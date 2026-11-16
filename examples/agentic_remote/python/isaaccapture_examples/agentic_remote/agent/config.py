@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -23,6 +24,7 @@ from typing import Any
 
 import yaml
 
+from ..protocol.messages import SIMULATED_DRIVERS
 from .arm_adapter import ARM_TYPE, ArmSettings
 from .self_mask import EXPERIMENT_DIR_ENV
 
@@ -57,6 +59,13 @@ ALLOWED_ENV = (
     "APAI_ASPIRE_LIBRARY",  # where the learned-notes library is read from
     "APAI_GRASPGENX_PORT",  # the port a grasp server on this machine is asked at
 )
+# The variables a path of the file may name as ${NAME}, and no other.
+PATH_VARIABLES = (
+    EXPERIMENT_DIR_ENV,
+    "AGENTIC_REMOTE_CAMERA_PR",
+    "AGENTIC_REMOTE_ENV_DIR",
+)
+_VARIABLE = re.compile(r"\$\{([^}]*)\}")
 # The keys of rig.motion_bounds; all four are needed when the block is given.
 MOTION_BOUNDS_KEYS = (
     "joint_center_rad",
@@ -157,6 +166,10 @@ class TaskSettings:
     owner_wait_s: float = 2.0
     # How long the start of the program waits for a usable obstacle grid.
     grid_wait_s: float = 20.0
+    # true: the next task clears the workstation checker's latch of a skill
+    # stop, after the typed yes and the Thor's grant. false: the program says
+    # to restart it and takes no new task.
+    clear_skill_stop: bool = True
 
 
 @dataclass(frozen=True)
@@ -171,7 +184,8 @@ class CameraSettings:
     depth_backend: str = "ffs"
     fps: float = 7.0
     # true lets the program run on a camera whose capture times are made up
-    # (--camera mock, --camera recorded:<dir>): never against a real arm.
+    # (--camera mock, --camera recorded:<dir>), and only against a robot app
+    # that declares a simulated driver.
     allow_invented_times: bool = False
 
 
@@ -181,6 +195,9 @@ class ExperimentSettings:
     # APAI's own profiles the minimal stack builds on.
     arm_profile: str = "mock"
     llm: str = "mock"
+    # The model client's program for the full stack. "" takes the path of the
+    # experiment's own file, inside the experiment folder.
+    codex_bin: str = ""
 
 
 @dataclass(frozen=True)
@@ -243,6 +260,7 @@ _TOP = ("state_dir", "log_level", *_SECTIONS)
 _PATHS = {
     "camera": ("bridge_python", "camera_pr", "calibration_dir", "hand_eye_json"),
     "link": ("socket_path",),
+    "experiment": ("codex_bin",),
 }
 # May be 0.
 _MAY_BE_ZERO = {"max_skew_ms"}
@@ -515,6 +533,32 @@ def invented_times(settings: AgentSettings, camera: str) -> bool:
     return True
 
 
+def check_robot_driver(settings: AgentSettings, driver: str, invented: bool) -> None:
+    """ConfigError when this program must not drive what WELCOME declares.
+
+    driver is Welcome.driver. One that is not simulated, "" (not declared)
+    included, counts as real: no invented capture times, and no minimal stack,
+    whose check ahead computes APAI's mock arm model and not the arm that moves.
+    """
+    if driver in SIMULATED_DRIVERS:
+        return
+    declared = f"the robot app declares the driver {driver!r}"
+    if not driver:
+        declared += " (none, which counts as real)"
+    if invented:
+        raise ConfigError(
+            f"camera.allow_invented_times is true, but {declared}: a permit "
+            "for a real arm must rest on a camera frame that was captured. Run "
+            "with --camera link, or against a simulated or mock arm"
+        )
+    if settings.minimal:
+        raise ConfigError(
+            f"experiment.stack is {STACK_MINIMAL}, but {declared}: the minimal "
+            "stack checks ahead on APAI's mock arm model, not on this arm. Set "
+            f"experiment.stack to {STACK_FULL}"
+        )
+
+
 def camera_kind(camera: str) -> tuple[str, str]:
     """("link" | "mock" | "recorded", the recorded folder or "")."""
     if camera in (CAMERA_LINK, CAMERA_MOCK):
@@ -596,7 +640,7 @@ def build_apai_config(
         ).as_dict()
         views = [data, *(arm["resolved"] for arm in data["arms"] if "resolved" in arm)]
         if not settings.minimal:
-            _merge_experiment(data, views, kind)
+            _merge_experiment(data, views, kind, settings)
         for view in views:
             if settings.minimal:
                 view["occupancy"]["enabled"] = True
@@ -679,8 +723,23 @@ def _camera_profile(
     return profile
 
 
+def _codex_bin(settings: AgentSettings, experiments: Path) -> str:
+    """The model client's program: experiment.codex_bin, else the experiment's."""
+    named = settings.experiment.codex_bin
+    if not named:
+        return str(experiments)
+    if not Path(named).is_file() or not os.access(named, os.X_OK):
+        raise ConfigError(
+            f"experiment.codex_bin names no program that can be run: {named}"
+        )
+    return named
+
+
 def _merge_experiment(
-    data: dict[str, Any], views: list[dict[str, Any]], camera: str
+    data: dict[str, Any],
+    views: list[dict[str, Any]],
+    camera: str,
+    settings: AgentSettings,
 ) -> None:
     """The experiment's own files over APAI's, read from its folder."""
     from apai.config import _deep_merge, _resolve_paths, load_profile
@@ -689,7 +748,8 @@ def _merge_experiment(
     configs = root / "configs"
     runtime = yaml.safe_load((configs / "thor_runtime.yaml").read_text())
     cloud = yaml.safe_load((configs / "thor_cloud.yaml").read_text())
-    cloud["llm"]["codex_bin"] = str(root / cloud["llm"]["codex_bin"])
+    # An absolute path: the experiment's own client joins it to its folder.
+    cloud["llm"]["codex_bin"] = _codex_bin(settings, root / cloud["llm"]["codex_bin"])
     overlay = _resolve_paths(runtime["overrides"], root)
     for view in views:
         _deep_merge(view, overlay)
@@ -782,8 +842,27 @@ def write_json(path: Path, data: Any) -> None:
 
 
 def _path(text: str, folder: Path) -> str:
-    path = Path(os.path.expandvars(text)).expanduser()
+    path = Path(_expanded(text)).expanduser()
     return str(path if path.is_absolute() else (folder / path).resolve())
+
+
+def _expanded(text: str) -> str:
+    """The path with each ${NAME} of PATH_VARIABLES replaced by its value."""
+
+    def value(found: re.Match[str]) -> str:
+        name = found.group(1)
+        if name not in PATH_VARIABLES:
+            raise ConfigError(
+                f"the path {text!r} names the variable {name!r}: a path takes "
+                f"{', '.join(PATH_VARIABLES)} and no other"
+            )
+        if not os.environ.get(name, "").strip():
+            raise ConfigError(
+                f"the path {text!r} names the variable {name}, which is not set"
+            )
+        return os.environ[name]
+
+    return _VARIABLE.sub(value, text)
 
 
 def _plain(value: Any) -> Any:

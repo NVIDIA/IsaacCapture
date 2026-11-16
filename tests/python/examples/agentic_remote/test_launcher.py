@@ -612,7 +612,8 @@ def test_the_agent_program_sends_owner_requests_and_stop_and_nothing_else() -> N
         if isinstance(node, ast.Return)
     }
     assert ends == {"None", "'help_needed'", "'nobody'"}
-    # No link message class is built in these files at all.
+    # No link message class is built in these files at all; the set of the
+    # simulated drivers' names is no link message.
     for name, tree in program_sources():
         imported = {
             alias.name
@@ -622,7 +623,7 @@ def test_the_agent_program_sends_owner_requests_and_stop_and_nothing_else() -> N
             and node.module.endswith("messages")
             for alias in node.names
         }
-        assert imported <= {"RobotState"}, (name, imported)
+        assert imported <= {"RobotState", "SIMULATED_DRIVERS"}, (name, imported)
 
 
 def test_nothing_in_the_agent_program_can_cut_torque_or_start_a_return_to_rest() -> (
@@ -780,18 +781,32 @@ def scene_robot_config() -> Any:
 
 
 @pytest.fixture
-def stage(make_realtime_apai: Callable[..., Any], tmp_path: Path) -> Iterator[Stage]:
+def make_stage(
+    make_realtime_apai: Callable[..., Any], tmp_path: Path
+) -> Iterator[Callable[..., Stage]]:
+    """make_stage(**app_options): a Stage; driver= is what its WELCOME declares."""
     import test_apai_app
     from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionState
 
-    # Started at rest, so the jaws are referenced; then put off the joint
-    # stops, holding, where APAI's checker lets the arm move.
-    harness = make_realtime_apai(config=scene_robot_config(), connected=False)
-    harness.spy.backend._q[:] = test_apai_app.RAISED
-    harness.app._motion.set(MotionState.HOLD)
-    harness.spy.backend.object_stop_frac = 0.5  # an object between the jaws
+    def make(**app_options: Any) -> Stage:
+        # Started at rest, so the jaws are referenced; then put off the joint
+        # stops, holding, where APAI's checker lets the arm move.
+        harness = make_realtime_apai(
+            config=scene_robot_config(), connected=False, **app_options
+        )
+        harness.spy.backend._q[:] = test_apai_app.RAISED
+        harness.app._motion.set(MotionState.HOLD)
+        harness.spy.backend.object_stop_frac = 0.5  # an object between the jaws
+        return Stage(harness, folder)
+
     with apai_runtime_env(tmp_path) as folder:
-        yield Stage(harness, folder)
+        yield make
+
+
+@pytest.fixture
+def stage(make_stage: Callable[..., Stage]) -> Stage:
+    """A Stage whose robot app declares the driver "apai-mock"."""
+    return make_stage()
 
 
 @apai
@@ -925,14 +940,14 @@ def test_ctrl_c_during_a_move_is_a_persons_stop_and_no_help_request(
 
 
 @apai
-def test_after_a_skill_stop_the_program_says_restart_and_takes_no_new_task(
+def test_a_skill_stop_with_clear_skill_stop_false_ends_in_restart_and_no_new_task(
     stage: Stage,
 ) -> None:
     # The driver refuses a joint target of the first move: a fault on the
     # Thor, a failed move for APAI, whose skill then stops the arm.
     stage.h.spy.fail_target = 30
     stage.typed = [PICK, QUICK]
-    code = stage.run("--interactive")
+    code = stage.run("--interactive", task={"clear_skill_stop": False})
     harness_of_run = stage.reports()[0]
     assert harness_of_run["success"] is False
     # The skill stop sent no STOP; the help request found the Thor's own
@@ -946,6 +961,288 @@ def test_after_a_skill_stop_the_program_says_restart_and_takes_no_new_task(
     assert stage.h.spy.released_at == []
     # Nothing was sent after the failed move: no MOVE, no GRIPPER, no STOP.
     assert stage.motion.count("send_move") == 1
+
+
+@apai
+def test_a_skill_stop_on_a_fault_stop_waits_for_the_reset_not_for_a_restart(
+    stage: Stage,
+) -> None:
+    stage.h.spy.fail_target = 30  # as above: a fault-stop on the Thor
+    stage.typed = [PICK, QUICK, QUICK]
+    stage.answers = ["yes", "yes"]
+    gate_start = task_gate.TaskGate._start
+    starts: list[str] = []
+
+    def start(gate: Any, task: Any, name: str, args: dict) -> Any:
+        starts.append(stage.h.app.snapshot().stop_level.value)
+        if len(starts) == 3:
+            # A person's reset cleared the fault-stop before this task, as a
+            # RESET from the console does.
+            app = stage.h.app
+            number = app.snapshot().stop_number
+            with app._lock:
+                assert app._stops.reset(number, app._arm) is None
+            until(lambda: stage.link.state().stop_level == "none", "the reset")
+        return gate_start(gate, task, name, args)
+
+    with mock.patch.object(task_gate.TaskGate, "_start", start):
+        code = stage.run("--interactive")
+    # The program went on after the skill stop and said no restart.
+    assert not stage.said(task_gate.RESTART) and stage.said(task_gate.SKILL_STOP_TOLD)
+    failed, refused, opened = stage.reports()
+    assert failed["success"] is False
+    # Under the Thor's fault-stop the next task was refused without a question
+    # and the workstation checker stayed latched: neither stop was cleared.
+    assert starts[:2] == ["none", "fault"]
+    assert stage.said("fault-stop") and refused["success"] is False
+    # Nothing was sent for it: the jaws opened in the first and the third task.
+    assert len(stage.asked) == 2
+    assert stage.motion == ["gripper", "send_move", "gripper"]
+    # After the console's reset the third task's typed yes cleared the latch.
+    assert task_gate.SKILL_STOP_NOTE in stage.asked[1]
+    assert stage.said("the skill stop of the last task is cleared")
+    assert opened["success"] is True
+    assert stage.order == [
+        "agent:completed",
+        "help_needed:refused",
+        "agent:completed",
+        "nobody:completed",
+        "close:nobody",
+    ]
+    assert code == launcher.EXIT_FAILED and stage.h.spy.released_at == []
+
+
+# What the robot app's WELCOME declares (N1, N2)
+
+
+def ended_before_any_task(stage: Stage, driver: str) -> None:
+    """The program said the driver, then ended: nothing was asked or sent."""
+    shown = driver or "(not declared)"
+    assert f"driver {shown}, session" in stage.said("robot connection up")[0]
+    assert stage.order == ["close:nobody"] and stage.asked == []
+    assert stage.h.heard("owner") == [] and stage.h.spy.targets == []
+    assert not stage.said("obstacle grid")  # APAI's runtime was not built
+    assert not (stage.run_dir / "task-reports.jsonl").exists()
+
+
+@apai
+def test_invented_times_against_a_real_driver_end_the_program(
+    make_stage: Callable[..., Stage], capsys: pytest.CaptureFixture[str]
+) -> None:
+    stage = make_stage(driver="real")
+    assert stage.run("--task", QUICK) == launcher.EXIT_FAILED
+    error = capsys.readouterr().err
+    assert (
+        "camera.allow_invented_times is true, but the robot app declares the "
+        "driver 'real':"
+    ) in error
+    ended_before_any_task(stage, "real")
+
+
+@apai
+def test_invented_times_against_an_undeclared_driver_end_the_program(
+    make_stage: Callable[..., Stage], capsys: pytest.CaptureFixture[str]
+) -> None:
+    stage = make_stage(driver="")
+    assert stage.run("--task", QUICK) == launcher.EXIT_FAILED
+    error = capsys.readouterr().err
+    assert (
+        "camera.allow_invented_times is true, but the robot app declares the "
+        "driver '' (none, which counts as real)"
+    ) in error
+    ended_before_any_task(stage, "")
+
+
+@apai
+@pytest.mark.parametrize("driver", ["sim", "apai-mock"])
+def test_invented_times_against_sim_and_mock_run(
+    make_stage: Callable[..., Stage], driver: str
+) -> None:
+    stage = make_stage(driver=driver)
+    stage.typed = [QUICK]
+    assert stage.run("--interactive") == launcher.EXIT_OK
+    assert f"driver {driver}, session" in stage.said("robot connection up")[0]
+    assert stage.order == ["agent:completed", "nobody:completed", "close:nobody"]
+    assert stage.results("open_gripper")[0]["ok"] is True
+
+
+@apai
+def test_the_minimal_stack_against_a_real_driver_ends_the_program(
+    make_stage: Callable[..., Stage],
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A camera whose times are not invented, so the stack is what is refused.
+    monkeypatch.setattr(agent_config, "invented_times", lambda *args: False)
+    stage = make_stage(driver="real")
+    assert stage.run("--task", QUICK) == launcher.EXIT_FAILED
+    error = capsys.readouterr().err
+    assert (
+        "experiment.stack is minimal, but the robot app declares the driver 'real'"
+    ) in error
+    assert "Set experiment.stack to full" in error
+    ended_before_any_task(stage, "real")
+
+
+def test_what_the_declared_driver_allows(tmp_path: Path) -> None:
+    minimal = agent_config.load_settings(settings_file(tmp_path))
+    full = agent_config.load_settings(
+        settings_file(tmp_path, experiment={"stack": "full"})
+    )
+    check = agent_config.check_robot_driver
+    for driver in ("sim", "apai-mock"):
+        for settings in (minimal, full):
+            for invented in (True, False):
+                check(settings, driver, invented)
+    # Any other declaration counts as real, the missing one too.
+    for driver in ("real", "", "Sim", "mock", "apai"):
+        check(full, driver, False)
+        for settings in (minimal, full):
+            with pytest.raises(ConfigError, match="allow_invented_times is true"):
+                check(settings, driver, True)
+        with pytest.raises(ConfigError, match=r"experiment\.stack is minimal"):
+            check(minimal, driver, False)
+
+
+# Variables in paths (N4) and the model client's path (N3)
+
+
+def test_a_path_variable_expands_and_an_unknown_one_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in agent_config.PATH_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    assert agent_config.PATH_VARIABLES == (
+        "AGENTIC_REMOTE_EXPERIMENT_DIR",
+        "AGENTIC_REMOTE_CAMERA_PR",
+        "AGENTIC_REMOTE_ENV_DIR",
+    )
+    monkeypatch.setenv("AGENTIC_REMOTE_EXPERIMENT_DIR", "/exp")
+    monkeypatch.setenv("AGENTIC_REMOTE_CAMERA_PR", "/pr")
+    monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", "/env")
+    path = settings_file(
+        tmp_path,
+        camera={
+            "calibration_dir": "${AGENTIC_REMOTE_EXPERIMENT_DIR}/.state/calibration",
+            "hand_eye_json": "${AGENTIC_REMOTE_EXPERIMENT_DIR}/handeye.json",
+            "bridge_python": "${AGENTIC_REMOTE_CAMERA_PR}/consumer/.venv/bin/python",
+            "camera_pr": "${AGENTIC_REMOTE_CAMERA_PR}",
+        },
+        experiment={"codex_bin": "${AGENTIC_REMOTE_ENV_DIR}/codex/bin/codex"},
+        link={"socket_path": "${AGENTIC_REMOTE_ENV_DIR}/a/${AGENTIC_REMOTE_ENV_DIR}"},
+    )
+    settings = agent_config.load_settings(path)
+    assert settings.camera.calibration_dir == "/exp/.state/calibration"
+    assert settings.camera.hand_eye_json == "/exp/handeye.json"
+    assert settings.camera.bridge_python == "/pr/consumer/.venv/bin/python"
+    assert settings.camera.camera_pr == "/pr"
+    assert settings.experiment.codex_bin == "/env/codex/bin/codex"
+    assert settings.link.socket_path == "/env/a/env"  # a name may come twice
+    # A key that is no path is taken as written.
+    other = tmp_path / "other"  # the folder of the files written from here on
+    other.mkdir()
+    kept = settings_file(other, link={"calibration_id": "${HOME}"})
+    assert agent_config.load_settings(kept).link.calibration_id == "${HOME}"
+    # Another name, and a name with no value, are refused and named.
+    for text, message in (
+        ("${HOME}/calibration", "names the variable 'HOME': a path takes"),
+        ("${}/calibration", "names the variable '': a path takes"),
+        ("${AGENTIC_REMOTE_APAI_SRC}/x", "names the variable 'AGENTIC_REMOTE_APAI_"),
+    ):
+        refused = settings_file(other, camera={"calibration_dir": text})
+        with pytest.raises(ConfigError, match=message):
+            agent_config.load_settings(refused)
+    for value in (None, "", "  "):
+        if value is None:
+            monkeypatch.delenv("AGENTIC_REMOTE_ENV_DIR")
+        else:
+            monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", value)
+        with pytest.raises(
+            ConfigError, match="AGENTIC_REMOTE_ENV_DIR, which is not set"
+        ):
+            agent_config.load_settings(path)
+    # The folder of the state is a path as well.
+    data = yaml.safe_load(path.read_text())
+    data["state_dir"] = "${AGENTIC_REMOTE_EXPERIMENT_DIR}/state"
+    del data["experiment"]["codex_bin"], data["link"]["socket_path"]
+    path.write_text(yaml.safe_dump(data))
+    assert agent_config.load_settings(path).state_dir == Path("/exp/state")
+    # A dollar sign without braces is no variable.
+    plain = settings_file(other, camera={"calibration_dir": "/a/$HOME/b"})
+    assert agent_config.load_settings(plain).camera.calibration_dir == "/a/$HOME/b"
+
+
+def test_the_model_clients_program_is_a_setting(tmp_path: Path) -> None:
+    shipped = agent_config.load_settings(SHIPPED)
+    assert shipped.experiment.codex_bin == ""
+    assert shipped.task.clear_skill_stop is True
+    theirs = tmp_path / "experiment" / ".tools" / "codex"
+    # Not set: the path of the experiment's own file.
+    assert agent_config._codex_bin(shipped, theirs) == str(theirs)
+    # A relative path is taken from the file's folder, as every path.
+    program = tmp_path / "codex"
+    named = agent_config.load_settings(
+        settings_file(tmp_path, experiment={"codex_bin": "codex"})
+    )
+    assert named.experiment.codex_bin == str(program)
+    assert named.as_dict()["experiment"]["codex_bin"] == str(program)
+    # It must name a file that can be run.
+    with pytest.raises(ConfigError, match=r"experiment\.codex_bin names no program"):
+        agent_config._codex_bin(named, theirs)
+    program.write_text("#!/bin/sh\n")
+    with pytest.raises(ConfigError, match=r"experiment\.codex_bin names no program"):
+        agent_config._codex_bin(named, theirs)
+    program.chmod(0o755)
+    assert agent_config._codex_bin(named, theirs) == str(program)
+    with pytest.raises(ConfigError, match=r"experiment\.codex_bin must be text"):
+        agent_config.load_settings(settings_file(tmp_path, experiment={"codex_bin": 3}))
+
+
+@apai
+@experiment
+def test_the_full_stack_takes_the_model_client_the_file_names(
+    apai_scratch: Path,
+    experiment_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv(EXPERIMENT_DIR_ENV, str(experiment_dir))
+    monkeypatch.setenv("AGENTIC_REMOTE_ENV_DIR", str(apai_scratch / "env"))
+    program = apai_scratch / "env" / "codex" / "node_modules" / ".bin" / "codex"
+    data = yaml.safe_load(SHIPPED.read_text())
+    data["state_dir"] = str(apai_scratch / "state")
+    data["camera"]["allow_invented_times"] = True  # for --camera mock below
+    data["experiment"]["codex_bin"] = (
+        "${AGENTIC_REMOTE_ENV_DIR}/codex/node_modules/.bin/codex"
+    )
+    path = apai_scratch / "agent.yaml"
+    path.write_text(yaml.safe_dump(data))
+    settings = agent_config.load_settings(path)
+    assert settings.experiment.codex_bin == str(program)
+    # No such program: refused when APAI's configuration is built, which the
+    # program does before it attaches (exit code 2).
+    with pytest.raises(ConfigError, match=r"experiment\.codex_bin names no program"):
+        agent_config.build_apai_config(settings, apai_scratch / "run", camera="mock")
+    code = launcher.main(["--config", str(path), "--camera", "mock", "--check"])
+    assert code == launcher.EXIT_NOT_RUN
+    assert "experiment.codex_bin names no program" in capsys.readouterr().err
+    assert not (apai_scratch / "state").exists()
+    program.parent.mkdir(parents=True)
+    program.write_text("#!/bin/sh\n")
+    program.chmod(0o755)
+    cfg = agent_config.build_apai_config(settings, apai_scratch / "run", camera="mock")
+    data = cfg.as_dict()
+    for view in (data, data["arms"][0]["resolved"]):
+        assert view["llm"]["type"] == "codex_exec"
+        assert view["llm"]["codex_bin"] == str(program)
+    # The experiment's own client joins the path to its folder: it stays.
+    assert str(experiment_dir / view["llm"]["codex_bin"]) == str(program)
+    # Not set: the experiment's own program, inside its folder.
+    shipped = agent_config.load_settings(SHIPPED)
+    theirs = agent_config.build_apai_config(
+        shipped, apai_scratch / "run", camera="mock"
+    ).as_dict()["llm"]["codex_bin"]
+    assert Path(theirs).is_relative_to(experiment_dir.resolve())
 
 
 @apai

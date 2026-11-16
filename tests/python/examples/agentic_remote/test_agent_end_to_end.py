@@ -547,18 +547,122 @@ def test_an_obstacle_on_the_path_ends_the_move_in_a_hold_and_help_is_asked(
     assert snapshot.stop_number == 0 and snapshot.stop_level.value == "none"
     assert scene.h.heard("stop") == [] and scene.h.heard("fault") == []
     # APAI got a failed step and its skill stopped the arm: the task ended
-    # with a help request, and the program takes no new task (D4).
+    # with a help request. The skill stop stands for the next task's typed
+    # yes; the program asks for no restart (D4).
     assert scene.order == ["agent:completed", "help_needed:completed", "close:nobody"]
     assert trace.owners == ["nobody", "agent", "nobody"]
     (help_needed,) = scene.h.heard("help_needed")
     assert help_needed[2]["reason"] == "blocked: arm stop latched"
-    assert scene.said(task_gate.RESTART) and code == launcher.EXIT_FAILED
+    assert scene.said(task_gate.SKILL_STOP_TOLD) and not scene.said(task_gate.RESTART)
+    assert trace.built["harness"].estopped is True and code == launcher.EXIT_FAILED
     assert scene.motion.count("send_move") == 1  # nothing was sent after it
     print(
         f"measured: setpoint {index} of {count} refused, {sent} joint targets "
         f"sent, {len(permits)} PERMITs, cancel to RESULT "
         f"{trace.built['adapter'].last_move['cancel_to_result_s'] * 1e3:.0f} ms"
     )
+
+
+@apai
+def test_after_an_obstacle_refusal_the_next_task_runs_without_a_restart(
+    scene: Scene,
+) -> None:
+    ObstacleGrid.made.clear()
+    scene.grid = ObstacleGrid
+    trace = scene.trace
+    grids: dict[str, np.ndarray] = {}
+    latched: list[bool] = []  # the workstation checker, at each question
+    resets: list[tuple[str, str, int]] = []
+
+    def on_attach(made: AgentLink) -> None:
+        send_move = made.send_move
+
+        def first_move(move_id: str, start: Any, tol: Any, q: Any, *rest: Any) -> None:
+            if not grids:
+                # A box where the gripper tip is at the end of the first move.
+                kinematics = trace.built["harness"].kin
+                tip = kinematics.fk(np.asarray(q[-1], dtype=float))[:3, 3]
+                grids["clear"] = ObstacleGrid.made[-1].grid
+                grids["box"] = ObstacleGrid.made[-1].with_box(tip, 0.04)
+            send_move(move_id, start, tol, q, *rest)
+
+        made.send_move = first_move
+
+    def switch_in(number: int) -> None:
+        if number == 5:  # the arm is under way; the grid's next query shows it
+            ObstacleGrid.made[-1].grid = grids["box"]
+
+    def on_ask() -> None:
+        harness = trace.built["harness"]
+        latched.append(harness.estopped)
+        if len(scene.asked) != 2:
+            return
+        # A person took the obstacle away before typing yes to the next task.
+        ObstacleGrid.made[-1].grid = grids["clear"]
+        reset = harness.reset_estop
+
+        def noted_reset(**kwargs: Any) -> None:
+            snapshot = scene.h.app.snapshot()
+            resets.append(
+                (snapshot.owner.value, snapshot.stop_level.value, len(scene.motion))
+            )
+            reset(**kwargs)
+
+        harness.reset_estop = noted_reset
+
+    scene.on_attach = on_attach
+    scene.on_ask = on_ask
+    scene.h.spy.after_target.append(switch_in)
+    scene.typed = [PICK, PICK]
+    scene.answers = ["yes", "yes"]
+    began = time.monotonic()
+    code = scene.run("--interactive")
+    assert time.monotonic() - began < RUN_BUDGET_S
+
+    # The first task: the check ahead refused a setpoint, APAI's skill stopped
+    # the arm, the task ended with a help request. No STOP, no fault-stop.
+    blocked, picked = scene.reports()
+    first, second = scene.results("pick_and_place")
+    assert first["ok"] is False and first["motion_blocked"] is True
+    assert "clearance" in first["error"] and blocked["success"] is False
+    first_move = next(iter(trace.moves))
+    assert trace.results[first_move].status == "refused"
+    assert scene.said(task_gate.SKILL_STOP_TOLD)
+    # The same program took the next task: it said no restart, the question
+    # named the skill stop, and the latch stood until the typed yes.
+    assert not scene.said(task_gate.RESTART)
+    assert task_gate.SKILL_STOP_NOTE not in scene.asked[0]
+    assert task_gate.SKILL_STOP_NOTE in scene.asked[1] and latched == [False, True]
+    # It was cleared once, with the agent as owner on the Thor and before any
+    # command of the second task.
+    sent_before = scene.motion.index("send_move") + 1
+    assert resets == [("agent", "none", sent_before)]
+    assert scene.said("the skill stop of the last task is cleared")
+    assert trace.built["harness"].estopped is False
+    # The second task moved the arm: the whole pick and place.
+    assert second["ok"] is True and second["picked"] == "red object"
+    assert second["return_home"]["ok"] is True
+    later = [move_id for move_id in trace.moves if move_id != first_move]
+    assert len(later) >= 5
+    assert all(trace.results[move_id].status == "completed" for move_id in later)
+    assert len(trace.targets) > 300
+    trace.check_every_target_was_permitted()
+    trace.check_permits_follow_the_check_ahead()
+    # Each task took the arm with its own grant and ended with a help request
+    # (the mock scene cannot confirm the place).
+    assert scene.order == [
+        "agent:completed",
+        "help_needed:completed",
+        "agent:completed",
+        "help_needed:completed",
+        "close:nobody",
+    ]
+    assert trace.owners == ["nobody", "agent", "nobody", "agent", "nobody"]
+    assert picked["success"] is False and code == launcher.EXIT_FAILED
+    snapshot = scene.h.app.snapshot()
+    assert snapshot.stop_number == 0 and snapshot.stop_level.value == "none"
+    assert scene.h.heard("stop") == [] and scene.h.heard("fault") == []
+    scene.holds()
 
 
 @apai

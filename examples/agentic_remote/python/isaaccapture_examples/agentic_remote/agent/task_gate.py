@@ -11,6 +11,11 @@ while the agent owns the arm, the gate gives the arm back (success) or sends
 a help request (anything else but a cancel), waits for the RESULT, and only
 then closes the task on the arm adapter.
 
+A skill stop of APAI latches the workstation checker. The next task clears
+that latch at its first motion skill, after the typed "yes" and the Thor's
+grant; nothing on the Thor is cleared by it. Where the latch does not clear,
+or with task.clear_skill_stop false, the program must be restarted.
+
 The gate sends OWNER_REQUEST and nothing else.
 """
 
@@ -66,6 +71,12 @@ RESTART = (
     "a skill stop latched the workstation checker: restart the agent program; "
     "it takes no new task"
 )
+# What the typed yes of the next task covers, in its question.
+SKILL_STOP_NOTE = "the last task ended in a skill stop; it is cleared when you confirm"
+SKILL_STOP_TOLD = (
+    "the task ended in a skill stop: the next task clears it after its typed yes"
+)
+SKILL_STOP_KEPT = "the skill stop is not cleared; type the task again"
 NO_TASK = "motion needs a task typed at the agent terminal"
 CONSENT = "consent"
 OWNERSHIP = "ownership"
@@ -128,12 +139,13 @@ class TaskGate:
         self._speed = float(getattr(task, "max_joint_speed", 0.1))
         self._end_wait_s = float(getattr(task, "end_wait_s", 5.0))
         self._owner_wait_s = float(getattr(task, "owner_wait_s", 2.0))
+        self._clear = bool(getattr(task, "clear_skill_stop", True))
         self._ask, self._say = ask, say
         self._motion = frozenset(motion_skills) - frozenset(read_only_tools)
         self._current: ContextVar[_Task | None] = ContextVar(
             "agentic_remote_task", default=None
         )
-        self._latched = False
+        self._restart = False  # only a restart lets this program move the arm
         self._owning = False  # a task of this gate owns the arm
         # The command id of an OWNER_REQUEST "agent" whose RESULT did not come
         # in time ("" when the id is not known); None when there is none.
@@ -155,11 +167,20 @@ class TaskGate:
         self._adapter, self._harness = adapter, harness
 
     @property
+    def skill_stop(self) -> bool:
+        """The workstation checker is latched now."""
+        return getattr(self._harness, "estopped", False) is True
+
+    @property
     def restart_needed(self) -> bool:
-        """A skill stop latched the workstation checker in this run."""
-        if getattr(self._harness, "estopped", False) is True:
-            self._latched = True
-        return self._latched
+        """A latch of the workstation checker that no task of this run clears.
+
+        With task.clear_skill_stop false that is every latch; else one that
+        stayed after the gate's reset. It stays for the run.
+        """
+        if not self._clear and self.skill_stop:
+            self._restart = True
+        return self._restart
 
     def tell_restart(self) -> bool:
         """Say that the program must be restarted, if it must; whether it must."""
@@ -269,8 +290,11 @@ class TaskGate:
         reason = _not_startable(state)
         if reason is not None:
             return self._refused(reason, OWNERSHIP)
+        # The typed yes covers the latch the question names, and no later stop.
+        told, mark = self.skill_stop, _stop_count(self._harness)
         prompt = (
-            f"Authorize motion for this task: {json.dumps(task.text)}. "
+            (f"Note: {SKILL_STOP_NOTE}. " if told else "")
+            + f"Authorize motion for this task: {json.dumps(task.text)}. "
             f"First tool {name}: {_short(args)}. This covers the later motion "
             "tools and retries of this task, without another prompt. Joint "
             f"speed at most {self._speed:g} rad/s. The checks of the robot app "
@@ -314,11 +338,76 @@ class TaskGate:
                 "no ROBOT_STATE showed the agent as control owner", OWNERSHIP
             )
         pinned = Pinned(shown.session_id, shown.owner_number, shown.stop_number)
+        if self.skill_stop:
+            reason = self._clear_skill_stop(pinned, told, mark)
+            if reason is not None:
+                self._give_back(pinned, reason)
+                return self._refused(reason, OWNERSHIP)
         link.pin(pinned)
         self._adapter.open_task(pinned)
         task.owner = self._owning = True
         self._say(f"the agent owns the arm (owner number {pinned.owner_number})")
         return None
+
+    def _clear_skill_stop(self, pinned: Pinned, told: bool, mark: Any) -> str | None:
+        """Clear the workstation checker's latch; why it stays, or None.
+
+        Called once the operator typed yes and the Thor granted the arm. The
+        latch stays when the question did not name it, when the checker was
+        stopped again since the question, and unless the newest ROBOT_STATE
+        shows the agent as owner with the granted numbers and stop level none.
+        Only the workstation's latch is reset: nothing is sent to the Thor.
+        """
+        harness = self._harness
+        if not told or _stop_count(harness) != mark:
+            return f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
+        try:
+            state = self._link.state()
+        except (LinkLost, StaleState) as error:
+            return f"robot connection lost: {error}"
+        shown = (state.session_id, state.owner_number, state.stop_number)
+        if (
+            state.owner != "agent"
+            or state.stop_level != "none"
+            or Pinned(*shown) != pinned
+        ):
+            return (
+                f"control owner {state.owner}, stop level {state.stop_level} "
+                f"after the grant: {SKILL_STOP_KEPT}"
+            )
+        try:
+            harness.reset_estop()
+        except Exception:
+            _log.exception("the workstation checker's latch was not reset")
+        if getattr(harness, "estopped", True) is not False:
+            self._restart = self.restart_told = True
+            return RESTART
+        self._say("the skill stop of the last task is cleared")
+        return None
+
+    def _give_back(self, quote: Pinned, reason: str) -> None:
+        """Return an ownership no task was opened on; waits for the RESULT."""
+        self._ended_number = quote.owner_number
+        try:
+            result = self._link.request_owner(
+                "nobody",
+                reason=printable(reason, MAX_REASON_CHARS),
+                quote=quote,
+                timeout_s=self._end_wait_s,
+            )
+        except (LinkLost, StaleState, CommandTimeout) as error:
+            self.end_unanswered = True
+            self._say(
+                f"the arm could not be given back: {error}; the robot app holds "
+                "the arm, and the agent may still own it"
+            )
+            return
+        self.requests.append(("nobody", result.status, result.reason))
+        if result.status != "completed":
+            self._say(f"the arm could not be given back: {result.reason}")
+            return
+        self._say("the arm was given back: nobody owns it")
+        self._await_released(quote.owner_number)
 
     def _await_owner(self, number: Any) -> RobotState | None:
         """The ROBOT_STATE that shows the agent as owner with this number."""
@@ -445,7 +534,8 @@ class TaskGate:
             except Exception:
                 _log.exception("closing the task on the arm adapter failed")
             self._owning = False
-            self.tell_restart()
+            if not self.tell_restart() and self.skill_stop:
+                self._say(SKILL_STOP_TOLD)
 
     def _send_end(self, request: str, reason: str) -> None:
         """One OWNER_REQUEST with the pinned numbers; waits for its RESULT."""
@@ -527,6 +617,11 @@ def _not_startable(state: RobotState) -> str | None:
     if not state.torque_on:
         return "the motors are off; restart the robot app"
     return None
+
+
+def _stop_count(harness: Any) -> Any:
+    """APAI's count of the checker's stops and halts; a reset never lowers it."""
+    return getattr(harness, "_observation_cancel_generation", None)
 
 
 def _status_line(state: RobotState) -> str:

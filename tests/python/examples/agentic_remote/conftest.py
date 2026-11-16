@@ -824,10 +824,12 @@ def make_realtime_robot_app(
 
     make_realtime_robot_app(config=None, pose=None, confirm=None, start=True,
     connected=True), as make_robot_app, with a simulated arm and checkers of
-    its own on the machine's clock. After the test every torque release of each
-    arm must have been at measured rest, unless the test is marked
+    its own on the machine's clock. The app declares the driver "sim" unless
+    driver= names another. After the test every torque release of each arm must
+    have been at measured rest, unless the test is marked
     "releases_away_from_rest".
     """
+    from isaaccapture_examples.agentic_remote.protocol.messages import DRIVER_SIM
     from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
 
     made: list[AppHarness] = []
@@ -838,6 +840,7 @@ def make_realtime_robot_app(
         confirm: Callable[[str], bool] | None = None,
         start: bool = True,
         connected: bool = True,
+        **app_options: Any,
     ) -> AppHarness:
         arm = SimArm(
             n_joints=config.n_joints,
@@ -852,6 +855,7 @@ def make_realtime_robot_app(
             confirm,
             connected,
             step_period_s=None,
+            app_options={"driver": DRIVER_SIM, **app_options},
         )
         made.append(harness)
         return harness.start() if start else harness
@@ -876,6 +880,7 @@ def realtime_apai_harness(
     config: RobotAppConfig | None = None,
     profile: Any = None,
     connected: bool = True,
+    **app_options: Any,
 ) -> AppHarness:
     """The robot app on APAI's mock arm and checkers, on the machine's clock.
 
@@ -883,9 +888,14 @@ def realtime_apai_harness(
     defaults to that file's make_config(profile), profile to APAI's mock
     profile. connected=False builds it with no robot connection, as
     UnconnectedApai of test_link_end_to_end.py, for a link_stack.Stack. APAI's
-    checker paces itself on a clock that is not a fake one.
+    checker paces itself on a clock that is not a fake one. The app declares
+    the driver "apai-mock" unless driver= names another; further keywords go
+    to RobotApp.
     """
     import test_apai_app as apai
+    from isaaccapture_examples.agentic_remote.protocol.messages import (
+        DRIVER_APAI_MOCK,
+    )
     from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
 
     backend = apai.apai_backend
@@ -899,7 +909,15 @@ def realtime_apai_harness(
             arm = backend.build_apai_arm(config, profile, clock)
             self.spy = apai.BackendSpy(arm, checkers)
             AppHarness.__init__(
-                self, config, arm, checkers, clock, None, connected, step_period_s=None
+                self,
+                config,
+                arm,
+                checkers,
+                clock,
+                None,
+                connected,
+                step_period_s=None,
+                app_options={"driver": DRIVER_APAI_MOCK, **app_options},
             )
 
     return RealtimeApai()
@@ -923,9 +941,9 @@ def check_realtime_apai(harness: AppHarness) -> None:
 def make_realtime_apai() -> Iterator[Callable[..., AppHarness]]:
     """Builds and starts a robot app on APAI's mock arm in real time.
 
-    make_realtime_apai(config=None, profile=None, connected=True, start=True);
-    see realtime_apai_harness(). After the test each app is closed and
-    check_realtime_apai() is applied to it. For tests marked "apai".
+    make_realtime_apai(config=None, profile=None, connected=True, start=True,
+    **app_options); see realtime_apai_harness(). After the test each app is
+    closed and check_realtime_apai() is applied to it. For tests marked "apai".
     """
     made: list[AppHarness] = []
 
@@ -934,8 +952,9 @@ def make_realtime_apai() -> Iterator[Callable[..., AppHarness]]:
         profile: Any = None,
         connected: bool = True,
         start: bool = True,
+        **app_options: Any,
     ) -> AppHarness:
-        harness = realtime_apai_harness(config, profile, connected)
+        harness = realtime_apai_harness(config, profile, connected, **app_options)
         made.append(harness)
         return harness.start() if start else harness
 

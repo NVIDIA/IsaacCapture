@@ -4,7 +4,9 @@
 # The agent program's settings: APAI's agent on the workstation, driving the arm
 # through the robot link service. Every number here is a first value; none was
 # measured on a robot. Angles are in rad, speeds in rad/s, times in s. A relative
-# path is taken from this file's folder.
+# path is taken from this file's folder. A path may name ${AGENTIC_REMOTE_EXPERIMENT_DIR},
+# ${AGENTIC_REMOTE_CAMERA_PR} or ${AGENTIC_REMOTE_ENV_DIR}; the program refuses
+# another ${NAME} and one that is not set.
 #
 # The program refuses a key it does not know, a key given twice, a block that is
 # not a mapping, and a number above the bound its comment names ("at most").
@@ -79,6 +81,11 @@ task:
   # in time. At most 30 s.
   owner_wait_s: 2.0
   grid_wait_s: 20.0  # longest wait for a usable obstacle grid at the start; at most 300 s
+  # A skill stop (APAI's own stop of the arm after a motion failed) latches the
+  # workstation checker. true: the next task clears that latch at its first
+  # motion skill, after the typed yes and the Thor's grant; its question says so.
+  # false: the program says to restart it and takes no new task.
+  clear_skill_stop: true
 
 camera:
   # The interpreter of the camera consumer (it has CuPy); the camera frame bridge
@@ -100,18 +107,24 @@ camera:
   fps: 7.0  # at most 120
   # --camera mock and --camera recorded:<dir> make their capture times up: a
   # permit would rest on evidence that nobody captured. With false the program
-  # does not start on such a camera. Set true only for a run against a
-  # simulated or mock arm, never against a real one.
+  # does not start on such a camera. With true it runs only against a robot app
+  # whose WELCOME declares a simulated driver (sim or apai-mock): against the
+  # real driver, or one that declares none, it ends with exit code 1.
   allow_invented_times: false
 
 experiment:
   # full: the experiment's behaviour hooks, its obstacle grid bridge on cuda:0
   # and its cloud model (AGENTIC_REMOTE_EXPERIMENT_DIR names its folder).
   # minimal: none of them; APAI's own profiles below and APAI's mock detector.
-  # For dry runs and tests.
+  # For dry runs and tests: it checks ahead on APAI's mock arm model, so the
+  # program ends (exit code 1) unless the robot app declares a simulated driver.
   stack: full
   arm_profile: mock
   llm: mock
+  # The model client's program (the Codex command-line program) for the full
+  # stack; a path. Empty: the one the experiment's own file names, inside the
+  # experiment folder. One that names no program that can be run is refused.
+  codex_bin: ""
 
 # Four values of the rig's arm profile, copied on 2026-11-15 from the experiment's
 # configs/thor_operation.yaml (lines 6 to 18); that file extends a path that

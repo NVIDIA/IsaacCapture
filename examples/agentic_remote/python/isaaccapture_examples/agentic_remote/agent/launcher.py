@@ -600,7 +600,8 @@ def main(
             f"WARNING: the camera frames of --camera {args.camera} carry invented "
             "capture times (camera.allow_invented_times is true): a permit rests "
             "on evidence that nobody captured. For a simulated or mock arm only, "
-            "never against a real arm"
+            "never against a real arm: the program ends unless the robot app "
+            "declares a simulated driver"
         )
 
     link: AgentLink | None = None
@@ -613,11 +614,14 @@ def main(
             timeout_s=settings.link.connect_timeout_s,
         )
         welcome = link.wait_ready(settings.link.connect_timeout_s)
+        driver = getattr(welcome, "driver", "")
         say(
             f"robot connection up: robot {welcome.robot_id}, profile "
-            f"{welcome.profile_id}, session {welcome.session_id}, camera "
-            f"calibration {welcome.camera_calibration_id or '(unnamed)'}"
+            f"{welcome.profile_id}, driver {driver or '(not declared)'}, session "
+            f"{welcome.session_id}, camera calibration "
+            f"{welcome.camera_calibration_id or '(unnamed)'}"
         )
+        agent_config.check_robot_driver(settings, driver, invented)
         agent_config.check_joint_count(settings, len(welcome.joint_names))
         frame_times = FrameTimes()
         joint_feed = None

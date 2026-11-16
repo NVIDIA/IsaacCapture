@@ -79,7 +79,7 @@ that connection. Nothing here has moved a real arm.
   depth code and its behaviour hooks for APAI. `AGENTIC_REMOTE_EXPERIMENT_DIR` names it. It is
   read, never written.
 - **Skill stop**: APAI's own stop of the arm after a motion failed. It latches the workstation
-  checker; only a restart of the agent program clears it.
+  checker; the next task clears that latch after its typed `yes` and the Thor's grant.
 - **Run folder**: the folder one run of the agent program writes its files into.
 
 ## What this folder contains
@@ -279,10 +279,11 @@ python -m isaaccapture_examples.agentic_remote.agent --config PATH
   that nobody captured. With `camera.allow_invented_times: false` (the shipped value) the
   program does not start on such a camera: exit code 2 and one line that names the setting.
   With `true` it prints a `WARNING` line at its start, and every such camera frame carries
-  `invented_times: True` in its capture record. Set it to `true` only for a run against a
-  simulated or mock arm. Nothing ties the setting to the robot app yet: a robot app that
-  declares a simulated driver, and an agent program that asks for that declaration, is a P2
-  item.
+  `invented_times: True` in its capture record. With `true` the program runs only against a
+  robot app whose WELCOME declares a simulated driver (`sim` or `apai-mock`): against `real`,
+  or a robot app that declares no driver, it ends with exit code 1 once the robot connection
+  is up, before any task. The minimal stack (`experiment.stack: minimal`) is refused the same
+  way, whatever the camera: its check ahead computes APAI's mock arm model.
 - `--check` loads and checks `agent.yaml` and APAI's configuration, attaches to nothing,
   prints the resolved values and the camera calibration id as JSON, and writes nothing into
   `state_dir`.
@@ -300,7 +301,7 @@ the line names it.
 | Exit code | Meaning |
 |---|---|
 | 0 | `--task`: the task succeeded and the arm was given back. `--interactive`: every task of the session succeeded and the arm was given back. `--check`: the files can be used. One Ctrl+C: the task was cancelled and a STOP sent |
-| 1 | No robot link service, the robot app not ready in time, another camera calibration than the robot app's, a `rig` list that is not of the arm's joint count, APAI's runtime not built (for example no usable obstacle grid within `task.grid_wait_s`), a task that ended without success (`--interactive`: any task of the session), an owner request at a task's end that was not answered, the agent still control owner when the program ended, a skill stop (the program said `restart the agent program`), or SIGTERM: a STOP was sent first |
+| 1 | No robot link service, the robot app not ready in time, another camera calibration than the robot app's, a `rig` list that is not of the arm's joint count, APAI's runtime not built (for example no usable obstacle grid within `task.grid_wait_s`), a task that ended without success (`--interactive`: any task of the session), an owner request at a task's end that was not answered, the agent still control owner when the program ended, invented capture times or the minimal stack against a robot app that declares no simulated driver, a skill stop that was not cleared (the program said `restart the agent program`), or SIGTERM: a STOP was sent first |
 | 2 | The arguments, `agent.yaml` or the environment cannot be used, or APAI cannot be imported. Nothing was attached |
 | 130 | A second Ctrl+C. A STOP was sent again first |
 
@@ -353,9 +354,15 @@ ready within `link.connect_timeout_s`, and an obstacle grid that is not usable i
    APAI's skill ends as halted. Nobody owns the arm then, so the task's help request, which
    quotes the stop number from before the STOP, is refused. The next task can take the arm;
    the program needs no restart.
-9. **After a skill stop the program takes no new task.** It says `a skill stop latched the
-   workstation checker: restart the agent program` and ends with exit code 1. The task itself
-   ended as in step 5.
+9. **After a skill stop the next task clears the workstation checker's latch.** The task
+   itself ended as in step 5, and the program says `the task ended in a skill stop: the next
+   task clears it after its typed yes`. The next task's question begins `Note: the last task
+   ended in a skill stop; it is cleared when you confirm`. After the typed `yes` and the
+   Thor's grant, with a ROBOT_STATE that shows the agent as owner and stop level `none`, the
+   gate resets the latch and the task goes on. Nothing on the Thor is cleared by it: under a
+   fault-stop the task is refused before the question, and the latch stays. The program says
+   `restart the agent program`, takes no new task and ends with exit code 1 in two cases: the
+   latch did not clear (the arm is given back first), or `task.clear_skill_stop` is `false`.
 
 The agent program sends OWNER_REQUEST and STOP; its arm adapter sends MOVE, PERMIT, GRIPPER
 and CHECKER_STATE. It sends no RELEASE, SHUTDOWN, RESET or OPEN and no request for a return
@@ -406,7 +413,10 @@ to rest, and it cuts no torque.
 ### `configs/agent.yaml`
 
 Every number in the shipped file is a first value; none was measured on a robot. A relative
-path is taken from the file's folder. The program refuses the file (exit code 2) when it
+path is taken from the file's folder. A path (`state_dir`, `link.socket_path`, the four paths
+of `camera`, `experiment.codex_bin`) may name `${AGENTIC_REMOTE_EXPERIMENT_DIR}`,
+`${AGENTIC_REMOTE_CAMERA_PR}` or `${AGENTIC_REMOTE_ENV_DIR}`; another `${NAME}`, or one that
+is not set, is refused. The program refuses the file (exit code 2) when it
 holds a key the program does not know, a key given twice, a block that is not a mapping, a
 number that is not above 0 (`camera.max_skew_ms` may be 0) or above its upper bound,
 `permits.renew_s` not below `permits.life_s`, `task.max_joint_speed` above
@@ -422,9 +432,9 @@ bound in a comment; for example a wait for a RESULT is at most 60 s and a joint 
 | `move` | `start_tol_rad`: a MOVE quotes the smaller of this and half a period's travel at the Thor's agent speed limit; `fresh_wait_s`; `start_grid_age_s` and `start_grid_wait_s`; `expires_in_s`, how long a MOVE stays valid on the Thor; `cancel_wait_s` |
 | `permits` | `reach_setpoints` (25), `renew_s` (0.05), `life_s` (1.0) |
 | `jaws` | `fresh_s`: an older jaw reading counts as unknown; `result_timeout_s` |
-| `task` | `timed_return` (false); `failed_steps_limit` (3); `max_joint_speed`, APAI's speed cap for the task, at most `thor.agent_max_joint_speed`; `end_wait_s`, `owner_wait_s` and `grid_wait_s`, the longest waits for an owner request's RESULT, for the ROBOT_STATE that shows the agent as owner, and for a usable obstacle grid at the start |
+| `task` | `timed_return` (false); `failed_steps_limit` (3); `max_joint_speed`, APAI's speed cap for the task, at most `thor.agent_max_joint_speed`; `end_wait_s`, `owner_wait_s` and `grid_wait_s`, the longest waits for an owner request's RESULT, for the ROBOT_STATE that shows the agent as owner, and for a usable obstacle grid at the start; `clear_skill_stop` (true), see step 9 of "A task from its start to its end" |
 | `camera` | `bridge_python`, the camera consumer's interpreter; `camera_pr` (empty: `AGENTIC_REMOTE_CAMERA_PR`); `receiver_socket`; `streams`; `calibration_dir` and `hand_eye_json`, the workstation's copies of the stereo calibration folder and the camera mounting file in use on the Thor; `max_skew_ms` between the two eyes; `depth_backend` (`ffs` on the GPU, `opencv_cpu` without one); `fps`; `allow_invented_times` (false), see `--camera` above |
-| `experiment` | `stack`: `full` uses the experiment folder's behaviour hooks, its obstacle grid bridge on `cuda:0` and its cloud model; `minimal` uses none of them, builds on APAI's own profiles `arm_profile` and `llm` (both `mock` in the shipped file) and pins APAI's mock detector for every camera, so no model server is asked |
+| `experiment` | `stack`: `full` uses the experiment folder's behaviour hooks, its obstacle grid bridge on `cuda:0` and its cloud model; `minimal` uses none of them, builds on APAI's own profiles `arm_profile` and `llm` (both `mock` in the shipped file) and pins APAI's mock detector for every camera, so no model server is asked; `codex_bin`, the model client's program for the full stack (empty: the one the experiment's own file names, inside the experiment folder), refused with exit code 2 when it names no program that can be run |
 | `rig` | Four values of the rig's arm profile on the Thor, copied: `home_q`, `park_q`, `body_mask_dilate_px`, `motion_bounds`. `home_q`, `park_q` and `motion_bounds.joint_center_rad` must have one value per joint of the arm; the program compares them with each other when it loads the file and with the joint count in WELCOME after it attached (exit code 1). `motion_bounds` takes `joint_center_rad`, `max_joint_deviation_rad`, `tcp_center_m` and `max_tcp_distance_m`, all four and no other key; the two `max_` values must be above 0 |
 
 ### The start scripts

@@ -28,6 +28,9 @@ from isaaccapture_examples.agentic_remote.agent.task_gate import (
     READ_ONLY_TOOLS,
     REST_REFUSAL,
     RESTART,
+    SKILL_STOP_KEPT,
+    SKILL_STOP_NOTE,
+    SKILL_STOP_TOLD,
     TaskGate,
 )
 from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
@@ -49,6 +52,26 @@ def report(success: bool = False, summary: str = "", **fields: Any) -> Any:
     return types.SimpleNamespace(task=TASK, success=success, summary=summary, **given)
 
 
+class Checker:
+    """The workstation checker (APAI's SafetyHarness), as far as the gate uses it."""
+
+    def __init__(self, log: list[tuple]) -> None:
+        self.estopped = False
+        self.stuck = False  # reset_estop() leaves the latch
+        self._log = log
+        self._observation_cancel_generation = 0  # APAI's count of its stops
+
+    def estop(self) -> None:
+        """What SafeArm.stop() leaves behind."""
+        self.estopped = True
+        self._observation_cancel_generation += 1
+
+    def reset_estop(self) -> None:
+        self._log.append(("reset",))
+        if not self.stuck:
+            self.estopped = False
+
+
 class Rig:
     """A gate on a link to the real robot app, with a scripted task around it."""
 
@@ -62,7 +85,7 @@ class Rig:
         self.said: list[str] = []
         self.answers = ["yes"]  # one per prompt; then "no"
         self.on_ask: Callable[[], None] | None = None
-        self.checker = types.SimpleNamespace(estopped=False)
+        self.checker = Checker(self.log)
         self.depth = 0  # how many skill scopes are open
         self.gate = TaskGate(
             self.link,
@@ -729,26 +752,11 @@ def test_the_timed_return_of_the_settings_goes_with_the_task(
 # The workstation latch (D4)
 
 
-def test_a_latched_checker_refuses_the_start_of_motion(rig: Rig) -> None:
-    rig.checker.estopped = True
-    result = rig.gate.execute(rig.skill(), "grasp_object", {})
-    assert result["motion_blocked"] is True  # outside a task: refused anyway
-    token = rig.gate._current.set(task_gate._Task(TASK))
-    try:
-        result = rig.gate.execute(rig.skill(), "grasp_object", {})
-    finally:
-        rig.gate._current.reset(token)
-    assert result["refused"] == "ownership"
-    assert result["motion_block_reason"] == RESTART
-    assert rig.kinds() == [] and rig.gate.restart_told is True
+def end_in_a_skill_stop(rig: Rig) -> None:
+    """One task whose motion skill fails and stops the arm; then nobody owns."""
 
-
-@apai
-def test_after_a_skill_stop_the_gate_says_restart_and_runs_no_new_task(
-    rig: Rig,
-) -> None:
     def stop_in_a_skill() -> dict:
-        rig.checker.estopped = True  # what SafeArm.stop() leaves behind
+        rig.checker.estop()
         return {
             "ok": False,
             "error": "home move failed; e-stop latched",
@@ -760,18 +768,223 @@ def test_after_a_skill_stop_the_gate_says_restart_and_runs_no_new_task(
         rig.execute("grasp_object", stop_in_a_skill)
         return report(summary="home move failed")
 
-    assert rig.gate.restart_needed is False
     rig.task(body)
-    # The agent kept the arm through the skill stop, so the help request is taken.
+    rig.shown("nobody")
+    rig.log.clear()
+    rig.answers = ["yes"]
+
+
+def grasp(rig: Rig) -> dict:
+    """One task of one motion skill; what the skill returned."""
+    results: list[dict] = []
+
+    def body() -> Any:
+        results.append(rig.execute("grasp_object", label="cube"))
+        return report(results[0].get("ok") is True)
+
+    rig.task(body)
+    rig.shown("nobody")
+    return results[0]
+
+
+def test_a_task_after_a_skill_stop_runs_without_a_restart(rig: Rig) -> None:
+    end_in_a_skill_stop(rig)
+    # The agent kept the arm through the skill stop, so the help request was
+    # taken. The latch stands until a person confirms the next task.
+    assert rig.help_reasons() == ["blocked: arm stop latched"]
+    assert rig.said[-1] == SKILL_STOP_TOLD and rig.checker.estopped is True
+    assert rig.gate.restart_needed is False and rig.gate.tell_restart() is False
+
+    assert grasp(rig) == {"ok": True}
+    # The question names the skill stop; the latch is reset after the Thor's
+    # grant and before the task is opened on the arm.
+    assert rig.kinds() == [
+        "ask",
+        "request",
+        "result",
+        "reset",
+        "open_task",
+        "skill",
+        "request",
+        "result",
+        "close_task",
+    ]
+    assert rig.of("ask")[0][1].startswith(f"Note: {SKILL_STOP_NOTE}. Authorize motion")
+    assert [entry[1:] for entry in rig.of("result")] == [
+        ("agent", "completed"),
+        ("nobody", "completed"),
+    ]
+    assert rig.checker.estopped is False
+    assert "the skill stop of the last task is cleared" in rig.said
+    assert RESTART not in rig.said and rig.gate.restart_told is False
+    assert rig.gate.failed_tasks == 1  # the task that ended in the skill stop
+
+    # A task after it is asked as any other: nothing is named, nothing reset.
+    rig.log.clear()
+    rig.answers = ["yes"]
+    assert grasp(rig) == {"ok": True}
+    assert SKILL_STOP_NOTE not in rig.of("ask")[0][1] and rig.of("reset") == []
+
+
+def test_the_latch_is_cleared_only_after_the_yes_and_the_grant(rig: Rig) -> None:
+    end_in_a_skill_stop(rig)
+    # Looking takes no arm and clears nothing.
+    rig.task(lambda: rig.execute("get_observation") and report(True))
+    assert rig.kinds() == ["skill"] and rig.checker.estopped is True
+    # Any answer but yes: nothing is asked of the Thor, the latch stays.
+    rig.log.clear()
+    rig.answers = ["no"]
+    assert grasp(rig)["refused"] == "consent"
+    assert rig.kinds() == ["ask"] and rig.checker.estopped is True
+    # A yes the Thor does not grant (a STOP came while the question stood).
+    rig.log.clear()
+    rig.answers = ["yes"]
+    rig.on_ask = lambda: rig.h.app.stop("typed stop")
+    refused = grasp(rig)
+    assert "stop number" in refused["motion_block_reason"]
+    assert rig.kinds() == ["ask", "request", "result"]
+    assert rig.of("result")[0][1:] == ("agent", "refused")
+    assert rig.checker.estopped is True and rig.gate.restart_needed is False
+    # A fault-stop on the Thor: no question, and the latch stays.
+    rig.log.clear()
+    rig.on_ask = None
+    rig.h.app._fault("motor fault")
+    until(lambda: rig.link.state().stop_level == "fault", "the fault-stop")
+    assert grasp(rig)["motion_block_reason"].startswith("fault-stop (motor fault)")
+    assert rig.kinds() == [] and rig.checker.estopped is True
+    assert rig.link.state().stop_level == "fault"  # nothing cleared it
+
+
+def test_the_latch_is_cleared_while_the_agent_owns_with_stop_level_none(
+    rig: Rig,
+) -> None:
+    end_in_a_skill_stop(rig)
+    rig.h.app.stop("typed stop")  # a STOP the grant of the next task ends
+    until(lambda: rig.link.state().stop_level == "stop", "the STOP")
+    seen: list[tuple] = []
+    reset = rig.checker.reset_estop
+
+    def noted_reset() -> None:
+        state = rig.link.state()
+        seen.append((rig.owner(), state.owner, state.stop_level, rig.link.pinned))
+        reset()
+
+    rig.checker.reset_estop = noted_reset
+    assert grasp(rig) == {"ok": True}
+    # At the reset the Thor showed the agent as owner; nothing was pinned yet,
+    # so no motion could have been sent before it.
+    assert seen == [("agent", "agent", "none", None)]
+
+
+def test_a_stop_of_the_checker_after_the_question_keeps_the_latch(rig: Rig) -> None:
+    # Latched before the question and stopped again while it stood.
+    end_in_a_skill_stop(rig)
+    rig.on_ask = rig.checker.estop
+    refused = grasp(rig)
+    assert refused["refused"] == "ownership"
+    assert refused["motion_block_reason"] == (
+        f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
+    )
+    # The arm was granted and given back; no task was opened on it.
+    assert rig.kinds() == ["ask", "request", "result", "request", "result"]
+    assert [entry[1:] for entry in rig.of("result")] == [
+        ("agent", "completed"),
+        ("nobody", "completed"),
+    ]
+    assert rig.checker.estopped is True and rig.gate.restart_needed is False
+    assert "the arm was given back: nobody owns it" in rig.said
+    # The next task's question names the latch, and its yes clears it.
+    rig.log.clear()
+    rig.answers, rig.on_ask = ["yes"], None
+    assert grasp(rig) == {"ok": True} and rig.checker.estopped is False
+
+
+def test_a_latch_the_question_did_not_name_is_not_cleared(rig: Rig) -> None:
+    rig.on_ask = rig.checker.estop  # not latched when the question was made
+    refused = grasp(rig)
+    assert SKILL_STOP_NOTE not in rig.of("ask")[0][1]
+    assert SKILL_STOP_KEPT in refused["motion_block_reason"]
+    assert rig.of("reset") == [] and rig.of("open_task") == []
+    assert rig.checker.estopped is True and rig.owner() == "nobody"
+
+
+def test_a_stop_on_the_thor_after_the_grant_keeps_the_latch(rig: Rig) -> None:
+    end_in_a_skill_stop(rig)
+    await_owner = rig.gate._await_owner
+
+    def stop_after_the_grant(number: Any) -> Any:
+        shown = await_owner(number)
+        rig.h.app.stop("typed stop")
+        rig.shown("nobody")
+        return shown
+
+    rig.gate._await_owner = stop_after_the_grant
+    refused = grasp(rig)
+    assert refused["motion_block_reason"] == (
+        f"control owner nobody, stop level stop after the grant: {SKILL_STOP_KEPT}"
+    )
+    assert rig.of("reset") == [] and rig.of("open_task") == []
+    assert rig.checker.estopped is True and rig.gate.restart_needed is False
+    # The STOP had ended the ownership already: the give-back was refused.
+    assert rig.of("result")[-1][1:] == ("nobody", "refused")
+    assert any("the arm could not be given back" in line for line in rig.said)
+
+
+@apai
+@pytest.mark.parametrize("checker", ["stuck", "without a reset"])
+def test_a_latch_that_does_not_clear_ends_in_the_restart_line(
+    rig: Rig, checker: str
+) -> None:
+    end_in_a_skill_stop(rig)
+    if checker == "stuck":
+        rig.checker.stuck = True
+    else:
+        rig.gate.bind_arm(rig, types.SimpleNamespace(estopped=True))
+    refused = grasp(rig)
+    assert refused["refused"] == "ownership"
+    assert refused["motion_block_reason"] == RESTART
+    # Granted, not cleared, given back; no task was opened and no skill ran.
+    assert [kind for kind in rig.kinds() if kind != "reset"] == [
+        "ask",
+        "request",
+        "result",
+        "request",
+        "result",
+    ]
+    assert rig.of("result")[-1][1:] == ("nobody", "completed")
+    assert rig.owner() == "nobody"
+    assert rig.gate.restart_needed is True and rig.gate.restart_told is True
+    # From here on as with clear_skill_stop false: no new task is run.
+    rig.log.clear()
+    ran: list[str] = []
+    again = rig.gate.bind_run_task(lambda task, **kwargs: ran.append(task))("again")
+    assert ran == [] and rig.log == [] and rig.said[-1] == RESTART
+    assert (again.success, again.summary, again.steps) == (False, RESTART, 0)
+
+
+@apai
+def test_clear_skill_stop_false_keeps_the_restart(
+    make_rig: Callable[..., Rig],
+) -> None:
+    rig = make_rig(clear_skill_stop=False)
+    assert rig.gate.restart_needed is False
+    end_in_a_skill_stop(rig)
     assert rig.help_reasons() == ["blocked: arm stop latched"]
     assert rig.said[-1] == RESTART and rig.gate.restart_told is True
     assert "restart the agent program" in RESTART
     # A new task is not run at all: no prompt, no request, no skill.
-    rig.log.clear()
     ran: list[str] = []
     again = rig.gate.bind_run_task(lambda task, **kwargs: ran.append(task))("again")
-    assert ran == [] and rig.log == []
+    assert ran == [] and rig.log == [] and rig.of("reset") == []
     assert (again.success, again.summary, again.steps) == (False, RESTART, 0)
+    # Motion inside a task that runs already is refused the same way.
+    token = rig.gate._current.set(task_gate._Task(TASK))
+    try:
+        result = rig.gate.execute(rig.skill(), "grasp_object", {})
+    finally:
+        rig.gate._current.reset(token)
+    assert result["refused"] == "ownership"
+    assert result["motion_block_reason"] == RESTART and rig.kinds() == []
     # The latch stays for the run, whatever the checker says later.
     rig.checker.estopped = False
     assert rig.gate.restart_needed is True and rig.gate.tell_restart() is True
