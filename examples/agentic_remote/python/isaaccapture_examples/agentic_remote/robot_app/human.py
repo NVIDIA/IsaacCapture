@@ -12,25 +12,48 @@ stretch of human motion on the Thor.
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from numbers import Real
 from typing import TYPE_CHECKING, NamedTuple
+
+from ..protocol.messages import HUMAN_MOVE_ID
+from .executor import HOLD_FAILED
+from .interfaces import ArmFault, ContactStop, FeedbackLost, Owner, ReadFailed, Refusal
 
 if TYPE_CHECKING:
     from .authority import Authority
     from .clock import Clock
     from .config import RobotAppConfig
-    from .interfaces import ArmPort, AuthorityState, Checker
+    from .interfaces import (
+        ArmPort,
+        AuthorityState,
+        Checker,
+        ContactWatch,
+        JointReading,
+    )
     from .state import JointHistory
+
+    # How a drive ended: (status, reason).
+    Ending = tuple[str, str]
+
+_log = logging.getLogger("isaaccapture.examples.agentic_remote.human_drive")
 
 # The speed clamp as a share of limits.human.max_joint_speed.
 SPEED_MARGIN = 0.98
 
-_NOT_BUILT = "the human drive is not built yet"
+# A hold at the measured pose needs a joint read, and one failed read is tried
+# again, as after a contact in a move.
+_HOLD_ATTEMPTS = 2
+
+# A target's stage says how far the human program, the program that turns
+# controller data into joint targets, is with those data (HUMAN_STAGES). Only
+# at this one do the data count as fresh.
+_STAGE_READY = "ready"
 
 
 @dataclass(frozen=True)
@@ -73,6 +96,15 @@ def _age_s(target: HumanTarget, now_mono: float) -> float | None:
     if not _finite(since):
         return None
     return float(reported) + max(0.0, float(since))
+
+
+def _pose_of(readings: Sequence[JointReading], n: int) -> list[float] | None:
+    """The pose of one full read, None unless every joint has a valid finite value."""
+    pose: list[float | None] = [None] * n
+    for reading in readings:
+        if 0 <= reading.joint < n and reading.valid and math.isfinite(reading.value):
+            pose[reading.joint] = float(reading.value)
+    return None if any(value is None for value in pose) else pose
 
 
 class HumanInput:
@@ -121,13 +153,40 @@ class DriveEnd(NamedTuple):
     status: str
     reason: str  # a "failed" reason starts with "fault: "
     sent: int  # setpoints sent
+    # The measured end pose, None when it was not read. A drive reads no joint
+    # for it: it is the start read's pose while nothing was sent after it.
     end_q: list[float] | None
+
+
+@dataclass
+class _Drive:
+    """What one run() call carries from pass to pass."""
+
+    admitted: AuthorityState
+    should_stop: Callable[[], str | None]
+    # The pose the start read measured, None before it.
+    measured: list[float] | None = None
+    # Where the next step starts: the measured pose, then the last setpoint sent.
+    q_prev: list[float] = field(default_factory=list)
+    # This pass's setpoint once it is checked, and the target it follows.
+    q_next: list[float] = field(default_factory=list)
+    target: HumanTarget | None = None
+    fed_seq: int | None = None  # seq of the target the watchdog was last fed with
+    begun: bool = False  # the checker's begin_motion passed
+    watch: ContactWatch | None = None
+    sent: int = 0  # setpoints sent so far
+    due: float = 0.0  # when this pass's setpoint is due, on the app's clock
 
 
 class HumanDrive:
     """Runs one human drive at a time, toward the newest human target.
 
-    A skeleton: run() refuses every drive and sends nothing.
+    Once per period it asks the stop conditions, the newest target's numbers,
+    stage and age and the live view's age, moves one speed-limited step toward
+    the target, has the human checker check it and sends it. Every end leaves the
+    last setpoint sent standing, which is a hold with the motors on; a contact
+    holds at the measured pose. It never changes the control owner, raises no
+    stop, cuts no torque and leaves the jaws alone.
     """
 
     def __init__(
@@ -149,7 +208,7 @@ class HumanDrive:
 
         A drive runs inside claim_idle() (MoveExecutor.claim_idle), so no move
         starts meanwhile. note_clamped is called for a step the speed clamp
-        cut. The drive's start read runs inside reads_paused()
+        cut. From its start read on the drive runs inside reads_paused()
         (IdleReader.paused).
         """
         self._arm = arm
@@ -163,10 +222,13 @@ class HumanDrive:
         self._claim_idle = claim_idle
         self._note_clamped = note_clamped
         self._reads_paused = reads_paused or contextlib.nullcontext
+        self._lock = threading.Lock()  # guards _progress
+        self._progress: tuple[str, int, int] | None = None
 
     def progress(self) -> tuple[str, int, int] | None:
         """(HUMAN_MOVE_ID, setpoints sent, 0) while a drive runs, else None."""
-        return None
+        with self._lock:
+            return self._progress
 
     def run(
         self, admitted: AuthorityState, should_stop: Callable[[], str | None]
@@ -175,5 +237,328 @@ class HumanDrive:
 
         admitted holds the owner number and the stop number the drive was
         admitted with; should_stop() gives a reason once the drive must end.
+        Nothing is sent before the start checks, the start read and the
+        checker's begin have passed.
         """
-        return DriveEnd("refused", _NOT_BUILT, 0, None)
+        with self._claim_idle() as idle:
+            if not idle:
+                # Also while a torque release holds the claim.
+                return DriveEnd("refused", "another move is running", 0, None)
+            drive = _Drive(admitted, should_stop)
+            self._set_progress(0)
+            try:
+                try:
+                    ended = self._start(drive)
+                    if ended is None:
+                        # No idle read shares the bus, or the clock, with the drive.
+                        with self._reads_paused():
+                            ended = self._begin(drive)
+                            while ended is None:
+                                ended = self._next_setpoint(drive)
+                                if ended is None:
+                                    self._arm.send_target(drive.q_next)
+                                    ended = self._after_send(drive)
+                except ContactStop as contact:
+                    ended = self._after_contact(drive.watch, contact.reason)
+                except FeedbackLost as lost:
+                    # Like a driver fault: the caller raises a fault-stop.
+                    ended = ("failed", f"fault: {lost.reason}")
+                except Refusal as refusal:
+                    ended = self._refused(drive, refusal.reason)
+                except ReadFailed as failed:
+                    ended = ("refused", f"a joint read failed: {failed}")
+            except ArmFault as fault:
+                ended = ("failed", f"fault: {fault}")
+            finally:
+                self._leave(drive)
+        status, reason = ended
+        _log.info(
+            "human drive: %s, sent %d setpoints (%s)",
+            status,
+            drive.sent,
+            reason or "no reason given",
+        )
+        # No setpoint went out after the start read: the arm is still there.
+        end_q = drive.measured if drive.sent == 0 else None
+        return DriveEnd(status, reason, drive.sent, end_q)
+
+    def _start(self, drive: _Drive) -> Ending | None:
+        """The checks before the start read; then the watchdog is fed."""
+        stop = self._stop_reason(drive)
+        if stop is not None:
+            return "stopped", stop
+        if not self._arm.torque_on():
+            return "refused", "the motors are off"
+        target, ended = self._fresh_target(drive, self._clock.monotonic())
+        if target is None:
+            return ended
+        # Nothing else feeds the human checker, and its begin needs a feed.
+        self._feed(drive, target)
+        return None
+
+    def _begin(self, drive: _Drive) -> Ending | None:
+        """The start read, the checker's begin and the contact watch."""
+        try:
+            readings = self._arm.read_all()
+        except ReadFailed as failed:
+            return "refused", f"the start pose could not be read: {failed}"
+        self._keep(readings)
+        measured = _pose_of(readings, self._config.n_joints)
+        if measured is None:
+            return "refused", "the start pose read left a joint out"
+        drive.measured = measured
+        drive.q_prev = measured  # the first step starts where the arm is
+        self._checker.begin_motion(self._checker.halt_count())
+        drive.begun = True
+        drive.watch = self._checker.contact_watch(self._arm, measured, self._history)
+        drive.due = self._clock.monotonic()
+        return None
+
+    def _next_setpoint(self, drive: _Drive) -> Ending | None:
+        """One pass up to its send: drive.q_next is checked and may go out.
+
+        A late wake-up moves this setpoint and those after it back. The step
+        keeps its size, so a late pass is never made up.
+        """
+        config = self._config.executor
+        stop = self._stop_reason(drive)
+        if stop is not None:
+            return "stopped", stop
+        now = self._clock.monotonic()
+        target, ended = self._fresh_target(drive, now)
+        if target is None:
+            return ended
+        late = now - drive.due
+        if late > config.large_delay_s:
+            return self._late(drive.sent, late, "is")
+        if late > 0.0:
+            drive.due = now
+        far = self._step_problem(target.q, drive.q_prev)
+        if far is not None:
+            return "refused", far
+        q_next = self._clamped(target.q, drive.q_prev)
+        self._checker.check_setpoint(drive.q_prev, q_next, config.period_s)
+        # The check took time: what held before it is asked again.
+        stop = self._stop_reason(drive)
+        if stop is not None:
+            return "stopped", stop
+        now = self._clock.monotonic()
+        target, ended = self._fresh_target(drive, now)
+        if target is None:
+            return ended
+        if now - drive.due > config.large_delay_s:
+            return self._late(drive.sent, now - drive.due, "is")
+        drive.q_next = q_next
+        drive.target = target
+        return None
+
+    def _after_send(self, drive: _Drive) -> Ending | None:
+        """What follows a send: the count, the joint reads, the feed, the sleep."""
+        config = self._config.executor
+        index = drive.sent
+        behind = self._clock.monotonic() - drive.due
+        drive.sent += 1
+        drive.q_prev = drive.q_next
+        self._set_progress(drive.sent)
+        if behind > config.large_delay_s:
+            return self._late(index, behind, "went out")
+        if behind > config.small_delay_s:
+            # A delay, not the usual cost: the next setpoint keeps its distance.
+            drive.due += behind
+        deadline = drive.due + config.period_s
+        drive.watch.after_send(index, drive.q_next, deadline)
+        # The checker suspends its watchdog while it is in motion: this feed
+        # serves the next drive, and the sample age is the watchdog of this one.
+        self._feed(drive, drive.target)
+        self._clock.sleep(max(0.0, deadline - self._clock.monotonic()))
+        drive.due = deadline
+        return None
+
+    def _stop_reason(self, drive: _Drive) -> str | None:
+        """Why the drive must stop now, None while it may go on."""
+        reason = drive.should_stop()
+        if reason is not None:
+            return reason or "stop requested"
+        now = self._authority.snapshot()
+        admitted = drive.admitted
+        if now.stop_number != admitted.stop_number:
+            return (
+                f"stop number is now {now.stop_number}, the drive was admitted "
+                f"at {admitted.stop_number}"
+            )
+        if now.owner_number != admitted.owner_number:
+            return (
+                f"owner number is now {now.owner_number}, the drive was admitted "
+                f"at {admitted.owner_number}"
+            )
+        if now.owner is not Owner.HUMAN:
+            return f"control owner is {now.owner}, not {Owner.HUMAN}"
+        return None
+
+    def _fresh_target(
+        self, drive: _Drive, now: float
+    ) -> tuple[HumanTarget, None] | tuple[None, Ending]:
+        """The newest target when a setpoint may follow it now, else the end.
+
+        It must quote the admitted numbers, be engaged with one finite value
+        per joint and be fresh (stage "ready", a sample age within the limit),
+        and the live view must be fresh.
+        """
+        human = self._config.human
+        target = self._human_input.newest()
+        if target is None:
+            return None, ("stale", "controller data stale (no human target)")
+        admitted = drive.admitted
+        quoted = (target.owner_number, target.stop_number)
+        if quoted != (admitted.owner_number, admitted.stop_number):
+            return None, (
+                "stopped",
+                f"the human target quotes owner number {target.owner_number} and "
+                f"stop number {target.stop_number}, the drive was admitted at "
+                f"{admitted.owner_number} and {admitted.stop_number}",
+            )
+        q = target.q
+        if not target.engaged or q is None:
+            if target.grip_released:
+                return None, ("released", "the grip was released")
+            note = target.note or "the human program ended the engagement"
+            return None, ("disengaged", note)
+        if target.stage != _STAGE_READY:
+            reason = f"controller data stale (stage {target.stage or 'unknown'})"
+            return None, ("stale", reason)
+        n = self._config.n_joints
+        if len(q) != n:
+            reason = f"the target has {len(q)} values, the arm {n} joints"
+            return None, ("refused", reason)
+        if not all(_finite(value) for value in q):
+            reason = "the target holds a value that is not a finite number"
+            return None, ("refused", reason)
+        age = _age_s(target, now)
+        if age is None:
+            reason = "controller data stale (the sample age is unknown)"
+            return None, ("stale", reason)
+        limit = human.sample_age_limit_s
+        if age > limit:
+            reason = (
+                f"controller data stale ({age:.3f} s old, the limit is {limit:g} s)"
+            )
+            return None, ("stale", reason)
+        if human.require_live_view:
+            view = self._view_age(now)
+            limit = human.view_age_limit_s
+            if view is None:
+                reason = "the live view is not fresh (no live view is reported)"
+                return None, ("view", reason)
+            if not 0.0 <= view <= limit:
+                reason = (
+                    f"the live view is not fresh ({view:.3f} s old, the limit "
+                    f"is {limit:g} s)"
+                )
+                return None, ("view", reason)
+        return target, None
+
+    def _step_problem(self, q: Sequence[float], q_prev: Sequence[float]) -> str | None:
+        """Why the target lies too far from the last setpoint, else None.
+
+        Such a target is refused, not clipped: it is an error, not a fast hand.
+        """
+        limit = self._config.limits.human.max_step_rad
+        joint = max(range(len(q)), key=lambda i: abs(q[i] - q_prev[i]))
+        off = abs(q[joint] - q_prev[joint])
+        if off <= limit:
+            return None
+        return (
+            f"the target is {off:.3f} rad from the arm on joint index {joint}, "
+            f"the limit is {limit:g} rad"
+        )
+
+    def _clamped(self, q: Sequence[float], q_prev: Sequence[float]) -> list[float]:
+        """One step from q_prev toward q, each joint within the speed clamp.
+
+        The clamp stays SPEED_MARGIN under the limit, because a checker may
+        refuse a step that rounding put above its speed limit by any amount.
+        """
+        speed = self._config.limits.human.max_joint_speed
+        most = SPEED_MARGIN * speed * self._config.executor.period_s
+        q_next: list[float] = []
+        clipped = False
+        for at, to in zip(q_prev, q):
+            if abs(to - at) > most:
+                clipped = True
+                q_next.append(at + math.copysign(most, to - at))
+            else:
+                q_next.append(float(to))
+        if clipped and self._note_clamped is not None:
+            self._note_clamped()
+        return q_next
+
+    def _feed(self, drive: _Drive, target: HumanTarget) -> None:
+        """Feed the checker's watchdog once per seq, with the controller data's time."""
+        if target.seq == drive.fed_seq:
+            return
+        drive.fed_seq = target.seq
+        self._checker.feed_watchdog(target.arrived_mono - target.sample_age_s)
+
+    def _refused(self, drive: _Drive, reason: str) -> Ending:
+        """A refusal, reported as a stop when the drive was stopped meanwhile."""
+        stop = self._stop_reason(drive)
+        return ("refused", reason) if stop is None else ("stopped", stop)
+
+    def _late(self, index: int, by_s: float, what: str) -> Ending:
+        """The end of a drive whose setpoint is, or went out, over the large delay."""
+        limit = self._config.executor.large_delay_s
+        return "late", (
+            f"setpoint {index} {what} {by_s:.3f} s late, over the limit of {limit:g} s"
+        )
+
+    def _after_contact(self, watch: ContactWatch | None, contact: str) -> Ending:
+        """The end after a contact: a hold at the measured pose.
+
+        A hold that raises more than a failed read ends the drive as a fault,
+        so that no error of the watch leaves run().
+        """
+        try:
+            return "contact", contact + self._hold_measured(watch)
+        except Refusal as refusal:
+            # What such a hold sent is not known: the caller raises a fault-stop.
+            return "failed", f"fault: {contact}{HOLD_FAILED}{refusal.reason}"
+
+    def _hold_measured(self, watch: ContactWatch | None) -> str:
+        """Hold at a freshly measured pose; text for the reason when that failed.
+
+        The drive's watch does it, so the reading is one that watch trusts.
+        When it fails nothing is sent and the last setpoint stands.
+        """
+        if watch is None:
+            return ""  # the drive had sent nothing yet: the target before it stands
+        error: ReadFailed | None = None
+        for _ in range(_HOLD_ATTEMPTS):
+            try:
+                watch.hold()
+            except ReadFailed as failed:
+                error = failed
+            else:
+                return ""
+        _log.error("no hold at the measured pose after a contact: %s", error)
+        return f"{HOLD_FAILED}{error}; the last setpoint stands"
+
+    def _keep(self, readings: Sequence[JointReading]) -> None:
+        if self._history is not None:
+            for reading in readings:
+                self._history.add(reading)
+
+    def _set_progress(self, sent: int | None) -> None:
+        with self._lock:
+            self._progress = None if sent is None else (HUMAN_MOVE_ID, sent, 0)
+
+    def _leave(self, drive: _Drive) -> None:
+        """What every end owes the checker and the watch."""
+        try:
+            if drive.begun:
+                self._checker.end_motion()
+        finally:
+            try:
+                if drive.watch is not None:
+                    drive.watch.finish()
+            finally:
+                self._set_progress(None)
