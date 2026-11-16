@@ -246,10 +246,11 @@ def test_first_pass_clears_through_the_reach_once_and_in_order() -> None:
     assert move.approved_through == -1 and move.refusal is None
     wall = rig.new_grid()
     grant = move.step(0, REACH)
-    assert grant == Grant(through_index=REACH, evidence_wall_s=wall)
-    assert rig.harness.indices("approve") == list(range(REACH + 1))
+    # Nothing is sent yet: the reach is setpoints 0..REACH-1.
+    assert grant == Grant(through_index=REACH - 1, evidence_wall_s=wall)
+    assert rig.harness.indices("approve") == list(range(REACH))
     assert rig.harness.indices("vet") == []
-    assert move.approved_through == REACH
+    assert move.approved_through == REACH - 1
 
 
 def test_each_index_is_cleared_once_and_never_past_the_reach() -> None:
@@ -259,10 +260,23 @@ def test_each_index_is_cleared_once_and_never_past_the_reach() -> None:
         before = len(rig.harness.indices("approve"))
         grant = move.step(sent, REACH)
         assert grant is not None
-        assert grant.through_index == min(99, sent + REACH) == move.approved_through
+        # The last setpoint sent is sent - 1: REACH setpoints beyond it.
+        beyond = grant.through_index - (sent - 1)
+        assert beyond == min(REACH, 100 - sent)
+        assert grant.through_index == move.approved_through <= 99
         cleared = rig.harness.indices("approve")[before:]
-        assert all(index <= sent + REACH for index in cleared)
+        assert all(index <= sent + REACH - 1 for index in cleared)
     assert rig.harness.indices("approve") == list(range(100))
+
+
+def test_a_reach_of_one_setpoint_still_moves_on() -> None:
+    rig = Scripted(steps=6)
+    move = rig.begin()
+    for sent in range(6):
+        grant = move.step(sent, 1)
+        assert grant is not None and grant.through_index == sent  # the next one
+    assert move.step(6, 1).through_index == 5  # never past the move's last index
+    assert rig.harness.indices("approve") == list(range(6))
 
 
 def test_a_pass_with_nothing_new_vets_the_next_setpoint_to_send() -> None:
@@ -284,10 +298,10 @@ def test_a_new_grid_vets_again_what_is_cleared_and_not_yet_sent() -> None:
     wall = rig.new_grid()
     rig.harness.calls.clear()
     grant = move.step(10, REACH)
-    assert grant == Grant(through_index=35, evidence_wall_s=wall)
+    assert grant == Grant(through_index=34, evidence_wall_s=wall)
     assert rig.harness.calls == [
-        *(("vet", index, (2, 0)) for index in range(10, 26)),
-        *(("approve", index, (2, 0)) for index in range(26, 36)),
+        *(("vet", index, (2, 0)) for index in range(10, 25)),
+        *(("approve", index, (2, 0)) for index in range(25, 35)),
     ]
     rig.harness.calls.clear()
     move.step(10, REACH)  # the same grid: nothing is vetted twice
@@ -301,7 +315,7 @@ def test_a_dropped_grid_counts_as_a_new_one() -> None:
     rig.harness.occupancy.cache_clears += 1
     rig.harness.calls.clear()
     move.step(20, REACH)
-    assert rig.harness.indices("vet") == list(range(20, 26))
+    assert rig.harness.indices("vet") == list(range(20, 25))
 
 
 def test_hold_max_caps_what_one_pass_clears() -> None:
@@ -310,8 +324,8 @@ def test_hold_max_caps_what_one_pass_clears() -> None:
     assert move.step(0, REACH).through_index == 7
     assert move.step(0, REACH).through_index == 15
     assert move.step(0, REACH).through_index == 23
-    assert move.step(0, REACH).through_index == REACH
-    assert rig.harness.indices("approve") == list(range(REACH + 1))
+    assert move.step(0, REACH).through_index == REACH - 1
+    assert rig.harness.indices("approve") == list(range(REACH))
 
 
 def test_a_busy_grid_lock_gives_no_permit_and_checks_nothing() -> None:
@@ -391,8 +405,6 @@ def test_vet_whole_holds_the_lock_for_at_most_hold_max_setpoints() -> None:
     class Counting:
         def acquire(self, timeout: float = -1) -> bool:
             holds.append(len(rig.harness.calls))
-            if len(holds) == 3:
-                rig.new_grid()  # perception installs a grid between two holds
             return lock.acquire(timeout=timeout)
 
         def release(self) -> None:
@@ -402,9 +414,54 @@ def test_vet_whole_holds_the_lock_for_at_most_hold_max_setpoints() -> None:
     evidence = rig.check.vet_whole(HOME, rig.path)
     assert holds == list(range(0, 500, 64))
     assert rig.harness.indices("vet") == list(range(500))
-    assert evidence.grid_stamp == (2, 0)  # the last hold's grid
+    assert evidence.grid_stamp == (1, 0)
     with pytest.raises(ValueError):
         rig.check.vet_whole(HOME, [])
+
+
+class GridAtHolds:
+    """The grid lock, with a new grid installed before the holds it names."""
+
+    def __init__(self, rig: Scripted, new_grid_at: Callable[[int], bool]) -> None:
+        self._rig, self._new_grid_at = rig, new_grid_at
+        self._lock = rig.harness.occupancy._refresh_lock
+        self.holds = 0
+        self.walls: dict[tuple[int, int], float] = {}
+
+    def acquire(self, timeout: float = -1) -> bool:
+        self.holds += 1
+        if self._new_grid_at(self.holds):
+            wall = self._rig.new_grid()
+            self.walls[self._rig.check.grid_stamp()] = wall
+        return self._lock.acquire(timeout=timeout)
+
+    def release(self) -> None:
+        self._lock.release()
+
+
+def test_vet_whole_starts_over_when_a_grid_arrives_between_two_holds() -> None:
+    rig = Scripted(steps=100)  # two holds
+    lock = rig.check._lock = GridAtHolds(rig, lambda hold: hold == 2)
+    evidence = rig.check.vet_whole(HOME, rig.path)
+    assert lock.holds == 4  # the first two count for nothing
+    assert evidence == Evidence(wall_s=lock.walls[(2, 0)], grid_stamp=(2, 0))
+    # Every setpoint was vetted on the grid the evidence names.
+    on_it = [index for kind, index, stamp in rig.harness.calls if stamp == (2, 0)]
+    assert on_it[-100:] == list(range(100))
+
+
+def test_vet_whole_gives_up_after_three_tries_and_quotes_the_oldest_grid() -> None:
+    rig = Scripted(steps=130)  # three holds
+    lock = rig.check._lock = GridAtHolds(rig, lambda hold: True)
+    evidence = rig.check.vet_whole(HOME, rig.path)
+    # Two tries end at their second hold; the third runs to the end.
+    assert lock.holds == 2 + 2 + 3
+    stamps = [stamp for _, _, stamp in rig.harness.calls[-130:]]
+    assert rig.harness.indices("vet")[-130:] == list(range(130))
+    assert sorted(set(stamps)) == [(6, 0), (7, 0), (8, 0)]
+    oldest = min(lock.walls[stamp] for stamp in set(stamps))
+    assert evidence == Evidence(wall_s=oldest, grid_stamp=(6, 0))
+    assert lock.walls[(8, 0)] > oldest
 
 
 # On APAI's checker with a required obstacle grid
@@ -533,8 +590,8 @@ def test_apais_callback_clears_each_setpoint_once_and_counts_it(
 ) -> None:
     move = rig.check.begin(rig.harness.approve, HOME, path)
     wall = rig.new_grid()
-    assert move.step(0, REACH) == Grant(through_index=REACH, evidence_wall_s=wall)
-    assert rig.harness.approved_commands == REACH + 1
+    assert move.step(0, REACH) == Grant(through_index=REACH - 1, evidence_wall_s=wall)
+    assert rig.harness.approved_commands == REACH
     assert rig.harness.motions_begun == 1
     for sent in range(0, 101, 5):
         move.step(sent, REACH)
@@ -558,7 +615,7 @@ def test_every_permitted_setpoint_was_checked_on_the_quoted_grid(
         assert grant is not None
         stamp = rig.check.grid_stamp()
         assert grant.evidence_wall_s == walls[stamp]
-        assert grant.through_index <= min(99, sent + REACH)
+        assert grant.through_index <= min(99, sent + REACH - 1)
         on_this_grid = {
             int(what.split()[1])
             for what, at, wall in rig.log
@@ -586,10 +643,10 @@ def test_an_obstacle_in_a_new_grid_refuses_a_cleared_setpoint(
     assert "clearance" in refusal.reason and "occupancy map" in refusal.reason
     assert str(refusal).startswith("check ahead refused setpoint 6 of 100: point")
     assert rig.harness.violations == [refusal.reason]
-    assert move.approved_through == REACH  # nothing more was cleared
+    assert move.approved_through == REACH - 1  # nothing more was cleared
     rig.new_grid()  # a free grid does not bring the move back
     assert move.step(6, REACH) is None and move.refusal is refusal
-    assert rig.harness.approved_commands == REACH + 1
+    assert rig.harness.approved_commands == REACH
 
 
 @pytest.mark.apai
@@ -792,9 +849,9 @@ def test_times_of_the_checks_on_this_machine(
             f"\ncheck ahead on this machine (APAI's checker, a 5x5x5 grid, no load): "
             f"vet_whole of 500 setpoints {min(whole) * 1e3:.1f} ms "
             f"({min(whole) / 500 * 1e6:.0f} us per vet_step, 8 holds); "
-            f"first pass with {REACH + 1} checker callbacks {min(first) * 1e3:.2f} ms; "
+            f"first pass with {REACH} checker callbacks {min(first) * 1e3:.2f} ms; "
             f"a pass that clears one setpoint {min(later) * 1e3:.2f} ms; "
-            f"a pass after a new grid ({REACH + 1} vet_step, 1 callback) "
+            f"a pass after a new grid ({REACH} vet_step, no callback) "
             f"{regrid * 1e3:.2f} ms"
         )
     assert min(whole) < 2.0 and min(first) < 0.25

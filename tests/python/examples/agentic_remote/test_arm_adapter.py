@@ -542,6 +542,7 @@ def test_the_adapter_sends_only_these_link_messages() -> None:
     reading = {
         "wait_ready",
         "state",
+        "state_and_arrival",
         "state_arrived_s",
         "wait_change",
         "wait_first",
@@ -574,6 +575,10 @@ def test_the_first_values_are_the_contracts() -> None:
     assert (settings.expires_in_s, settings.cancel_wait_s) == (2.0, 2.0)
     assert (settings.fresh_s, settings.result_timeout_s) == (1.0, 12.0)
     assert (settings.state_max_age_s, settings.connect_timeout_s) == (0.5, 10.0)
+    # Two ROBOT_STATE periods of the robot app (0.05 s each).
+    assert settings.state_renew_age_s == 0.1
+    names = {field.name for field in dataclasses.fields(ArmSettings)}
+    assert "first_reach_setpoints" not in names  # one reach, the one in agent.yaml
     # The Thor checks setpoint 0 from its own pose: half a period's travel.
     assert settings.start_tol(0.02) == pytest.approx(0.004)
     slow = dataclasses.replace(settings, agent_max_joint_speed=0.1)
@@ -752,6 +757,41 @@ def test_get_state_is_the_newest_published_pose_and_never_waits(
     # The local arrival time of that state minus the age of its readings.
     assert state.t == pytest.approx(time.monotonic() - 0.12, abs=0.05)
     assert (state.gripper_pos, state.gripper_valid) == (0.0, False)
+
+
+@apai
+def test_the_pose_and_its_time_are_of_one_robot_state(scripted: ScriptedRig) -> None:
+    link, thor = scripted.link, scripted.thor
+    arrivals: dict[float, float] = {}  # joint 0 of a state: when it arrived
+    arrived_s = link.state_arrived_s
+    link.add_state_listener(
+        lambda state: arrivals.setdefault(state.joints[0].value, arrived_s())
+    )
+    publish = thor._publish
+
+    def numbered() -> None:  # every ROBOT_STATE has its own pose
+        thor.q = [thor.q[0] + 0.001, *thor.q[1:]]
+        publish()
+
+    thor._publish = numbered
+    newest = link.state
+    until(lambda: newest().joints[0].value in arrivals, "a numbered state")
+
+    def slow(read: Callable[..., Any]) -> Callable[..., Any]:
+        def reading(*args: Any) -> Any:
+            out = read(*args)
+            before = link._states
+            until(lambda: link._states >= before + 3, "three more states")
+            return out
+
+        return reading
+
+    # Newer states arrive after each read of the link.
+    link.state = slow(link.state)
+    link.state_and_arrival = slow(link.state_and_arrival)
+    link.state_arrived_s = slow(link.state_arrived_s)
+    got = scripted.adapter.get_state()
+    assert got.t == arrivals[float(got.q[0])]  # reading_age_s is 0
 
 
 @apai
@@ -948,8 +988,11 @@ def test_the_callback_clears_each_setpoint_once_in_order_ahead_of_its_permit(
             assert 0 <= through <= cleared  # never past what the callback cleared
             assert through <= count - 1
             if first:
-                assert through == 25  # setpoints 0..reach
+                assert through == 24  # nothing sent yet: the reach of 25 setpoints
                 first = False
+            if event[-1] is not None:
+                # At most the reach beyond the last setpoint shown as sent.
+                assert through - (event[-1] - 1) <= 25
     assert sim.permits()[-1][0] == count - 1
     assert len(sim.permits()) >= 10  # renewed every pass, also with nothing new
     # The callback saw each setpoint from the one before it, the first from
@@ -975,7 +1018,7 @@ def test_every_permitted_setpoint_was_checked_on_the_grid_the_permit_quotes(
             evidence = sim.times.lookup(event[3])
             checked.add((sim.index_of(event[1]), evidence))
         elif event[0] == "permit":
-            _, _, through, evidence, _, sent = event
+            _, _, through, evidence, _, _, sent = event
             assert sent is not None
             for index in range(sent, through + 1):
                 assert (index, evidence) in checked, (index, through, sent)
@@ -1148,7 +1191,7 @@ def test_a_new_grid_that_refuses_a_cleared_setpoint_cancels_the_move(
     release.set()
 
     def new_obstacle() -> None:
-        assert reached.wait(5.0)  # setpoints up to 25 are cleared, 8 are sent
+        assert reached.wait(5.0)  # setpoints up to 24 are cleared, 8 are sent
         sim.obstacle_beyond(float(sim.setpoints()[20][0]))
         sim.new_grid()
 
@@ -1367,6 +1410,107 @@ def test_a_lost_link_ends_the_move_and_the_arm_holds(sim: SimRig) -> None:
     assert len(sim.h.sent()) < 60  # the robot app ended the move by itself
     with pytest.raises(types().SafetyViolation, match="arm stop latched"):
         sim.move(SHORT, 0.5)
+
+
+@apai
+@pytest.mark.parametrize("step_s", [-0.5, 4.0])
+def test_a_cancel_stops_the_arm_after_a_step_of_the_thors_wall_clock(
+    sim: SimRig, step_s: float
+) -> None:
+    """The cancel quotes evidence the stepped clock reads as future or too old."""
+    reached, release = sim.h.hold_move_after(8)
+    release.set()
+    clock = sim.h.clock
+
+    def step_and_halt() -> None:
+        assert reached.wait(5.0)
+        clock.wall = lambda: time.time() + step_s
+        sim.checker.halted = "look again"
+
+    thread = in_thread(step_and_halt)
+    try:
+        with pytest.raises(types().MotionHalted, match="halted: look again"):
+            sim.move(LONG, 1.2)
+        thread.join(5.0)
+        sim.h.idle()
+    finally:
+        clock.__dict__.pop("wall", None)
+    assert sim.permits()[-1][0] == -1
+    sent = len(sim.h.sent())
+    print(f"\nwall clock step {step_s:+g} s, halt at 8 setpoints: the Thor sent {sent}")
+    assert sent <= 8 + 6  # one pass, the link and one setpoint
+    assert sim.adapter.last_move["cancel_to_result_s"] < 0.3
+
+
+@apai
+def test_a_task_closed_from_another_thread_mid_move_still_cancels_the_move(
+    sim: SimRig,
+) -> None:
+    pinned = sim.link.pinned
+    reached, release = sim.h.hold_move_after(15)
+    release.set()
+
+    def close() -> None:
+        assert reached.wait(5.0)
+        sim.adapter.close_task()
+
+    thread = in_thread(close)
+    with pytest.raises(types().MotionHalted, match="no ownership is pinned"):
+        sim.move(LONG, 1.2)
+    thread.join(5.0)
+    sim.h.idle()
+    permits = sim.of("permit")
+    assert permits[-1][2] == -1
+    # Every PERMIT of the move quoted the numbers the move began with.
+    assert {event[5] for event in permits} == {pinned}
+    sent = len(sim.h.sent())
+    print(f"\ntask closed at 15 setpoints: the Thor sent {sent}")
+    assert sent <= 15 + 6
+    assert sim.link.pinned is None and sim.link.state().owner == "agent"
+
+
+def permits_after_the_last_state(rig: Rig) -> tuple[list[float], list[float]]:
+    """When PERMITs left, in s after the newest ROBOT_STATE: (renewals, cancels)."""
+    last_state = rig.link.state_arrived_s()
+    after = [
+        (when - last_state, through)
+        for when, (through, _) in zip(rig.permit_times, rig.permits())
+        if when > last_state
+    ]
+    renewals = [when for when, through in after if through >= 0]
+    return renewals, [when for when, through in after if through < 0]
+
+
+@apai
+def test_a_robot_state_that_grows_old_gets_no_new_permit_on_the_real_app(
+    sim: SimRig,
+) -> None:
+    """ROBOT_STATE stops reaching the agent at 8 setpoints; the Thor goes on."""
+    reached, release = sim.h.hold_move_after(8)
+    release.set()
+
+    def freeze() -> None:
+        assert reached.wait(5.0)
+        sim.link._take_state = lambda state: None  # every later one is lost
+
+    thread = in_thread(freeze)
+    with pytest.raises(RobotLinkError, match=r"ROBOT_STATE is 0\.5\d s old"):
+        sim.move(LONG, 1.2)
+    thread.join(5.0)
+    sim.h.idle()
+    assert sim.adapter._stopped is True
+    renewals, cancels = permits_after_the_last_state(sim)
+    sent = len(sim.h.sent())
+    print(
+        f"\nstates stopped at 8 setpoints: {len(renewals)} PERMITs after the last "
+        f"state, the last {max(renewals, default=0.0) * 1e3:.0f} ms after it; the "
+        f"cancel {cancels[0] * 1e3:.0f} ms after it; the Thor sent {sent} in all"
+    )
+    # state_renew_age_s is 0.1 s and a pass comes every 0.05 s.
+    assert len(renewals) <= 4 and all(when < 0.2 for when in renewals)
+    assert len(cancels) == 1 and 0.5 <= cancels[0] < 0.8
+    # The arm went no further than the last PERMIT reached.
+    assert sent <= max(through for through, _ in sim.permits()) + 1 <= 8 + 25 + 3
 
 
 @apai
@@ -1687,25 +1831,51 @@ def test_no_answer_to_a_move_is_a_fault_of_the_link(
 def test_a_stale_state_ends_the_permits_at_once(scripted: ScriptedRig) -> None:
     thor = scripted.thor
     thor.on_cancel = None  # the robot side has gone quiet
-    silent = threading.Event()
 
     def quiet() -> None:
         until(lambda: len(thor.permits) >= 3, "three permits")
         thor.publishing = False
-        silent.set()
 
     thread = in_thread(quiet)
-    began = time.monotonic()
     with pytest.raises(RobotLinkError, match=r"ROBOT_STATE is .* s old") as raised:
         scripted.move(SHORT, 0.5)
     thread.join(5.0)
     assert "the permits were stopped" in str(raised.value)
     assert scripted.adapter._stopped is True
-    # Permits went on for state_max_age_s and no longer, then the cancel.
+    # No PERMIT on a state older than state_renew_age_s (0.1 s; a pass comes
+    # every 0.05 s), and the cancel once it is older than state_max_age_s.
+    renewals, cancels = permits_after_the_last_state(scripted)
+    assert len(renewals) <= 4 and all(when < 0.2 for when in renewals)
+    assert len(cancels) == 1 and 0.5 <= cancels[0] < 0.8
     last, cancel = thor.permits[-2], thor.permits[-1]
     assert cancel.through_index == -1
     assert cancel.evidence_wall_s == last.evidence_wall_s
-    assert time.monotonic() - began < 0.5 + 0.5 + scripted.settings.cancel_wait_s + 1.0
+
+
+@apai
+def test_permits_go_on_when_a_newer_state_arrives_before_the_cancel(
+    scripted: ScriptedRig,
+) -> None:
+    thor = scripted.thor
+    counts: dict[str, int] = {}
+
+    def gap() -> None:
+        until(lambda: len(thor.permits) >= 3, "three permits")
+        thor.publishing = False
+        time.sleep(0.2)  # past state_renew_age_s
+        counts["early"] = len(scripted.permit_times)
+        time.sleep(0.15)  # 0.35 s without a state: under state_max_age_s
+        counts["late"] = len(scripted.permit_times)
+        thor.publishing = True
+        until(lambda: len(scripted.permit_times) >= counts["late"] + 3, "permits")
+        thor.end_move("completed", "", {"outcome": "reached", "sent": 25})
+
+    thread = in_thread(gap)
+    assert scripted.move(SHORT, 0.5) is True
+    thread.join(5.0)
+    assert counts["late"] == counts["early"]  # none while the state was old
+    assert all(permit.through_index >= 0 for permit in thor.permits)  # no cancel
+    assert scripted.adapter._stopped is False
 
 
 @apai

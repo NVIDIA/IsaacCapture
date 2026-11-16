@@ -14,6 +14,7 @@ import logging
 import math
 import threading
 import uuid
+from collections import deque
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -49,6 +50,8 @@ _RECEIVE_S = 0.005
 # How long a permit of this client lasts unless the caller says otherwise: just
 # under the evidence age limit of the robot app's demo configuration (3 s).
 PERMIT_LIFE_S = 2.5
+# EVENTs kept, and link messages a workstation should never get: the newest.
+MESSAGES_KEPT = 1024
 # Peak speed of the minimum-jerk time law over its mean speed.
 _PEAK_OVER_MEAN = 1.875
 _EPS = 1e-9
@@ -103,7 +106,7 @@ class WorkstationClient:
     """Sends commands to a robot app and keeps what it answers.
 
     A receive thread stores the WELCOME, the newest ROBOT_STATE, every RESULT by
-    command id and every EVENT. Commands quote the session id, owner number and
+    command id and the newest MESSAGES_KEPT EVENTs. Commands quote the session id, owner number and
     stop number of the newest ROBOT_STATE unless the caller passes its own.
     """
 
@@ -131,8 +134,8 @@ class WorkstationClient:
         self._state: RobotState | None = None
         self._state_at = 0.0  # this client's clock when the state arrived
         self._results: dict[str, list[Result]] = {}
-        self._events: list[Event] = []
-        self._unexpected: list[Message] = []
+        self._events: deque[Event] = deque(maxlen=MESSAGES_KEPT)
+        self._unexpected: deque[Message] = deque(maxlen=MESSAGES_KEPT)
         self._ids = itertools.count(1)
         self._prefix = f"{name}-{uuid.uuid4().hex[:8]}"
         self._feeds: list[PermitFeed] = []
@@ -180,13 +183,13 @@ class WorkstationClient:
 
     @property
     def events(self) -> list[Event]:
-        """Every EVENT so far, oldest first."""
+        """The EVENTs so far, oldest first; the newest MESSAGES_KEPT at most."""
         with self._cond:
             return list(self._events)
 
     @property
     def unexpected(self) -> list[Message]:
-        """Link messages a workstation should never get."""
+        """Link messages a workstation should never get; the newest MESSAGES_KEPT."""
         with self._cond:
             return list(self._unexpected)
 

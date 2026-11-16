@@ -372,6 +372,113 @@ def test_a_permit_with_older_evidence_is_ignored_however_the_clocks_read(
     assert len(checker.fed) == 1
 
 
+# Less cover needs no fresh evidence: a permit of the held move that reaches
+# less far and fails a time check lowers the held reach and nothing else.
+
+REACHES_MINUS_1 = "permit reaches setpoint -1, not 3"
+
+
+@pytest.mark.parametrize("step_s", [-0.5, 4.0])
+def test_a_cancel_is_taken_after_a_step_of_the_wall_clock(
+    gate, authority, checker, clock, step_s
+):
+    held = make_permit(authority, clock, through_index=25, evidence_age_s=0.25)
+    offset = clock.wall() - clock.monotonic()
+    assert gate.update(held, clock.monotonic(), offset) is None
+    assert covers(gate, clock, 3) is None
+    gate.arrived.clear()
+    # The wall clock steps; the cancel quotes the evidence of the permit before.
+    clock.advance(0.125)
+    cancel = dataclasses.replace(
+        make_permit(authority, clock, through_index=-1),
+        evidence_wall_s=held.evidence_wall_s,
+    )
+    assert gate.update(cancel, clock.monotonic(), offset + step_s) is None
+    assert covers(gate, clock, 3) == REACHES_MINUS_1
+    assert gate.last_refusal(MOVE) is None
+    assert gate.arrived.is_set()  # the move looks again
+    assert len(checker.fed) == 1  # no new evidence, so the watchdog is not fed
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"expires_in_s": 0.0},
+        {"evidence_age_s": 3.5},
+        {"evidence_age_s": -1.0},
+    ],
+)
+def test_a_cancel_is_taken_whatever_its_times_say(gate, authority, clock, fields):
+    update(gate, clock, make_permit(authority, clock, through_index=25))
+    cancel = make_permit(authority, clock, through_index=-1, **fields)
+    assert update(gate, clock, cancel) is None
+    assert covers(gate, clock, 3) == REACHES_MINUS_1
+    assert gate.last_refusal(MOVE) is None
+    # A second one finds nothing to lower and is refused like any other permit.
+    assert update(gate, clock, cancel) is not None
+    assert covers(gate, clock, 3) == REACHES_MINUS_1
+
+
+def test_a_permit_taken_without_its_times_keeps_the_held_expiry_and_evidence(
+    gate, authority, checker, clock
+):
+    held = make_permit(
+        authority, clock, through_index=10, evidence_age_s=2.0, expires_in_s=1.5
+    )
+    update(gate, clock, held)
+    # Its evidence is from the future, so its own times count for nothing.
+    shorter = make_permit(
+        authority, clock, through_index=5, evidence_age_s=-1.0, expires_in_s=60.0
+    )
+    assert update(gate, clock, shorter) is None
+    assert covers(gate, clock, 5) is None
+    assert covers(gate, clock, 6) == "permit reaches setpoint 5, not 6"
+    assert checker.fed == [clock.monotonic() - 2.0]
+    clock.advance(0.75)
+    assert covers(gate, clock, 5) is None
+    clock.advance(0.25)
+    assert covers(gate, clock, 5) == TOO_OLD  # the held evidence: 2 s old then
+    gate.clear()
+    update(gate, clock, make_permit(authority, clock, expires_in_s=1.0))
+    late = make_permit(authority, clock, through_index=5, evidence_age_s=-1.0)
+    late = dataclasses.replace(late, expires_mono_s=late.expires_mono_s + 60.0)
+    assert update(gate, clock, late) is None
+    clock.advance(1.0)
+    assert covers(gate, clock, 5) == EXPIRED  # the held expiry, not its own
+
+
+def test_a_permit_on_older_evidence_that_reaches_less_far_lowers_the_reach(
+    gate, authority, checker, clock
+):
+    update(gate, clock, make_permit(authority, clock, through_index=10))
+    older = make_permit(authority, clock, through_index=5, evidence_age_s=1.0)
+    assert update(gate, clock, older) is None
+    assert covers(gate, clock, 5) is None
+    assert covers(gate, clock, 6) == "permit reaches setpoint 5, not 6"
+    assert checker.fed == [clock.monotonic()]  # the held evidence stays
+
+
+def test_only_a_shorter_permit_of_the_held_move_with_current_numbers_is_taken_so(
+    gate, authority, checker, clock
+):
+    update(gate, clock, make_permit(authority, clock, through_index=10))
+    stale = make_permit(authority, clock, through_index=-1, expires_in_s=0.0)
+    refused_ones = [
+        dataclasses.replace(stale, stop_number=9),  # other numbers
+        dataclasses.replace(stale, move_id="move-2"),  # another move
+        dataclasses.replace(stale, through_index=-2),  # no cancel
+        dataclasses.replace(stale, through_index=10),  # the same reach
+        dataclasses.replace(stale, through_index=11),  # further
+    ]
+    for permit in refused_ones:
+        assert update(gate, clock, permit) is not None, permit
+        assert covers(gate, clock, 10) is None
+    assert gate.last_refusal(MOVE) == EXPIRED
+    assert len(checker.fed) == 1
+    # A late permit of the held move that is refused never ends the cover.
+    assert covers(gate, clock, 11) == "permit reaches setpoint 10, not 11"
+
+
 # The same evidence quoted again, on the system clock: two reads of its wall and
 # monotonic clocks never give the same difference twice.
 

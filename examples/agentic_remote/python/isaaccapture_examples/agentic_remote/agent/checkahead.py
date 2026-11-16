@@ -29,6 +29,8 @@ _log = logging.getLogger("isaaccapture.examples.agentic_remote.checkahead")
 
 NO_FRAME_TIME = "the grid has no known camera-frame time"
 FRAME_TIMES_KEPT = 256
+# How often vet_whole starts when the grid changes under it.
+WHOLE_TRIES = 3
 _FRESH_POLL_S = 0.01
 
 _refused_lock = threading.Lock()
@@ -199,25 +201,40 @@ class CheckAhead:
     def vet_whole(
         self, start_q: Sequence[float], setpoints: Sequence[Sequence[float]]
     ) -> Evidence:
-        """vet_step for every setpoint, at most hold_max per hold of the lock."""
+        """vet_step for every setpoint, at most hold_max per hold of the lock.
+
+        The evidence is of the grid every setpoint was vetted on. A grid
+        installed between two holds starts the vet over, WHOLE_TRIES times at
+        most; the last try goes on and returns the oldest evidence it used.
+        """
         count = len(setpoints)
         if count == 0:
             raise ValueError("the move has no setpoints")
-        evidence = None
-        for first in range(0, count, self.hold_max):
-            last = min(count, first + self.hold_max) - 1
-            try:
-                evidence = self._vet_hold(
-                    start_q, setpoints, first, last, self.whole_lock_wait_s
-                )
-            except GridBusy:
-                raise self._refused(
-                    first,
-                    f"the obstacle grid was busy for {self.whole_lock_wait_s:g} s",
-                    count,
-                ) from None
-        assert evidence is not None
-        return evidence
+        for attempt in range(1, WHOLE_TRIES + 1):
+            oldest: Evidence | None = None
+            for first in range(0, count, self.hold_max):
+                last = min(count, first + self.hold_max) - 1
+                try:
+                    evidence = self._vet_hold(
+                        start_q, setpoints, first, last, self.whole_lock_wait_s
+                    )
+                except GridBusy:
+                    raise self._refused(
+                        first,
+                        f"the obstacle grid was busy for {self.whole_lock_wait_s:g} s",
+                        count,
+                    ) from None
+                if oldest is None:
+                    oldest = evidence
+                elif evidence.grid_stamp != oldest.grid_stamp:
+                    if attempt < WHOLE_TRIES:
+                        oldest = None
+                        break
+                    if evidence.wall_s < oldest.wall_s:
+                        oldest = evidence
+            if oldest is not None:
+                return oldest
+        raise AssertionError("unreachable")
 
     def begin(
         self,
@@ -297,8 +314,10 @@ class MoveCheck:
     def step(self, sent: int, reach: int) -> Grant | None:
         """One pass: how far a PERMIT may reach now, or None for no permit.
 
-        sent is the number of setpoints the Thor reports as sent. None means
-        the grid lock was busy, nothing is cleared yet, or a refusal is set.
+        sent is the number of setpoints the Thor reports as sent; the PERMIT
+        reaches at most `reach` setpoints beyond the last of them and never
+        past the move's last one. None means the grid lock was busy, nothing
+        is cleared yet, or a refusal is set.
         """
         if threading.get_ident() != self._thread:
             raise RuntimeError("a MoveCheck is stepped only on the skill thread")
@@ -335,7 +354,10 @@ class MoveCheck:
                 if not self._vet(index):
                     return None
             self._stamp = stamp
-        last = min(self.count - 1, sent + reach, self.approved_through + check.hold_max)
+        # sent is a count: the last setpoint sent has index sent - 1.
+        last = min(
+            self.count - 1, sent + reach - 1, self.approved_through + check.hold_max
+        )
         for index in range(self.approved_through + 1, last + 1):
             checked += 1
             try:

@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import math
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from .interfaces import Owner
@@ -35,9 +35,12 @@ class _Held:
 class PermitGate:
     """Holds one permit and says whether it covers a setpoint of a move.
 
-    Thread-safe. A permit is used whole: its reach, expiry and evidence time are
-    never mixed with another permit's. The newest permit decides, so one that
-    reaches less far shortens how far the move may go.
+    Thread-safe. A permit that passes every check is used whole: its reach,
+    expiry and evidence time replace the held permit's. The newest permit
+    decides, so one that reaches less far shortens how far the move may go.
+    Less cover needs no fresh evidence: a permit of the held move that reaches
+    less far and fails a time check lowers the held reach and nothing else. A
+    cancel (through_index -1) is such a permit.
     """
 
     def __init__(
@@ -75,46 +78,66 @@ class PermitGate:
 
         wall_minus_mono (app wall clock minus monotonic clock) turns the evidence
         time into monotonic time; both times default to the clock. An accepted
-        permit replaces the held one, except that for the move already held a
-        permit that quotes an older evidence time is ignored without a reason.
-        The quoted times are compared: two conversions of one quoted time
-        differ by the jitter of the clock reads.
+        permit replaces the held one. For the move already held, a permit that
+        fails a time check or quotes an older evidence time lowers the held
+        reach when it reaches less far (down to -1) and leaves the held expiry
+        and evidence as they are; otherwise the first is refused and the second
+        ignored without a reason, and the held permit stays. The quoted times
+        are compared: two conversions of one quoted time differ by the jitter
+        of the clock reads.
         """
         if now_mono is None:
             now_mono = self._clock.monotonic()
         if wall_minus_mono is None:
             wall_minus_mono = self._clock.wall() - self._clock.monotonic()
-        evidence_mono = permit.evidence_wall_s - wall_minus_mono
-        reason = self._refusal(permit, now_mono, evidence_mono)
+        reason = self._stale(permit)
         if reason is not None:
             with self._lock:
                 self._refused = (permit.move_id, reason)
             return reason
+        evidence_mono = permit.evidence_wall_s - wall_minus_mono
+        reason = self._untimely(permit, now_mono, evidence_mono)
         # Evidence slightly ahead of the clock must not add to the permit's life.
         evidence_mono = min(evidence_mono, now_mono)
         with self._lock:
             held = self._held
-            ignored = (
-                held is not None
-                and held.permit.move_id == permit.move_id
-                and permit.evidence_wall_s < held.permit.evidence_wall_s
-            )
-            if not ignored:
+            same_move = held is not None and held.permit.move_id == permit.move_id
+            older = same_move and permit.evidence_wall_s < held.permit.evidence_wall_s
+            if reason is None and not older:
                 # Fed under the lock, so a move that finds this permit covering its
                 # first setpoint also finds the watchdog fed.
                 self._agent_checker.feed_watchdog(evidence_mono)
                 self._held = _Held(permit, evidence_mono)
-                if self._refused is not None and self._refused[0] == permit.move_id:
+                taken = "whole"
+            elif same_move and -1 <= permit.through_index < held.permit.through_index:
+                lowered = replace(held.permit, through_index=permit.through_index)
+                self._held = _Held(lowered, held.evidence_mono)
+                taken = "reach"
+            else:
+                taken = ""
+                if reason is not None:
+                    self._refused = (permit.move_id, reason)
+            if taken and self._refused is not None:
+                if self._refused[0] == permit.move_id:
                     self._refused = None  # the move has a newer permit than that
-        if ignored:
+        if taken:
+            if taken == "reach":
+                _log.debug(
+                    "took only the reach of a permit for move %s through setpoint "
+                    "%d: %s",
+                    permit.move_id,
+                    permit.through_index,
+                    reason or "older evidence",
+                )
+            self._arrived.set()
+            return None
+        if reason is None:
             _log.debug(
                 "ignored a permit for move %s through setpoint %d: older evidence",
                 permit.move_id,
                 permit.through_index,
             )
-            return None
-        self._arrived.set()
-        return None
+        return reason
 
     def covers(
         self, move_id: str, index: int, now_mono: float | None = None
@@ -159,13 +182,10 @@ class PermitGate:
             self._held = None
             self._refused = None
 
-    def _refusal(
+    def _untimely(
         self, permit: Permit, now_mono: float, evidence_mono: float
     ) -> str | None:
-        """Why a permit is not taken, or None when it is."""
-        reason = self._stale(permit)
-        if reason is not None:
-            return reason
+        """Which time check a permit fails, or None when it passes them all."""
         if not (math.isfinite(permit.expires_mono_s) and math.isfinite(evidence_mono)):
             return "permit times are not finite"
         if permit.expires_mono_s <= now_mono:

@@ -80,6 +80,8 @@ class ArmSettings:
     allow_unnamed_calibration: bool = False
     connect_timeout_s: float = 10.0
     state_max_age_s: float = 0.5
+    # No PERMIT is sent on a ROBOT_STATE older than this; under state_max_age_s.
+    state_renew_age_s: float = 0.1
     # The workstation's joint range, compared with the WELCOME's for a warning.
     joint_min: tuple[float, ...] | None = None
     joint_max: tuple[float, ...] | None = None
@@ -98,7 +100,6 @@ class ArmSettings:
     cancel_wait_s: float = 2.0
     # permits
     reach_setpoints: int = 25
-    first_reach_setpoints: int | None = None  # None: the reach
     renew_s: float = 0.05
     life_s: float = 1.0
     # jaws
@@ -269,8 +270,7 @@ class RobotLinkArm:
         """The newest published pose; never blocks. RuntimeError when it is unusable."""
         settings = self._settings
         try:
-            state = self._link.state(settings.state_max_age_s)
-            arrived = self._link.state_arrived_s()
+            state, arrived = self._link.state_and_arrival(settings.state_max_age_s)
         except (LinkLost, StaleState) as error:
             raise RuntimeError(f"robot link feedback lost: {error}") from error
         q = _pose(state.joints, self.n_joints)
@@ -493,6 +493,10 @@ class RobotLinkArm:
         region = self._grasp_region()
         began = time.monotonic()
         self.last_move = {"move_id": move_id, "setpoints": len(q), "permits": 0}
+        # The numbers every PERMIT of this move quotes, also after close_task().
+        pinned = link.pinned
+        if pinned is None:
+            raise violation("no ownership is pinned; no motion sent")
         try:
             link.send_move(
                 move_id, start, tol, q, region, evidence_wall_s, settings.expires_in_s
@@ -508,7 +512,7 @@ class RobotLinkArm:
             self._grasp_sent = True
         try:
             self._await_armed(move_id, began)
-            result, cause = self._permit_loop(move_id, start, q, approve, began)
+            result, cause = self._permit_loop(move_id, pinned, start, q, approve, began)
         except BaseException:
             link.forget(move_id)
             raise
@@ -572,6 +576,7 @@ class RobotLinkArm:
     def _permit_loop(
         self,
         move_id: str,
+        pinned: Pinned,
         start: np.ndarray,
         q: list[np.ndarray],
         approve: Any,
@@ -579,14 +584,14 @@ class RobotLinkArm:
     ) -> tuple[Result | None, BaseException | None]:
         """Send PERMITs until the move's final RESULT.
 
-        Returns (the final RESULT, why the adapter cancelled). The RESULT is
-        None when none came; the cause is None when the adapter did not cancel.
+        Every PERMIT quotes `pinned`. Returns (the final RESULT, why the
+        adapter cancelled). The RESULT is None when none came; the cause is
+        None when the adapter did not cancel.
         """
         link, settings = self._link, self._settings
         stats = self.last_move
         count = len(q)
         reach = settings.reach_setpoints
-        first_reach = settings.first_reach_setpoints
         deadline = time.monotonic() + (
             settings.first_wait_s
             + count * float(link.welcome.setpoint_period_s) * 1.1
@@ -611,12 +616,14 @@ class RobotLinkArm:
                 cause = self._live_gate()
                 if cause is not None:
                     break
-                state = link.state(settings.state_max_age_s)
-                if state.move_id == move_id:
+                state, arrived = link.state_and_arrival(settings.state_max_age_s)
+                # On an old state nothing is renewed: the Thor's last PERMIT
+                # runs out unless a newer state arrives.
+                fresh = time.monotonic() - arrived <= settings.state_renew_age_s
+                if state.move_id == move_id and fresh:
                     sent = max(sent, int(state.move_index))
-                    how_far = reach if last_evidence is not None else first_reach
                     started = time.monotonic()
-                    grant = move_check.step(sent, reach if how_far is None else how_far)
+                    grant = move_check.step(sent, reach)
                     took = time.monotonic() - started
                     stats["max_pass_s"] = max(stats.get("max_pass_s", 0.0), took)
                     if grant is None and move_check.refusal is not None:
@@ -627,7 +634,7 @@ class RobotLinkArm:
                             last_evidence is not None
                             and grant.evidence_wall_s < last_evidence
                         ):
-                            # The Thor would ignore it, and a cancel after it.
+                            # The Thor would ignore it.
                             cause = _types().SafetyViolation(
                                 "the obstacle grid's camera-frame time went back; "
                                 "the permits were stopped"
@@ -638,13 +645,14 @@ class RobotLinkArm:
                             grant.through_index,
                             grant.evidence_wall_s,
                             settings.life_s,
+                            pinned,
                         )
                         if last_evidence is None:
                             stats["first_permit_after_s"] = time.monotonic() - began
                         last_evidence = grant.evidence_wall_s
                         stats["permits"] += 1
                         stats["through"] = grant.through_index
-                # Else the robot app shows the move no longer: its RESULT is due.
+                # A fresh state without the move: its RESULT is due.
                 link.wait_change(settings.renew_s)
         except (LinkLost, StaleState) as error:
             self._stopped = True
@@ -658,9 +666,13 @@ class RobotLinkArm:
         cancelled = time.monotonic()
         if last_evidence is not None:
             # The cancel: no setpoint index is at or below -1. It quotes the
-            # evidence of the last PERMIT, or the Thor would ignore it.
-            link.send_permit(move_id, -1, last_evidence, settings.life_s)
-            stats["cancelled"] = True
+            # evidence of the last PERMIT and the numbers the move began with.
+            try:
+                link.send_permit(move_id, -1, last_evidence, settings.life_s, pinned)
+                stats["cancelled"] = True
+            except Exception:
+                # The cause of the cancel goes on up, not this.
+                _log.exception("the cancel PERMIT for %s was not sent", move_id)
         # Without a PERMIT the Thor refuses the move when its first wait ends.
         try:
             result = link.wait_final(move_id, settings.cancel_wait_s)

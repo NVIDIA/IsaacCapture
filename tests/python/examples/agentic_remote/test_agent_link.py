@@ -193,6 +193,23 @@ def test_a_command_without_a_pin_raises_and_sends_nothing(rig: Rig) -> None:
     rig.thor.nothing()
 
 
+def test_a_permit_quotes_the_numbers_it_is_given_also_without_a_pin(rig: Rig) -> None:
+    """A move keeps the numbers it began with: its cancel leaves after unpin()."""
+    link = rig.ready()
+    began_with = Pinned("s1", 4, 2)
+    for through in (7, -1):
+        link.send_permit("m-1", through, 1.7e9, 1.0, began_with)
+        link.unpin()
+        permit = rig.thor.next_message()
+        assert isinstance(permit, Permit) and permit.through_index == through
+        assert (permit.session_id, permit.owner_number, permit.stop_number) == (
+            "s1",
+            4,
+            2,
+        )
+    rig.thor.nothing()
+
+
 def test_pin_takes_only_a_pinned(rig: Rig) -> None:
     with pytest.raises(TypeError):
         rig.link.pin(("s1", 1, 0))  # type: ignore[arg-type]
@@ -411,6 +428,43 @@ def test_state_is_stale_before_the_first_and_past_the_age_asked(rig: Rig) -> Non
     with pytest.raises(StaleState, match=r"0\.60 s old"):
         link.state(0.5)
     assert link.state() == sent
+
+
+def test_a_state_and_its_arrival_time_are_read_in_one_call(rig: Rig) -> None:
+    link = rig.link
+    with pytest.raises(StaleState):
+        link.state_and_arrival()
+    first = rig.arrive(a_state(1), at=510.0)
+    assert link.state_and_arrival() == (first, 510.0)
+    second = rig.arrive(a_state(2, 1000.5), at=510.5)
+    assert link.state_and_arrival(0.5) == (second, 510.5)
+    rig.now.t = 511.25
+    with pytest.raises(StaleState, match=r"0\.75 s old"):
+        link.state_and_arrival(0.5)
+    rig.thor.carrier.break_link()
+    with pytest.raises(LinkLost):
+        link.state_and_arrival()
+
+
+def test_events_and_unexpected_messages_are_kept_up_to_a_bound(rig: Rig) -> None:
+    """The link's client lives as long as the agent program."""
+    from isaaccapture_examples.agentic_remote.protocol.messages import Event
+    from isaaccapture_examples.agentic_remote.testing import client as ws_client
+
+    assert ws_client.MESSAGES_KEPT == 1024
+    client = rig.link._client
+    for seq in range(1, 1201):
+        rig.thor.send(Event(seq, "note", f"line {seq}"))
+        rig.thor.send(Stop(reason=f"stop {seq}", sender="thor"))
+    rig.arrive(a_state())  # everything before it was taken
+    events, unexpected = client.events, client.unexpected
+    assert isinstance(events, list) and isinstance(unexpected, list)
+    # The newest 1024 of each, oldest first.
+    assert [event.seq for event in events] == list(range(177, 1201))
+    assert [stop.reason for stop in unexpected] == [
+        f"stop {seq}" for seq in range(177, 1201)
+    ]
+    assert client.wait_event("note", lambda event: event.seq == 1200).seq == 1200
 
 
 def test_state_listeners_get_every_state_on_the_receive_thread(rig: Rig) -> None:

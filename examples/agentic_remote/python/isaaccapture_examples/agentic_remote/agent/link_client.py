@@ -217,6 +217,15 @@ class AgentLink:
         LinkLost while the link is lost; StaleState before the first one and
         when it is older than max_age_s.
         """
+        return self.state_and_arrival(max_age_s)[0]
+
+    def state_and_arrival(
+        self, max_age_s: float | None = None
+    ) -> tuple[RobotState, float]:
+        """The newest ROBOT_STATE and the local monotonic time it arrived.
+
+        Both are of one state. Never blocks; raises as state() does.
+        """
         down = self._down()
         if down:
             raise LinkLost(down)
@@ -230,7 +239,7 @@ class AgentLink:
                 raise StaleState(
                     f"the newest ROBOT_STATE is {age:.2f} s old, over {max_age_s:g} s"
                 )
-        return state
+        return state, at
 
     def state_arrived_s(self) -> float:
         """Local monotonic time the newest ROBOT_STATE arrived; StaleState if none."""
@@ -451,14 +460,18 @@ class AgentLink:
         through_index: int,
         evidence_wall_s: float,
         life_s: float,
+        pinned: Pinned | None = None,
     ) -> None:
-        """Send one PERMIT with the pinned numbers; never blocks.
+        """Send one PERMIT; never blocks.
 
-        It ends life_s from now on the Thor's monotonic clock. RuntimeError
-        without a pin; nothing else is raised: a PERMIT that cannot go out is
-        dropped, and the robot app then ends the move by itself.
+        It quotes `pinned`, the numbers its move began with, else the pinned
+        numbers, and ends life_s from now on the Thor's monotonic clock.
+        RuntimeError without either; nothing else is raised: a PERMIT that
+        cannot go out is dropped, and the robot app then ends the move by
+        itself.
         """
-        pinned = self._need_pin("PERMIT")
+        if pinned is None:
+            pinned = self._need_pin("PERMIT")
         try:
             if self._down():
                 return
