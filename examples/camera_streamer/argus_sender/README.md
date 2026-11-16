@@ -19,9 +19,9 @@ verifies its SHA-256 digest, and builds it statically.
 ## Integration boundary
 
 The sender captures through a small backend interface (`src/CaptureBackend.h`, `src/CaptureFrame.h` and
-`src/CameraCapture.h`) so that one capture, encode and send loop serves both SIPL and Argus. That interface is
-temporary integration glue private to this sender. It is intended to converge on a shared camera backend and
-buffer-ownership contract once such a contract covers both capture paths, and the wrappers may then be adapted or
+`src/CameraCapture.h`) which the SIPL capture path uses through a shared, SDK-free sender loop; the Argus loop does not consume it. That
+interface is temporary integration glue private to this sender. It is intended to converge on a shared camera backend and
+buffer-ownership contract once such a contract covers both capture paths (SIPL today), and the wrappers may then be adapted or
 replaced. Until then it is the supported seam, and SIPL and Argus capture and the HEVC encoder stay available.
 
 | Current path | Intended owner or replacement | Reuse, adapt or retire | Follow-up and landing condition |
