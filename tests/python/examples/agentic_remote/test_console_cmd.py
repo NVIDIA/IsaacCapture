@@ -26,6 +26,9 @@ from typing import Any
 
 import pytest
 from isaaccapture_examples.agentic_remote.agent import console_cmd
+from isaaccapture_examples.agentic_remote.link_service.local import LocalRefused
+from isaaccapture_examples.agentic_remote.protocol import confirm
+from isaaccapture_examples.agentic_remote.protocol.confirm import PATH_IS_CLEAR, YES
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     Message,
     Open,
@@ -37,7 +40,7 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     Stop,
     decode,
 )
-from link_bench import Bench, until, welcome
+from link_bench import Bench, robot_state, until, welcome
 
 link = pytest.mark.link
 
@@ -50,9 +53,14 @@ ON_THE_LINK: dict[str, tuple[type, dict[str, Any]]] = {
     "rest": (OwnerRequest, {"request": "rest", "confirmed": True}),
     "open": (Open, {"confirmed": True}),
     "release": (Release, {}),
-    "shutdown": (Shutdown, {"confirmed": True}),
+    # The arm of these tests is at rest: a typed "yes", and nothing may move.
+    "shutdown": (Shutdown, {"confirmed": False}),
 }
 CONFIRMED = ("rest", "open", "release", "shutdown")
+# What each question asks for with the arm at rest.
+PHRASE = {"rest": PATH_IS_CLEAR, "open": YES, "release": YES, "shutdown": YES}
+# Shows on the terminal once a question that asks for "yes" is put.
+ASKS_YES = b'Type "yes"'
 
 Reply = Callable[[Message], list[Message]]
 
@@ -74,7 +82,8 @@ class Console:
         self.forwarded: list[Message] = []  # what the service sent to the robot
         self.said: list[str] = []
         self.asked: list[str] = []
-        self.answer = "yes"
+        # What is typed at a question; None types the phrase it asks for.
+        self.answer: str | None = None
         self.roles: list[str] = []  # the role of every attach
         self.reply: Reply = completed
         self._off = threading.Event()
@@ -94,7 +103,17 @@ class Console:
 
     def ask(self, prompt: str) -> str:
         self.asked.append(prompt)
-        return self.answer
+        if self.answer is not None:
+            return self.answer
+        return PATH_IS_CLEAR if f'"{PATH_IS_CLEAR}"' in prompt else YES
+
+    def show(self, **changes: Any) -> Any:
+        """Send a newer ROBOT_STATE and wait until the service has it."""
+        seq = self.state.seq + 1
+        self.state = dataclasses.replace(self.state, seq=seq, **changes)
+        self.thor.send(self.state)
+        until(lambda: self.bench.service.robot_state == self.state, "the state")
+        return self.state
 
     def run(self, *argv: str, ask: Any = None) -> int:
         real = console_cmd.connect_local
@@ -161,30 +180,114 @@ def test_a_command_is_one_link_message_with_the_console_role_and_its_result_is_p
 
 
 @pytest.mark.parametrize("command", CONFIRMED)
-def test_rest_open_release_and_shutdown_ask_for_a_typed_yes_first(
+def test_rest_open_release_and_shutdown_ask_for_a_typed_phrase_first(
     console: Console, command: str
 ) -> None:
     assert console.run(command) == console_cmd.EXIT_OK
     (prompt,) = console.asked
-    assert prompt == console_cmd.CONFIRMATIONS[command] and "Type yes" in prompt
+    assert (prompt, PHRASE[command]) == console_cmd.question(command, console.state)
+    assert f'Type "{PHRASE[command]}" to ' in prompt
     words = {
         "rest": "Is the path clear?",
         "open": "whatever they hold is let go",
         "release": "only with the arm measured at rest",
-        "shutdown": "is the path clear?",
+        "shutdown": "the arm is at rest",
     }
     assert words[command] in prompt
+    # The state the answer is given for is on the screen before the question.
+    assert console.said[0] == console_cmd.state_text(console.state)
 
 
 @pytest.mark.parametrize("command", CONFIRMED)
-@pytest.mark.parametrize("answer", ["", "no", "y", "yes."])
-def test_without_the_typed_yes_nothing_is_attached_or_sent(
+@pytest.mark.parametrize("answer", ["", "no", "y", "yes.", "path clear"])
+def test_without_the_typed_phrase_nothing_is_sent(
     console: Console, command: str, answer: str
 ) -> None:
     console.answer = answer
     assert console.run(command) == console_cmd.EXIT_FAILED
-    assert console.said == [f"{command} not confirmed; nothing sent"]
-    assert console.roles == [] and console.settled() == []
+    assert console.said[-1] == f"{command} not confirmed; nothing sent"
+    assert len(console.asked) == 1 and console.settled() == []
+
+
+def test_rest_asks_for_path_is_clear_and_yes_sends_nothing(console: Console) -> None:
+    console.answer = "yes"
+    assert console.run("rest") == console_cmd.EXIT_FAILED
+    assert console.asked == [console_cmd.ASK_REST]
+    assert 'Type "path is clear" to start' in console.asked[0]
+    assert console.said[-1] == "rest not confirmed; nothing sent"
+    assert console.settled() == []
+    # Case and spacing do not count; the words do.
+    console.answer = "  Path  is CLEAR \n"
+    assert console.run("rest") == console_cmd.EXIT_OK
+    (message,) = console.settled()
+    assert isinstance(message, OwnerRequest) and message.confirmed is True
+
+
+def test_shutdown_at_rest_asks_for_yes_and_is_sent_unconfirmed(
+    console: Console,
+) -> None:
+    assert console.state.motion == "rest_hold"
+    reason = "confirm the path is clear"  # what the Thor says if the arm must move
+    console.reply = lambda message: [Result(message.command_id, "refused", reason)]
+    assert console.run("shutdown") == console_cmd.EXIT_FAILED
+    assert console.asked == [console_cmd.ASK_SHUTDOWN_AT_REST]
+    (message,) = console.settled()
+    assert isinstance(message, Shutdown) and message.confirmed is False
+    assert console.said[-1] == f"shutdown: RESULT refused: {reason}"
+    # "path is clear" is not what was asked at rest: nothing more is sent.
+    console.answer = PATH_IS_CLEAR
+    assert console.run("shutdown") == console_cmd.EXIT_FAILED
+    assert console.said[-1] == "shutdown not confirmed; nothing sent"
+    assert len(console.settled()) == 1
+
+
+def test_shutdown_away_from_rest_asks_for_path_is_clear(console: Console) -> None:
+    console.show(motion="hold")
+    console.answer = "yes"
+    assert console.run("shutdown") == console_cmd.EXIT_FAILED
+    assert console.asked == [console_cmd.ASK_SHUTDOWN_MOVES]
+    assert 'Type "path is clear" to shut down' in console.asked[0]
+    assert console.settled() == []
+    console.answer = None
+    assert console.run("shutdown") == console_cmd.EXIT_OK
+    (message,) = console.settled()
+    assert isinstance(message, Shutdown) and message.confirmed is True
+    # No ROBOT_STATE at all asks the same: the arm may have to move.
+    assert console_cmd.question("shutdown", None)[1] == PATH_IS_CLEAR
+
+
+def test_a_command_quotes_the_state_shown_with_its_question(console: Console) -> None:
+    shown = console.state
+
+    def ask(prompt: str) -> str:
+        # While the operator types, the owner number and the stop number move on.
+        console.show(owner_number=5, stop_number=4)
+        return YES
+
+    assert console.run("open", ask=ask) == console_cmd.EXIT_OK
+    (message,) = console.settled()
+    assert (message.owner_number, message.stop_number) == (4, 3)
+    assert console.said[0] == console_cmd.state_text(shown)
+
+
+def test_send_command_sends_nothing_without_the_phrase_of_its_question() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.sent: list[tuple[str, dict[str, Any]]] = []
+
+        def __getattr__(self, name: str) -> Any:
+            return lambda **fields: self.sent.append((name, fields)) or f"{name}-1"
+
+    client, state = Client(), robot_state(owner_number=4, stop_number=3)
+    for command in CONFIRMED:
+        for typed in ("", "no", "stop"):
+            with pytest.raises(console_cmd.NotConfirmed):
+                console_cmd.send_command(command, client, state, phrase_typed=typed)
+    with pytest.raises(ValueError, match="'stop' is not a command"):
+        console_cmd.send_command("stop", client, state, phrase_typed="")
+    assert client.sent == []
+    sent = console_cmd.send_command("reset", client, state, phrase_typed="")
+    assert sent == "reset-1" and client.sent == [("reset", NUMBERS)]
 
 
 @pytest.mark.parametrize("command", CONFIRMED)
@@ -192,11 +295,11 @@ def test_a_confirmation_cannot_come_from_a_pipe(console: Console, command: str) 
     # Under pytest there is no terminal on stdin: the real prompt refuses.
     code = console.run(command, ask=console_cmd.terminal_ask)
     assert code == console_cmd.EXIT_FAILED
-    assert console.said == [
+    assert console.said[-1] == (
         f"{command} not confirmed (this command needs a terminal to type the "
         "confirmation at); nothing sent"
-    ]
-    assert console.roles == [] and console.settled() == []
+    )
+    assert console.settled() == []
 
 
 def on_a_terminal(
@@ -253,44 +356,48 @@ def on_a_terminal(
         os.unlink(result.name)
 
 
-def release_at_a_terminal(tmp_path: Path, agent_marker: str = "") -> str:
-    """console_cmd release, with no service to attach to; for on_a_terminal()."""
+def release_at_a_terminal(socket_path: str, agent_marker: str = "") -> str:
+    """console_cmd release on the service at socket_path; for on_a_terminal()."""
     said: list[str] = []
     for name in list(os.environ):
         if console_cmd.agent_environment({name: os.environ[name]}):
             del os.environ[name]
     if agent_marker:
         os.environ[agent_marker] = "1"
-    code = console_cmd.main(
-        ["release", "--socket", str(tmp_path / "no-service.sock")], say=said.append
-    )
+    code = console_cmd.main(["release", "--socket", socket_path], say=said.append)
     return f"exit {code}: {said}"
 
 
-def test_a_yes_typed_before_the_question_does_not_answer_it(tmp_path: Path) -> None:
+def test_a_yes_typed_before_the_question_does_not_answer_it(console: Console) -> None:
     def run() -> str:
-        return release_at_a_terminal(tmp_path)
+        return release_at_a_terminal(console.bench.path)
 
     # Typed ahead, the yes is dropped; what is typed at the question counts.
-    answer, shown = on_a_terminal(run, b"yes\n", b"no\n")
+    answer, shown = on_a_terminal(run, b"yes\n", b"no\n", ASKS_YES)
     assert shown and "release not confirmed; nothing sent" in answer
-    answer, shown = on_a_terminal(run, b"", b"yes\n")
-    assert shown and "cannot attach to the robot link service" in answer
-    answer, shown = on_a_terminal(run, b"no\n\n", b"yes\n")
-    assert shown and "cannot attach to the robot link service" in answer
+    assert console.settled() == []
+    answer, shown = on_a_terminal(run, b"", b"yes\n", ASKS_YES)
+    assert shown and "exit 0: " in answer and "release: RESULT completed" in answer
+    answer, shown = on_a_terminal(run, b"no\n\n", b"yes\n", ASKS_YES)
+    assert shown and "exit 0: " in answer
+    assert [type(message) for message in console.settled()] == [Release, Release]
 
 
 @pytest.mark.parametrize("marker", ["CLAUDECODE", "AI_AGENT", "OPENCLAW_HOME"])
 def test_a_confirmation_is_not_asked_in_an_agents_environment(
-    tmp_path: Path, marker: str
+    console: Console, marker: str
 ) -> None:
     answer, shown = on_a_terminal(
-        lambda: release_at_a_terminal(tmp_path, marker), b"yes\n", b"yes\n"
+        lambda: release_at_a_terminal(console.bench.path, marker),
+        b"yes\n",
+        b"yes\n",
+        ASKS_YES,
     )
     assert not shown  # the question was never put
     assert "release not confirmed (the confirmation is typed by the operator" in answer
     assert "outside an agent environment); nothing sent" in answer
     assert "exit 1: " in answer
+    assert console.settled() == []
 
 
 def test_the_marks_of_an_agents_environment() -> None:
@@ -299,6 +406,11 @@ def test_the_marks_of_an_agents_environment() -> None:
     assert marked({"OPENCLAW_ANYTHING": "x"}) == "OPENCLAW_ANYTHING"
     assert marked({"CLAUDECODE": " ", "PATH": "/bin"}) is None
     assert marked({}) is None
+    # One copy, in protocol/confirm.py; the old names still import from here.
+    assert marked is confirm.agent_environment
+    assert console_cmd.AGENT_ENV is confirm.AGENT_ENV
+    assert console_cmd.AGENT_ENV_PREFIXES is confirm.AGENT_ENV_PREFIXES
+    assert "AGENT_ENV = " not in SOURCE.read_text(encoding="utf-8")
 
 
 @pytest.mark.apai
@@ -417,6 +529,43 @@ def test_no_service_is_said_so(tmp_path: Path) -> None:
     assert said[0].startswith(
         "console command: cannot attach to the robot link service"
     )
+    # A stop says so too: its raw STOP found nobody to write to.
+    code = console_cmd.main(
+        ["--socket", str(tmp_path / "none.sock"), "stop"], say=said.append
+    )
+    assert code == console_cmd.EXIT_FAILED
+    assert said[-1].startswith("stop: cannot attach to the robot link service: ")
+    assert "STOP NOT written: no robot link service at " in said[-1]
+
+
+def test_the_one_shot_stop_falls_back_to_the_raw_path(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    full = Bench(tmp_path_factory.mktemp("cf"), max_clients=1)
+    try:
+        thor = full.robot()
+        full.client("viewer")  # the one client slot
+        with pytest.raises(LocalRefused):
+            console_cmd.connect_local(full.path, "console", "console_cmd", 2.0)
+        said: list[str] = []
+        code = console_cmd.main(["--socket", full.path, "stop"], say=said.append)
+        # Exit code 1: a raw STOP cannot be confirmed.
+        assert code == console_cmd.EXIT_FAILED
+        assert said == [
+            "stop: cannot attach to the robot link service: too many local "
+            "clients are attached. STOP written; not confirmed: look at the Thor "
+            "terminal (the robot link service said: too many local clients are "
+            "attached)"
+        ]
+        assert thor.next_message() == Stop(console_cmd.STOP_REASON, "console")
+        thor.nothing()
+        # Any other command is not sent that way.
+        code = console_cmd.main(["--socket", full.path, "reset"], say=said.append)
+        assert code == console_cmd.EXIT_FAILED
+        assert said[-1].startswith("console command: cannot attach")
+        thor.nothing()
+    finally:
+        full.close()
 
 
 def test_an_unknown_command_is_not_run(console: Console) -> None:
@@ -440,6 +589,18 @@ def test_each_command_sends_through_one_call_and_there_is_no_other_send() -> Non
         not in ("close", "results", "state", "status", "notices", "alive")
     )
     assert sends == ["open_jaws", "release", "reset", "rest", "shutdown", "stop"]
+    # The five that quote numbers go out in _run() and nowhere else.
+    (run,) = (
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_run"
+    )
+    in_run = sorted(
+        node.func.attr
+        for node in ast.walk(run)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    )
+    assert in_run == ["open_jaws", "release", "reset", "rest", "shutdown"]
     assert "connect_local(args.socket, ROLE_CONSOLE" in SOURCE.read_text()
     # Nothing here starts motion of its own or stands in for the agent.
     names = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
@@ -467,7 +628,7 @@ def stack(make_robot_app: Callable[..., Any], tmp_path_factory: Any) -> Iterator
     made.close()
 
 
-def command(stack: Any, *argv: str, answer: str = "yes") -> tuple[int, list[str]]:
+def command(stack: Any, *argv: str, answer: str = YES) -> tuple[int, list[str]]:
     said: list[str] = []
     code = console_cmd.main(
         ["--socket", stack.path, *argv], ask=lambda prompt: answer, say=said.append

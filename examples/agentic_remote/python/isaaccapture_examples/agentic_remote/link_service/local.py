@@ -22,8 +22,10 @@ import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
+from typing import NamedTuple
 
 from ..protocol.local_messages import (
+    ROLE_CONSOLE,
     LocalHello,
     LocalNotice,
     LocalStatus,
@@ -35,6 +37,7 @@ from ..protocol.messages import (
     NEWEST_WINS_TYPES,
     PROTOCOL_VERSION,
     ProtocolError,
+    Stop,
 )
 from ..robot_app.text import MAX_REASON_CHARS, printable
 
@@ -552,3 +555,59 @@ def connect_local(
             )
         raise LocalRefused(notices[-1].text if notices else why)
     return carrier
+
+
+class RawStop(NamedTuple):
+    """What became of a raw STOP; it is never known to be delivered."""
+
+    written: bool  # both records left this process
+    notice: str  # the last LOCAL_NOTICE read back, "" if none; why, if not written
+
+
+def send_raw_stop(
+    path: str | None = None,
+    *,
+    reason: str,
+    sender: str,
+    name: str = "console",
+    timeout_s: float = 1.0,
+) -> RawStop:
+    """Write a LOCAL_HELLO and a STOP to the service in one go, without a carrier.
+
+    For when connect_local() fails: the service forwards a STOP that follows
+    the LOCAL_HELLO at once even when it turns the client away. One attempt;
+    it raises nothing. Then it reads until the service closes the socket or
+    timeout_s has passed and keeps the newest LOCAL_NOTICE.
+    """
+    path = path or default_socket_path()
+    hello = LocalHello(role=ROLE_CONSOLE, name=name, protocol_version=PROTOCOL_VERSION)
+    stop = Stop(reason=reason, sender=sender)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        try:
+            records = pack_record(hello.TYPE, hello.to_payload())
+            records += pack_record(stop.TYPE, stop.to_payload())
+            sock.settimeout(timeout_s)
+            _dial(sock, path)
+        except (OSError, ProtocolError) as error:
+            return RawStop(False, f"no robot link service at {path}: {error}")
+        try:
+            sock.sendall(records)
+        except OSError as error:
+            return RawStop(False, f"writing to {path} failed: {error}")
+        notice = ""
+        by = time.monotonic() + timeout_s
+        try:
+            while True:
+                msg_type, length = HEADER.unpack(read_exact(sock, HEADER.size, by))
+                if length > MAX_PAYLOAD_BYTES:
+                    break
+                payload = read_exact(sock, length, by)
+                if msg_type == LocalNotice.TYPE:
+                    with contextlib.suppress(ProtocolError):
+                        notice = decode_local(msg_type, payload).text
+        except (EOFError, Stalled):
+            pass
+        return RawStop(True, printable(notice, MAX_REASON_CHARS))
+    finally:
+        sock.close()
