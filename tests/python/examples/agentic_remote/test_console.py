@@ -43,6 +43,7 @@ from isaaccapture_examples.agentic_remote.console.console import (
 from isaaccapture_examples.agentic_remote.console.status import (
     event_bells,
     help_block,
+    jaws_text,
     status_key,
     status_line,
     takeover_text,
@@ -75,6 +76,12 @@ from isaaccapture_examples.agentic_remote.robot_app import app as app_module
 from isaaccapture_examples.agentic_remote.robot_app import waits
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
 from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
+from isaaccapture_examples.agentic_remote.robot_app.gripper import (
+    NO_GRIP_LEVEL,
+    NO_OPENING,
+    NO_TIGHTER,
+    NOT_MATCHED,
+)
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     JawLoad,
     MotionState,
@@ -88,6 +95,7 @@ from isaaccapture_examples.agentic_remote.testing.client import WorkstationClien
 from link_bench import Bench, robot_state, until, welcome
 from test_console_cmd import Console as ScriptedRobot
 from test_console_cmd import OddService, completed, odd_services, on_a_terminal
+from test_human_jaws import Trigger, agent_leaves_the_jaws
 from test_takeover import feed, human_config, state_now, take_over
 
 PACKAGE = Path(console_module.__file__).resolve().parent
@@ -2169,6 +2177,8 @@ def test_the_event_kinds_are_the_robot_apps() -> None:
     assert event_bells(Event(1, app_module.EVENT_OWNER, app_module.HANDED_BACK)) == 2
     assert status_module._STAGE_READY == app_module.STAGE_READY
     assert status_module._REST_HOLD == MotionState.REST_HOLD.value
+    assert status_module._RELEASE_FAILED == MotionState.RELEASE_FAILED.value
+    assert "release_failed" in console_cmd.AT_REST
     assert status_module._JAWS_LOADED == JawLoad.LOADED.value
     assert status_module._OWNER_HUMAN == Owner.HUMAN.value
     assert status_module._OWNER_NOBODY == Owner.NOBODY.value
@@ -2270,3 +2280,273 @@ def test_run_console_sh_execs_the_console_with_the_examples_python_path() -> Non
     )
     assert done.returncode == 2, done.stderr
     assert done.stdout.startswith("operator console: it needs a terminal")
+
+
+# A human program on the Thor. It attaches at the robot app's own socket, so
+# the robot link service's client list does not name it: ROBOT_STATE says
+# whether one is attached there, in health["human"]["local_program"].
+
+
+def at_robot_app(state: RobotState, attached: bool = True) -> RobotState:
+    """The state as a robot app with a socket for the human program sends it."""
+    human = {**state.health["human"], "local_program": attached}
+    return dataclasses.replace(state, health={**state.health, "human": human})
+
+
+def test_a_human_program_attached_at_the_robot_app_counts_as_attached() -> None:
+    on = at_robot_app(with_human())
+    line = status_line(None, on, WITHOUT_PROGRAM, 0.04)
+    assert line.endswith(
+        " | view none | human program at the robot app | headset ready | "
+        "controller 0.03 s | state 0.04 s"
+    )
+    assert "no human program" not in line
+    assert takeover_text(on, WITHOUT_PROGRAM) == POSSIBLE
+    # The Thor's reason is told, not a missing program.
+    stale = "no fresh controller data: stage stale"
+    refused = at_robot_app(with_human(takeover=stale))
+    assert takeover_text(refused, WITHOUT_PROGRAM) == f"takeover: not possible: {stale}"
+    # An open takeover is ended with right A, as with a program at the service.
+    for owner in ("human", "nobody"):
+        at_rest = at_robot_app(with_human(robot_state(owner=owner), takeover_open=True))
+        assert takeover_text(at_rest, WITHOUT_PROGRAM) == RIGHT_A
+    # The help request's block ends with the same line.
+    event = Event(1, "help_needed", "the agent asks for help", {"reason": "why"})
+    assert help_block(event, on, WITHOUT_PROGRAM)[-1] == f"  {POSSIBLE}"
+
+
+def test_a_robot_app_with_no_human_program_at_its_socket_is_without_one() -> None:
+    none = at_robot_app(with_human(), attached=False)
+    line = status_line(None, none, WITHOUT_PROGRAM, 0.04)
+    assert line.endswith(
+        " | view none | no human program | controller 0.03 s | state 0.04 s"
+    )
+    assert "at the robot app" not in line
+    assert takeover_text(none, WITHOUT_PROGRAM) == NO_PROGRAM
+    left = at_robot_app(
+        with_human(robot_state(owner="human"), takeover_open=True), attached=False
+    )
+    assert takeover_text(left, WITHOUT_PROGRAM) == NO_DATA
+    # One at the service counts whatever the robot app's socket holds.
+    assert takeover_text(none, WITH_PROGRAM) == POSSIBLE
+    # Only the robot app's own word counts: True, and nothing that reads so.
+    odd = with_human()
+    odd.health["human"]["local_program"] = "yes"
+    assert takeover_text(odd, WITHOUT_PROGRAM) == NO_PROGRAM
+    # A program that attaches there or leaves makes a new status line due.
+    assert status_key(none, WITHOUT_PROGRAM) != status_key(
+        at_robot_app(with_human()), WITHOUT_PROGRAM
+    )
+
+
+def test_a_lost_robot_connection_is_said_before_a_program_at_the_robot_app() -> None:
+    # The console's last ROBOT_STATE says nothing of who is attached now.
+    lost = dataclasses.replace(WITHOUT_PROGRAM, robot_connected=False)
+    assert takeover_text(at_robot_app(with_human()), lost) == LOST
+
+
+# The jaws under a person. While a takeover is open the trigger of the
+# person's controller moves the jaws, once the jaw opening it asks for has
+# reached the grip level: the jaw opening in force at the takeover. Openings
+# are shares of the jaw travel, 1.0 fully open. ROBOT_STATE says what the
+# trigger does in health["human"]["jaws"], and the console prints one line
+# for it.
+
+BRING = "jaws: trigger asks {}, grip level {}: bring the trigger to the grip level"
+FOLLOW = "jaws: follow the trigger"
+NOTHING = "jaws: the trigger moves nothing"
+
+
+def jaw_facts(**changes: Any) -> dict[str, Any]:
+    """health["human"]["jaws"] of a trigger that has not reached the grip level."""
+    facts = {
+        "matched": False,
+        "grip_level": 0.4,
+        "opened": False,
+        "asked": 0.8,
+        "refusal": NOT_MATCHED,
+    }
+    assert set(changes) <= set(facts)
+    return {**facts, **changes}
+
+
+def under_a_person(**changes: Any) -> RobotState:
+    """A ROBOT_STATE with a takeover open and these facts of the jaws."""
+    state = with_human(robot_state(owner="human"), takeover_open=True)
+    state.health["human"]["jaws"] = jaw_facts(**changes)
+    return state
+
+
+@pytest.mark.parametrize(
+    ("facts", "line"),
+    [
+        ({}, BRING.format("0.80", "0.40")),
+        ({"asked": 0.449, "grip_level": 1.0}, BRING.format("0.45", "1.00")),
+        ({"matched": True, "asked": 0.4, "refusal": ""}, FOLLOW),
+        # The jaws follow, held wider than the trigger asks.
+        (
+            {"matched": True, "asked": 0.1, "refusal": NO_TIGHTER},
+            "jaws: follow the trigger; no closing beyond the grip level until the "
+            "jaws were measured fully open",
+        ),
+        (
+            {"asked": None, "refusal": NO_OPENING},
+            "jaws: the trigger moves nothing: the human target carries no jaw opening",
+        ),
+        (
+            {
+                "grip_level": None,
+                "refusal": f"{NO_GRIP_LEVEL}the jaws are not referenced",
+            },
+            "jaws: the trigger moves nothing: the grip level is not known: the "
+            "jaws are not referenced",
+        ),
+        # From the takeover to its first human target no opening is asked for.
+        ({"asked": None}, f"{NOTHING}: the trigger has not reached the grip level"),
+    ],
+    ids=[
+        "short of the grip level",
+        "short of fully open jaws",
+        "following",
+        "following, no tighter",
+        "no opening sent",
+        "no grip level",
+        "nothing asked yet",
+    ],
+)
+def test_the_jaws_line_says_what_the_trigger_does(
+    facts: dict[str, Any], line: str
+) -> None:
+    state = under_a_person(**facts)
+    assert jaws_text(state, WITH_PROGRAM) == line
+    # Who is attached to the robot link service changes nothing in it.
+    assert jaws_text(state, WITHOUT_PROGRAM) == jaws_text(state, None) == line
+
+
+def test_the_jaws_line_takes_only_the_robot_apps_own_words() -> None:
+    def line(**facts: Any) -> str | None:
+        return jaws_text(under_a_person(**facts), WITH_PROGRAM)
+
+    # Followed means True, and nothing that reads so.
+    assert line(matched="yes", refusal="") == NOTHING
+    assert line(matched=1, asked=0.4, refusal="") == NOTHING
+    # An opening that is no finite number is not printed as one.
+    for odd in (float("nan"), float("inf"), True, "0.8"):
+        assert line(asked=odd) == f"{NOTHING}: {NOT_MATCHED}"
+        assert line(grip_level=odd) == f"{NOTHING}: {NOT_MATCHED}"
+    # A reason that is no text is left out; one with a bell does not ring.
+    assert line(refusal=None) == NOTHING and line(refusal=7) == NOTHING
+    assert line(matched=True, refusal=None) == FOLLOW
+    assert line(refusal="no closing: the view\a is old") == (
+        f"{NOTHING}: no closing: the view  is old"
+    )
+
+
+def test_without_the_fact_of_the_jaws_there_is_no_jaws_line() -> None:
+    # No ROBOT_STATE, a robot app without the human path, no takeover open, and
+    # a takeover open on a robot app whose file has human.trigger_jaws false.
+    taken = with_human(robot_state(owner="human"), takeover_open=True)
+    for state in (None, robot_state(), with_human(), taken):
+        assert jaws_text(state, WITH_PROGRAM) is None
+    # Something else under the fact's name is no fact.
+    for odd in ("follow", True, ["matched"], None):
+        state = under_a_person()
+        state.health["human"]["jaws"] = odd
+        assert jaws_text(state, WITH_PROGRAM) is None
+    # After a lost robot connection the last ROBOT_STATE says nothing of now.
+    following = under_a_person(matched=True, refusal="")
+    lost = dataclasses.replace(WITH_PROGRAM, robot_connected=False)
+    assert jaws_text(following, WITH_PROGRAM) == FOLLOW
+    assert jaws_text(following, lost) is None
+
+
+def test_the_console_prints_the_jaws_line_below_the_status_line(
+    robot: ScriptedRobot, desks: Callable[..., Desk]
+) -> None:
+    clock = FakeClock()
+    desk = desks(robot.bench.path, clock=clock, tick_s=None)
+    desk.sees(lambda state: True)
+
+    def said(wait_s: float = 1.0, **human: Any) -> list[str]:
+        """Show this health["human"], let the time pass; what the console printed."""
+        robot.show(
+            owner="human",
+            motion="hold",
+            teleop_stage="ready",
+            controller_age_s=0.03,
+            health={"human": {**human_facts(takeover_open=True), **human}},
+        )
+        desk.sees(lambda state: state.seq == robot.state.seq)
+        assert desk.console._flush()
+        before = len(desk.said)
+        clock.advance(wait_s)
+        desk.console.tick()
+        assert desk.console._flush()
+        return desk.said[before:]
+
+    # A takeover is open on a robot app that says nothing of the jaws.
+    (status,) = said()
+    assert " | owner human #4 | " in status and " | takeover open | " in status
+    # The fact arrives: a new status line, and the jaws line below it.
+    short = said(jaws=jaw_facts())
+    assert len(short) == 2 and " | takeover open | " in short[0]
+    assert short[1] == BRING.format("0.80", "0.40")
+    # The trigger moves short of the grip level: only numbers change, no line.
+    assert said(jaws=jaw_facts(asked=0.6)) == []
+    # It reaches the grip level: both lines again.
+    following = said(jaws=jaw_facts(matched=True, asked=0.4, refusal=""))
+    assert len(following) == 2 and following[1] == FOLLOW
+    held = jaw_facts(matched=True, asked=0.1, refusal=NO_TIGHTER)
+    tighter = said(jaws=held)
+    assert len(tighter) == 2 and tighter[1] == f"{FOLLOW}; {NO_TIGHTER}"
+    # Every ten seconds the status line comes with it.
+    again = said(wait_s=10.0, jaws=held)
+    assert len(again) == 2 and again[1] == tighter[1]
+    # `state` prints it between the status line and the takeover line.
+    desk.type("state")
+    desk.wait(NO_DATA, 1)
+    assert " | takeover open | " in desk.said[-3]
+    assert desk.said[-2:] == [tighter[1], NO_DATA]
+    # The fact is gone, as after the hand-back: a status line and nothing below.
+    (status,) = said(takeover_open=False)
+    assert " | takeover open | " not in status and desk.count("jaws: ") == 5
+
+
+@pytest.mark.parametrize(
+    ("config", "follows"),
+    [
+        (human_config(RobotAppConfig.default()), True),
+        (human_config(RobotAppConfig.default(), trigger_jaws=False), False),
+    ],
+    ids=["the trigger moves the jaws", "human.trigger_jaws false"],
+)
+def test_the_jaws_line_repeats_the_robot_app_through_a_takeover(
+    make_robot_app: Callable[..., Any], follows: bool
+) -> None:
+    h = make_robot_app()
+
+    def line() -> str | None:
+        """The jaws line for the ROBOT_STATE the robot app would send now."""
+        return jaws_text(state_now(h), WITH_PROGRAM)
+
+    # The agent leaves the jaws at 0.3 and asks for help: no takeover is open.
+    agent_leaves_the_jaws(h, 0.3)
+    assert line() is None
+    take_over(h)
+    if not follows:
+        assert "jaws" not in state_now(h).health["human"] and line() is None
+        return
+    # jaw_facts() stands in for the robot app in the tests above.
+    assert set(state_now(h).health["human"]["jaws"]) == set(jaw_facts())
+    assert line() == f"{NOTHING}: {NOT_MATCHED}"
+    trigger = Trigger(h)
+    trigger.pull(0.8)
+    assert line() == BRING.format("0.80", "0.30")
+    trigger.pull(0.3)
+    assert line() == FOLLOW
+    # Never measured fully open since the takeover: no tighter than the agent.
+    trigger.pull(0.1)
+    assert line() == f"{FOLLOW}; {NO_TIGHTER}"
+    # A human target without a jaw opening: the trigger must match again.
+    feed(h)
+    assert line() == f"{NOTHING}: {NO_OPENING}"

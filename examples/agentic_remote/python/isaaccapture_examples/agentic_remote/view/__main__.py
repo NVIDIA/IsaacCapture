@@ -453,7 +453,7 @@ class ViewProgram:
             try:
                 self.model.on_local(self.carrier.status, self.carrier.alive)
                 now = self._clock.monotonic()
-                status = self.model.view_status(now, self.model.thor_wall_now(now))
+                status = self.model.status_to_send(now)
                 send(self.carrier, status)
                 self.model.note_sent(status)
             except Exception:

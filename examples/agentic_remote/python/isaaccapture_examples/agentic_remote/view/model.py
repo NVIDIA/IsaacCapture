@@ -254,6 +254,24 @@ class ViewModel:
             return ViewStatus(live=False, age_s=AGE_WHEN_NOT_LIVE_S)
         return ViewStatus(live=True, age_s=age)
 
+    def status_to_send(self, now_mono: float) -> ViewStatus:
+        """The VIEW_STATUS to send now; a live one says when it is sent.
+
+        As view_status() with thor_wall_now() of this moment, both of the
+        Thor's clocks read off one ROBOT_STATE. sent_mono_s is its
+        clock_mono_s plus the time since it arrived: never later than the
+        Thor's monotonic clock reads now. The Thor adds the time from then to
+        the age.
+        """
+        with self._lock:
+            age = self._live_age(now_mono, self._thor_wall_now(now_mono))
+            if age is None:
+                return ViewStatus(live=False, age_s=AGE_WHEN_NOT_LIVE_S)
+            # A live view has a fresh ROBOT_STATE: _live_age asks for one.
+            passed = max(0.0, now_mono - self._state_at)
+            sent = self._state.clock_mono_s + passed
+        return ViewStatus(live=True, age_s=age, sent_mono_s=sent)
+
     def status_json(
         self, now_mono: float, thor_wall_now: float | None
     ) -> dict[str, Any]:

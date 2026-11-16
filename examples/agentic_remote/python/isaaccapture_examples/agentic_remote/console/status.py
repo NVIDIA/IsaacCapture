@@ -60,6 +60,20 @@ OPEN_PERSON = "a person owns the arm"
 OPEN_NOBODY = "nobody owns the arm: hold right B for 1 s to take it again"
 # Followed by the robot app's reason, where it would refuse that right B.
 OPEN_NOBODY_REFUSED = "nobody owns the arm: a new takeover is not possible: "
+# The jaws under a person. While a takeover is open the trigger of the person's
+# controller moves the jaws, once the jaw opening it asks for has reached the
+# grip level: the jaw opening in force at the takeover. Openings are shares of
+# the jaw travel, 1.00 fully open. ROBOT_STATE says what the trigger does in
+# health["human"]["jaws"].
+JAWS_FOLLOW = "jaws: follow the trigger"
+JAWS_NOTHING = "jaws: the trigger moves nothing"
+JAWS_BRING = (
+    "jaws: trigger asks {asked}, grip level {level}: bring the trigger to the "
+    "grip level"
+)
+# robot_app.gripper.NOT_MATCHED: why a trigger short of the grip level moves
+# nothing.
+_NOT_MATCHED = "the trigger has not reached the grip level"
 # How the EVENT texts begin that ring more than once: a takeover that began
 # or ended, and a refused takeover or hand-back.
 _TWO_BELLS = ("TAKEOVER", "takeover ended")
@@ -72,6 +86,9 @@ _THREE_BELLS = (
 # control owners, and the stop level of a fault-stop.
 _STAGE_READY = "ready"
 _REST_HOLD = "rest_hold"
+# The motion after a torque release whose driver call failed: the motors may
+# be on or off.
+_RELEASE_FAILED = "release_failed"
 _JAWS_LOADED = "loaded"
 _OWNER_HUMAN = "human"
 _OWNER_NOBODY = "nobody"
@@ -152,9 +169,20 @@ def _human(health: dict[str, Any]) -> dict[str, Any]:
     return human if isinstance(human, dict) else {}
 
 
-def _no_human_program(status: LocalStatus | None) -> bool:
-    """Whether the robot link service says that no human program is attached."""
-    return status is not None and not status.roles.get(ROLE_HUMAN, 0)
+def _at_robot_app(state: RobotState | None) -> bool:
+    """Whether ROBOT_STATE says a human program is attached at the robot app."""
+    return _human(_health(state)).get("local_program") is True
+
+
+def _no_human_program(status: LocalStatus | None, state: RobotState | None) -> bool:
+    """Whether no human program is attached, at either place one attaches.
+
+    At the robot link service, by its client list, or at the robot app's own
+    socket on the Thor, by ROBOT_STATE. Without a LOCAL_STATUS it is not known.
+    """
+    if status is None or status.roles.get(ROLE_HUMAN, 0):
+        return False
+    return not _at_robot_app(state)
 
 
 def _human_parts(
@@ -165,7 +193,10 @@ def _human_parts(
     parts = []
     stage = _text(state.teleop_stage, MAX_WORD_CHARS)
     wanted = bool(human.get("enabled") or human.get("takeover_open"))
-    if wanted and _no_human_program(status):
+    if _at_robot_app(state):
+        # The service's client list does not name this one.
+        parts.append("human program at the robot app")
+    if wanted and _no_human_program(status, state):
         parts.append("no human program")
     elif stage:
         parts.append(f"headset {stage}")
@@ -218,7 +249,10 @@ def status_line(
     if state.gripper.may_be_holding:
         jaws += ", may be holding"
     parts.append(jaws)
-    parts.append(f"torque {'on' if state.torque_on else 'off'}")
+    torque = "on" if state.torque_on else "off"
+    if state.motion == _RELEASE_FAILED:
+        torque = "unknown"
+    parts.append(f"torque {torque}")
     if state.assistance_wait_s is not None:
         parts.append(f"wait {_seconds(state.assistance_wait_s, 0)}")
     health = _health(state)
@@ -235,10 +269,10 @@ def status_line(
 def status_key(state: RobotState | None, status: LocalStatus | None) -> Hashable:
     """What a new status line is printed for when it changes.
 
-    The facts of status_line() and of takeover_text() that change in steps.
-    The ages, the move index, the wait's seconds, how far the permit reaches
-    and the numbers in the robot app's takeover reason change all the time
-    and are left out.
+    The facts of status_line(), takeover_text() and jaws_text() that change in
+    steps. The ages, the move index, the wait's seconds, how far the permit
+    reaches and the numbers in the robot app's takeover reason and in the jaws
+    line change all the time and are left out.
     """
     connection = tuple(_connection_parts(status))
     if state is None:
@@ -272,6 +306,8 @@ def status_key(state: RobotState | None, status: LocalStatus | None) -> Hashable
         str(human.get("note") or ""),
         str(human.get("ended") or ""),
         str(human.get("takeover") or "").translate(_NO_DIGITS),
+        human.get("local_program") is True,
+        (jaws_text(state, status) or "").translate(_NO_DIGITS),
     )
 
 
@@ -280,7 +316,7 @@ def takeover_text(state: RobotState | None, status: LocalStatus | None) -> str:
 
     Why none is possible is the robot app's word, health["human"]["takeover"],
     after what only the console sees: a lost robot connection, no human
-    program, no ROBOT_STATE.
+    program at either place, no ROBOT_STATE.
     """
     human = _human(_health(state))
     # After the loss `state` is the last one before it: it says what was open
@@ -295,7 +331,7 @@ def takeover_text(state: RobotState | None, status: LocalStatus | None) -> str:
     # With human driving off in the robot app's file a human program would
     # change nothing: the robot app's word stands before the missing program.
     off = human.get("enabled") is False and isinstance(why, str) and bool(why)
-    if _no_human_program(status) and not off:
+    if _no_human_program(status, state) and not off:
         why = NO_HUMAN_PROGRAM
     elif state is None:
         why = NO_STATE
@@ -312,7 +348,7 @@ def _open_takeover(state: RobotState, status: LocalStatus | None) -> str:
     if state.stop_level == _STOP_FAULT:
         return OPEN_FAULT
     # The stage outlasts a human program that left by a few seconds.
-    if state.teleop_stage != _STAGE_READY or _no_human_program(status):
+    if state.teleop_stage != _STAGE_READY or _no_human_program(status, state):
         return OPEN_NO_CONTROLLER
     if state.motion == _REST_HOLD:
         # Unknown jaws keep the plain line: the hand-back reads them anew.
@@ -326,6 +362,29 @@ def _open_takeover(state: RobotState, status: LocalStatus | None) -> str:
             return f"{OPEN_NOBODY_REFUSED}{_text(why)}"
         return OPEN_NOBODY
     return f"{_text(state.owner, MAX_WORD_CHARS)} owns the arm"
+
+
+def jaws_text(state: RobotState | None, status: LocalStatus | None) -> str | None:
+    """One line: what the person's trigger does to the jaws; None without the fact.
+
+    The fact is health["human"]["jaws"] of ROBOT_STATE. After a lost robot
+    connection `state` is the last one before it and says nothing of now.
+    """
+    jaws = _human(_health(state)).get("jaws")
+    if not isinstance(jaws, dict):
+        return None
+    if status is not None and not status.robot_connected:
+        return None
+    refusal = jaws.get("refusal")
+    refusal = _text(refusal) if isinstance(refusal, str) else ""
+    if jaws.get("matched") is True:
+        # A refusal here holds the jaws wider than the trigger asks.
+        return f"{JAWS_FOLLOW}; {refusal}" if refusal else JAWS_FOLLOW
+    asked = _number(jaws.get("asked"), 2)
+    level = _number(jaws.get("grip_level"), 2)
+    if refusal == _NOT_MATCHED and asked is not None and level is not None:
+        return JAWS_BRING.format(asked=asked, level=level)
+    return f"{JAWS_NOTHING}: {refusal}" if refusal else JAWS_NOTHING
 
 
 def event_bells(event: Event) -> int:

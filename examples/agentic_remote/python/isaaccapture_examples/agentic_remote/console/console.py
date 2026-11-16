@@ -59,6 +59,7 @@ from .status import (
     KIND_REFUSED,
     event_bells,
     help_block,
+    jaws_text,
     status_key,
     status_line,
     takeover_text,
@@ -66,7 +67,7 @@ from .status import (
 )
 
 if TYPE_CHECKING:
-    from ..protocol.local_messages import LocalNotice
+    from ..protocol.local_messages import LocalNotice, LocalStatus
     from ..protocol.messages import Message
     from ..robot_app.clock import Clock
 
@@ -491,6 +492,13 @@ class Console:
         with self._lock:
             self._status_key, self._status_at = key, now
         self._say(status_line(welcome, state, status, age))
+        self._say_jaws(state, status)
+
+    def _say_jaws(self, state: RobotState | None, status: LocalStatus | None) -> None:
+        """The line for the jaws under a person, while ROBOT_STATE has the fact."""
+        jaws = jaws_text(state, status)
+        if jaws is not None:
+            self._say(jaws)
 
     # Attaching
 

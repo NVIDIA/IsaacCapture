@@ -1216,9 +1216,7 @@ def test_the_view_can_send_only_view_status():
         ("__main__.py", "status"),
     ]
     main_source = (VIEW / "__main__.py").read_text(encoding="utf-8")
-    assert "status = self.model.view_status(now, self.model.thor_wall_now(now))" in (
-        main_source
-    )
+    assert "status = self.model.status_to_send(now)" in main_source
     # The model and the HTTP server cannot send at all.
     for file in ("model.py", "server.py"):
         tree = ast.parse((VIEW / file).read_text(encoding="utf-8"))
