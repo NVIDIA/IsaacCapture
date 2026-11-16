@@ -956,3 +956,654 @@ def test_the_robot_app_on_apais_mock_driver_dials_the_service(
     out = capsys.readouterr().out
     assert f"dialing the robot link service at {listener.endpoint}" in out
     assert left_threads() == []
+
+
+# The README
+
+README = CONFIGS.parent / "README.md"
+TESTS = repo_root() / "tests" / "python" / "examples" / "agentic_remote"
+# The heading the operator console and the agent program's task gate send the
+# operator to when a takeover, a person's ownership of the arm, cannot be
+# ended with the controller.
+NO_RIGHT_A = "A takeover that cannot be ended with right A"
+
+
+def readme_section(heading: str) -> str:
+    """The README from this heading line to the next heading of its level."""
+    readme = README.read_text(encoding="utf-8")
+    start = readme.index(f"\n{heading}\n")
+    level = heading.split()[0]
+    return readme[start : readme.index(f"\n{level} ", start + 1)]
+
+
+def config_files_named(text: str) -> set[str]:
+    """The names of the example's config files that a text mentions."""
+    import re
+
+    programs = r"robot_app|agent|link_service|view|human|camera_(?:sender|receiver)"
+    return set(re.findall(rf"\b(?:{programs})(?:_\w+)?\.yaml\b", text))
+
+
+def test_the_readme_has_the_section_the_console_and_the_task_gate_name():
+    from isaaccapture_examples.agentic_remote.agent import task_gate
+    from isaaccapture_examples.agentic_remote.console import status
+
+    assert f'README, "{NO_RIGHT_A}"' in status.OPEN_NO_CONTROLLER
+    remedies = [remedy for _, remedy in task_gate._REMEDIES]
+    assert any(f'README, "{NO_RIGHT_A}"' in remedy for remedy in remedies)
+    assert f"\n#### {NO_RIGHT_A}\n" in README.read_text(encoding="utf-8")
+
+
+def test_the_readme_lists_every_workstation_start_script_with_the_programs():
+    where = readme_section("### What runs where")
+    table = [line for line in where.splitlines() if line.startswith("|")]
+    gpu = where[where.index("use one GPU") :]
+    scripts = sorted(CONFIGS.parent.glob("run_*.sh"))
+    assert len(scripts) >= 6
+    for script in scripts:
+        if script.name == "run_robot_app.sh":  # the Thor's; under its own heading
+            continue
+        assert any(script.name in row for row in table), script.name
+        if "CUDA_VISIBLE_DEVICES=0" in script.read_text(encoding="utf-8"):
+            assert f"`{script.name}`" in gpu, script.name
+
+
+def test_the_readme_names_every_test_file_of_the_human_path():
+    tests = readme_section("## Run the tests")
+    names = sorted(path.name for path in TESTS.glob("test_human_*.py"))
+    assert len(names) >= 6
+    for name in [*names, "test_takeover.py", "test_demo2_programs.py"]:
+        assert (TESTS / name).is_file(), name
+        assert f"`{name}`" in tests, name
+
+
+def test_the_readme_names_only_config_files_that_are_there():
+    named = config_files_named(README.read_text(encoding="utf-8"))
+    assert {"robot_app_demo2.yaml", "robot_app_human_check.yaml"} <= named
+    assert sorted(name for name in named if not (CONFIGS / name).is_file()) == []
+    # The scan finds a file that is not there, however it is written.
+    assert config_files_named("see `configs/robot_app_demo3.yaml`, (view_x.yaml)") == {
+        "robot_app_demo3.yaml",
+        "view_x.yaml",
+    }
+
+
+# The README on the human path. The human joint box is limits.human.joint_min to
+# joint_max of the robot app's file: where a person may drive the arm. The
+# recovery region is rest.region_min to region_max: the start poses from which
+# a return to rest is taken. The rig file is the robot app's file for the rig,
+# the real arm.
+
+RIG_ROBOT_YAML = CONFIGS / "robot_app_rebot.yaml"
+# The two tests that run the recipes of "Run demo 2 on one machine" as processes.
+RECIPE_TESTS = (
+    "test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files",
+    "test_demo_2_with_the_agent_failing_first_runs_as_processes",
+)
+# The refusal of a takeover from a pose outside the human joint box, as quoted.
+NO_TAKEOVER = "`the arm is outside the human limits: ...; type rest`"
+
+
+def one_line(text: str) -> str:
+    """A text with every line break and its indent as one blank."""
+    return " ".join(text.split())
+
+
+def readme_row(start: str) -> str:
+    """The one table row of the README that begins with this text."""
+    lines = README.read_text(encoding="utf-8").splitlines()
+    [found] = [line for line in lines if line.startswith(start)]
+    return found
+
+
+def readme_item(start: str) -> str:
+    """The list item that begins with this text, on one line, up to the next."""
+    text = one_line(README.read_text(encoding="utf-8"))
+    at = text.index(start)
+    return text[at : text.index(" - **", at + 1)]
+
+
+def test_the_readme_says_what_the_rig_margin_does_for_a_typed_rest():
+    # The row of the typed rest's refusal for a start pose outside the region.
+    cell = readme_row("| `joint index N at X rad is outside the tested recovery region")
+    assert "In the rig file the box lies 0.02 rad inside the region" in cell
+    assert "this refusal does not come" in cell
+    # What a box that equals its region leaves after a STOP at its edge.
+    assert "That needs the person as control owner" in cell
+    assert "a new takeover is refused too" in cell and NO_TAKEOVER in cell
+    assert "no command moves the arm then" in cell
+    assert "[Known gaps](#known-gaps)" in cell
+
+
+def test_the_readme_rig_files_say_what_the_margin_is_for_and_what_it_costs():
+    rig = one_line(readme_section("## The rig files"))
+    assert "A STOP at such a pose leaves no squeeze" in rig
+    assert "a new takeover is refused there too" in rig and NO_TAKEOVER in rig
+    assert "so the typed `rest` is taken" in rig
+    cost = "In the outer 0.02 rad of the agent's working box a takeover is refused"
+    assert cost in rig
+    assert "No rule of the loader asks for the margin" in rig
+
+
+def test_the_readme_known_gaps_name_what_the_margin_leaves_and_a_box_without_one():
+    left = readme_item("- **In the outer 0.02 rad of the agent's working box")
+    assert "a takeover is refused" in left and NO_TAKEOVER in left
+    assert "The typed `rest` is the way out" in left
+    assert "If its path is refused there" in left
+    assert "no command moves the arm" in left
+    assert "the 48 V switch with the arm held by hand" in left
+    equal = readme_item("- **A robot file whose human joint box equals its region")
+    assert "a new takeover is refused" in equal
+    assert "the typed `rest` and a shutdown are refused for the start pose" in equal
+    assert "the 48 V switch with the arm held by hand" in equal
+
+
+def test_the_readme_gives_the_rig_files_human_joint_box_and_its_margin():
+    rig = yaml.safe_load(RIG_ROBOT_YAML.read_text(encoding="utf-8"))
+    box, rest = rig["limits"]["human"], rig["rest"]
+    told = one_line(readme_section("## The rig files"))
+
+    def listed(values: list[float]) -> str:
+        return "`[" + ", ".join(f"{value:g}" for value in values) + "]`"
+
+    assert f"`limits.human.joint_min` is {listed(box['joint_min'])}" in told
+    assert f"`limits.human.joint_max` is {listed(box['joint_max'])}" in told
+    region = f"{listed(rest['region_min'])} to {listed(rest['region_max'])}"
+    assert f"the region runs from {region}" in told
+    # The margin the README names is the file's, and so is where there is none.
+    above = [edge - high for high, edge in zip(box["joint_max"], rest["region_max"])]
+    below = [low - edge for low, edge in zip(box["joint_min"], rest["region_min"])]
+    margin = round(above[0], 6)
+    assert margin > 0.0
+    assert [round(value, 6) for value in above] == [margin] * 6
+    assert [round(value, 6) for value in below] == [margin, 0, 0, *[margin] * 3]
+    heading = f"**The human joint box lies {margin:g} rad inside `rest.region_*`.**"
+    assert heading in told
+    assert (
+        "The lower bound of the second and the third joint is the region's own, "
+        "with no margin"
+    ) in told
+    # Every other place of the README that names the margin names the file's.
+    import re
+
+    whole = one_line(README.read_text(encoding="utf-8"))
+    inside = r"([\d.]+) rad inside (?:`rest\.region_\*`|the region)"
+    named = re.findall(inside, whole) + re.findall(r"outer ([\d.]+) rad of", whole)
+    assert len(named) >= 8 and set(named) == {f"{margin:g}"}
+
+
+def test_the_readme_names_the_tests_that_ran_the_recipes_of_demo_2():
+    recipe = one_line(readme_section("## Run demo 2 on one machine"))
+    run = one_line(readme_section("## What was run"))
+    by_tests, never = run.split(" Never run: ")
+    tests = (TESTS / "test_demo2_programs.py").read_text(encoding="utf-8")
+    for name in RECIPE_TESTS:
+        assert f"\ndef {name}(" in tests, name
+        assert f"`{name}`" in recipe, name
+        assert f"`{name}`" in by_tests, name
+    # Neither recipe is said to be not run, other than by a person.
+    assert "was not run" not in recipe and "not run either" not in recipe
+    assert recipe.count("A person has not run them.") == 1
+    assert recipe.count("a person has not run it.") == 1
+    assert "as processes or by hand" not in never
+    assert "Tests ran both as processes." in never
+
+
+def test_the_readme_tells_a_failed_pass_by_where_its_error_came():
+    told = readme_item(
+        "- **A pass whose logic raises an error does not end the program.**"
+    )
+    assert "Right B is still a STOP on such a pass" not in told
+    assert "nothing follows the hand until a new squeeze. Right B" not in told
+    assert "a STOP or a request that was due on that pass still goes out" in told
+    assert "An error before the buttons are read" in told
+    assert "is a STOP on the next pass that reads it" in told
+
+
+def test_the_readme_row_of_unproven_jaws_names_jaws_that_are_not_referenced():
+    cell = readme_row("| `the jaws are not proven empty (...)` |")
+    assert "`open` is refused too" in cell
+    assert "(unknown): the jaws are not referenced`" in cell
+
+
+def test_the_readme_defines_the_checkers_and_the_limit_set_at_their_first_use():
+    text = one_line(README.read_text(encoding="utf-8"))
+    for term in ("agent's checker", "recovery checker", "limit set"):
+        found = [text.find(term), text.find(term.capitalize())]
+        first = min(at for at in found if at >= 0)
+        assert text[first - 2 : first] == "**", term
+    assert "jaw load" not in text
+
+
+def test_the_readme_says_in_one_way_that_the_human_program_writes_no_raw_stop():
+    text = one_line(README.read_text(encoding="utf-8"))
+    assert "writes no raw STOP, as the console does" not in text
+    assert (
+        "unlike the console, which writes a raw STOP when it is not attached, "
+        "the human program writes none"
+    ) in text
+
+
+# The README on where the human program runs, on the jaws under a person and on
+# a low gripper tip. On the rig the human program runs on the Thor, the machine
+# on the robot, attached at a Unix socket that the robot app serves when it is
+# started with --human-socket; on one machine it attaches to the robot link
+# service. The jaws are the gripper's fingers; a jaw opening is a share of
+# their travel, and the grip level is the jaw opening in force when a person
+# takes the arm over. The gripper tip is low below the table clearance or
+# inside the agent's last grasp region: a person lifts it out.
+
+HUMAN_YAML = CONFIGS / "human.yaml"
+RIG_HUMAN_YAML = CONFIGS / "human_rebot.yaml"
+HUMAN_SOCKET = "--human-socket"
+ON_THOR = "### The human program on the Thor"
+# The item of "A takeover, step by step" on a takeover with a low gripper tip.
+LOW_TIP_ITEM = "- **A low gripper tip: a person lifts the arm out.**"
+
+
+def test_the_readme_places_the_human_program_on_the_thor_on_the_rig():
+    text = one_line(README.read_text(encoding="utf-8"))
+    opening = text[: text.index(" ## Terms ")]
+    assert (
+        "On the rig the human program runs on the Thor, attached at the robot "
+        f"app's own socket (`{HUMAN_SOCKET}`)"
+    ) in opening
+    assert (
+        "On one machine and in the tests the human program attaches to the robot "
+        "link service"
+    ) in opening
+    # No place calls it a workstation program.
+    for old in (
+        "**human program** on the workstation",
+        "the workstation program in the role `human`",
+        "| Human program | Workstation |",
+        "| `configs/human_rebot.yaml` | Workstation |",
+        "this folder does it on the workstation",
+    ):
+        assert old not in text, old
+    where = readme_row("| Human program |").split("|")
+    assert where[2].strip().startswith("Thor on the rig")
+    assert "--config configs/human_rebot.yaml`" in where[3]
+    assert f"started with `{HUMAN_SOCKET}`" in where[3]
+    assert readme_row("| `configs/human_rebot.yaml` |").split("|")[2].strip() == "Thor"
+    # The two files place it so: the rig's names a socket of its own, and the
+    # one-machine file leaves the robot link service's default.
+    rig = yaml.safe_load(RIG_HUMAN_YAML.read_text(encoding="utf-8"))
+    demo = yaml.safe_load(HUMAN_YAML.read_text(encoding="utf-8"))
+    assert rig["socket_path"] and demo["socket_path"] == ""
+    assert f'`socket_path: "{rig["socket_path"]}"`' in text
+    assert f'`teleop.endpoint: "{rig["teleop"]["endpoint"]}"`' in text
+
+
+def test_the_readme_gives_the_robot_app_the_socket_the_rig_human_file_names():
+    path = yaml.safe_load(RIG_HUMAN_YAML.read_text(encoding="utf-8"))["socket_path"]
+    # The robot app's command line takes the argument, with --connect only.
+    served = [*SIM, "--connect", "127.0.0.1:9", HUMAN_SOCKET, path]
+    args = robot_main._parser().parse_args(served)
+    assert args.human_socket == path and robot_main._unusable(args) is None
+    alone = robot_main._parser().parse_args([*SIM, HUMAN_SOCKET, path])
+    refusal = robot_main._unusable(alone)
+    text = one_line(README.read_text(encoding="utf-8"))
+    assert refusal is not None and f"`{refusal}`" in text
+    # Every command of the README that starts the robot app for the human
+    # program on the Thor gives it the path of the rig's human file.
+    given = f"{HUMAN_SOCKET} {path}"
+    thor = readme_section(ON_THOR)
+    assert f"    {given}\n" in thor  # the command for the Thor
+    assert f"Started with `{given}`" in one_line(thor)
+    assert f"{given}` |" in readme_row("| F0 |")
+    assert f"with `{given}` added" in readme_row("| 15 |")
+    assert f"`{given}`" in one_line(readme_section("### The real driver"))
+    # And no command names another path.
+    import re
+
+    paths = set(re.findall(rf"{HUMAN_SOCKET} (~?/[^\s`]+)", text))
+    assert paths == {path}
+
+
+def test_the_readme_gives_the_two_jaw_settings_of_every_robot_app_file():
+    files = sorted(CONFIGS.glob("robot_app*.yaml"))
+    assert len(files) >= 5
+    shipped = set()
+    for file in files:
+        human = yaml.safe_load(file.read_text(encoding="utf-8"))["human"]
+        shipped.add((human["trigger_jaws"], human["jaw_match_tol"]))
+    [(on, tol)] = shipped  # one pair of values in every file
+    default = RobotAppConfig.default().human
+    assert (default.trigger_jaws, default.jaw_match_tol) == (on, tol)
+    switch = f"`human.trigger_jaws: {str(on).lower()}`"
+    both = f"{switch} and `human.jaw_match_tol: {tol:g}` in every robot app file"
+    # The row of "The settings that ship off", and the rule of the jaws.
+    assert readme_row("| `human.trigger_jaws: ").startswith(f"| {both} |")
+    text = one_line(README.read_text(encoding="utf-8"))
+    assert f"With {switch} in the robot app's file, the shipped value" in text
+    near = f"is within `human.jaw_match_tol` ({tol:g} of the jaw travel) of the grip"
+    assert near in text
+    rig = one_line(readme_section("## The rig files"))
+    assert f"({switch}, `human.jaw_match_tol: {tol:g}`)" in rig
+    # The other position is told as what it is, not as what ships.
+    off = f"`human.trigger_jaws: {str(not on).lower()}`"
+    assert f"With {off} the trigger does nothing" in text
+    assert f"{off} in every robot app file" not in text
+
+
+def test_the_readme_quotes_the_rule_of_the_lift_as_the_robot_app_has_it():
+    from isaaccapture_examples.agentic_remote.robot_app import app, human
+
+    steps = one_line(readme_section("### A takeover, step by step"))
+    rule = steps[steps.index(LOW_TIP_ITEM) :]
+    # What a takeover with a low gripper tip adds to its line.
+    assert f"the takeover's line ends `{app.LOW_TIP}`" in rule
+    assert f"the line goes on `{app.LOW_TIP}`" in readme_row("| 5 | B stays down")
+    # The refusal of a target that would lower the tip, and its tolerance.
+    ended = "`human drive ended: " + human.LIFT + "<why the tip is low>, and the target"
+    assert ended in rule
+    tolerance = f"{human.TIP_TOL_M * 1000:g} mm"
+    assert f"puts the tip more than {tolerance} lower than it is measured" in rule
+    lowered = readme_row("| While the measured gripper tip is low")
+    assert f"`human drive ended: {human.LIFT}...`" in lowered
+    # APAI's own rule under its table clearance, and what stays refused.
+    assert "Below APAI's own table clearance every step must rise" in rule
+    assert "The typed `rest` stays refused there" in rule
+    # The old rule is gone, and the test file of the rule is named.
+    whole = one_line(README.read_text(encoding="utf-8"))
+    assert "Below the table clearance nobody can move the arm" not in whole
+    assert "Below the table clearance a takeover is refused too" not in whole
+    assert (TESTS / "test_lift_out.py").is_file()
+    assert "`test_lift_out.py`" in readme_section("## Run the tests")
+
+
+def test_the_readme_quotes_what_the_trigger_is_told_as_the_programs_say_it():
+    from isaaccapture_examples.agentic_remote.console import status
+    from isaaccapture_examples.agentic_remote.human import logic
+    from isaaccapture_examples.agentic_remote.robot_app import gripper
+
+    text = one_line(README.read_text(encoding="utf-8"))
+    # The human program: its two notes and the trigger's two dead zones.
+    for note in (logic.NOTE_TRIGGER_PULL, logic.NOTE_TRIGGER_EASE):
+        assert f"`{note}`" in text, note
+    low, high = logic.TRIGGER_OPEN_MAX, logic.TRIGGER_CLOSED_MIN
+    assert (logic.jaw_opening(low), logic.jaw_opening(high)) == (1.0, 0.0)
+    assert logic.jaw_opening(0.25) == 0.75
+    zones = (
+        f"A trigger at or below {low:g} asks for fully open jaws, one at or above "
+        f"{high:g} for closed jaws"
+    )
+    assert zones in text
+    # The console's jaws line.
+    for line in (
+        status.JAWS_FOLLOW,
+        status.JAWS_BRING.format(asked="X", level="Y"),
+        f"{status.JAWS_NOTHING}: <reason>",
+    ):
+        assert f"`{line}`" in text, line
+    # The robot app's reasons that the rule of the jaws quotes.
+    for reason in (gripper.NOT_MATCHED, gripper.NO_TIGHTER):
+        assert f"`{reason}`" in text, reason
+    assert f"(`{gripper.NO_CLOSING}the live view is not fresh: ...`)" in text
+
+
+# The README on the workstation's start script, on the agent program's
+# arguments and on three refusals of the robot app. tmux is a program that
+# splits a terminal into panes; the script starts the workstation's programs of
+# demo 1 in the panes of one tmux window. The experiment's launcher is the
+# program of the experiment folder whose arguments the agent program takes. A
+# GRIPPER is the link message of one jaw command and a MOVE that of one move;
+# the expiry of either is a time of the Thor's monotonic clock. A torque
+# release switches the motors off at measured rest.
+
+WORKSTATION_SCRIPT = CONFIGS.parent / "run_workstation.sh"
+START_SCRIPTS = "### The start scripts"
+LAUNCHER_OPTIONS = "### The options of the experiment's launcher"
+AGENT_YAMLS = (CONFIGS / "agent.yaml", CONFIGS / "agent_rebot.yaml")
+TORQUE_RULE = "## The rule: torque is never cut away from rest"
+RESULT_WAIT_S = 5.0  # real seconds a test waits for a RESULT
+
+
+def workstation_variables() -> list[str]:
+    """The variables run_workstation.sh asks for, from its own list."""
+    import re
+
+    script = WORKSTATION_SCRIPT.read_text(encoding="utf-8")
+    listed = re.search(r"^names=\(\n(.*?)\n\)$", script, re.M | re.S)
+    assert listed is not None
+    return listed.group(1).split()
+
+
+def workstation_script(folder: Any, *arguments: str, **changed: str | None) -> Any:
+    """Run run_workstation.sh --print; the process as it ended.
+
+    With --print the script starts nothing. Its variables name this Python
+    and `folder`; `changed` replaces one, or with None leaves it out.
+    """
+    import subprocess
+
+    env = {name: str(folder) for name in workstation_variables()}
+    env["AGENTIC_REMOTE_AGENT_PYTHON"] = sys.executable
+    env = {name: value for name, value in {**env, **changed}.items() if value}
+    return subprocess.run(
+        ["bash", str(WORKSTATION_SCRIPT), "--print", *arguments],
+        env={**env, "PATH": os.environ["PATH"]},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
+    tmp_path,
+):
+    import re
+    import subprocess
+
+    script = WORKSTATION_SCRIPT.read_text(encoding="utf-8")
+    told = readme_section(START_SCRIPTS)
+    parsed = subprocess.run(
+        ["bash", "-n", str(WORKSTATION_SCRIPT)], capture_output=True, check=False
+    )
+    assert parsed.returncode == 0, parsed.stderr
+    done = workstation_script(tmp_path, "--thor", "192.0.2.7")
+    assert (done.returncode, done.stderr) == (0, "")
+    lines = done.stdout.splitlines()
+    printed = {
+        line[2:].split()[0]: command
+        for line, command in zip(lines, lines[1:])
+        if line.startswith("# ")
+    }
+    # The panes the script makes are the rows of the README's table.
+    panes = re.findall(r"-T (\w+)$", script, re.M)
+    panes += re.findall(r"\$\(pane (\w+)\)", script)
+    rows = dict(re.findall(r"^\| `([a-z]+)` \| `([^`]+)`", told, re.M))
+    assert sorted(rows) == sorted(panes) == sorted(printed)
+    assert len(rows) == 5
+    variables = workstation_variables()
+    assert len(variables) == 6
+    for pane, command in rows.items():
+        given = command.removeprefix("python ").replace("ADDRESS", "192.0.2.7")
+        assert printed[pane].endswith(f" {given}"), pane
+        # Each pane's command carries the variables itself, as the README says.
+        for name in variables:
+            assert f" {name}=" in printed[pane], (pane, name)
+    for name in variables:
+        assert f"`{name}`" in told, name
+    # Without --thor the camera receiver's command names no address.
+    no_address = workstation_script(tmp_path).stdout
+    assert "./run_camera_receiver.sh --host THOR_ADDRESS\n" in no_address
+    told = one_line(told)
+    assert "with `THOR_ADDRESS` in the address's place" in told
+    # The refusals: one line, exit code 2, nothing printed.
+    unknown = workstation_script(tmp_path, "--bogus")
+    assert (unknown.returncode, unknown.stdout) == (2, "")
+    assert unknown.stderr.count("\n") == 1
+    for argument in ("--env FILE", "--thor ADDRESS", "--session NAME", "--print"):
+        assert argument in unknown.stderr and f"[{argument}]" in told, argument
+    for name in variables:
+        unset = workstation_script(tmp_path, **{name: None})
+        assert (unset.returncode, unset.stdout) == (2, ""), name
+        assert name in unset.stderr and unset.stderr.count("\n") == 1, name
+    nowhere = str(tmp_path / "no-python")
+    no_python = workstation_script(tmp_path, AGENTIC_REMOTE_AGENT_PYTHON=nowhere)
+    assert (no_python.returncode, no_python.stdout) == (2, "")
+    # The session's name, and the row of the programs' table.
+    session = re.search(r'^session="(\w+)"$', script, re.M)
+    assert session is not None
+    assert f"names the tmux session (`{session.group(1)}`)" in told
+    assert f"`attach with: tmux attach -t {session.group(1)}`" in told
+    where = readme_row("| The console, the agent program, the robot link service,")
+    assert "`bash run_workstation.sh --env FILE --thor THOR_ADDRESS`" in where
+    never = one_line(readme_section("## What was run")).split(" Never run: ")[1]
+    assert "`run_workstation.sh` with tmux: a test runs it with `--print` only" in never
+
+
+def test_the_readme_names_every_argument_the_agent_program_takes(monkeypatch):
+    import re
+    from pathlib import Path
+
+    from isaaccapture_examples.agentic_remote.agent import config as agent_config
+    from isaaccapture_examples.agentic_remote.agent import launcher
+
+    for name in agent_config.PATH_VARIABLES:
+        monkeypatch.setenv(name, "/absolute")
+    parser = launcher._parser()
+    taken = {
+        option
+        for action in parser._actions
+        for option in action.option_strings
+        if option.startswith("--") and option != "--help"
+    }
+    program = readme_section("### The agent program")
+    usage = program[program.index("```text") : program.index("\n```\n")]
+    assert set(re.findall(r"--[a-z-]+", usage)) == taken
+    told = readme_section(LAUNCHER_OPTIONS)
+    rows = dict(re.findall(r"^\| `(--[a-z-]+)[^|]*\| (.*) \|$", told, re.M))
+    assert len(rows) == 7 and set(rows) <= taken
+
+    def run(settings: Any, *arguments: str) -> Any:
+        args = parser.parse_args(["--config", "unused", *arguments])
+        return launcher._run_options(args, settings)
+
+    # The command the README gives is taken on the rig's file, and the two
+    # arguments it calls ignored change nothing of the run.
+    rig = agent_config.load_settings(CONFIGS / "agent_rebot.yaml")
+    command = re.search(r"^\./run_agent\.sh --config \S+ (.*?)\n```", told, re.M | re.S)
+    assert command is not None
+    given = command.group(1).replace("\\\n", " ").split()
+    assert {"--operate", "--depth-backend", "--motion-approval"} < set(given)
+    kept = [word for word in given if word not in ("--operate", "ffs")]
+    kept.remove("--depth-backend")
+    took = run(rig, *given)
+    assert took == run(rig, *kept)
+    assert (took.record_debug, took.batch_milestones) == (True, True)
+    for ignored in ("--operate", "--depth-backend"):
+        assert rows[ignored].startswith("Accepted and ignored"), ignored
+    # What the run does not take, as the README quotes it.
+    text = one_line(told)
+    mock = agent_config.load_settings(CONFIGS / "agent_mock.yaml")
+    for settings, arguments in (
+        (rig, ["--motion-approval", "tool"]),
+        (rig, ["--record-debug", "--no-timing"]),
+        (mock, ["--no-timing"]),
+    ):
+        with pytest.raises(agent_config.ConfigError) as refused:
+            run(settings, *arguments)
+        reason = str(refused.value)
+        head = reason[: reason.index(":" if ":" in reason else ";") + 1]
+        head = head.removeprefix("--no-timing ")
+        assert f"{head} ...`" in text, reason
+    # The defaults: the size, and the two recordings of both shipped files.
+    assert run(rig).debug_max_gib == agent_config.DEBUG_MAX_GIB
+    assert f"({agent_config.DEBUG_MAX_GIB:g})" in rows["--debug-max-gib"]
+    keys = one_line(readme_section("### `configs/agent.yaml`"))
+    for file in AGENT_YAMLS:
+        written = yaml.safe_load(file.read_text(encoding="utf-8"))["experiment"]
+        assert (written["timing"], written["model_trace"]) == (True, True), file
+        assert f"`configs/{file.name}`" in text
+    assert "`timing` (true) and `model_trace` (true)" in keys
+    assert (run(rig).timing, run(rig).model_trace) == (True, True)
+    assert run(mock) == agent_config.RunOptions()
+    # The program's first lines, and what the debug recording leaves out.
+    lines = launcher._option_lines(took, Path("run"))
+    for line in lines:
+        assert f"`{line.split(':')[0]}:`" in text, line
+    [debug] = [line for line in lines if line.startswith("debug recording:")]
+    for event in re.search(r"\(([^)]+)\)", debug).group(1).split(", "):
+        assert f"`{event}`" in text, event
+
+
+def test_the_readme_quotes_a_grippers_expiry_as_the_robot_app_refuses_it(robot_app):
+    import dataclasses
+    import re
+
+    from isaaccapture_examples.agentic_remote.protocol.messages import Gripper
+
+    h = robot_app
+    h.new_task()
+    late = h.client.gripper(0.0, expires_mono_s=h.clock.monotonic() - 0.25)
+    refused = h.client.wait_result(late, timeout_s=RESULT_WAIT_S)
+    assert refused.status == "refused" and h.arm.jaw_commands == []
+    quoted = re.sub(r"\d+\.\d{3}", "X.XXX", refused.reason)
+    jaws = one_line(readme_section("## What the jaws do"))
+    assert f"with `{quoted}`; the jaws are sent nothing" in jaws
+    # The field as the README names it, and a GRIPPER that carries none.
+    fields = {field.name: field for field in dataclasses.fields(Gripper)}
+    assert fields["expires_mono_s"].default is None
+    assert "**A GRIPPER can carry an expiry**, `expires_mono_s`" in jaws
+    h.clock.advance(1000.0)
+    plain = h.client.gripper(0.5)
+    assert h.client.wait_result(plain, timeout_s=RESULT_WAIT_S).status == "completed"
+    assert "A GRIPPER without the field never expires" in jaws
+    # The waits of the agent's files that the README gives in seconds.
+    move = one_line(readme_section("### A move, its permits and the camera evidence"))
+    for file in AGENT_YAMLS:
+        agent = yaml.safe_load(file.read_text(encoding="utf-8"))
+        wait = f"{agent['jaws']['result_timeout_s']:g} s"
+        assert f"`jaws.result_timeout_s` ({wait})" in jaws, file
+        assert f"no RESULT within {wait}; the arm holds" in jaws, file
+        assert f"`move.expires_in_s` ({agent['move']['expires_in_s']:g} s)" in move
+
+
+def test_the_readme_quotes_a_failed_torque_release_as_the_robot_app_says_it(robot_app):
+    from isaaccapture_examples.agentic_remote.console import status
+    from isaaccapture_examples.agentic_remote.robot_app.interfaces import ArmFault
+
+    h = robot_app
+
+    def failing() -> None:
+        raise ArmFault("bus off")
+
+    h.arm.release_torque = failing
+    failed = h.client.wait_result(h.client.release(), timeout_s=RESULT_WAIT_S)
+    state = h.client.wait_state(lambda s: s.stop_level == "fault")
+    assert failed.status == "failed" and state.torque_on is True
+    rule = one_line(readme_section(TORQUE_RULE))
+    commands = one_line(readme_section("## What the operator's commands do"))
+    carried = one_line(
+        readme_section(
+            "### What WELCOME, ROBOT_STATE and VIEW_STATUS carry for the operator"
+        )
+    )
+    # The motion word, and how the fault-stop's reason begins.
+    assert f"The motion state becomes `{state.motion}`" in rule
+    assert f"The motion state is `{state.motion}`" in commands
+    assert f"and `{state.motion}`. The last one follows a torque release" in carried
+    begins = state.fault_reason.removesuffix("bus off")
+    assert begins != state.fault_reason and failed.reason == f"fault: {begins}bus off"
+    assert f"with the reason `{begins}the driver's disconnect failed: " in rule
+    # What the console shows of the motors then.
+    shown = status.status_line(None, state, None, 0.0)
+    [torque] = [part for part in shown.split(" | ") if part.startswith("torque ")]
+    assert f"The console shows `{torque}`" in rule
+    assert f"`{torque}` while the motion is `{state.motion}`" in one_line(
+        readme_section("### The operator console")
+    )
+    # What a return to rest is told once the fault-stop was reset.
+    reset = h.client.wait_result(h.client.reset(), timeout_s=RESULT_WAIT_S)
+    assert reset.status == "completed"
+    h.client.wait_state(lambda s: s.stop_level == "none")
+    rest = h.client.wait_result(h.client.rest(), timeout_s=RESULT_WAIT_S)
+    assert rest.status == "refused" and h.arm.sent == []
+    assert f"refused with `{rest.reason}`" in rule
+    assert f"refused with `{rest.reason}`" in commands
+    assert "`test_release_failed.py`" in readme_section("## Run the tests")
