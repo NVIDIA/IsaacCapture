@@ -77,6 +77,10 @@ public:
     {
         calls.push_back({ "joint_state", { b.begin(), b.end() }, t, t, {} });
     }
+    void clear_joint_state()
+    {
+        calls.push_back({ "clear_joint_state" });
+    }
     void push_tactile(std::span<const std::uint8_t> b, std::int64_t t, std::int64_t raw)
     {
         calls.push_back({ "tactile", { b.begin(), b.end() }, t, raw, {} });
@@ -328,8 +332,8 @@ TEST_CASE("pipeline: a reopened glove keeps nothing of its earlier meta", "[unit
     f.pipeline.set_meta(meta());
     f.pipeline.on_glove(with_tactile(glove(10 * kMs), 1, 10 * kMs), 10 * kMs);
     f.pipeline.reset();
-    CHECK(f.sink.kinds() == std::vector<std::string>{ "joint_state", "shape", "tactile", "create", "hand", "destroy",
-                                                      "clear_tactile", "clear_shape" });
+    CHECK(f.sink.kinds() == std::vector<std::string>{ "joint_state", "shape", "tactile", "create", "hand",
+                                                      "clear_joint_state", "destroy", "clear_tactile", "clear_shape" });
     // The source sets no meta for a reopened stream it cannot use: the earlier TactileMetadata is not resent and the
     // earlier glove's tactile reasons are gone.
     f.pipeline.on_tick(10 * kMs + kShapeResendNs + 1);
@@ -398,4 +402,30 @@ TEST_CASE("pipeline: split tactile of a glove without tactile sensors is ignored
     f.pipeline.on_tactile(0, TactileSample{ 1, 10 * kMs, true, true, kTwoTaxels }, 10 * kMs);
     CHECK(f.sink.of("tactile").empty());
     CHECK(f.sink.of("shape").empty());
+}
+
+TEST_CASE("pipeline: the joint state of a stalled glove is removed and comes back with its next sample", "[unit]")
+{
+    Fixture f;
+    f.pipeline.set_meta(meta(false));
+    f.pipeline.on_glove(glove(10 * kMs), 10 * kMs);
+    f.pipeline.on_tick(10 * kMs + kStallNs);
+    CHECK(f.sink.of("clear_joint_state").empty());
+
+    f.pipeline.on_tick(10 * kMs + kStallNs + 1);
+    f.pipeline.on_tick(10 * kMs + kStallNs + 2); // Removed once.
+    const std::vector<std::string> removed{ "joint_state", "create", "hand", "clear_joint_state", "destroy" };
+    CHECK(f.sink.kinds() == removed);
+
+    f.pipeline.on_glove(glove(100 * kMs), 100 * kMs);
+    const auto joint_states = f.sink.of("joint_state");
+    REQUIRE(joint_states.size() == 2);
+    CHECK(joint_states[1].t_ns == 100 * kMs);
+    CHECK(f.pipeline.health(100 * kMs).hand_active);
+
+    // A reopened glove leaves no joint state of the earlier stream.
+    f.pipeline.reset();
+    CHECK(f.sink.of("clear_joint_state").size() == 2);
+    f.pipeline.reset();
+    CHECK(f.sink.of("clear_joint_state").size() == 2);
 }

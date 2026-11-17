@@ -115,7 +115,7 @@ std::array<PluginDeviceStatusEntry, 3> hand_status(Hand hand, const HandHealth& 
 
 } // namespace
 
-//! One hand's OpenXR outputs. The hand and the tactile collections exist only while the pipeline says so.
+//! One hand's OpenXR outputs. Each exists only while the pipeline says so.
 class RevoHumanPlugin::HandOutput
 {
 public:
@@ -127,14 +127,20 @@ public:
           time_converter_(handles),
           wrists_(wrists),
           hand_(hand),
-          collection_(prefix + "_" + hand_name(hand)),
-          joint_state_(handles, pusher_config(collection_ + "_joint_state", kJointStateMaxBytes, "joint_state", hand))
+          collection_(prefix + "_" + hand_name(hand))
     {
     }
 
     void push_joint_state(std::span<const std::uint8_t> buffer, std::int64_t sample_ns)
     {
-        joint_state_.push_buffer(buffer.data(), buffer.size(), sample_ns, sample_ns);
+        if (!joint_state_)
+            joint_state_ = std::make_unique<core::SchemaPusher>(
+                handles_, pusher_config(collection_ + "_joint_state", kJointStateMaxBytes, "joint_state", hand_));
+        joint_state_->push_buffer(buffer.data(), buffer.size(), sample_ns, sample_ns);
+    }
+    void clear_joint_state()
+    {
+        joint_state_.reset();
     }
     void push_tactile(std::span<const std::uint8_t> buffer, std::int64_t sample_ns, std::int64_t raw_ns)
     {
@@ -218,7 +224,7 @@ private:
     plugin_utils::WristPoseSource& wrists_;
     Hand hand_;
     std::string collection_;
-    core::SchemaPusher joint_state_;
+    std::unique_ptr<core::SchemaPusher> joint_state_;
     std::unique_ptr<core::SchemaPusher> tactile_;
     std::unique_ptr<core::SchemaPusher> shape_;
     std::size_t shape_size_ = 0;
