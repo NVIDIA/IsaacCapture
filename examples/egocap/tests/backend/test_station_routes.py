@@ -217,7 +217,8 @@ def test_a_change_that_would_start_a_new_batch_is_refused_while_an_interrupted_t
     assert StationStore(tmp_path / "stations.json").load().selected.name == "Bench A"
     # What leaves the batch alone is still allowed: the station's cameras, and another station's record.
     kept = client.put(f"/api/stations/{bench}", json={"camera_roles": {"wrist_left": None}}, headers=AUTH)
-    assert kept.status_code == 200 and client.delete(f"/api/stations/{cart}", headers=AUTH).status_code == 200
+    removed = client.delete(f"/api/stations/{cart}", headers=AUTH)
+    assert (kept.status_code, removed.status_code) == (200, 200)
     # Once the take is recovered or discarded the change goes through.
     service.episode = None
     renamed = client.put(f"/api/stations/{bench}", json={"name": "Bench Z"}, headers=AUTH)
