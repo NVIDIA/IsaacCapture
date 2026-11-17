@@ -25,6 +25,7 @@ from typing import Any
 from ..agent.link_client import CLOCK_STEP_S
 from ..protocol.local_messages import LocalStatus
 from ..protocol.messages import Event, Message, RobotState, ViewStatus, Welcome
+from ..robot_app.text import TORQUE_NOT_HOLDING, TORQUE_UNKNOWN, torque_text
 
 # The age a VIEW_STATUS carries when the view is not live.
 AGE_WHEN_NOT_LIVE_S = 3600.0
@@ -48,6 +49,8 @@ RECORDED = "RECORDED, NOT LIVE"
 HUMAN_DRIVING = "HUMAN DRIVING"
 
 _PERMIT_KEYS = ("move_id", "through_index", "evidence_age_s", "expires_in_s")
+# ROBOT_STATE's motion after a torque release whose driver call failed.
+_RELEASE_FAILED = "release_failed"
 
 
 class ViewModel:
@@ -389,6 +392,10 @@ class ViewModel:
 def _state_json(state: RobotState) -> dict[str, Any]:
     health = state.health if isinstance(state.health, dict) else {}
     refusal = health.get("permit_refusal")
+    motors = health.get("motors")
+    hold = motors.get("state") if isinstance(motors, dict) else None
+    # After a torque release that failed the motors may be on or off.
+    torque = torque_text(state.torque_on, hold, state.motion == _RELEASE_FAILED)
     return {
         "owner": state.owner,
         "owner_number": state.owner_number,
@@ -402,10 +409,69 @@ def _state_json(state: RobotState) -> dict[str, Any]:
         "move_stage": state.move_stage,
         "jaw_load": state.gripper.load,
         "torque_on": state.torque_on,
+        # The page's Torque row: what the robot app says of the motors, and
+        # whether it is written as a warning. torque_on alone says only that
+        # the robot app has not released the motors.
+        "torque": torque.removeprefix("torque "),
+        "torque_bad": torque in (TORQUE_NOT_HOLDING, TORQUE_UNKNOWN),
         "assistance_wait_s": state.assistance_wait_s,
         "permit": _permit_json(health.get("permit")),
         "permit_refusal": refusal if isinstance(refusal, str) else "",
         "view_age_s": state.view_age_s,
+        "joints": _joints_json(state),
+        "jaw": _jaw_json(state),
+        # How old the oldest of the joints' readings was when the robot app
+        # built this ROBOT_STATE; None while a joint has no valid reading.
+        "reading_age_s": _number_or_none(health.get("reading_age_s")),
+        # A missed deadline is a setpoint of a move that the robot app sent
+        # late; it counts them from its start. None when it reports no count.
+        "missed_deadlines": _count_or_none(health.get("missed_deadlines")),
+    }
+
+
+def _joints_json(state: RobotState) -> list[dict[str, Any]]:
+    """Per joint: its measured value, the last target sent and their difference.
+
+    "q", "target" and "diff" (measured minus target) are in rad; "deg" is "q"
+    in degrees. A joint without a valid reading has "valid" false and no
+    value; one without a target has no target. Either way it has no difference.
+    """
+    targets = state.target_q if isinstance(state.target_q, list) else []
+    rows = []
+    for sample in state.joints:
+        valid = sample.valid is True and _is_number(sample.value)
+        q = sample.value if valid else None
+        target = None
+        if 0 <= sample.joint < len(targets):
+            target = _number_or_none(targets[sample.joint])
+        rows.append(
+            {
+                "joint": sample.joint,
+                "valid": valid,
+                "q": q,
+                "deg": None if q is None else math.degrees(q),
+                "target": target,
+                "diff": None if q is None or target is None else q - target,
+            }
+        )
+    return rows
+
+
+def _jaw_json(state: RobotState) -> dict[str, Any]:
+    """The jaw opening, the last jaw target and their difference.
+
+    All three are shares of the jaw travel, 1.0 fully open. Without a valid
+    jaw reading "valid" is false and there is no opening.
+    """
+    jaws = state.gripper
+    valid = jaws.valid is True and _is_number(jaws.opening)
+    opening = jaws.opening if valid else None
+    target = _number_or_none(jaws.last_target)
+    return {
+        "valid": valid,
+        "opening": opening,
+        "target": target,
+        "diff": None if opening is None or target is None else opening - target,
     }
 
 
@@ -436,3 +502,14 @@ def _is_number(value: Any) -> bool:
         and not isinstance(value, bool)
         and math.isfinite(value)
     )
+
+
+def _number_or_none(value: Any) -> float | None:
+    return value if _is_number(value) else None
+
+
+def _count_or_none(value: Any) -> int | None:
+    """A count as the page shows it: a whole number of 0 or more, else None."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value

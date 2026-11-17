@@ -34,9 +34,13 @@ acknowledgement. Only the page loaded last has the valid one.
     border-bottom: 1px solid #333; }
   th { width: 14em; font-weight: normal; color: #999; }
   td.bad { color: #ff6b60; font-weight: bold; }
+  #joints { margin-top: 0; font-family: monospace; }
+  #joints th, #joints td { width: auto; text-align: right; }
+  #loop { margin: 0 0 4px; }
+  #loop.bad { color: #ff6b60; font-weight: bold; }
   h2 { font-size: 15px; color: #999; margin: 14px 0 4px; }
   ol { list-style: none; margin: 0; padding: 0; font-family: monospace; }
-  body.lost table, body.lost ol { opacity: 0.4; }
+  body.lost table, body.lost ol, body.lost p { opacity: 0.4; }
 </style>
 </head>
 <body>
@@ -47,6 +51,9 @@ acknowledgement. Only the page loaded last has the valid one.
     <div id="overlay">NO PICTURE</div>
   </div>
   <table><tbody id="rows"></tbody></table>
+  <h2>Measured joints and the last target sent</h2>
+  <p id="loop"></p>
+  <table id="joints"><tbody id="jointRows"></tbody></table>
   <h2>Last EVENTs of the robot app</h2>
   <ol id="events"></ol>
 </main>
@@ -65,6 +72,8 @@ const canvas = document.getElementById("picture");
 const banner = document.getElementById("banner");
 const overlay = document.getElementById("overlay");
 const rows = document.getElementById("rows");
+const loop = document.getElementById("loop");
+const jointRows = document.getElementById("jointRows");
 const events = document.getElementById("events");
 let pictureMs = 200;
 let drawnSeq = null;
@@ -127,6 +136,50 @@ function row(name, text, bad) {
   rows.appendChild(line);
 }
 
+function figure(value, digits) {
+  return typeof value === "number" ? value.toFixed(digits) : "-";
+}
+
+function cells(tag, texts, bad) {
+  const line = document.createElement("tr");
+  for (const text of texts) {
+    const cell = document.createElement(tag);
+    cell.textContent = text;
+    if (bad) { cell.className = "bad"; }
+    line.appendChild(cell);
+  }
+  jointRows.appendChild(line);
+}
+
+// The arm's measured joints beside the last target sent, the jaws, and how
+// the setpoint stream is doing. A missed deadline is a setpoint of a move
+// that the robot app sent late.
+function showJoints(status) {
+  const state = status.state;
+  jointRows.replaceChildren();
+  loop.textContent = "";
+  loop.className = "";
+  // No ROBOT_STATE yet, or a view program that tells no joints.
+  if (state === null || !state.joints) { return; }
+  cells("th", ["Joint index", "Measured, rad", "deg", "Last target, rad",
+    "Measured minus target, rad"], false);
+  for (const joint of state.joints) {
+    cells("td", [joint.joint, joint.valid ? figure(joint.q, 3) : "NOT VALID",
+      figure(joint.deg, 1), figure(joint.target, 3), figure(joint.diff, 3)],
+      !joint.valid);
+  }
+  const jaw = state.jaw;
+  cells("td", ["Jaws, 1 = open", jaw.valid ? figure(jaw.opening, 2) : "NOT VALID",
+    "", figure(jaw.target, 2), figure(jaw.diff, 2)], !jaw.valid);
+  const missed = state.missed_deadlines;
+  loop.textContent = "Joint readings: age " + seconds(state.reading_age_s, 2) +
+    " at the robot app; age of the ROBOT_STATE " + seconds(status.state_age_s, 2) +
+    "; missed setpoint deadlines: " + (missed === null ? "not reported" : missed);
+  if (missed > 0 || state.reading_age_s === null || status.state_age_s > 1) {
+    loop.className = "bad";
+  }
+}
+
 function show(status) {
   const robot = status.robot, state = status.state, picture = status.picture;
   rows.replaceChildren();
@@ -154,7 +207,10 @@ function show(status) {
       " at setpoint " + state.move_index + " of " + state.move_total + ", stage " +
       (state.move_stage || "not started") : ""), false);
     row("Jaw load", state.jaw_load, false);
-    row("Torque", state.torque_on ? "on" : "off", false);
+    // What the robot app says of the motors: "on (holding)", "NOT HOLDING",
+    // "on, hold unknown", "unknown" after a torque release that failed, "off",
+    // or "on" from a robot app that does not report the hold.
+    row("Torque", state.torque, state.torque_bad);
     row("Assistance wait", state.assistance_wait_s === null ? "none" :
       seconds(state.assistance_wait_s, 0) + " left", state.assistance_wait_s !== null);
     const permit = state.permit;
@@ -188,6 +244,8 @@ function show(status) {
   if (status.page && status.page.picture_period_s > 0) {
     pictureMs = Math.max(50, 1000 * status.page.picture_period_s);
   }
+  // Last: everything above is on the page before the joints are drawn.
+  showJoints(status);
 }
 
 async function nextStatus() {

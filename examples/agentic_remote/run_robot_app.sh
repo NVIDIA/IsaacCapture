@@ -7,7 +7,9 @@
 #   python -m isaaccapture_examples.agentic_remote.robot_app "$@"
 # The working folder stays as it is, so a relative --config is taken from it.
 #
-# Needs in the environment:
+# --env FILE, as the first argument only, reads the variables below from FILE,
+# a shell file of KEY=value lines; the robot app does not get it. Without it
+# they are taken from the environment:
 #   AGENTIC_REMOTE_THOR_PYTHON       the Python of APAI's environment on the Thor
 #   AGENTIC_REMOTE_APAI_SRC          the src folder of the APAI checkout
 #   AGENTIC_REMOTE_ISAAC_CAPTURE_PY  the folder of the Isaac Capture Python package
@@ -15,6 +17,18 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${1:-}" == "--env" ]]; then
+  if [[ $# -lt 2 || ! -f "$2" ]]; then
+    echo "run_robot_app.sh: --env needs a file of KEY=value lines (it is '${2:-}')" >&2
+    exit 2
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$2"
+  set +a
+  shift 2
+fi
 
 python="${AGENTIC_REMOTE_THOR_PYTHON:-}"
 if [[ -z "${python}" || ! -x "${python}" ]]; then

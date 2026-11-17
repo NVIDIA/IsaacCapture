@@ -19,6 +19,7 @@ connection from the workstation, Isaac Capture's remote session.
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 from ..link_service.service import (
@@ -57,6 +58,27 @@ class _HumanOnlyService(RobotLinkService):
             return False
         return super()._hello(client, payload)
 
+    def _lift_gate(self) -> None:
+        """End the gate; one set before any ROBOT_STATE ends with the first.
+
+        The gate holds HUMAN_SETPOINTs back from a STOP until a ROBOT_STATE
+        shows its effect. The robot app serves this socket while it still
+        connects the arm, and its first ROBOT_STATE most often counts a STOP
+        sent in that time already: no later one would show a higher number.
+        """
+        gate = self._gate
+        if gate is not None and gate[0] is None and self._state is not None:
+            # At most one pass early. The STOP went on the in-process link
+            # ahead of every later HUMAN_SETPOINT, nobody owns the arm before
+            # the robot app's first ROBOT_STATE, and the robot app refuses a
+            # target that quotes an older stop number. The robot link
+            # service's own rule, for a robot connection between two
+            # machines, is unchanged.
+            self._gate = None
+            self._status_changed()
+            return
+        super()._lift_gate()
+
 
 class HumanSocket:
     """A Unix socket of the robot app that one human program attaches to.
@@ -71,9 +93,14 @@ class HumanSocket:
     """
 
     def __init__(self, path: str, **service_options: Any) -> None:
-        """path is the socket's file; service_options go to RobotLinkService."""
+        """path is the socket's file; service_options go to RobotLinkService.
+
+        A path that begins with ~ is taken from the home folder, as the human
+        program takes socket_path of its file: one text names one socket.
+        """
         if not path:
             raise ValueError("the human program's socket needs a path")
+        path = os.path.expanduser(path)
         self._app_end, self._service_end = loopback_pair()
         self._handed_over = False
         options = {"max_clients": MAX_CLIENTS, **service_options}

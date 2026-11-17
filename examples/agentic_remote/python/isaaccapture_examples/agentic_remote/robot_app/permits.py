@@ -166,6 +166,19 @@ class PermitGate:
             return f"permit reaches setpoint {permit.through_index}, not {index}"
         return None
 
+    def may_renew(self, move_id: str) -> bool:
+        """Whether a later permit can still bring this move cover.
+
+        False without a permit for the move, after its cancel (a reach of -1)
+        and once the held permit no longer quotes the authority's values. A
+        setpoint that is not covered waits only while this is true.
+        """
+        with self._lock:
+            held = self._held
+        if held is None or held.permit.move_id != move_id:
+            return False
+        return held.permit.through_index >= 0 and self._stale(held.permit) is None
+
     def last_refusal(self, move_id: str) -> str | None:
         """Why the newest refused permit was refused, if it was for this move.
 

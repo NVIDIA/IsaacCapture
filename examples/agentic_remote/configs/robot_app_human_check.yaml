@@ -16,7 +16,7 @@
 # - limits.human.joint_min and limits.human.joint_max are -2.5 and 2.5 on every
 #   joint, not -3.0 and 3.0: with human.enabled the human joint box must lie inside
 #   rest.region_*.
-# - limits.human.max_joint_speed is 0.1, not 1.5: the speed limit of the rig's file.
+# - limits.human.max_joint_speed is 0.8, not 1.5: the speed limit of the rig's file.
 
 robot_id: sim-arm
 profile_id: sim-6dof
@@ -39,7 +39,7 @@ limits:
     version: sim-1
     joint_min: [-2.5, -2.5, -2.5, -2.5, -2.5, -2.5]
     joint_max: [2.5, 2.5, 2.5, 2.5, 2.5, 2.5]
-    max_joint_speed: 0.1
+    max_joint_speed: 0.8
     # A human target is a joint target that follows a person's hand. This is the
     # farthest, on any joint, one may lie from the last joint target sent. One
     # beyond it is refused: the arm holds until the grip is squeezed again. The
@@ -96,14 +96,15 @@ gripper:
   # Jaws proven empty: how far a reading may lie from the last jaw target. At
   # most 0.1 rad of the gripper's travel; --arm apai tightens it to that.
   target_tol: 0.03
-  # A jaw command has reached its target within this.
+  # The jaws under a person's trigger: a step has reached its opening within
+  # this. With --arm apai the mock arm's close until contact too.
   reach_tol: 0.03
   # A reading within this of 1 after a command to full open is a full open.
   full_open_tol: 0.03
   agree_tol: 0.02
   reads: 3
   read_gap_s: 0.05
-  open_step: 0.05
+  open_step: 0.05  # the jaws under a person's trigger open in steps this wide
   reference_at_start: true
 
 # The grasp region a MOVE may carry; one beyond these is refused, never cut down.

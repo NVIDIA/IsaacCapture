@@ -13,7 +13,7 @@ import queue
 import signal
 import threading
 from collections.abc import Callable, Iterable, Iterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ..protocol.confirm import JAWS_ARE_EMPTY, PATH_IS_CLEAR, confirms
 from ..protocol.confirm import YES as YES  # re-exported: the entry point imports it
@@ -22,6 +22,7 @@ from .app import (
     EVENT_REFUSED,
     NOT_RUNNING,
     PATH_CLEAR_PROMPT,
+    POWER_ON_PROMPT,
     THOR_TERMINAL,
 )
 from .clock import SystemClock
@@ -48,7 +49,26 @@ CONFIRM_REFERENCE = (
     "Reference the jaws: they close slowly to their stop. Are the jaws empty? "
     f'Type "{JAWS_ARE_EMPTY}" to confirm.'
 )
-BANNER = "Thor terminal: type stop, rest, release, quit or help"
+CONFIRM_OPEN = (
+    f'Open the jaws: whatever they hold is let go. Type "{YES}" to open the jaws.'
+)
+# Asked before a typed close only while the jaws are not proven empty.
+CONFIRM_CLOSE = (
+    "Close the jaws: they are not proven empty ({why}) and close on whatever "
+    f'they hold. Type "{YES}" to close the jaws.'
+)
+# How the robot app's refusal reads when only the jaws stand in the way of a
+# rest, a release or a quit (rest.py), and what the terminal asks then. The
+# typed word goes with the command, which is asked again.
+JAWS_NOT_PROVEN = "the jaws are not proven empty"
+ASK_JAWS_EMPTY = (
+    "{what} was refused because the jaws are not proven empty. Look at the "
+    f"jaws. If they hold something: stop, open, {YES}. If they are empty: type "
+    f'"{JAWS_ARE_EMPTY}" and {{what}} is asked again on your word.'
+)
+# Asked before the motors are switched on again after a rest or a release.
+CONFIRM_POWER_ON = f'{POWER_ON_PROMPT} Type "{YES}" to switch the motors on.'
+BANNER = "Thor terminal: type stop, rest, release, on, reset, open, close, quit or help"
 CTRL_C_NOTE = "Ctrl+C is STOP"
 INPUT_ENDED = "the Thor terminal's input ended"
 # Said in place of an answer when a stop was typed ahead of a question.
@@ -57,12 +77,21 @@ STOP_AHEAD = (
 )
 HELP = (
     "stop       STOP: the arm holds where it is, motors on",
-    f'rest       return the arm to rest; asks first for a typed "{PATH_IS_CLEAR}"',
-    "release    switch the motors off; only at rest with the jaws proven empty",
-    "quit       return to rest (asks like rest if the arm moves), motors off, exit",
+    f'rest       asks first for a typed "{PATH_IS_CLEAR}"; then the arm returns '
+    "to rest, rest is measured, the jaws close and the motors go off",
+    "release    at measured rest: the jaws close and the motors go off; away "
+    "from rest nothing happens",
+    "on         switch the motors on again after a rest or a release; asks "
+    f'first for a typed "{YES}"',
+    "reset      clear a fault-stop; the arm holds and nothing is started",
+    "quit       as rest (asks only if the arm moves), then the robot app ends",
     "reference  make the jaw position known again: the jaws close slowly to "
     f'their stop; asks first for a typed "{JAWS_ARE_EMPTY}"; only with the '
     "robot app setting jaws.allow_reference",
+    f'open       open the jaws in one go; asks first for a typed "{YES}"; type '
+    "stop first: nobody may own the arm",
+    "close      close the jaws; asks first while they are not proven empty; "
+    "type stop first: nobody may own the arm",
     "help       this list",
 )
 
@@ -156,6 +185,9 @@ class ThorTerminal:
         self._stopper_told = False  # the stop thread was told to end
         # The handlers install_signal_handlers() replaced; None while not installed.
         self._replaced: dict[int, Any] | None = None
+        # The command the robot app refused because the jaws are not proven
+        # empty, while the operator may answer that they are; else None.
+        self._jaws_offer: str | None = None
         self._writer = threading.Thread(
             target=self._write_loop, name="thor-terminal-output", daemon=True
         )
@@ -287,16 +319,29 @@ class ThorTerminal:
         word = line.strip().lower()
         if not word:
             return
+        # The question about the jaws stands for the next typed line only.
+        offered, self._jaws_offer = self._jaws_offer, None
         if word == "stop":
             self._stop(STOP_TYPED)
         elif word == "rest":
             self._rest()
         elif word == "release":
-            self._request("release", self._app.request_release)
+            self._release()
+        elif word == "on":
+            self._power_on()
+        elif word == "reset":
+            self._request("reset", self._app.request_reset)
         elif word == "quit":
             self._quit()
         elif word == "reference":
             self._reference()
+        elif word == "open":
+            self._open()
+        elif word == "close":
+            self._close_jaws()
+        elif offered is not None and confirms(line, JAWS_ARE_EMPTY):
+            # The answer to the question a refusal for the jaws put.
+            self._ASKED_AGAIN[offered](self, True)
         elif word == "help":
             for text in HELP:
                 self._say(text)
@@ -304,15 +349,56 @@ class ThorTerminal:
         else:
             self._say(f"unknown command {line.strip()[:_SHOWN]!r}; type help")
 
-    def _rest(self) -> None:
-        """A typed rest: ask that the path is clear and pass the answer on."""
-        confirmed = self._path_is_clear()
-        self._request("rest", lambda done: self._app.request_rest(confirmed, done))
+    def _rest(self, jaws_empty: bool = False) -> None:
+        """A typed rest: ask that the path is clear and pass the answer on.
 
-    def _quit(self) -> None:
+        jaws_empty, here and below: the operator typed that the jaws are
+        empty, after the robot app refused the command for jaws that are not
+        proven empty.
+        """
+        confirmed = self._path_is_clear()
+        word = _word(jaws_empty)
+        self._request(
+            "rest", lambda done: self._app.request_rest(confirmed, done, **word)
+        )
+
+    def _release(self, jaws_empty: bool = False) -> None:
+        """A typed release: the robot app does it only at measured rest."""
+        word = _word(jaws_empty)
+        self._request("release", lambda done: self._app.request_release(done, **word))
+
+    def _quit(self, jaws_empty: bool = False) -> None:
         """A typed quit: the same question, asked only when the arm has to move."""
         confirmed = self._app.shutdown_moves_arm() and self._path_is_clear()
-        self._request("quit", lambda done: self._app.request_shutdown(confirmed, done))
+        word = _word(jaws_empty)
+        self._request(
+            "quit", lambda done: self._app.request_shutdown(confirmed, done, **word)
+        )
+
+    def _power_on(self) -> None:
+        """A typed on: asked only where the motors were switched off at rest."""
+        confirmed = self._app.motors_off_at_rest and self._asked(CONFIRM_POWER_ON, YES)
+        self._request("on", lambda done: self._app.request_power_on(confirmed, done))
+
+    # The commands asked again on the operator's word that the jaws are empty.
+    _ASKED_AGAIN: ClassVar[dict[str, Callable[..., None]]] = {
+        "rest": _rest,
+        "release": _release,
+        "quit": _quit,
+    }
+
+    def _open(self) -> None:
+        """A typed open: the driver's own opening, after a typed confirmation."""
+        confirmed = self._asked(CONFIRM_OPEN, YES)
+        self._request("open", lambda done: self._app.request_open(confirmed, done))
+
+    def _close_jaws(self) -> None:
+        """A typed close: asked first only while the jaws are not proven empty."""
+        why = self._app.jaws_not_proven()
+        confirmed = why is not None and self._asked(
+            CONFIRM_CLOSE.format(why=_printable(why)), YES
+        )
+        self._request("close", lambda done: self._app.request_close(confirmed, done))
 
     def _reference(self) -> None:
         """A typed reference: asked only where the setting allows the command."""
@@ -365,8 +451,12 @@ class ThorTerminal:
         """Ask the robot app for something; its final RESULT becomes one line."""
 
         def done(result: Result) -> None:
-            # Can run under the robot app's lock: it only queues the line.
+            # Can run under the robot app's lock: it only queues the lines.
             self._say(_answer(what, result))
+            if what in self._ASKED_AGAIN and _for_the_jaws(result):
+                # The operator is asked; the next typed line may be the word.
+                self._jaws_offer = what
+                self._say(ASK_JAWS_EMPTY.format(what=what))
 
         try:
             request(done)
@@ -465,6 +555,16 @@ def _more_refusals(count: int, line: object) -> str:
     if line is None:
         return f"{head}{count} more refusals of other kinds"
     return f"{head}{count} more like: {str(line).removeprefix(head)}"
+
+
+def _word(jaws_empty: bool) -> dict[str, bool]:
+    """The keyword that carries the operator's word to the robot app, if given."""
+    return {"jaws_empty": True} if jaws_empty else {}
+
+
+def _for_the_jaws(result: Result) -> bool:
+    """Whether the robot app refused a request for jaws that are not proven empty."""
+    return result.status != COMPLETED and JAWS_NOT_PROVEN in result.reason
 
 
 def _answer(what: str, result: Result) -> str:

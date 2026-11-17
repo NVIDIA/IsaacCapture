@@ -36,6 +36,7 @@ from ..agent.console_cmd import (
     UNDELIVERED,
     NotConfirmed,
     buttons_hint,
+    jaws_refused,
     new_session,
     new_session_text,
     question,
@@ -48,7 +49,7 @@ from ..agent.console_cmd import (
 )
 from ..console_log import set_console_level
 from ..link_service.local import LocalCarrier, RawStop, connect_local, send_raw_stop
-from ..protocol.confirm import agent_environment, confirms
+from ..protocol.confirm import JAWS_ARE_EMPTY, agent_environment, confirms
 from ..protocol.local_messages import ROLE_CONSOLE
 from ..protocol.messages import Event, Result, RobotState, Welcome
 from ..robot_app.clock import SystemClock
@@ -60,6 +61,7 @@ from .status import (
     event_bells,
     help_block,
     jaws_text,
+    joints_line,
     status_key,
     status_line,
     takeover_text,
@@ -105,18 +107,25 @@ _LINES_WAITING = 10000
 _SHOWN = 40  # how much of an unknown command is shown back
 
 BANNER = (
-    "operator console: type stop, reset, rest, open, release, shutdown, state, "
-    "attach, help or quit; Ctrl+C is STOP"
+    "operator console: type stop, reset, rest, open, close, release, on, "
+    "shutdown, state, attach, help or quit; Ctrl+C is STOP"
 )
 # The typed takeover and hand-back are a fallback for the controller's buttons.
 IF_ALLOWED = "(only if the robot link service's file allows it)"
 HELP = (
     "stop      STOP: the arm holds where it is, motors on; ends a running task",
     "reset     clear a fault-stop; starts nothing",
-    'rest      return the arm to rest; asks first for a typed "path is clear"',
-    'open      open the jaws; asks first for a typed "yes"',
-    "release   switch the motors off; the robot app does it only at measured rest",
+    'rest      asks first for a typed "path is clear"; then the arm returns to '
+    "rest, rest is measured, the jaws close and the motors go off",
+    'open      open the jaws in one go; asks first for a typed "yes"',
+    "close     close the jaws; asks first while they are not proven empty",
+    "release   at measured rest: the jaws close and the motors go off; away "
+    "from rest nothing happens",
+    "on        switch the motors on again after a rest or a release; asks first "
+    'for a typed "yes"',
     "shutdown  rest, motors off, end the robot app; asks first",
+    "          rest, release, shutdown and handback need the jaws proven empty; "
+    'refused for that, you are asked, and a typed "jaws are empty" is taken',
     f"takeover  a person takes the arm, as with right B; asks first {IF_ALLOWED}",
     f"handback  ends a takeover at rest, as with right A; asks first {IF_ALLOWED}",
     "state     the robot connection and the newest ROBOT_STATE; sends nothing",
@@ -224,6 +233,9 @@ class Console:
         self._attaching = threading.Lock()  # one attempt at a time
         self._ticking = threading.Lock()
         self._kept_line: str | None = None  # typed after a withdrawn question
+        # The command the robot app refused because the jaws are not proven
+        # empty, while the operator may answer that they are; else None.
+        self._jaws_offer: str | None = None
         self._ended = threading.Event()
         self._saying = threading.Lock()  # a line is queued, or the output ends
         self._closing = False  # close() began: nothing attaches, a STOP goes raw
@@ -368,6 +380,13 @@ class Console:
         text = printable(result_text(result), MAX_OUT_CHARS)
         if command is not None:
             self._say(f"{command}: {text}{buttons_hint(command, result)}")
+            about_jaws = jaws_refused(command, result)
+            if about_jaws is not None:
+                # Refused only for jaws that are not proven empty: the operator
+                # is asked, and the next typed line may be the word.
+                with self._lock:
+                    self._jaws_offer = command
+                self._say(about_jaws[0].rstrip())
         elif result.status == "refused":
             line = f"(another client) {text}"
             self._say_repeats()
@@ -680,6 +699,9 @@ class Console:
         word = " ".join(line.lower().split())
         if not word:
             return True
+        # The question about the jaws stands for the next typed line only.
+        with self._lock:
+            offered, self._jaws_offer = self._jaws_offer, None
         if word == "quit":
             return False
         if word == "stop":
@@ -698,6 +720,9 @@ class Console:
                 self._ask_attach()
         elif word == "reset" or word in CONFIRMED:
             self._command(word)
+        elif offered is not None and word == JAWS_ARE_EMPTY:
+            # The answer to the question a refusal for the jaws put.
+            self._command(offered, jaws_empty=True)
         else:
             shown = printable(line.strip(), _SHOWN)
             self._say(f"unknown command {shown!r}; type help")
@@ -711,6 +736,8 @@ class Console:
         else:
             self._say(f"robot link service: {status_text(station.carrier)}")
         self._say(state_text(state) if state else "ROBOT_STATE: none has arrived")
+        if state is not None:
+            self._say(joints_line(state))
         now = self._clock.monotonic()
         with self._lock:
             self._status_at = None  # the status line is due now
@@ -718,8 +745,12 @@ class Console:
         status = None if station is None else station.carrier.status
         self._say(takeover_text(state, status))
 
-    def _command(self, command: str) -> None:
-        """reset or a command of CONFIRMED: ask, then console_cmd sends it."""
+    def _command(self, command: str, jaws_empty: bool = False) -> None:
+        """reset or a command of CONFIRMED: ask, then console_cmd sends it.
+
+        jaws_empty: the operator typed that the jaws are empty, after the
+        robot app refused the command because they are not proven empty.
+        """
         with self._lock:
             station, state = self._station, self._state
         if station is None or not station.carrier.alive:
@@ -775,6 +806,7 @@ class Console:
                 state,
                 phrase_typed=typed,
                 command_id=command_id,
+                jaws_empty=jaws_empty,
             )
         except BaseException as problem:
             with self._lock:
@@ -910,7 +942,7 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "The operator console: shows the robot connection, the robot's state "
             "and its events, and sends the typed commands stop, reset, rest, "
-            "open, release and shutdown through the robot link service; takeover "
+            "open, close, release and shutdown through the robot link service; takeover "
             "and handback too, where that service's file allows it."
         ),
     )

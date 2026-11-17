@@ -57,9 +57,13 @@ _HOLD_ATTEMPTS = 2
 _STAGE_READY = "ready"
 
 # The gripper tip is low while it is below the table clearance or inside the
-# agent's last grasp region. A person lifts it out: while the measured tip is
-# low, a human target, and the step toward it, may not bring the tip lower
-# than it is measured, within TIP_TOL_M. LIFT begins the refusal.
+# agent's last grasp region. A person lifts it out. The floor is the highest
+# tip height measured since the takeover, or since the tip last was not low.
+# While the measured tip is low, a human target, and the step toward it, may
+# not bring the tip under the floor, within TIP_TOL_M. LIFT begins the refusal.
+# An arm settles when it comes to rest under its joint target. A tip that
+# settled under the floor was not lowered by a target: from there a drive
+# sends nothing until its target is back at the floor.
 TIP_TOL_M = 0.001
 LIFT = "lift the gripper: "
 
@@ -190,6 +194,13 @@ class _Drive:
     watch: ContactWatch | None = None
     sent: int = 0  # setpoints sent so far
     due: float = 0.0  # when this pass's setpoint is due, on the app's clock
+    # This pass sends nothing: the arm has settled under the floor of its
+    # gripper tip and the target is not back at the floor.
+    waiting: bool = False
+    waited: int = 0  # passes that sent nothing so far
+    # The highest gripper tip of the poses this drive's steps began at since
+    # the tip was low, m; None while it is not low.
+    step_top: float | None = None
 
 
 class HumanDrive:
@@ -198,7 +209,9 @@ class HumanDrive:
     Once per period it asks the stop conditions, the newest target's numbers,
     stage and age and the live view's age, moves one speed-limited step toward
     the target, has the human checker check it and sends it. While the measured
-    gripper tip is low, a target that would lower it ends the drive, refused.
+    gripper tip is low, a target that would bring it under its floor ends the
+    drive, refused; where the arm itself settled under the floor, the drive
+    sends nothing until the target is back at the floor.
     Every end leaves the last setpoint sent standing, which is a hold with the
     motors on; a contact holds at the measured pose. It never changes the
     control owner, raises no stop, cuts no torque and leaves the jaws alone.
@@ -242,6 +255,10 @@ class HumanDrive:
         self._reads_paused = reads_paused or contextlib.nullcontext
         self._lock = threading.Lock()  # guards _progress
         self._progress: tuple[str, int, int] | None = None
+        # (owner number, floor): the highest gripper tip height measured, m,
+        # since that takeover or since the tip last was not low. None while
+        # the tip is not low. Only run() uses it, one drive at a time.
+        self._tip_floor: tuple[int, float] | None = None
 
     def progress(self) -> tuple[str, int, int] | None:
         """(HUMAN_MOVE_ID, setpoints sent, 0) while a drive runs, else None."""
@@ -275,7 +292,9 @@ class HumanDrive:
                                 ended = self._begin(drive)
                                 while ended is None:
                                     ended = self._next_setpoint(drive)
-                                    if ended is None:
+                                    if ended is None and drive.waiting:
+                                        self._after_wait(drive)
+                                    elif ended is None:
                                         self._arm.send_target(drive.q_next)
                                         ended = self._after_send(drive)
                             except ContactStop as contact:
@@ -295,6 +314,12 @@ class HumanDrive:
             finally:
                 self._leave(drive)
         status, reason = ended
+        if drive.waited:
+            _log.info(
+                "human drive: %d passes sent nothing: the arm had settled and "
+                "the target was under the floor of the low gripper tip",
+                drive.waited,
+            )
         _log.info(
             "human drive: %s, sent %d setpoints (%s)",
             status,
@@ -364,7 +389,8 @@ class HumanDrive:
         lower = self._lift_problem(drive, target.q, q_next)
         if lower is not None:
             return "refused", lower
-        self._checker.check_setpoint(drive.q_prev, q_next, config.period_s)
+        if not drive.waiting:
+            self._checker.check_setpoint(drive.q_prev, q_next, config.period_s)
         # The check took time: what held before it is asked again.
         stop = self._stop_reason(drive)
         if stop is not None:
@@ -393,17 +419,36 @@ class HumanDrive:
             # A delay, not the usual cost: the next setpoint keeps its distance.
             drive.due += behind
         deadline = drive.due + config.period_s
-        readings = drive.watch.after_send(index, drive.q_next, deadline)
-        for reading in readings or ():
-            known = 0 <= reading.joint < len(drive.at)
-            if known and reading.valid and math.isfinite(reading.value):
-                drive.at[reading.joint] = float(reading.value)
+        self._read(drive, index, drive.q_next, deadline)
         # The checker suspends its watchdog while it is in motion: this feed
         # serves the next drive, and the sample age is the watchdog of this one.
         self._feed(drive, drive.target)
         self._clock.sleep(max(0.0, deadline - self._clock.monotonic()))
         drive.due = deadline
         return None
+
+    def _after_wait(self, drive: _Drive) -> None:
+        """What follows a pass that sent nothing: the joint reads, the feed, the sleep.
+
+        The last setpoint sent stands. The watch is given the pose the
+        drive's next step begins at: that is all this drive has asked for.
+        """
+        drive.waited += 1
+        deadline = drive.due + self._config.executor.period_s
+        self._read(drive, drive.sent, drive.q_prev, deadline)
+        self._feed(drive, drive.target)
+        self._clock.sleep(max(0.0, deadline - self._clock.monotonic()))
+        drive.due = deadline
+
+    def _read(
+        self, drive: _Drive, index: int, q: Sequence[float], deadline: float
+    ) -> None:
+        """One pass's joint reads by the contact watch; drive.at follows them."""
+        readings = drive.watch.after_send(index, q, deadline)
+        for reading in readings or ():
+            known = 0 <= reading.joint < len(drive.at)
+            if known and reading.valid and math.isfinite(reading.value):
+                drive.at[reading.joint] = float(reading.value)
 
     def _stop_reason(self, drive: _Drive) -> str | None:
         """Why the drive must stop now, None while it may go on."""
@@ -506,20 +551,53 @@ class HumanDrive:
     def _lift_problem(
         self, drive: _Drive, q: Sequence[float], q_next: Sequence[float]
     ) -> str | None:
-        """Why the target q, or the step q_next toward it, is no lift, else None.
+        """Why the target q, or the step q_next toward it, is refused, else None.
 
         Only while the measured gripper tip is low; with a checker that knows
-        no table it never is.
+        no table it never is. It sets drive.waiting for a pass that sends
+        nothing: the arm has settled under the floor, and the target is under
+        the floor but not under the tip.
         """
+        drive.waiting = False
         region = self._last_grasp_region()
         tip = self._checker.tip_state(drive.at, region)
         if tip is None or tip.low is None:
+            self._tip_floor = None
+            drive.step_top = None
             return None
-        for what, pose in (("the target", q), ("the step toward the target", q_next)):
-            to = self._checker.tip_state(pose, region)
-            if to is not None and to.z < tip.z - TIP_TOL_M:
-                return f"{LIFT}{tip.low}, and {what} would lower it to z={to.z:.3f} m"
+
+        def lowers(what: str, z: float) -> str:
+            return f"{LIFT}{tip.low}, and {what} would lower it to z={z:.3f} m"
+
+        owner = drive.admitted.owner_number
+        kept = self._tip_floor
+        floor = tip.z if kept is None or kept[0] != owner else max(kept[1], tip.z)
+        self._tip_floor = (owner, floor)
+        lowest = floor - TIP_TOL_M
+        target_z = self._tip_z(q, region)
+        if target_z < lowest:
+            # No target under the floor is followed, so a tip measured under
+            # it was not asked for: the arm settled there. A target under
+            # that tip is a lowering the person asks for all the same.
+            if tip.z < lowest and target_z >= tip.z - TIP_TOL_M:
+                drive.waiting = True
+                return None
+            return lowers("the target", target_z)
+        # The steps of a lift from where the arm settled begin under the
+        # floor: they are held against the highest of them until they reach it.
+        if drive.step_top is None:
+            drive.step_top = self._tip_z(drive.q_prev, region)
+        base = floor if drive.step_top >= lowest else drive.step_top
+        step_z = self._tip_z(q_next, region)
+        if step_z < base - TIP_TOL_M:
+            return lowers("the step toward the target", step_z)
+        drive.step_top = max(drive.step_top, step_z)
         return None
+
+    def _tip_z(self, q: Sequence[float], region: GraspRegion | None) -> float:
+        """The gripper tip's height at q, m, from a checker that knows the table."""
+        state = self._checker.tip_state(q, region)
+        return math.inf if state is None else state.z
 
     def _clamped(self, q: Sequence[float], q_prev: Sequence[float]) -> list[float]:
         """One step from q_prev toward q, each joint within the speed clamp.

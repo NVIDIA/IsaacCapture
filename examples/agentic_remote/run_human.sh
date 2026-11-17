@@ -12,7 +12,9 @@
 # configs/human.yaml. The working folder stays as it is, so a relative --config
 # is taken from it.
 #
-# Needs in the environment:
+# --env FILE, as the first argument only, reads the variables below from FILE,
+# a shell file of KEY=value lines; the human program does not get it. Without
+# it they are taken from the environment:
 #   AGENTIC_REMOTE_HUMAN_PYTHON      a Python with numpy, PyYAML and pinocchio;
 #                                    without it AGENTIC_REMOTE_AGENT_PYTHON is
 #                                    taken
@@ -22,6 +24,18 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ "${1:-}" == "--env" ]]; then
+  if [[ $# -lt 2 || ! -f "$2" ]]; then
+    echo "run_human.sh: --env needs a file of KEY=value lines (it is '${2:-}')" >&2
+    exit 2
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$2"
+  set +a
+  shift 2
+fi
 
 python="${AGENTIC_REMOTE_HUMAN_PYTHON:-${AGENTIC_REMOTE_AGENT_PYTHON:-}}"
 if [[ -z "${python}" || ! -x "${python}" ]]; then

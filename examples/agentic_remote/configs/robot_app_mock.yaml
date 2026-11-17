@@ -96,14 +96,15 @@ gripper:
   closed_frac: 0.04
   # Jaws proven empty: how far a reading may lie from the last jaw target.
   target_tol: 0.03
-  # A jaw command has reached its target within this.
+  # The mock arm's close until contact, and the jaws under a person's trigger:
+  # the jaws have reached their opening within this.
   reach_tol: 0.03
   # A reading within this of 1 after a command to full open is a full open.
   full_open_tol: 0.03
   agree_tol: 0.02
   reads: 3
   read_gap_s: 0.05
-  open_step: 0.05
+  open_step: 0.05  # the jaws under a person's trigger open in steps this wide
   reference_at_start: true
 
 # The grasp region a MOVE may carry; one beyond these is refused, never cut down.

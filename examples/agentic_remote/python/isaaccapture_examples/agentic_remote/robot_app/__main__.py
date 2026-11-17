@@ -39,16 +39,22 @@ from ..protocol.confirm import PATH_IS_CLEAR, YES, agent_environment, confirms
 from ..protocol.link_carrier import LinkCarrier
 from ..protocol.local_messages import ROLE_AGENT, ROLE_CONSOLE
 from ..protocol.messages import DRIVER_APAI_MOCK, DRIVER_REAL, DRIVER_SIM
-from .app import RobotApp, live_view_problem
+from .app import TORQUE_UNKNOWN, RobotApp, live_view_problem
 from .clock import SystemClock
 from .config import ConfigError, load_config
 from .connection import RobotDialer
 from .human_socket import HumanSocket
 from .interfaces import CheckerSet, MotionState, Owner
-from .rest import planned_duration_s
+from .rest import RestRoute, functional_route, planned_duration_s
 from .sim import BasicChecker, SimArm
-from .terminal import CONFIRM_REST, ThorTerminal, TypedLines, drop_typed_ahead
-from .text import MAX_WORD_CHARS, printable
+from .terminal import (
+    CONFIRM_POWER_ON,
+    CONFIRM_REST,
+    ThorTerminal,
+    TypedLines,
+    drop_typed_ahead,
+)
+from .text import MAX_REASON_CHARS, MAX_WORD_CHARS, printable, torque_text
 from ..testing.client import WorkstationClient
 
 try:
@@ -279,7 +285,9 @@ def _parser() -> argparse.ArgumentParser:
             "with --connect: serve a Unix socket at PATH for the human program, "
             "the program through which a person drives the arm with the "
             "headset's right controller, when it runs on this machine (its "
-            "socket_path names the same PATH); without it there is no such socket"
+            "socket_path names the same PATH, and in both a PATH that begins "
+            "with ~ is taken from the home folder); without it there is no "
+            "such socket"
         ),
     )
     return parser
@@ -341,20 +349,24 @@ def _main(argv: Sequence[str] | None) -> int:
         _complain(f"--connect cannot run: {missing}")
         return EXIT_NOT_RUN
     clock = SystemClock()
-    arm = SimArm(
-        n_joints=config.n_joints,
-        clock=clock,
-        q0=list(config.rest.rest_q),
-        joint_names=config.joint_names,
-    )
+
+    def new_arm() -> SimArm:
+        return SimArm(
+            n_joints=config.n_joints,
+            clock=clock,
+            q0=list(config.rest.rest_q),
+            joint_names=config.joint_names,
+        )
+
     return run_connected(
         config,
-        arm,
+        new_arm(),
         sim_checkers(config, clock),
         clock,
         args.connect,
         driver=DRIVER_SIM,
         human_socket=args.human_socket,
+        rebuild_arm=new_arm,
     )
 
 
@@ -484,11 +496,16 @@ def run_connected(
     driver: str = "",
     signals: _StartSignals | None = None,
     human_socket: str | None = None,
+    rest_route: RestRoute | None = None,
+    rebuild_arm: Callable[[], ArmPort] | None = None,
 ) -> int:
     """Run the robot app with the Thor terminal and dial the robot link service.
 
     Returns when the robot app has closed (a typed quit, or a SHUTDOWN) or on
-    SIGTERM, which closes the app with the motors left on. typed yields the
+    SIGTERM. SIGTERM ends as the functional launcher's does where the arm
+    lies at measured rest: the jaws close and the motors go off; away from
+    rest nothing moves and the app closes with the motors left on.
+    rest_route and rebuild_arm are RobotApp's. typed yields the
     lines of the Thor terminal; None reads the standard input. Ctrl+C is a STOP
     when this runs on the main thread: one pressed while the app starts is a
     STOP once it has started, and a SIGTERM then closes the app after the
@@ -500,8 +517,9 @@ def run_connected(
     line and EXIT_NOT_RUN, with nothing connected. human_socket is the path of
     a Unix socket to serve for a human program on this machine, the program
     through which a person drives the arm with the headset's right controller;
-    None serves none. A socket that cannot be made gives one line and
-    EXIT_NOT_RUN, with nothing connected.
+    one that begins with ~ is taken from the home folder; None serves none. A
+    socket that cannot be made gives one line and EXIT_NOT_RUN, with nothing
+    connected.
     """
     lines = typed_lines() if typed is None else typed
     signals = _StartSignals() if signals is None else signals
@@ -526,6 +544,8 @@ def run_connected(
             clock,
             driver=driver,
             allow_reference=config.jaws.allow_reference,
+            rest_route=rest_route,
+            rebuild_arm=rebuild_arm,
         )
     except ConfigError as error:
         # A setting this driver may not run with: nothing was connected.
@@ -576,7 +596,8 @@ def run_connected(
         shown = ""
         while not app.wait_closed(_WATCH_S):
             if signals.terminated:
-                tell("robot app: SIGTERM; closing with the motors left on")
+                for line in _sigterm_lines(app):
+                    tell(line)
                 break
             error = "" if app.link_alive else dialer.last_error
             if error and error != shown:
@@ -597,6 +618,27 @@ def run_connected(
         if on_main:
             signals.restore()
     return EXIT_OK
+
+
+def _sigterm_lines(app: RobotApp) -> list[str]:
+    """End the session on SIGTERM where the arm lies; the lines that say how.
+
+    At measured rest the jaws close and the motors go off, as the functional
+    launcher ends. Away from rest nothing moves: the motors stay on.
+    """
+    head = "robot app: SIGTERM; closing"
+    if app.motion_state is MotionState.RELEASE_FAILED:
+        return [f"{head} after a torque release that failed: {TORQUE_UNKNOWN}"]
+    if app.motors_off_at_rest:
+        return [f"{head}; the motors are off at rest"]
+    kept = app.end_at_rest()
+    if kept is None:
+        return [f"{head}; the arm lies at measured rest: the motors are off"]
+    why = printable(kept, MAX_REASON_CHARS)
+    return [
+        f"{head} with the motors left on",
+        f"robot app: the motors stay on because {why}",
+    ]
 
 
 class _StartSignals:
@@ -640,8 +682,17 @@ class _StartSignals:
 
 
 def _connected_line(app: RobotApp, arm: ArmPort) -> str:
-    """What the real driver's connect left: motors, motion state and jaws."""
-    motors = "motors on" if arm.torque_on() else "MOTORS OFF"
+    """What the real driver's connect left: motors, motion state and jaws.
+
+    The motors' word is robot_app.text's: whether this program switched them
+    on, and what the joint readings say of the hold where the arm port can
+    say it. Right after a connect no joint target is in force: the hold is
+    unknown until the first one was sent and read back.
+    """
+    motors = "MOTORS OFF"
+    if arm.torque_on():
+        evidence = getattr(arm, "hold_evidence", None)
+        motors = torque_text(True, evidence()[0] if callable(evidence) else None)
     jaws = "referenced" if arm.gripper_referenced() else "NOT referenced"
     # APAI's driver sets this when it went ahead on an operator's confirmation.
     on_word = getattr(getattr(arm, "backend", None), "connected_on_confirmation", False)
@@ -727,7 +778,41 @@ def _run_apai(config: RobotAppConfig, args: argparse.Namespace) -> int:
         args.connect,
         driver=DRIVER_APAI_MOCK,
         human_socket=args.human_socket,
+        rest_route=_rest_route(config, profile),
+        rebuild_arm=lambda: apai_backend.build_apai_arm(config, profile, clock),
     )
+
+
+def _rest_route(config: RobotAppConfig, profile: Any) -> RestRoute | None:
+    """The functional rest's route for an APAI arm profile; None without APAI.
+
+    The ready pose is the profile's home_q. APAI's software arm is started at
+    the rest pose in place of its home_q, and a ready pose outside
+    rest.region_* is not driven to: the arm then folds from where it is.
+    """
+    try:
+        home = profile.arm_cfg.get("home_q")
+        if profile.arm_cfg.get("type") == "mock":
+            home = None
+        low, high = config.rest.region_min, config.rest.region_max
+        if home is not None and not (
+            len(home) == config.n_joints
+            and all(a <= float(q) <= b for a, q, b in zip(low, home, high))
+        ):
+            _log.warning(
+                "the APAI profile's home_q %s does not lie inside rest.region_*: "
+                "a return to rest folds from where the arm is",
+                list(home),
+            )
+            home = None
+        return functional_route(home)
+    except Exception as error:
+        _log.warning(
+            "the functional rest's route cannot be read (%s): a return to rest "
+            "is one straight move",
+            error,
+        )
+        return None
 
 
 def confirm_real_driver(calibration: str, typed: Iterator[str], say: Say) -> bool:
@@ -934,6 +1019,8 @@ def _real_driver(
             driver=DRIVER_REAL,
             signals=signals,
             human_socket=args.human_socket,
+            rest_route=_rest_route(config, profile),
+            rebuild_arm=lambda: apai_backend.build_apai_arm(config, profile, clock),
         )
     finally:
         signals.restore()
@@ -1072,21 +1159,16 @@ class _SelfTest:
         self._say = say
         self._clock = SystemClock()
         rest_q = list(config.rest.rest_q)
-        self._arm = SimArm(
-            n_joints=config.n_joints,
-            clock=self._clock,
-            q0=rest_q,
-            joint_names=config.joint_names,
-        )
         self._robot_end, self._workstation_end = loopback_pair()
         self._app = RobotApp(
             config,
-            self._arm,
+            self._new_arm(),
             sim_checkers(config, self._clock),
             self._robot_end,
             self._clock,
             driver=DRIVER_SIM,
             allow_reference=config.jaws.allow_reference,
+            rebuild_arm=self._new_arm,
         )
         self._client = WorkstationClient(self._workstation_end, self._clock)
         self._typed = TypedLines()
@@ -1107,11 +1189,23 @@ class _SelfTest:
             ("the agent asks for help", self._help_needed),
             ("stop typed at the Thor terminal", self._typed_stop),
             ("rest typed at the Thor terminal", self._typed_rest),
+            ("on typed at the Thor terminal", self._typed_on),
             ("release at rest", self._release),
             ("quit typed at the Thor terminal", self._typed_quit),
         )
 
     _label = "selftest"  # how each line of the run begins
+
+    def _new_arm(self) -> SimArm:
+        """A simulated arm at rest; the one in use from here on."""
+        config = self._config
+        self._arm = SimArm(
+            n_joints=config.n_joints,
+            clock=self._clock,
+            q0=list(config.rest.rest_q),
+            joint_names=config.joint_names,
+        )
+        return self._arm
 
     def run(self) -> int:
         total, label = len(self._steps), self._label
@@ -1301,9 +1395,23 @@ class _SelfTest:
             result.get("status") == "completed",
             f"the return to rest ended {result.get('status')}: {result.get('reason')}",
         )
-        _need(state.motion == "rest_hold" and state.torque_on, "not holding at rest")
-        off = _distance(self._arm.pose(), rest.rest_q)
-        return f"the arm holds at rest with the motors on, {off:.3f} rad from rest"
+        return self._motors_off_at_rest()
+
+    def _typed_on(self) -> str:
+        self._type("on")
+        _need(
+            self._written.wait_for(CONFIRM_POWER_ON, STEP_WAIT_S),
+            "the Thor terminal did not ask before the motors are switched on",
+        )
+        self._type(YES)
+        state = self._state(lambda s: _typed_result(s, "on") is not None)
+        result = _typed_result(state, "on") or {}
+        _need(
+            result.get("status") == "completed",
+            f"on ended {result.get('status')}: {result.get('reason')}",
+        )
+        self._state(lambda s: s.motion == "rest_hold" and s.torque_on)
+        return "the motors are on again at rest; the robot app was not started anew"
 
     def _release(self) -> str:
         return self._released_by(self._client)
@@ -1312,6 +1420,10 @@ class _SelfTest:
         """A RELEASE this client sends, at rest."""
         command_id = operator.release()
         _ended(operator.wait_result(command_id, timeout_s=STEP_WAIT_S), "completed")
+        return self._motors_off_at_rest()
+
+    def _motors_off_at_rest(self) -> str:
+        """The motors are off, and they were switched off once, at measured rest."""
         self._state(lambda s: s.motion == "rest_unpowered" and not s.torque_on)
         _need(len(self._arm.released_at) == 1, "torque was not released exactly once")
         off = _distance(self._arm.released_at[0], self._config.rest.rest_q)
@@ -1382,20 +1494,15 @@ class _LinkSelfTest(_SelfTest):
         self._say = say
         self._clock = SystemClock()
         rest_q = list(config.rest.rest_q)
-        self._arm = SimArm(
-            n_joints=config.n_joints,
-            clock=self._clock,
-            q0=rest_q,
-            joint_names=config.joint_names,
-        )
         self._app = RobotApp(
             config,
-            self._arm,
+            self._new_arm(),
             sim_checkers(config, self._clock),
             None,
             self._clock,
             driver=DRIVER_SIM,
             allow_reference=config.jaws.allow_reference,
+            rebuild_arm=self._new_arm,
         )
         self._socket_path = os.path.join(socket_folder, "robot_link.sock")
         self._listener: RobotListener | None = None
@@ -1419,7 +1526,6 @@ class _LinkSelfTest(_SelfTest):
             ("the robot connection is cut during a move", self._cut_during_move),
             ("the robot app dials again", self._connected_again),
             ("rest from the console", self._console_rest),
-            ("release from the console", self._console_release),
             ("close the robot app", self._close_app),
         )
 
@@ -1575,12 +1681,7 @@ class _LinkSelfTest(_SelfTest):
         command_id = self._console.rest(confirmed=True)
         result = self._console.wait_result(command_id, timeout_s=STEP_WAIT_S + longest)
         _ended(result, "completed")
-        self._state(lambda s: s.motion == "rest_hold" and s.torque_on)
-        off = _distance(self._arm.pose(), rest.rest_q)
-        return f"the arm holds at rest with the motors on, {off:.3f} rad from rest"
-
-    def _console_release(self) -> str:
-        return self._released_by(self._console)
+        return self._motors_off_at_rest()
 
     def _close_app(self) -> str:
         self._dialer.close()

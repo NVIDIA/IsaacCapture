@@ -86,8 +86,10 @@ class JointReading:
 
 @dataclass(frozen=True)
 class GripperOutcome:
-    # "reached", "stalled", "timeout", "cancelled" or "refused" from the arm; the
-    # gripper worker adds "failed" when the driver raised.
+    # From the arm: "reached", "sent" (a close or a hold that returns once it
+    # is sent), "stalled", "timeout", "cancelled", "refused" or "gripper_fault"
+    # (a fault of the jaws that leaves the arm usable; detail is the driver's
+    # text). The gripper worker adds "failed" when the driver raised.
     status: str
     opening: float | None
     detail: str = ""
@@ -140,10 +142,19 @@ class ArmPort(Protocol):
     joint_names: list[str]
 
     def connect(self) -> None:
-        """Connect to the motors. Called once at start and never again."""
+        """Connect to the motors. Called once on an arm port.
+
+        After a torque release at rest the motors are switched on again on a
+        new arm port (rest.SwitchedArm).
+        """
 
     def torque_on(self) -> bool:
-        """Whether the motors are powered."""
+        """Whether this program switched the motors on and has not released them.
+
+        It is not a reading of the motors. An arm port that can say more has
+        hold_evidence() -> (state, why), with the state "holding", "not
+        holding" or "unknown": ROBOT_STATE carries it as health["motors"].
+        """
 
     def send_target(self, q: Sequence[float]) -> None:
         """Send one already-checked setpoint without waiting."""
@@ -201,9 +212,13 @@ class ArmPort(Protocol):
     ) -> GripperOutcome:
         """Run one jaw command to its end; ends early when cancel is set.
 
-        A close that ends "stalled" or "timeout" short of its target is left at
-        the light holding stiffness, in either mode. A cancelled opening stops
-        within a small step, with the jaw target where the jaws are.
+        Which routine of the driver runs is the mode's. A driver with jaw
+        routines of its own leaves the jaws as those leave them: a close
+        keeps its stiffness. A cancelled command ends at the light holding
+        stiffness; a cancelled opening stops within a small step, with the
+        jaw target where the jaws are. An arm port may also have jaw_modes,
+        gripper_close_two_stage() and gripper_close_torque(): the gripper
+        worker asks for them by name (gripper.py).
         """
 
     def gripper_light_hold(self) -> None:
@@ -277,6 +292,15 @@ class Checker(Protocol):
         """check_pose() without its table clearance for the gripper tip.
 
         Every other rule of check_pose() stays; raises Refusal.
+        """
+
+    def check_start_pose(self, q: Sequence[float]) -> None:
+        """Check the measured pose a new task of this owner starts from.
+
+        The arm is already there: the pose is judged as a hold, not as a
+        target. So a pose that a setpoint may only leave is taken, such as a
+        gripper tip under the table clearance, which may only rise, or one
+        outside the workspace box, which may only come back. Raises Refusal.
         """
 
     def check_path(

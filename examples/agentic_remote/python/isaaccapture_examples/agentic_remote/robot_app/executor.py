@@ -58,6 +58,12 @@ _HOLD_ATTEMPTS = 2
 HOLD_FAILED = "; the hold at the measured pose failed: "
 
 _IDLE: tuple[str, int, int] = ("", 0, 0)
+# A wait that has this little left has run out: a clock cannot be advanced by
+# less.
+_TIME_EPS_S = 1e-9
+# A move whose start tolerance is at most this has its first setpoint checked
+# from its own start pose: the arm is at most this far from it.
+_PLANNED_START_TOL_RAD = 0.005
 
 
 def _never_stop() -> str | None:
@@ -118,15 +124,21 @@ class _Move:
     sent: int = 0  # setpoints sent so far
     missed: int = 0  # deadlines missed by more than the small delay
     settled_q: list[float] | None = None  # the full read the move settled on
+    # The pose the move's setpoints were sampled from; None for a replanned
+    # move, whose setpoints are sampled from the pose measured here.
+    planned_from: list[float] | None = None
 
 
 class MoveExecutor:
     """Runs one move at a time: every setpoint once, in order, one per period.
 
     Before each setpoint it asks the stop conditions, the permit gate and the
-    checker, the first one from the measured start pose. It never changes the
-    control owner, raises no stop and leaves the jaws alone. MoveOutcome.index
-    and progress() count the setpoints sent.
+    checker. The first setpoint is checked from the pose the move was sampled
+    from, as APAI's own stream checks it; a replanned move, and one with a
+    start tolerance over _PLANNED_START_TOL_RAD, from the measured start pose.
+    A setpoint no permit covers yet waits in a hold, at most large_delay_s.
+    It never changes the control owner, raises no stop and leaves the jaws
+    alone. MoveOutcome.index and progress() count the setpoints sent.
     """
 
     def __init__(
@@ -140,6 +152,8 @@ class MoveExecutor:
         *,
         on_missed_deadline: Callable[[], None] | None = None,
         reads_paused: Callable[[], AbstractContextManager[None]] | None = None,
+        start_read_tries: int = 1,
+        pause_limit_s: float | None = None,
     ) -> None:
         """first_wait_s is the longest a move waits for its first covering permit.
 
@@ -147,10 +161,24 @@ class MoveExecutor:
         the small delay allows, and for a move that ends "late". A move's start
         read runs inside reads_paused() (IdleReader.paused), and so does the
         move from its first setpoint on; the wait for the first permit that
-        lies between the two does not.
+        lies between the two does not. start_read_tries is how often the
+        start pose is read before a move is refused for a failed read.
+        pause_limit_s is the large delay of this executor's moves: the
+        longest a setpoint may be late, or wait for a permit; None is the
+        configuration's large_delay_s.
         """
         if not (_is_number(first_wait_s) and first_wait_s >= 0.0):
             raise ValueError(f"first_wait_s must be 0 or more, got {first_wait_s!r}")
+        tries = start_read_tries
+        if isinstance(tries, bool) or not isinstance(tries, int) or tries < 1:
+            raise ValueError(f"start_read_tries must be 1 or more, got {tries!r}")
+        self._start_read_tries = tries
+        pause = config.large_delay_s if pause_limit_s is None else pause_limit_s
+        if not (_is_number(pause) and pause > config.small_delay_s):
+            raise ValueError(
+                f"pause_limit_s must be above small_delay_s, got {pause_limit_s!r}"
+            )
+        self._large_delay_s = float(pause)
         self._arm = arm
         self._authority = authority
         self._history = history
@@ -293,6 +321,11 @@ class MoveExecutor:
             if isinstance(begun, MoveOutcome):
                 return begun
             rows, measured = begun
+            # The measured pose is within start_tol of the move's start pose.
+            # With a wider tolerance the first setpoint stays checked from the
+            # measured pose, so its step from there is never unchecked.
+            if replan is None and start_tol <= _PLANNED_START_TOL_RAD:
+                move.planned_from = list(start)
             if gate is None:
                 self._set_stage(MOVE_SENDING)
                 return self._from_start(move, rows, measured, gate, region)
@@ -305,8 +338,7 @@ class MoveExecutor:
         if ended is not None:
             return MoveOutcome(*ended)
         self._set_stage(MOVE_SENDING)
-        # Nor with the move from here on. The arm held since the start read, so
-        # the first setpoint is checked from the pose that read measured.
+        # Nor with the move from here on. The arm held since the start read.
         with self._reads_paused():
             return self._from_start(move, rows, measured, gate, region)
 
@@ -321,12 +353,23 @@ class MoveExecutor:
         """Read the start pose and compare it with the move's.
 
         Returns the setpoints, replanned when asked, and the measured pose; or
-        the refusal. Nothing is sent.
+        the refusal. Nothing is sent. A failed read is made again, up to
+        start_read_tries reads: APAI's driver starts a move over a missed
+        motor answer. Only a fresh read is ever used.
         """
-        try:
-            readings = self._arm.read_all()
-        except ReadFailed as failed:
-            return MoveOutcome("refused", f"the start pose could not be read: {failed}")
+        readings = None
+        for attempt in range(1, self._start_read_tries + 1):
+            try:
+                readings = self._arm.read_all()
+                break
+            except ReadFailed as failed:
+                if attempt == self._start_read_tries:
+                    reason = f"the start pose could not be read: {failed}"
+                    return MoveOutcome("refused", reason)
+                _log.info("start pose read %d failed, read again: %s", attempt, failed)
+                stop = self._stop_reason(move)
+                if stop is not None:
+                    return MoveOutcome("stopped", stop)
         self._keep(readings)
         measured = _pose_of(readings, self._arm.n_joints)
         if measured is None:
@@ -515,26 +558,33 @@ class MoveExecutor:
 
         Setpoint i is due at t0 + i * period. A late wake-up moves t0 back, and
         so does a check and send that took longer than the small delay; what
-        they usually cost does not, so it cannot stretch the move.
+        they usually cost does not, so it cannot stretch the move. A wait for
+        a permit moves t0 back by its length.
         """
         config = self._config
         period = config.period_s
-        q_prev = measured  # the first step starts where the arm is
+        # As APAI's own stream: the first setpoint is checked from the pose
+        # the setpoints were sampled from. From a second reading, a joint that
+        # lies on its stop fails the checker's rule that it must move back
+        # inside its limits, by the noise between the two readings.
+        q_prev = measured if move.planned_from is None else move.planned_from
+        standing = measured  # the target the arm holds while a setpoint waits
         t0 = self._clock.monotonic()
         for index, q in enumerate(rows):
             stop = self._stop_reason(move)
             if stop is not None:
                 return "stopped", stop
-            now = self._clock.monotonic()
-            ended = self._permit_problem(move, gate, index, now)
+            ended, waited = self._await_cover(move, gate, index, standing)
             if ended is not None:
                 return ended
+            t0 += waited
+            now = self._clock.monotonic()
             if index == 0:
                 expired = self._expired(move)
                 if expired is not None:
                     return self._refused(move, expired)
             late = now - (t0 + index * period)
-            if late > config.large_delay_s:
+            if late > self._large_delay_s:
                 return self._late(move, index, late, "is")
             if late > 0.0:
                 # Later setpoints move back with this one: none is skipped and
@@ -548,21 +598,23 @@ class MoveExecutor:
             stop = self._stop_reason(move)
             if stop is not None:
                 return "stopped", stop
-            now = self._clock.monotonic()
-            ended = self._permit_problem(move, gate, index, now)
+            ended, waited = self._await_cover(move, gate, index, standing)
             if ended is not None:
                 return ended
+            t0 += waited
+            due += waited
+            now = self._clock.monotonic()
             if index == 0:
                 expired = self._expired(move)
                 if expired is not None:
                     return self._refused(move, expired)
-            if now - due > config.large_delay_s:
+            if now - due > self._large_delay_s:
                 return self._late(move, index, now - due, "is")
             self._arm.send_target(q)
             behind = self._clock.monotonic() - due
             move.sent = index + 1
             self._set_progress((move.move_id, move.sent, move.total))
-            if behind > config.large_delay_s:
+            if behind > self._large_delay_s:
                 return self._late(move, index, behind, "went out")
             if behind > config.small_delay_s:
                 # A delay, not the usual cost: the next setpoint keeps its distance.
@@ -570,23 +622,63 @@ class MoveExecutor:
                 self._note_missed(move)
             deadline = t0 + (index + 1) * period
             move.watch.after_send(index, q, deadline)
-            q_prev = q
+            q_prev = standing = q
             self._clock.sleep(max(0.0, deadline - self._clock.monotonic()))
         return None
 
-    def _permit_problem(
-        self, move: _Move, gate: PermitGate | None, index: int, now: float
-    ) -> Ending | None:
-        """How the move ends when no permit covers setpoint `index` at `now`."""
-        reason = None if gate is None else gate.covers(move.move_id, index, now)
-        if reason is None:
-            return None
-        return self._refused(move, _with_permit_refusal(reason, gate, move.move_id))
+    def _await_cover(
+        self,
+        move: _Move,
+        gate: PermitGate | None,
+        index: int,
+        standing: list[float],
+    ) -> tuple[Ending | None, float]:
+        """Hold until a permit covers setpoint `index`: (the move's end, the wait).
+
+        The end is None once a permit covers it; the wait is in s. A permit
+        that is late is waited for, at most large_delay_s: the arm holds the
+        standing setpoint and the watch goes on reading against it, so a
+        contact still ends in a hold. APAI's stream waits for a slow check
+        the same way and ends at that pause. A cancel, and a permit that no
+        longer quotes the authority's numbers, end the move at once.
+        """
+        if gate is None:
+            return None, 0.0
+        limit = self._large_delay_s
+        period = self._config.period_s
+        started = self._clock.monotonic()
+        waited = 0.0  # stays 0 for a setpoint that is covered at once
+        while True:
+            now = self._clock.monotonic()
+            reason = gate.covers(move.move_id, index, now)
+            if reason is None:
+                if waited > 0.0:
+                    self._note_missed(move)
+                    _log.info(
+                        "move %s waited %.3f s in a hold for a permit that covers "
+                        "setpoint %d",
+                        move.move_id,
+                        waited,
+                        index,
+                    )
+                return None, waited
+            if limit - waited < _TIME_EPS_S or not gate.may_renew(move.move_id):
+                reason = _with_permit_refusal(reason, gate, move.move_id)
+                return self._refused(move, reason), waited
+            stop = self._stop_reason(move)
+            if stop is not None:
+                return ("stopped", stop), waited
+            deadline = now + min(period, limit - waited)
+            if move.sent > 0:
+                # Nothing is sent: the reads go on against the standing setpoint.
+                move.watch.after_send(move.sent - 1, standing, deadline)
+            self._clock.sleep(max(0.0, deadline - self._clock.monotonic()))
+            waited = self._clock.monotonic() - started
 
     def _late(self, move: _Move, index: int, by_s: float, what: str) -> Ending:
         """The end of a move whose setpoint is, or went out, over the large delay."""
         self._note_missed(move)
-        limit = self._config.large_delay_s
+        limit = self._large_delay_s
         return "late", (
             f"setpoint {index} {what} {by_s:.3f} s late, over the limit of {limit:g} s"
         )
@@ -595,7 +687,8 @@ class MoveExecutor:
         """Read until one full read has every joint at the last setpoint; None then.
 
         The watch reads a few joints a pass. Once each joint's newest reading
-        is valid and near, one read of every joint decides.
+        is valid and near, one read of every joint, one after the other,
+        decides.
         """
         config = self._config
         near = [False] * len(q_last)
@@ -627,23 +720,26 @@ class MoveExecutor:
     ) -> None:
         """Set near[joint] from each reading: valid and inside the settle tolerance.
 
-        A reading that is not valid takes back what an earlier one showed.
+        Inside is closer than the tolerance, as APAI's driver settles. A
+        reading that is not valid takes back what an earlier one showed.
         """
         tol = self._config.settle_tol_rad
         for reading in readings:
             joint = reading.joint
             if 0 <= joint < len(near):
                 valid = reading.valid and math.isfinite(reading.value)
-                near[joint] = valid and abs(reading.value - q_last[joint]) <= tol
+                near[joint] = valid and abs(reading.value - q_last[joint]) < tol
 
     def _read_near(self, move: _Move, q_last: list[float]) -> list[bool]:
         """Per joint, whether one fresh full read has it valid and near q_last.
 
-        Keeps that read's pose in move.settled_q when every joint is.
+        Keeps that read's pose in move.settled_q when every joint is. The
+        read asks joint by joint: read_all() can wait far longer for a motor
+        that does not answer than the watch allows a joint without a reading.
         """
         near = [False] * len(q_last)
         try:
-            readings = self._arm.read_all()
+            readings = [self._arm.read_joint(joint) for joint in range(len(q_last))]
         except ReadFailed as failed:
             _log.debug("no settled pose yet: the full read failed: %s", failed)
             return near

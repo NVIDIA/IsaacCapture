@@ -69,9 +69,10 @@ if TYPE_CHECKING:
 _log = logging.getLogger("isaaccapture.examples.agentic_remote.human_main")
 
 EXIT_OK = 0
-# No robot link service, a second human program, an arm model that does not
-# fit WELCOME, a synthetic controller against a real arm, or no Teleop Session
-# Server after teleop.attempts attempts.
+# Neither a robot link service nor a robot app at the socket, a second human
+# program, an arm model that does not fit WELCOME, a synthetic controller
+# against a real arm, no Teleop Session Server after teleop.attempts attempts,
+# or an error in a pass.
 EXIT_FAILED = 1
 EXIT_NOT_RUN = 2  # the arguments, the file or the installation cannot be used
 
@@ -670,7 +671,10 @@ class _Loop:
 
     def run(self) -> int:
         """Run until the program is to end; the exit code."""
-        _log.info("attached to the robot link service; waiting for a WELCOME")
+        # The socket is the robot link service's or the robot app's own.
+        _log.info(
+            "attached to the robot link service or the robot app; waiting for a WELCOME"
+        )
         while True:
             welcome = self._inbox.welcome()
             if welcome is not None:
@@ -737,7 +741,8 @@ class _Loop:
                 _complain(str(error))
                 return EXIT_FAILED
             except self._refused as error:
-                # The file's error, met at the first attempt: nothing was sent.
+                # The file's error, which the feed raises at its first attempt
+                # only: nothing was sent.
                 _complain(f"the settings cannot be used: {_plain(error)}")
                 return EXIT_NOT_RUN
             except Exception as error:
@@ -796,6 +801,7 @@ class _Loop:
             self._client.send(message)
         # A log call can block, as on a terminal that is paused: this pass's
         # log lines come behind its link messages, so right B's STOP is out.
+        self._log_feed()
         if new_session:
             _log.info(_NEW_SESSION, _plain(welcome.session_id))
         logic.log_pass()
@@ -823,9 +829,20 @@ class _Loop:
             if isinstance(message, Stop):
                 self._client.send(message)
         self._stop_if_owning("the robot app's new session cannot be driven")
+        self._log_feed()
         _log.info(_NEW_SESSION, _plain(welcome.session_id))
         _complain(problem)
         self._logic.log_pass()
+
+    def _log_feed(self) -> None:
+        """Have the feed log the lines it kept; a feed need not keep any.
+
+        The teleop feed keeps the line of a session it entered: that pass
+        reads right B behind the entry.
+        """
+        log_pass = getattr(self._feed, "log_pass", None)
+        if log_pass is not None:
+            log_pass()
 
     def _report(self, now: float, state: RobotState | None) -> None:
         """Say the report line; the next one is due a period after this one was."""
@@ -1034,7 +1051,10 @@ def main(
             settings.socket_path or None, ROLE_HUMAN, "human", ATTACH_TIMEOUT_S
         )
     except OSError as problem:  # also LocalRefused and TimeoutError
-        _complain(f"cannot attach to the robot link service: {problem}")
+        # The socket is the robot link service's or the robot app's own.
+        _complain(
+            f"cannot attach to the robot link service or the robot app: {problem}"
+        )
         return EXIT_FAILED
     try:
         client = WorkstationClient(

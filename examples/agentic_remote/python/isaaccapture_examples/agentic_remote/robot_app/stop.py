@@ -38,6 +38,8 @@ JAW_COMMAND_OUT = (
     "a cancelled jaw command has not returned: until it does the jaws take no "
     "other command, and rest and release are refused"
 )
+# What a fault-stop's text names as the way on, unless its caller names another.
+HOLDS_UNTIL_RESET = "the arm holds until a person types reset"
 
 _CHECKER_NAMES = ("agent", "human", "recovery")
 
@@ -49,7 +51,8 @@ class StopController:
     """Raises STOP and fault-stop, and clears a fault-stop on reset.
 
     Both levels end in a hold with the motors on: the running move stops at its
-    next setpoint and the jaws stay where they are, at the light stiffness.
+    next setpoint and a running jaw command ends at the light stiffness; jaws
+    no command is moving stay as they are, so what they grip stays gripped.
     Nothing here starts a motion or a wait, opens the jaws or cuts torque.
     Thread-safe; every step of a stop runs even when an earlier one raised.
     """
@@ -118,11 +121,13 @@ class StopController:
         self._emit(STOP_EVENT, text, data, problems)
         return number
 
-    def fault(self, reason: str) -> int:
+    def fault(self, reason: str, way_on: str | None = None) -> int:
         """Fault-stop: as a STOP, and latched until reset; returns the new stop number.
 
         It always cancels the assistance wait. Every call raises the stop number,
         so call it once per fault, not on every poll of a fault that stays.
+        way_on stands in the text in place of HOLDS_UNTIL_RESET, for a fault
+        after which the arm may not hold and a reset is not the way on.
         """
         reason = _worded(reason, MAX_OUT_CHARS)
         problems: list[str] = []
@@ -134,8 +139,7 @@ class StopController:
         why = f"fault-stop: {reason}"
         cancelled, jaws_out = self._stop_move_and_jaws(problems, why, cancel_wait=True)
         text = (
-            f"FAULT-STOP: {reason}; the arm holds until a person types reset, "
-            f"stop number {number}"
+            f"FAULT-STOP: {reason}; {way_on or HOLDS_UNTIL_RESET}, stop number {number}"
         )
         if state.fault_reason != reason:
             text += f"; latched earlier: {state.fault_reason}"

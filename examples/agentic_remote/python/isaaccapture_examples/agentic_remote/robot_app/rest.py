@@ -1,18 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Return to rest and the guarded torque release.
+"""Return to rest, the guarded torque release, and the motors on again.
 
 See section 11 of docs/design/claude_agentic_remote_execution.md. No other module
 may switch the motors off.
+
+The functional rest is APAI's rest tool (apai.skills.rest_pose.move_to_rest):
+up to the ready pose unless the arm is there, the fold onto the rest pose in
+measured steps, the proof of rest by measurement, the jaws closed with the
+driver's close, the motors off. With a RestRoute the return to rest drives
+that route; power_down() is its end.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import threading
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .interfaces import (
@@ -40,8 +49,8 @@ if TYPE_CHECKING:
     )
     from .state import JointHistory
 
-    # The planned move: (setpoints, duration in seconds).
-    Plan = tuple[list[list[float]], float]
+    # The planned return: per leg, (the leg, its setpoints, its duration in s).
+    Plan = list[tuple["Leg", list[list[float]], float]]
     # Sends one operator event: (kind, text, data).
     EmitEvent = Callable[[str, str, dict[str, Any]], None]
 
@@ -83,6 +92,21 @@ _EPS = 1e-9
 CONFIRM_PATH = "confirm the path is clear"
 _BUSY = "a return to rest or a release is already running"
 _OWNER_CHANGED = "the control owner changed while the return to rest was checked"
+MOTORS_ALREADY_OFF = "the motors are already off"
+_STOP_WHILE_CHECKED = "a STOP was raised while the release was checked"
+# The one leg of a return to rest without a RestRoute, and the legs of one.
+LEG_STRAIGHT = "to the rest pose"
+LEG_UP = "up to the ready pose"
+LEG_FOLD = "fold step {step} of {steps}"
+# What power_down() says of the jaws before the motors go off, and its kind.
+EVENT_JAWS = "jaws"
+CLOSING_JAWS = "at rest: closing the jaws with the driver's close"
+JAWS_CLOSED = "at rest: the jaws are closed"
+JAWS_LEFT = "at rest: the jaws are left as they were: {why}"
+# What switches the motors on again, and why it did not.
+MOTORS_ON_AGAIN = "the motors are on again at rest"
+NOT_ON_AGAIN = "the motors were not switched on again: {why}"
+MOTORS_ARE_ON = "the motors are on"
 
 
 class MotionStateHolder(Protocol):
@@ -93,6 +117,80 @@ class MotionStateHolder(Protocol):
 
     def set(self, state: MotionState) -> None:
         """Replace the motion state."""
+
+
+@dataclass(frozen=True)
+class RestRoute:
+    """The route of the functional rest and its numbers.
+
+    Every value but home_q is read from apai.skills.rest_pose by
+    functional_route(). home_q is the arm profile's ready pose, raised and
+    ready for work; None: the arm folds from where it is.
+    """
+
+    home_q: tuple[float, ...] | None
+    track_tol_rad: float  # measured against a leg's goal after the leg
+    home_s: float  # the shortest the leg up to the ready pose takes
+    segment_s: float  # the shortest one fold step takes
+    # fold_waypoints(start, rest pose): the goals of the fold steps, in order.
+    waypoints: Callable[[Sequence[float], Sequence[float]], Sequence[Any]]
+
+
+def functional_route(home_q: Sequence[float] | None = None) -> RestRoute:
+    """The route APAI's rest tool drives, with its own numbers; needs APAI."""
+    from apai.skills import rest_pose as functional
+
+    return RestRoute(
+        home_q=None if home_q is None else tuple(float(value) for value in home_q),
+        track_tol_rad=float(functional.TRACK_TOL_RAD),
+        home_s=float(functional.HOME_S),
+        segment_s=float(functional.SEGMENT_S),
+        waypoints=functional.fold_waypoints,
+    )
+
+
+@dataclass(frozen=True)
+class Leg:
+    """One measured stretch of a return to rest."""
+
+    name: str
+    goal: tuple[float, ...]
+    min_duration_s: float
+    # The farthest the measured pose may lie from the goal afterwards; None:
+    # the last leg, which the proof of rest judges.
+    track_tol_rad: float | None = None
+
+
+class SwitchedArm:
+    """An arm port whose motors can be switched on again.
+
+    Every call goes to the driver's port in use. connect() after a torque
+    release makes a new port with `build` and connects that one, as APAI's
+    LazyArm makes a new backend each time it wakes.
+    """
+
+    def __init__(self, port: ArmPort, build: Callable[[], ArmPort]) -> None:
+        self._port = port
+        self._build = build
+        self._connects = 0
+
+    def connect(self) -> None:
+        if self._connects:
+            if self._port.torque_on():
+                raise RuntimeError(MOTORS_ARE_ON)
+            self._port = self._build()
+        self._connects += 1
+        self._port.connect()
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._port, name)
+
+
+def _far(pose: Sequence[float], goal: Sequence[float]) -> float:
+    """The largest joint distance between two poses, rad."""
+    return max(abs(float(at) - float(to)) for at, to in zip(pose, goal))
 
 
 def planned_duration_s(
@@ -174,14 +272,26 @@ class ReturnToRest:
         move_running: Callable[[], bool],
         *,
         jaws_busy: Callable[[], bool] | None = None,
+        route: RestRoute | None = None,
+        close_jaws: Callable[[Callable[[], str | None]], str | None] | None = None,
+        reads_paused: Callable[[], AbstractContextManager[None]] | None = None,
     ) -> None:
         """emit_event(kind, text, data) sends one operator event.
 
         last_grasp_region() is the grasp region of the agent's last grasp,
         contact_hold_active() whether the arm holds at a contact, move_running()
         whether a move is being sent to the arm, and jaws_busy() whether a jaw
-        command is queued or running (GripperWorker.busy).
+        command is queued or running (GripperWorker.busy). route is the
+        functional rest's route; None: one straight move to the rest pose.
+        close_jaws(should_stop) closes the jaws with the driver's close and
+        returns None, or why they were left as they were; None: no close.
+        reads_paused() is a block inside which no idle joint read begins
+        (IdleReader.paused): the torque release runs inside it, so no read
+        meets a driver that is switching its motors off.
         """
+        self._route = route
+        self._close_jaws = close_jaws
+        self._reads_paused = reads_paused or contextlib.nullcontext
         self._arm = arm
         self._authority = authority
         self._recovery = checkers.recovery
@@ -204,6 +314,9 @@ class ReturnToRest:
         self._move_running = move_running
         self._jaws_busy = jaws_busy
         self._busy = threading.Lock()  # held while a request or a release runs
+        # The (stop number, owner number) at which power_down() judged the
+        # jaws empty; None before, and once the arm is next moved from here.
+        self._jaws_judged: tuple[int, int] | None = None
         self._moves = 0  # moves started, for their ids
         self._last_move: MoveOutcome | None = None
 
@@ -241,23 +354,83 @@ class ReturnToRest:
         self._report(source, outcome)
         return outcome
 
+    def power_down(
+        self,
+        stop_number_seen: int,
+        should_stop: Callable[[], str | None] | None = None,
+        *,
+        jaws_empty: bool = False,
+        close: bool = True,
+    ) -> str | None:
+        """The end of the functional rest; why the motors stay on, or None.
+
+        At measured rest the jaws are closed with the driver's close and the
+        motors are switched off, in that order. jaws_empty: the jaws were
+        found empty before the arm was folded, so they are not judged again;
+        else they must be proven empty first, by measurement or the operator's
+        word. close False sends the jaws nothing. A close that fails is told
+        and the release follows: at rest the jaws hold nothing up. Away from
+        measured rest nothing is sent and the motors stay on.
+        """
+        stop = should_stop or _never_stop
+        now = self._authority.snapshot()
+        # What refuses the release itself is said before anything is read.
+        if stop_number_seen != now.stop_number:
+            return _stop_number_text(stop_number_seen, now.stop_number)
+        if now.stop_level is StopLevel.FAULT:
+            return _fault_text(now)
+        stopped = stop()
+        if stopped is not None:
+            return stopped or "stop requested"
+        if not self._arm.torque_on():
+            return MOTORS_ALREADY_OFF
+        # Jaws this rest has judged and closed are not judged again while no
+        # STOP and no owner change came: what its close left is not a load.
+        numbers = (now.stop_number, now.owner_number)
+        judged = jaws_empty or self._jaws_judged == numbers
+        problem = None if judged else self._jaws_problem()
+        problem = problem or self._rest_problem()
+        if problem is not None:
+            _log.warning("the motors stay on: %s", problem)
+            return problem
+        self._jaws_judged = numbers
+        if self._authority.stop_number != stop_number_seen:
+            return _STOP_WHILE_CHECKED
+        if self._jaws_busy is not None and self._jaws_busy():
+            # One that began while the arm was read: the jaws are not as judged.
+            self._jaws_judged = None
+            return "a jaw command is running"
+        if close and self._close_jaws is not None:
+            self._tell(EVENT_JAWS, CLOSING_JAWS, {})
+            why = self._close_jaws(stop)
+            text = JAWS_CLOSED if why is None else JAWS_LEFT.format(why=why)
+            self._tell(EVENT_JAWS, text, {"problem": why or ""})
+            if self._authority.stop_number != stop_number_seen:
+                return _STOP_WHILE_CHECKED
+        return self.release(stop_number_seen, stop, jaws_checked=True)
+
     def release(
         self,
         stop_number_seen: int,
         should_stop: Callable[[], str | None] | None = None,
+        *,
+        jaws_checked: bool = False,
     ) -> str | None:
         """Switch the motors off at measured rest; why not, or None when done.
 
         Needs the current stop number, no fault-stop, no move running, the jaws
         proven empty, and two fresh full reads read_gap_s apart within
         rest_tol_rad of rest and of each other. A reason from should_stop, asked
-        first and again just before the cut, keeps the motors on.
+        first and again just before the cut, keeps the motors on. jaws_checked:
+        power_down() has judged the jaws before it closed them.
         """
         if not self._busy.acquire(blocking=False):
             reason: str | None = _BUSY
         else:
             try:
-                reason = self._release(stop_number_seen, should_stop or _never_stop)
+                reason = self._release(
+                    stop_number_seen, should_stop or _never_stop, jaws_checked
+                )
             finally:
                 self._busy.release()
         if reason is None:
@@ -385,41 +558,91 @@ class ReturnToRest:
             raise Refusal(blocked or "the gripper tip is blocked")
         return start
 
-    def _plan(self, start: list[float]) -> Plan:
-        """The move from start to rest, checked whole; raises Refusal."""
+    def legs(self, start: Sequence[float]) -> list[Leg]:
+        """The legs of a return to rest from a pose away from rest, in order.
+
+        Without a route: one straight move. With one, the functional rest's:
+        up to the ready pose unless the arm is within the route's tracking
+        tolerance of it, then the fold in the route's steps.
+        """
+        rest, route = self._rest, self._route
+        if route is None:
+            park = tuple(float(value) for value in rest.rest_q)
+            return [Leg(LEG_STRAIGHT, park, rest.min_duration_s)]
+        home = route.home_q
+        if home is not None and _far(start, home) > route.track_tol_rad:
+            up = Leg(LEG_UP, home, route.home_s, route.track_tol_rad)
+            return [up, *self._fold(home)]
+        return self._fold(start)
+
+    def _fold(self, start: Sequence[float]) -> list[Leg]:
+        """The fold's legs from a pose: the route's steps, the last onto rest."""
+        route = self._route
+        assert route is not None
+        park = tuple(float(value) for value in self._rest.rest_q)
+        goals = [
+            tuple(float(value) for value in goal)
+            for goal in route.waypoints(start, park)
+        ]
+        found: list[Leg] = []
+        for step, goal in enumerate(goals, start=1):
+            name = LEG_FOLD.format(step=step, steps=len(goals))
+            if step == len(goals):
+                found.append(Leg(name, park, route.segment_s))
+            else:
+                found.append(Leg(name, goal, route.segment_s, route.track_tol_rad))
+        return found
+
+    def _plan(self, start: list[float], legs: Sequence[Leg] | None = None) -> Plan:
+        """Every leg from start to rest, checked whole; raises Refusal.
+
+        legs None plans legs(start).
+        """
         rest = self._rest
-        travel = max(abs(goal - at) for at, goal in zip(start, rest.rest_q))
-        duration = planned_duration_s(travel, rest.recovery_speed, rest.min_duration_s)
-        count = setpoint_count(duration, self._period_s)
-        if count > self._max_setpoints:
-            raise Refusal(
-                f"the return to rest needs {count} setpoints, the limit is "
-                f"{self._max_setpoints}"
+        plan: Plan = []
+        at = list(start)
+        for leg in self.legs(start) if legs is None else legs:
+            travel = _far(at, leg.goal)
+            duration = planned_duration_s(
+                travel, rest.recovery_speed, leg.min_duration_s
             )
-        plan = plan_return(
-            start, rest.rest_q, self._period_s, rest.recovery_speed, rest.min_duration_s
-        )
-        try:
-            self._recovery.check_path(start, plan[0], self._period_s)
-        except Refusal as refusal:
-            raise Refusal(f"the path to rest was refused: {refusal.reason}") from None
+            count = setpoint_count(duration, self._period_s)
+            if count > self._max_setpoints:
+                raise Refusal(
+                    f"the return to rest needs {count} setpoints, the limit is "
+                    f"{self._max_setpoints}"
+                )
+            rows, duration = self._leg_rows(at, leg)
+            try:
+                self._recovery.check_path(at, rows, self._period_s)
+            except Refusal as refusal:
+                raise Refusal(
+                    f"the path to rest was refused: {refusal.reason}"
+                ) from None
+            plan.append((leg, rows, duration))
+            at = list(leg.goal)
         return plan
 
-    def _from_measured(self, measured: list[float]) -> list[list[float]]:
-        """The same move from the pose the executor itself has just read.
+    def _leg_rows(
+        self, start: Sequence[float], leg: Leg
+    ) -> tuple[list[list[float]], float]:
+        """One leg's setpoints from a pose, and their duration."""
+        return plan_return(
+            start,
+            leg.goal,
+            self._period_s,
+            self._rest.recovery_speed,
+            leg.min_duration_s,
+        )
+
+    def _from_measured(self, leg: Leg) -> Callable[[list[float]], list[list[float]]]:
+        """The same leg from the pose the executor itself has just read.
 
         The executor checks the first setpoint from that pose, and one step at
         the recovery speed is smaller than two reads of a still arm can differ.
         Every setpoint is checked as it is sent, so the path is not checked here.
         """
-        rest = self._rest
-        return plan_return(
-            measured,
-            rest.rest_q,
-            self._period_s,
-            rest.recovery_speed,
-            rest.min_duration_s,
-        )[0]
+        return lambda measured: self._leg_rows(measured, leg)[0]
 
     def _take_arm(self, source: str, seen: AuthorityState) -> int | None:
         """Make recovery the owner while the numbers of `seen` stand; its number."""
@@ -463,55 +686,89 @@ class ReturnToRest:
         halt_count: int,
         should_stop: Callable[[], str | None],
     ) -> RestOutcome | None:
-        """Run the planned move once; None when it completed, else how it ended."""
-        setpoints, duration = plan
-        stopped = should_stop()
-        if stopped is not None:
-            # Told to stop while it was checked: no move is announced or sent.
-            where = f"after 0 of {len(setpoints)} setpoints"
-            return RestOutcome(STOPPED, f"{stopped or 'stop requested'} ({where})")
-        travel = max(abs(goal - at) for at, goal in zip(start, self._rest.rest_q))
-        text = (
-            f"return to rest: the arm moves for {duration:.1f} s "
-            f"(largest joint travel {travel:.2f} rad)"
-        )
-        data = {
-            "source": source,
-            "duration_s": duration,
-            "travel_rad": travel,
-            "setpoints": len(setpoints),
-        }
-        self._tell(EVENT_REST, text, data)
-        self._moves += 1
-        self._motion_state.set(MotionState.MOVING)
-        try:
-            move = self._executor.run(
-                setpoints,
-                start,
-                self._start_tol_rad,
-                self._period_s,
-                Owner.RECOVERY,
-                self._recovery,
-                admitted,
-                f"rest-{self._moves}",
-                None,
-                None,
-                should_stop,
-                halt_count=halt_count,
-                replan=self._from_measured,
+        """Run the planned legs once; None when all completed, else how it ended.
+
+        Each leg starts from the pose measured after the one before, and that
+        pose must lie within the leg's tracking tolerance of its goal. After
+        the leg up to the ready pose the fold is planned and checked anew from
+        the measured pose, as the functional rest does.
+        """
+        at = list(start)
+        legs = list(plan)
+        while legs:
+            leg, setpoints, duration = legs.pop(0)
+            named = "" if self._route is None else f"{leg.name}: "
+            stopped = should_stop()
+            if stopped is not None:
+                # Told to stop while it was checked: no move is announced or sent.
+                where = f"{named}after 0 of {len(setpoints)} setpoints"
+                return RestOutcome(STOPPED, f"{stopped or 'stop requested'} ({where})")
+            travel = _far(at, leg.goal)
+            text = (
+                f"return to rest: {named}the arm moves for {duration:.1f} s "
+                f"(largest joint travel {travel:.2f} rad)"
             )
-        finally:
-            # However the move ended, setpoints are no longer being sent.
-            self._motion_state.set(MotionState.HOLD)
-        self._last_move = move
-        if move.status == "completed":
-            return None
-        where = f"after {move.index} of {len(setpoints)} setpoints"
-        if move.status == "stopped":
-            return RestOutcome(STOPPED, f"{move.reason} ({where})")
-        # Also a move refused before its first setpoint: recovery has taken the
-        # arm, so this is no refusal that changed nothing.
-        return RestOutcome(FAILED, f"{move.status} {where}: {move.reason}")
+            data = {
+                "source": source,
+                "duration_s": duration,
+                "travel_rad": travel,
+                "setpoints": len(setpoints),
+            }
+            if self._route is not None:
+                data["leg"] = leg.name
+            self._tell(EVENT_REST, text, data)
+            self._moves += 1
+            self._jaws_judged = None
+            self._motion_state.set(MotionState.MOVING)
+            try:
+                move = self._executor.run(
+                    setpoints,
+                    at,
+                    self._start_tol_rad,
+                    self._period_s,
+                    Owner.RECOVERY,
+                    self._recovery,
+                    admitted,
+                    f"rest-{self._moves}",
+                    None,
+                    None,
+                    should_stop,
+                    halt_count=halt_count,
+                    replan=self._from_measured(leg),
+                )
+            finally:
+                # However the move ended, setpoints are no longer being sent.
+                self._motion_state.set(MotionState.HOLD)
+            self._last_move = move
+            where = f"{named}after {move.index} of {len(setpoints)} setpoints"
+            if move.status == "stopped":
+                return RestOutcome(STOPPED, f"{move.reason} ({where})")
+            if move.status != "completed":
+                # Also a move refused before its first setpoint: recovery has
+                # taken the arm, so this is no refusal that changed nothing.
+                return RestOutcome(FAILED, f"{move.status} {where}: {move.reason}")
+            if not legs:
+                return None
+            try:
+                at = list(move.end_q) if move.end_q is not None else self._read_pose()
+            except ReadFailed as failed:
+                return RestOutcome(FAILED, f"{leg.name}: a joint read failed: {failed}")
+            off = _far(at, leg.goal)
+            if leg.track_tol_rad is not None and off > leg.track_tol_rad:
+                return RestOutcome(
+                    FAILED,
+                    f"{leg.name} did not track: the arm is {off:.3f} rad from its "
+                    f"goal (tolerance {leg.track_tol_rad:g} rad)",
+                )
+            if leg.name == LEG_UP:
+                try:
+                    legs = self._plan(at, self._fold(at))
+                except Refusal as refusal:
+                    return RestOutcome(
+                        FAILED,
+                        f"the fold was refused before it started: {refusal.reason}",
+                    )
+        return None
 
     def _give_back(
         self, person_owned: bool, stop_number: int, owner_number: int
@@ -547,7 +804,10 @@ class ReturnToRest:
     # The release, step by step
 
     def _release(
-        self, stop_number_seen: int, should_stop: Callable[[], str | None]
+        self,
+        stop_number_seen: int,
+        should_stop: Callable[[], str | None],
+        jaws_checked: bool = False,
     ) -> str | None:
         state = self._authority.snapshot()
         if stop_number_seen != state.stop_number:
@@ -558,29 +818,33 @@ class ReturnToRest:
         if stopped is not None:
             return stopped or "stop requested"
         if not self._arm.torque_on():
-            return "the motors are already off"
+            return MOTORS_ALREADY_OFF
         # The executor starts no move from here until the release is decided.
         with self._executor.claim_idle() as idle:
             if not idle or self._move_running():
                 return "a move is running"
-            problem = self._jaws_problem() or self._rest_problem()
+            problem = None if jaws_checked else self._jaws_problem()
+            problem = problem or self._rest_problem()
             if problem is not None:
                 return problem
             # The joint reads above are the newest evidence. A STOP that came
             # while they were taken keeps the motors on, and so does whatever
             # told this work to stop, such as the loss of the robot connection.
             if self._authority.stop_number != stop_number_seen:
-                return "a STOP was raised while the release was checked"
+                return _STOP_WHILE_CHECKED
             stopped = should_stop()
             if stopped is not None:
                 return stopped or "stop requested"
             if self._move_running():
                 return "a move began while the release was checked"
-            try:
-                self._arm.release_torque()
-            finally:
-                if not self._arm.torque_on():
-                    self._motion_state.set(MotionState.REST_UNPOWERED)
+            # An idle joint read that met the driver while it switches its
+            # motors off would count as lost joint feedback: a fault-stop.
+            with self._reads_paused():
+                try:
+                    self._arm.release_torque()
+                finally:
+                    if not self._arm.torque_on():
+                        self._motion_state.set(MotionState.REST_UNPOWERED)
         return None
 
     # Shared checks

@@ -63,11 +63,14 @@ retarget:
   position_scale: 1.0  # the target's motion per motion of the hand
   squeeze_threshold: 0.5  # the grip counts as squeezed above this; below 1
   # The rate limiter's bounds on the target's speed. A pass that asks for more is
-  # clamped. They are low so that the joint targets stay near the 0.1 rad/s the
-  # Thor moves a person's target with (limits.human.max_joint_speed of
-  # configs/robot_app_rebot.yaml). Computed on the arm model, not measured on
-  # the arm: 1 m/s at the gripper tip asks a joint for 10 to 13 rad/s, and
-  # 1 rad/s of the tip's turning for up to 3 rad/s.
+  # clamped. Computed on the arm model, not measured on the arm: 1 m/s at the
+  # gripper tip asks a joint for 10 to 13 rad/s, and 1 rad/s of the tip's
+  # turning for up to 3 rad/s. So these two ask a joint for about 0.1 rad/s,
+  # and for more where the arm is stretched out or folded. The Thor follows a
+  # person's target at up to 0.8 rad/s (limits.human.max_joint_speed of
+  # configs/robot_app_rebot.yaml): these two, not that limit, decide how fast
+  # the arm follows the hand. About 0.06 m/s and 0.26 rad/s would ask a joint
+  # for 0.8 rad/s.
   max_linear_velocity: 0.01  # m/s
   max_angular_velocity: 0.03  # rad/s
   # A hand faster than this is not followed at all, and the arm holds until the

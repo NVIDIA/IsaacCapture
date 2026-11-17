@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 from ..protocol.carrier import send
 from ..protocol.messages import JointSample, ProtocolError, RobotState
 from .interfaces import Owner, ReadFailed
-from .text import LineLimit
+from .text import MAX_REASON_CHARS, LineLimit, printable
 
 if TYPE_CHECKING:
     from ..protocol.carrier import Carrier
@@ -239,6 +239,14 @@ class IdleReader:
         else:
             self._history.add(reading)
         good = reading is not None and _usable(reading)
+        if not good and not self._arm.torque_on():
+            # The motors went off while the joint was read: nothing holds
+            # now, and that is no lost feedback.
+            with self._lock:
+                self._paused = True
+                self._retry = None
+                self._failing = [None] * len(self._failing)
+            return None
         with self._lock:
             if good:
                 self._failing[joint] = None
@@ -463,6 +471,14 @@ class StatePublisher:
         last_result = _clean(newest_result, "last_result", not_finite)
         temperatures = _clean(self._arm.temperatures(), "temperatures", not_finite)
         failures = None if self._read_failures is None else self._read_failures()
+        health: dict[str, Any] = {}
+        # What the arm port's joint readings say of the hold; not sent by an
+        # arm port that cannot say it. torque_on is no reading of the motors.
+        evidence = getattr(self._arm, "hold_evidence", None)
+        if callable(evidence):
+            hold, why = evidence()
+            reason = printable(why, MAX_REASON_CHARS)
+            health["motors"] = {"state": str(hold), "reason": reason}
         with self._lock:
             self._seq += 1
             seq = self._seq
@@ -512,6 +528,7 @@ class StatePublisher:
                 # the newest human target; empty without a source.
                 "human": human,
                 "contact_hold": bool(contact_hold),
+                **health,
             },
             move_stage=move_stage,
         )

@@ -74,8 +74,9 @@ STOP_SENDER = "controller"
 
 # HUMAN_SETPOINT.note: what the operator does next, or why nothing moves.
 NOTE_TAKE_OVER = "hold right B for 1 s with the grip released to take over"
-# While right B is down with no press that can ask: none that counts, or one
-# with the grip squeezed on a pass of it. Holding on asks for nothing.
+# While right B is down with no press that can ask: none that counts, one with
+# the grip squeezed on a pass of it, or one whose STOP went out with no
+# ROBOT_STATE of the robot app's session of now. Holding on asks for nothing.
 NOTE_RELEASE_B = (
     "release right B, then hold it for 1 s with the grip released to take over"
 )
@@ -109,8 +110,8 @@ NOTE_TRIGGER_EASE = "ease the trigger back to the grip level to move the jaws"
 TRIGGER_OPEN_MAX = 0.05
 TRIGGER_CLOSED_MIN = 0.95
 # A note goes out as printable ASCII of at most this many characters, which
-# keeps every HUMAN_SETPOINT under 512 bytes. A longer one loses its middle:
-# a refusal ends with what to do about it. The reason behind
+# keeps every HUMAN_SETPOINT under 600 bytes as it is sent. A longer one loses
+# its middle: a refusal ends with what to do about it. The reason behind
 # NOTE_SQUEEZE_AGAIN is cut by itself, so that its own first characters stay.
 NOTE_MAX_CHARS = 100
 NOTE_CUT = "..."
@@ -748,7 +749,10 @@ class HumanLogic:
             if p.takeover_open and at_rest:
                 return self._give_back(state)
             # B is down with no press that can ask: its hold asks for nothing.
-            waiting = self._b_down and not self._b.clean()
+            # One can ask only on a ROBOT_STATE of the session its STOP quoted.
+            seen = self._b_stop
+            quoted = seen is not None and seen[0] == state.session_id
+            waiting = self._b_down and not (self._b.clean() and quoted)
             return NOTE_RELEASE_B if waiting else NOTE_TAKE_OVER
         if gate is not None:
             key, why = gate

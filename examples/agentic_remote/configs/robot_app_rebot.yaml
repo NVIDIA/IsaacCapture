@@ -23,14 +23,22 @@ joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
 # rest is taken from, on every bound but the lower bound of joint indices 1 and
 # 2, which keep the region's -0.05. The comment at limits.human says why. With
 # human.enabled a human joint box that reaches outside rest.region_* is refused.
-# Every speed is 0.1: the rig's profile caps the joint speed at 0.1 or 0.2, and a
-# limit set faster than the profile's cap is refused.
+# The speeds. The experiment's launcher (the on-device agent this example was
+# split from) runs its arm at safety.max_joint_vel of its
+# configs/rebot_workstation.yaml, 0.4 in the workstation's copy. With the
+# rig's profile (configs/thor_operation of the experiment) the robot app reads
+# that file on the Thor as the launcher does and takes it for the profile's
+# speed cap: an agent or recovery limit set faster than that cap is refused at
+# the start. The human limit set is refused only above the speed cap of APAI's
+# rebot_rs profile, 0.8, the bound the launcher holds its own speed to.
+# thor.agent_max_joint_speed of configs/agent_rebot.yaml repeats the agent's
+# speed; change both together.
 limits:
   agent:
-    version: rebot-p2-1
+    version: rebot-p4-1
     joint_min: [-2.8, -0.05, -0.05, -1.69, -1.57, -3.14]
     joint_max: [2.8, 3.14, 3.14, 1.79, 1.57, 3.14]
-    max_joint_speed: 0.1
+    max_joint_speed: 0.2  # the owner's value of 2026-11-16
     # The agent's working box: 120 degrees around 0 (the rig profile's
     # motion_bounds.max_joint_deviation_rad), cut to the joint box.
     envelope_min: [-2.0944, -0.05, -0.05, -1.69, -1.57, -2.0944]
@@ -48,28 +56,37 @@ limits:
     # refused. Type rest there.
     joint_min: [-2.0744, -0.05, -0.05, -1.67, -1.55, -2.0744]
     joint_max: [2.0744, 2.0744, 2.0744, 1.77, 1.55, 2.0744]
-    # First value. It may not exceed the profile's cap. A person's motion is
-    # clamped at 0.98 of it.
-    max_joint_speed: 0.1
+    # A person's motion is clamped at 0.98 of it. The hand speed limits of
+    # configs/human_rebot.yaml (retarget.max_*_velocity) decide how fast the
+    # joint targets of a person's hand ask the joints to move.
+    max_joint_speed: 0.8  # the owner's value of 2026-11-16
     # A human target is a joint target that follows a person's hand. This is
     # the farthest, on any joint, one may lie from the last joint target sent;
     # one beyond it is refused and the arm holds. First value.
     max_step_rad: 0.1
   recovery:
-    version: rebot-p2-1
+    version: rebot-p4-1
     joint_min: [-2.8, -0.05, -0.05, -1.69, -1.57, -3.14]
     joint_max: [2.8, 3.14, 3.14, 1.79, 1.57, 3.14]
-    max_joint_speed: 0.1
+    # The most a return to rest may ask for; it runs at rest.recovery_speed.
+    max_joint_speed: 0.2  # the owner's value of 2026-11-16
 
-# First values, equal to configs/robot_app.yaml; measure in the hardware session.
+# First values; measure in the hardware session.
 executor:
   period_s: 0.02
-  # Holds the longest return to rest from the far end of rest.region_*: 2182
-  # setpoints for 2.0944 rad at 0.1 rad/s.
+  # Holds the longest leg of a return to rest from the far end of
+  # rest.region_*: 1091 setpoints for 2.0944 rad at 0.2 rad/s.
   max_setpoints: 3000
   small_delay_s: 0.005
+  # A setpoint later than this ends a move or a person's drive in a hold. For
+  # the moves of --arm apai the robot app takes the pause APAI's own stream
+  # ends a move at instead: the contact monitor's max_feedback_gap_s less one
+  # round of joint reads, 0.35 - 0.06 = 0.29 s with the rig's profile. A
+  # setpoint that waits for a permit waits that long too.
   large_delay_s: 0.1
-  settle_tol_rad: 0.03
+  # --arm apai replaces both with the settle tolerance and settle time of
+  # APAI's driver: 0.05 rad and 2.0 s for the reBot driver.
+  settle_tol_rad: 0.05
   settle_timeout_s: 2.0  # configs/agent_rebot.yaml copies it (thor.settle_timeout_s)
   reads_per_step: 2
   max_start_tol_rad: 0.05
@@ -78,6 +95,8 @@ executor:
 permits:
   evidence_age_limit_s: 3.0
   required_for_agent: true
+  # The longest a move waits for its first permit. Later in a move a setpoint
+  # waits for its permit in a hold, at most the large delay of the executor.
   first_wait_s: 0.5  # configs/agent_rebot.yaml copies it (thor.first_wait_s)
 
 waits:
@@ -93,7 +112,7 @@ rest:
   start_rest_tol_rad: 0.05
   agree_tol_rad: 0.02
   read_gap_s: 0.2
-  recovery_speed: 0.1
+  recovery_speed: 0.2  # the owner's value of 2026-11-16
   min_duration_s: 2.0
   # Start poses from which a return to rest is allowed: the agent's working box.
   # First value; no return to rest has been run on the bench with this program.
@@ -105,14 +124,26 @@ rest:
   auto_return: false
   table_clearance_m: 0.02  # first value; measure in the hardware session
 
-# First values; measure in the hardware session. --arm apai tightens target_tol to
-# 0.1 rad of the profile's jaw travel.
+# The jaws. Every jaw command of the agent, the typed open and the typed close
+# are routines of APAI's driver, which decides when each has ended; the numbers
+# here are for the robot app's own check "jaws proven empty" and for the jaws
+# under a person's trigger. With --arm apai three of them are APAI's own and
+# replace what stands here:
+#   closed_frac    the opening below which APAI takes the jaws as closed on
+#                  nothing (grasp.air_grasp_frac)
+#   target_tol     at most how near its target APAI's driver takes a close as
+#                  reached: 0.1 rad of the profile's jaw travel
+#   full_open_tol  how far short of its target APAI's guarded opening may end:
+#                  0.4 rad of the profile's jaw travel, 0.065 of the rig's 6.2
+#                  rad. Measured on the rig, a full open reads 0.963.
 gripper:
   closed_frac: 0.04
   target_tol: 0.03
+  # Only the jaws under a person's trigger: a step has reached its opening
+  # within reach_tol, and an opening step is open_step wide.
   reach_tol: 0.03
   full_open_tol: 0.03
-  agree_tol: 0.02
+  agree_tol: 0.02  # first value; measure in the hardware session
   reads: 3
   read_gap_s: 0.05
   open_step: 0.05
@@ -126,7 +157,10 @@ state:
   publish_period_s: 0.05
   recent_window_s: 0.5
   history_s: 6.0
-  idle_read_period_s: 0.02  # first value; measure in the hardware session
+  # One joint is read every this long while the arm holds, as the experiment
+  # reads it (thor_self_mask.IdleJointSampler.PERIOD_S). The robot app logs at
+  # its start how long one joint read takes on the motor bus.
+  idle_read_period_s: 0.01
 
 # A person driving the arm with the headset's controller. Off: it has not been
 # run on this arm. While it is off a takeover is refused and no human target
@@ -158,8 +192,8 @@ jaws:
 
 # The calibration in use on the rig, named by the first 12 hex digits of the
 # SHA-256 of the stereo calibration's manifest.json and of the camera mounting's
-# handeye.json (mounting 20261107T005443Z), computed on 2026-11-15 from the
-# workstation's copies. The agent program builds the same name from its copies
-# and prints it with --check: if that prints another name, that one is right.
-# --calibration on the command line must repeat this name.
-camera_calibration_id: stereo-c50bf5b2b899+mount-41d3ce701628
+# handeye.json (the fit 20261116T235557Z-live-629d_gvb), computed on 2026-11-16
+# from the workstation's copies. The agent program builds the same name from
+# its copies and prints it with --check: if that prints another name, that one
+# is right. --calibration on the command line must repeat this name.
+camera_calibration_id: stereo-c50bf5b2b899+mount-fa6cfe676036

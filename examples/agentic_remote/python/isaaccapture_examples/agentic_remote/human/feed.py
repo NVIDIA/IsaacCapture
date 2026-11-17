@@ -202,6 +202,10 @@ class TeleopFeed:
     A session that cannot be entered, or that was lost, is tried again
     teleop.retry_s later, with a new TeleopSession. An attempt runs inside
     step() and takes up to teleop.connect_timeout_s.
+
+    The pass that enters a session reads the controller behind the entry, and
+    a log call can block: the line of the entry is kept for log_pass(), which
+    the program calls once it has sent that pass's link messages.
     """
 
     source = HUMAN_SOURCE_TELEOP
@@ -222,9 +226,14 @@ class TeleopFeed:
         self._session: Any | None = None  # the entered session
         self._failures = 0  # failed attempts in a row
         self._next_attempt = -math.inf
+        # An attempt was entered, or failed with another error than a
+        # ValueError: Isaac Capture can read teleop.endpoint.
+        self._endpoint_read = False
         # Of the last attempt, while there is no session.
         self._stage = STAGE_NO_SERVER
         self._note = ""
+        # The INFO lines kept for log_pass(): a text and its values.
+        self._lines: list[tuple[str, tuple[Any, ...]]] = []
 
     def session_config(self) -> Any:
         """The TeleopSessionConfig of each attempt."""
@@ -252,7 +261,8 @@ class TeleopFeed:
     ) -> FeedStep:
         """One pass of the session; AttemptsRanOut when the attempts ran out.
 
-        EndpointRefused when Isaac Capture cannot use teleop.endpoint.
+        EndpointRefused when Isaac Capture cannot use teleop.endpoint, at the
+        first attempt; a RuntimeError for a ValueError of a later attempt.
         Without a session: no outputs, the stage and the text of the last
         attempt. With one the graph's outputs are given also while the
         controller's pose is not valid, with the tick age: its buttons are read.
@@ -269,6 +279,8 @@ class TeleopFeed:
                 external_inputs=external_inputs, execution_events=events
             )
         except RuntimeError as error:
+            # No controller data came with this pass: no STOP waits for a line.
+            self.log_pass()
             _log.warning("the remote session was lost: %s", error)
             self._leave()
             self._failed(error, STAGE_NO_SERVER)
@@ -281,8 +293,18 @@ class TeleopFeed:
         return FeedStep(outputs, age, STAGE_NO_CONTROLLER, NOTE_NO_CONTROLLER)
 
     def close(self) -> None:
-        """Leave the session, if one is entered."""
+        """Leave the session, if one is entered, and log the lines still kept."""
         self._leave()
+        self.log_pass()
+
+    def log_pass(self) -> None:
+        """Log the lines kept since the last call, in their order.
+
+        The program calls it once it has sent a pass's link messages.
+        """
+        lines, self._lines = self._lines, []
+        for text, values in lines:
+            _log.info(text, *values)
 
     def _enter(self) -> None:
         """One attempt to enter a remote session."""
@@ -291,6 +313,7 @@ class TeleopFeed:
             session = self._make(self.session_config())
             session.__enter__()
         except (OSError, RuntimeError) as error:  # a TimeoutError is an OSError
+            self._endpoint_read = True
             self._failures += 1
             self._failed(error, entry_stage(error))
             if self._failures >= settings.attempts:
@@ -311,14 +334,23 @@ class TeleopFeed:
             )
             return
         except ValueError as error:
+            if self._endpoint_read:
+                # Not the file's error: Isaac Capture read teleop.endpoint at
+                # an attempt before. The program ends on it as on any error.
+                raise RuntimeError(
+                    f"the attempt to enter a remote session at {settings.endpoint} "
+                    f"failed: {type(error).__name__}: {error}"
+                ) from error
             # Isaac Capture's error for an endpoint it cannot read, such as a
             # port that is no number: no later attempt can end another way.
             raise EndpointRefused(
                 f"teleop.endpoint {settings.endpoint!r}: {error}"
             ) from error
+        self._endpoint_read = True
         self._failures = 0
         self._session = session
-        _log.info("entered a remote session at %s", settings.endpoint)
+        # Not logged here: this pass reads the controller, and right B, next.
+        self._lines.append(("entered a remote session at %s", (settings.endpoint,)))
 
     def _failed(self, error: BaseException, stage: str) -> None:
         """Note why there is no session; the next attempt comes after the pause."""
@@ -421,6 +453,9 @@ class ScriptFeed:
 
     def close(self) -> None:
         """Nothing to end."""
+
+    def log_pass(self) -> None:
+        """Nothing to log: a script feed keeps no line."""
 
     def _advance(self, passed: float) -> None:
         """Move the script's clock on, up to a wait that does not hold yet."""

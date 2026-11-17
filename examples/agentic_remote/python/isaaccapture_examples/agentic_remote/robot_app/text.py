@@ -20,6 +20,25 @@ MAX_REASON_CHARS = 256  # reasons
 MAX_OUT_CHARS = 1024
 CUT_MARK = "..."
 
+# What an arm port's hold_evidence() says of the motors, and ROBOT_STATE's
+# health["motors"]["state"] carries: every joint reads at the target it holds;
+# a joint has left it or a motor reports a fault; or it cannot be said.
+MOTORS_HOLDING = "holding"
+MOTORS_NOT_HOLDING = "not holding"
+MOTORS_UNKNOWN = "unknown"
+# What an operator line says of the motors: torque_text() gives one of these.
+TORQUE_OFF = "torque off"
+TORQUE_ON = "torque on"  # the hold is not reported, as by a simulated arm
+TORQUE_HOLDING = "torque on (holding)"
+TORQUE_NOT_HOLDING = "torque NOT HOLDING"
+TORQUE_HOLD_UNKNOWN = "torque on, hold unknown"
+TORQUE_UNKNOWN = "torque unknown"  # a torque release failed
+_TORQUE_BY_HOLD = {
+    MOTORS_HOLDING: TORQUE_HOLDING,
+    MOTORS_NOT_HOLDING: TORQUE_NOT_HOLDING,
+    MOTORS_UNKNOWN: TORQUE_HOLD_UNKNOWN,
+}
+
 # A repeated line is written once per this many seconds of the app clock.
 LINE_WINDOW_S = 1.0
 # How many kinds of line are told apart in one such window.
@@ -40,6 +59,21 @@ def printable(text: object, limit: int) -> str:
     if text.isprintable():
         return text
     return "".join(char if char.isprintable() else " " for char in text)
+
+
+def torque_text(torque_on: object, hold: object, release_failed: bool = False) -> str:
+    """What an operator line says of the motors: one of the TORQUE_* texts.
+
+    torque_on says that the robot app switched the motors on and has not
+    released them; it is no reading of them. hold is what the joint readings
+    say, one of the MOTORS_* words; anything else: not reported.
+    release_failed: a torque release failed, so the motors may be on or off.
+    """
+    if release_failed:
+        return TORQUE_UNKNOWN
+    if torque_on is not True:
+        return TORQUE_OFF
+    return _TORQUE_BY_HOLD.get(hold if isinstance(hold, str) else "", TORQUE_ON)
 
 
 class LineLimit:

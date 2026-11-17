@@ -142,6 +142,7 @@ class SimArm:
         self._jaw_target: float | None = None
         self._jaw_referenced = False
         self._jaw_object: float | None = None
+        self._jaw_block: float | None = None
         self._jaw_failing = 0
         self._jaw_stiffness = LIGHT
 
@@ -351,6 +352,11 @@ class SimArm:
         with self._lock:
             self._jaw_object = None if opening is None else float(opening)
 
+    def jaw_block(self, opening: float | None) -> None:
+        """Keep the jaws from opening past this opening: an opening stalls there."""
+        with self._lock:
+            self._jaw_block = None if opening is None else float(opening)
+
     def fail_gripper_reads(self, count: int) -> None:
         """Make the next count jaw reads return None."""
         with self._lock:
@@ -422,14 +428,23 @@ class SimArm:
         held = self._object_in_the_way(target)
         if held is not None and self._jaw <= held + _EPS:
             return "stalled"
+        if target > self._jaw and self._open_stop(target) <= self._jaw + _EPS:
+            return "stalled"
         if steps_left <= 0:
             return "timeout"
         return None
 
+    def _open_stop(self, target: float) -> float:
+        """How far an opening to target gets: to it, or to what blocks the jaws."""
+        block = self._jaw_block
+        if block is None or target <= self._jaw:
+            return target
+        return min(target, max(block, self._jaw))
+
     def _jaw_after_step(self, target: float) -> float:
         travel = self.jaw_speed * self.jaw_step_s
         if target >= self._jaw:
-            return min(self._jaw + travel, target)
+            return min(self._jaw + travel, self._open_stop(target))
         moved = max(self._jaw - travel, target)
         held = self._object_in_the_way(target)
         return moved if held is None else max(moved, held)
@@ -662,6 +677,9 @@ class BasicChecker:
 
     def check_low_pose(self, q: Sequence[float]) -> None:
         self.check_pose(q)  # no table rule to leave out
+
+    def check_start_pose(self, q: Sequence[float]) -> None:
+        self.check_pose(q)  # no rule a setpoint may only leave
 
     def check_path(
         self, q_start: Sequence[float], setpoints: Sequence[Sequence[float]], dt: float

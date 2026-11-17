@@ -30,10 +30,10 @@ http:
 # The same names and meanings as in agent.yaml. The view starts a camera frame
 # bridge of its own: a second reader of the camera receiver, no second decoder.
 camera:
-  # The interpreter of the camera consumer (it has CuPy):
-  # <camera pull request>/cuda_ipc_consumer/.venv/bin/python. Needed for
-  # --source link.
-  bridge_python: ""
+  # The interpreter of the camera consumer (it has CuPy); the view's camera
+  # frame bridge runs under it (--source link). The program reads this path at
+  # every start, so AGENTIC_REMOTE_CAMERA_PR must be set for any --source.
+  bridge_python: ${AGENTIC_REMOTE_CAMERA_PR}/cuda_ipc_consumer/.venv/bin/python
   # The camera_streamer example of the camera pull request. Empty: the
   # environment variable AGENTIC_REMOTE_CAMERA_PR.
   camera_pr: ""

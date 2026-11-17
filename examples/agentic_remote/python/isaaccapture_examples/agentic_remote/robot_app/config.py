@@ -389,19 +389,26 @@ class RestConfig:
 
 @dataclass(frozen=True, kw_only=True)
 class GripperConfig:
-    """Jaw rules; openings run from 0 closed to 1 open."""
+    """Jaw rules; openings run from 0 closed to 1 open.
+
+    With --arm apai closed_frac, target_tol and full_open_tol are APAI's own
+    numbers (apai_backend.config_for_profile).
+    """
 
     closed_frac: float = 0.04  # a reading at or below this counts as closed
     # Jaws proven empty: how far a reading may lie from the last jaw target. The
     # design's 0.1 rad as a fraction of the gripper's travel, or less.
     target_tol: float = 0.03
-    # A command has reached its target, and a close has not ended short of it.
+    # The jaws under a person's trigger: a step has reached its opening within
+    # this. A driver's own jaw routines decide for themselves when they end.
     reach_tol: float = 0.03
     # A reading this close to 1 after a command to full open is a full open.
     full_open_tol: float = 0.03
     agree_tol: float = 0.02
     reads: int = 3
     read_gap_s: float = 0.05
+    # The jaws under a person's trigger open in steps this wide. The typed
+    # open is one opening of the driver.
     open_step: float = 0.05
     reference_at_start: bool = True
 

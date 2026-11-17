@@ -12,7 +12,14 @@ from typing import TYPE_CHECKING, Any
 from ..protocol.confirm import PATH_IS_CLEAR
 from ..protocol.local_messages import ROLE_HUMAN
 from ..protocol.messages import REQUEST_HANDBACK, REQUEST_HUMAN
-from ..robot_app.text import MAX_OUT_CHARS, MAX_WORD_CHARS, printable
+from ..robot_app.text import (
+    MAX_OUT_CHARS,
+    MAX_WORD_CHARS,
+    TORQUE_HOLD_UNKNOWN,
+    TORQUE_HOLDING,
+    printable,
+    torque_text,
+)
 
 if TYPE_CHECKING:
     from ..protocol.local_messages import LocalStatus
@@ -94,6 +101,8 @@ _OWNER_HUMAN = "human"
 _OWNER_NOBODY = "nobody"
 _STOP_FAULT = "fault"
 _NO_DIGITS = str.maketrans("", "", "0123456789")
+# In the joints line, in place of the value of a joint without a valid reading.
+INVALID = "invalid"
 
 
 def _text(value: object, limit: int = MAX_OUT_CHARS) -> str:
@@ -167,6 +176,54 @@ def _human(health: dict[str, Any]) -> dict[str, Any]:
     """health["human"]: the robot app's facts of the human path; {} without."""
     human = health.get("human")
     return human if isinstance(human, dict) else {}
+
+
+def motors_text(state: RobotState) -> str:
+    """What ROBOT_STATE says of the motors: one of robot_app.text's TORQUE_* texts.
+
+    torque_on says only that the robot app has not released the motors.
+    health["motors"] is what the joint readings say of the hold: "torque on
+    (holding)", "torque NOT HOLDING" or "torque on, hold unknown". A robot
+    app that does not report it gives "torque on". After a torque release
+    that failed the motors may be on or off: "torque unknown".
+    """
+    motors = _health(state).get("motors")
+    hold = motors.get("state") if isinstance(motors, dict) else None
+    return torque_text(state.torque_on, hold, state.motion == _RELEASE_FAILED)
+
+
+def _missed_deadlines(health: dict[str, Any]) -> int | None:
+    """health["missed_deadlines"] as a count of 0 or more; None without one.
+
+    A missed deadline is a setpoint of a move that the robot app sent late; it
+    counts them from its start.
+    """
+    count = health.get("missed_deadlines")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+        return None
+    return count
+
+
+def joints_line(state: RobotState) -> str:
+    """One line: the measured joints, the last target sent and the readings' health.
+
+    Joint values in rad in the order of the joints; INVALID for a joint
+    without a valid reading. The reading age is that of the oldest reading
+    when the robot app built `state`.
+    """
+    measured = [
+        (_number(sample.value, 3) if sample.valid is True else None) or INVALID
+        for sample in state.joints
+    ]
+    target = [_number(value, 3) or "?" for value in state.target_q or []]
+    health = _health(state)
+    age = _seconds(health.get("reading_age_s"), 2, unknown="unknown")
+    missed = _missed_deadlines(health)
+    return (
+        f"joints (rad): {' '.join(measured) or 'none'}; "
+        f"last target: {' '.join(target) or 'none'}; reading age {age}; "
+        f"missed deadlines {'not reported' if missed is None else missed}"
+    )
 
 
 def _at_robot_app(state: RobotState | None) -> bool:
@@ -249,10 +306,7 @@ def status_line(
     if state.gripper.may_be_holding:
         jaws += ", may be holding"
     parts.append(jaws)
-    torque = "on" if state.torque_on else "off"
-    if state.motion == _RELEASE_FAILED:
-        torque = "unknown"
-    parts.append(f"torque {torque}")
+    parts.append(motors_text(state))
     if state.assistance_wait_s is not None:
         parts.append(f"wait {_seconds(state.assistance_wait_s, 0)}")
     health = _health(state)
@@ -260,6 +314,9 @@ def status_line(
     refusal = health.get("permit_refusal")
     if refusal:
         parts.append(f"permit refused: {_text(refusal)}")
+    missed = _missed_deadlines(health)
+    if missed:
+        parts.append(f"missed deadlines {missed}")
     parts.append(f"view {_seconds(state.view_age_s, 1, unknown='none')}")
     parts.extend(_human_parts(state, status, health))
     parts.append(f"state {_seconds(state_age_s, 2, unknown='age unknown')}")
@@ -272,7 +329,9 @@ def status_key(state: RobotState | None, status: LocalStatus | None) -> Hashable
     The facts of status_line(), takeover_text() and jaws_text() that change in
     steps. The ages, the move index, the wait's seconds, how far the permit
     reaches and the numbers in the robot app's takeover reason and in the jaws
-    line change all the time and are left out.
+    line change all the time and are left out. Of the missed deadlines only
+    whether there are any is in: the first one makes a line due, the count's
+    growth does not.
     """
     connection = tuple(_connection_parts(status))
     if state is None:
@@ -292,10 +351,13 @@ def status_key(state: RobotState | None, status: LocalStatus | None) -> Hashable
         state.move_stage,
         state.gripper.load,
         state.gripper.may_be_holding,
-        state.torque_on,
+        # From each joint target until every joint was read at it the hold is
+        # unknown: that comes with every move and makes no line due.
+        motors_text(state).replace(TORQUE_HOLD_UNKNOWN, TORQUE_HOLDING),
         state.assistance_wait_s is None,
         isinstance(health.get("permit"), dict),
         str(health.get("permit_refusal") or ""),
+        bool(_missed_deadlines(health)),
         state.view_age_s is None,
         state.teleop_stage,
         bool(health.get("contact_hold")),

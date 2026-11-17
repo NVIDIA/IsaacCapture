@@ -6,6 +6,12 @@
 #
 # The camera frame bridge on the workstation refuses any other device pair,
 # rotation or size, because the calibration would not fit the pixels.
+#
+# Against the experiment's own capture on the Thor (single lossless I420 shots
+# of the same two sensors at the same size): this is a 60 fps stream, packed as
+# HEVC and sent over TCP. The pixels are not identical; the geometry is. TCP
+# loses no packet, so a picture arrives whole or late, never damaged, and a late
+# one is dated at its capture by the agent's camera.
 
 version: 1
 
