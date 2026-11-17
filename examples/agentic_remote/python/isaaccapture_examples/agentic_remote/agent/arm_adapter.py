@@ -1006,13 +1006,19 @@ class RobotLinkArm:
             return RobotLinkError(reason)
         if result.status == "cancelled":
             self._mirror()
-            return types.MotionHalted(f"the robot app stopped the move: {reason}")
-        refused = types.SafetyViolation(f"robot app refused the move: {reason}")
+            return self._halted(f"the robot app stopped the move: {reason}")
+        told = f"robot app refused the move: {reason}"
         # The Thor read the arm away from the pose the move starts at and sent
         # nothing: _stream_checked() samples the move again.
-        refused.start_pose_moved = result.status == "refused" and reason.startswith(
-            START_POSE
-        )
+        moved = result.status == "refused" and reason.startswith(START_POSE)
+        if result.status == "refused" and not moved:
+            # A STOP that reached the Thor just before the MOVE: the
+            # ROBOT_STATE that shows it can come behind the RESULT.
+            self._link.wait_reflected(result.command_id, _REFLECT_S)
+            if self._mirror():
+                return self._halted(told)
+        refused = types.SafetyViolation(told)
+        refused.start_pose_moved = moved
         return refused
 
     def _uncount(self, approved: int, begun: Any) -> None:
@@ -1244,7 +1250,10 @@ class RobotLinkArm:
             )
 
     def _live_gate(self) -> BaseException | None:
-        """Why the permits must stop now; None while they may go on."""
+        """Why the permits must stop now; None while they may go on.
+
+        An ownership that has ended halts the workstation checker (_halted).
+        """
         types = _types()
         harness = self._check.harness
         if getattr(harness, "estopped", False):
@@ -1262,7 +1271,23 @@ class RobotLinkArm:
             self._link.state()
         except (LinkLost, StaleState):
             return RobotLinkError(lost)
-        return types.MotionHalted(f"the agent no longer owns the arm: {lost}")
+        return self._halted(f"the agent no longer owns the arm: {lost}")
+
+    def _halted(self, told: str) -> BaseException:
+        """MotionHalted for a stop that did not come from the workstation checker.
+
+        The checker is halted first, with the same text: APAI's skills read
+        the halt. A grasp stopped below its hover keeps its approach column
+        for the next move_home, starts no retreat and no retry. The halt is
+        cleared where APAI clears its own: at the next skill's first motion.
+        """
+        harness = getattr(self._check, "harness", None)
+        if harness is not None and getattr(harness, "halted", None) is None:
+            try:
+                harness.halt(told)
+            except Exception:
+                _log.exception("the workstation checker was not halted: %s", told)
+        return _types().MotionHalted(told)
 
     def _move_ending(
         self,
@@ -1296,7 +1321,7 @@ class RobotLinkArm:
             raise RobotLinkError(reason)
         if result.status == "cancelled":
             self._mirror()
-            raise types.MotionHalted(f"the robot app stopped the move: {reason}")
+            raise self._halted(f"the robot app stopped the move: {reason}")
         if cause is not None:
             raise cause
         if result.status == "completed":
@@ -1412,12 +1437,34 @@ class RobotLinkArm:
         lost = self._link.lost_reason()
         if lost is not None:
             self._latched = True
-            raise violation(f"the agent no longer owns the arm: {lost}; no {what} sent")
+            told = f"the agent no longer owns the arm: {lost}; no {what} sent"
+            # A STOP or an owner change between two commands of a skill.
+            if self._state_fresh():
+                raise self._halted(told)
+            raise violation(told)
 
-    def _mirror(self) -> None:
-        """Latch the adapter's stop when the pinned ownership no longer stands."""
-        if self._link.lost_reason() is not None:
-            self._latched = True
+    def _mirror(self) -> bool:
+        """Latch the adapter's stop when the pinned ownership no longer stands.
+
+        True when the robot app itself says that it ended (_state_fresh).
+        """
+        if self._link.lost_reason() is None:
+            return False
+        self._latched = True
+        return self._state_fresh()
+
+    def _state_fresh(self) -> bool:
+        """Whether a ROBOT_STATE at most state_max_age_s old can be read.
+
+        With one, an ownership that ended is the robot app's word: a STOP or
+        an owner change, which halts the workstation checker (_halted).
+        Without one the link is lost or the robot app is silent.
+        """
+        try:
+            self._link.state(self._settings.state_max_age_s)
+        except (LinkLost, StaleState):
+            return False
+        return True
 
     # Jaws
 
@@ -1587,11 +1634,16 @@ class RobotLinkArm:
             raise RobotLinkError(reason)
         if result.status == "cancelled":
             self._mirror()
-            raise types.MotionHalted(f"the robot app stopped the jaw command: {reason}")
+            why = reason or "a STOP or an owner change"
+            raise self._halted(f"the robot app stopped the jaw command: {why}")
         if result.status == "refused":
             if reason == _JAWS_UNREFERENCED or reason.startswith(_JAWS_UNREAD):
                 raise types.GripperFault(reason)
-            raise types.SafetyViolation(f"robot app refused the jaw command: {reason}")
+            told = f"robot app refused the jaw command: {reason}"
+            # A STOP that reached the Thor just before the GRIPPER.
+            if self._mirror():
+                raise self._halted(told)
+            raise types.SafetyViolation(told)
         outcome = (result.detail or {}).get("outcome")
         if outcome == _GRIPPER_FAULT:
             raise types.GripperFault(reason or "the driver reported a gripper fault")

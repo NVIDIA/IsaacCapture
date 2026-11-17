@@ -137,13 +137,15 @@ def fold_margin(harness: Any, q_prev: np.ndarray, q_next: np.ndarray) -> float |
     """The joint margin a step onto the rest pose is vetted with, else None.
 
     The joint margin is the band the checker keeps clear of each joint stop.
-    The rest pose (the checker's park_q) lies on joint stops, and the last
-    fold step of APAI's rest tool is streamed with the margin at 0. 0.0 for
-    a step that enters the margin only at joints whose rest value lies in it,
-    goes no further than that value and moves no joint away from the rest
-    pose. None, the checker's own margin, for every other step. The checker
-    callback of the move still decides whether the move may use it; the
-    Thor's agent checker has the same rule (apai_backend.ApaiChecker).
+    The rest pose (the checker's park_q) lies on joint stops, and the fold
+    of APAI's rest tool is streamed with the margin at 0. 0.0 for a step
+    that is inside the margin only at joints whose rest value lies in it,
+    and at each of them goes no further than that value or moves back
+    toward it. None, the checker's own margin, for every other step. With
+    0.0 the checker still stops every joint at its stop and runs every other
+    gate. The checker callback of the move still decides whether the move
+    may use it; the Thor's agent checker has the same rule
+    (apai_backend.ApaiChecker).
     """
     park = getattr(harness, "park_q", None)
     kin = getattr(harness, "kin", None)
@@ -157,17 +159,18 @@ def fold_margin(harness: Any, q_prev: np.ndarray, q_next: np.ndarray) -> float |
         return None  # no rest pose or no joint limits to read: the own margin
     if not (rest.shape == low.shape == high.shape == q_prev.shape == q_next.shape):
         return None
+    if not (np.isfinite(q_prev).all() and np.isfinite(q_next).all()):
+        return None  # not a pose: the checker's own vet refuses it
     under = q_next < low + margin - _MARGIN_EPS
     over = q_next > high - margin + _MARGIN_EPS
     if not (under.any() or over.any()):
         return None
     onto = np.where(
         under,
-        (rest < low + margin) & (q_next >= rest - _MARGIN_EPS),
-        (rest > high - margin) & (q_next <= rest + _MARGIN_EPS),
+        (rest < low + margin) & ((q_next >= rest - _MARGIN_EPS) | (q_next > q_prev)),
+        (rest > high - margin) & ((q_next <= rest + _MARGIN_EPS) | (q_next < q_prev)),
     )
-    nearer = np.abs(q_next - rest) <= np.abs(q_prev - rest) + _MARGIN_EPS
-    return 0.0 if onto[under | over].all() and nearer.all() else None
+    return 0.0 if onto[under | over].all() else None
 
 
 class CheckAhead:
