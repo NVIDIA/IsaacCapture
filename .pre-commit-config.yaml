@@ -78,8 +78,9 @@ repos:
         files: ^(docs/source/.*\.rst|(?!.*/(build|_build|\.venv|node_modules)/).*\.md)$
       - id: check-agent-docs
         name: Check llms.txt and skills match the tree
-        entry: python3 scripts/check_agent_docs.py
-        language: system
+        entry: python scripts/check_agent_docs.py
+        language: python
+        additional_dependencies: ["pyyaml==6.0.2"]
         pass_filenames: false
         # docs/source/ is in the list because moving a page breaks links to it.
         files: ^(llms\.txt|docs/llms\.txt|skills/.*|docs/source/.*\.rst)$

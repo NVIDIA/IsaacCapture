@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 DOCS_SITE = "https://nvidia.github.io/IsaacCapture/"
 DOCS_SOURCE = "docs/source"
 SKILLS = "skills"
@@ -118,11 +120,10 @@ def _docs_links(root: Path, path: Path) -> list[str]:
     return problems
 
 
-def _frontmatter(text: str) -> dict[str, str] | None:
-    """Return the top-level scalars of text's leading YAML frontmatter.
+def _frontmatter(text: str) -> dict | None:
+    """Return text's leading YAML frontmatter, or None if it has no such block.
 
-    Covers what skills use: plain, quoted and block (``>``, ``|``) scalars. A nested
-    mapping reads as an empty string; None means there is no frontmatter block.
+    Raises ValueError when the block is not YAML or not a mapping.
     """
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -130,32 +131,14 @@ def _frontmatter(text: str) -> dict[str, str] | None:
     end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
     if end is None:
         return None
-    body = lines[1:end]
-    fields: dict[str, str] = {}
-    index = 0
-    while index < len(body):
-        line = body[index]
-        index += 1
-        if not line.strip() or line[:1].isspace() or line.startswith("#"):
-            continue
-        key, separator, value = line.partition(":")
-        if not separator:
-            continue
-        continuation: list[str] = []
-        while index < len(body) and (
-            not body[index].strip() or body[index][:1].isspace()
-        ):
-            continuation.append(body[index].strip())
-            index += 1
-        parts = [part for part in continuation if part]
-        value = value.strip()
-        if value[:1] in (">", "|"):
-            value = (" " if value[0] == ">" else "\n").join(parts)
-        elif len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-            value = value[1:-1]
-        elif value:
-            value = " ".join([value, *parts])
-        fields[key.strip()] = value
+    try:
+        fields = yaml.safe_load("\n".join(lines[1:end]))
+    except yaml.YAMLError as error:
+        raise ValueError(f"is not valid YAML: {error}") from error
+    if fields is None:
+        return {}
+    if not isinstance(fields, dict):
+        raise ValueError("is not a mapping")
     return fields
 
 
@@ -166,11 +149,20 @@ def _skill_problems(root: Path, skill: Path) -> list[str]:
     if text is None:
         return [f"{rel}/: has no SKILL.md"]
     where = f"{rel}/SKILL.md:1"
-    fields = _frontmatter(text)
+    try:
+        fields = _frontmatter(text)
+    except ValueError as error:
+        return [f"{where}: frontmatter {error}"]
     if fields is None:
         return [f"{where}: has no YAML frontmatter between '---' lines"]
     problems: list[str] = []
-    name = fields.get("name", "")
+    name = fields.get("name")
+    description = fields.get("description")
+    for key, value in (("name", name), ("description", description)):
+        if value is not None and not isinstance(value, str):
+            problems.append(f"{where}: {key} must be a string")
+    if problems:
+        return problems
     if not name:
         problems.append(f"{where}: frontmatter has no name")
     else:
@@ -187,7 +179,6 @@ def _skill_problems(root: Path, skill: Path) -> list[str]:
             problems.append(
                 f"{where}: name is {len(name)} characters; the limit is {NAME_MAX}"
             )
-    description = fields.get("description", "")
     if not description:
         problems.append(f"{where}: frontmatter has no description")
     elif len(description) > DESCRIPTION_MAX:

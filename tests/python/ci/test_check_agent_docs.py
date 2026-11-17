@@ -147,7 +147,21 @@ class CheckAgentDocsTests(unittest.TestCase):
             (self.root / "skills/folded-skill/SKILL.md").read_text(encoding="utf-8")
         )
         self.assertEqual(fields["description"], "Use when the value folds.")
-        self.assertEqual(fields["metadata"], "")
+        self.assertEqual(fields["metadata"], {"internal": True})
+
+    def test_frontmatter_must_be_valid_yaml(self):
+        self.add_skill("colon-skill", "name: colon-skill\ndescription: Use when: x\n")
+        self.assert_one_problem(
+            "colon-skill/SKILL.md:1", "frontmatter is not valid YAML"
+        )
+
+    def test_frontmatter_must_be_a_mapping(self):
+        self.add_skill("list-skill", "- name\n- description\n")
+        self.assert_one_problem("list-skill/SKILL.md:1", "frontmatter is not a mapping")
+
+    def test_name_must_be_a_string(self):
+        self.add_skill("number-skill", "name: 42\ndescription: Testing.\n")
+        self.assert_one_problem("number-skill/SKILL.md:1", "name must be a string")
 
     def test_frontmatter_is_required(self):
         self.write("skills/plain-skill/SKILL.md", "# No frontmatter\n")
