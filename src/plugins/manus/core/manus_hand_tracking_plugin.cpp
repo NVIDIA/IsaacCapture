@@ -125,9 +125,6 @@ std::vector<unsigned char> read_calibration_file(const std::string& path)
 
 } // anonymous namespace
 
-static constexpr XrPosef kLeftHandOffset = { { -0.744f, -0.445f, -0.282f, 0.411f }, { -0.072f, -0.001f, -0.003f } };
-static constexpr XrPosef kRightHandOffset = { { -0.744f, 0.445f, 0.282f, 0.411f }, { 0.072f, -0.001f, -0.003f } };
-
 ManusTracker& ManusTracker::instance(const ManusPluginConfig& config) noexcept(false)
 {
     static ManusTracker s(config);
@@ -1263,7 +1260,7 @@ bool ManusTracker::get_controller_wrist_pose(bool is_left, XrPosef& out_wrist_po
         return false;
     }
 
-    XrPosef offset_pose = is_left ? kLeftHandOffset : kRightHandOffset;
+    const XrPosef& offset_pose = is_left ? m_config.left_aim_to_wrist : m_config.right_aim_to_wrist;
     out_wrist_pose = oxr_utils::multiply_poses(raw_pose, offset_pose);
     return true;
 }

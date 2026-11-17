@@ -43,13 +43,19 @@ namespace manus
 // different actuator count would change this and the values it consumes.
 inline constexpr std::size_t kManusFingerCount = 5;
 
-/// Runtime feature flags for manus_hand_plugin (parsed from --datasets=...).
+// Controller aim pose -> wrist joint, the default ManusPluginConfig offsets.
+// These values are optimised for the Meta Quest 3 with the official MANUS Meta Quest 3 mount.
+inline constexpr XrPosef kLeftHandOffset = { { -0.744f, -0.445f, -0.282f, 0.411f }, { -0.072f, -0.001f, -0.003f } };
+inline constexpr XrPosef kRightHandOffset = { { -0.744f, 0.445f, 0.282f, 0.411f }, { 0.072f, -0.001f, -0.003f } };
+
 struct ManusPluginConfig
 {
     std::string app_name = "ManusHandPlugin";
     std::optional<std::string> monitoring_plugin_root_id;
     std::string left_calibration_file;
     std::string right_calibration_file;
+    XrPosef left_aim_to_wrist = kLeftHandOffset;
+    XrPosef right_aim_to_wrist = kRightHandOffset;
     bool human = true; // OpenXR HandInjector
     bool sensors = true; // RawDeviceData -> SchemaPusher
     bool haptic = true; // inbound HapticCommandReaderTracker

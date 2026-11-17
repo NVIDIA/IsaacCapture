@@ -4,9 +4,13 @@
 #include <log_bridge/logger.hpp>
 #include <manus/manus_hand_tracking_plugin.hpp>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <csignal>
+#include <cstdio>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -54,6 +58,55 @@ std::vector<std::string> split_csv(const std::string& text)
     return out;
 }
 
+// Parses --{left,right}-aim-to-wrist=px,py,pz,qx,qy,qz,qw (meters, then quaternion).
+XrPosef parse_aim_to_wrist(const std::string& arg, spdlog::logger& logger)
+{
+    const auto eq = arg.find('=');
+    const std::string flag = arg.substr(0, eq);
+    const std::string value = arg.substr(eq + 1);
+
+    XrPosef pose{};
+    int consumed = -1;
+
+    const int parsed = std::sscanf(value.c_str(), "%f ,%f ,%f ,%f ,%f ,%f ,%f %n", &pose.position.x, &pose.position.y,
+                                   &pose.position.z, &pose.orientation.x, &pose.orientation.y, &pose.orientation.z,
+                                   &pose.orientation.w, &consumed);
+    if (parsed != 7 || consumed < 0 || static_cast<std::size_t>(consumed) != value.size())
+    {
+        throw std::runtime_error("ManusHandPlugin: " + flag + " expects px,py,pz,qx,qy,qz,qw, got '" + value + "'");
+    }
+
+    const std::array<float, 7> components{ pose.position.x,    pose.position.y,    pose.position.z,
+                                           pose.orientation.x, pose.orientation.y, pose.orientation.z,
+                                           pose.orientation.w };
+    if (!std::all_of(components.begin(), components.end(), [](float c) { return std::isfinite(c); }))
+    {
+        throw std::runtime_error("ManusHandPlugin: " + flag + " values must be finite, got '" + value + "'");
+    }
+
+    XrQuaternionf& q = pose.orientation;
+    const double norm = std::sqrt(static_cast<double>(q.x) * q.x + static_cast<double>(q.y) * q.y +
+                                  static_cast<double>(q.z) * q.z + static_cast<double>(q.w) * q.w);
+    if (norm < 1e-6f)
+    {
+        throw std::runtime_error("ManusHandPlugin: " + flag + " has a zero quaternion: '" + value + "'");
+    }
+    // Rounding keeps a unit quaternion's norm well inside this band; a value
+    // written in XrPosef order (quaternion first) usually lands outside it.
+    if (std::abs(norm - 1.0f) > 0.05f)
+    {
+        logger.warn("{}: quaternion norm is {:.3f}, normalizing it; check the order is px,py,pz,qx,qy,qz,qw", flag, norm);
+    }
+    q.x /= norm;
+    q.y /= norm;
+    q.z /= norm;
+    q.w /= norm;
+
+    logger.info("{} overrides the built-in controller-to-wrist offset: {},{},{},{},{},{},{}", flag, pose.position.x,
+                pose.position.y, pose.position.z, q.x, q.y, q.z, q.w);
+    return pose;
+}
+
 ManusPluginConfig parse_args(int argc, char** argv)
 {
     ManusPluginConfig config;
@@ -74,6 +127,14 @@ ManusPluginConfig parse_args(int argc, char** argv)
         else if (starts_with(arg, "--right-calibration="))
         {
             config.right_calibration_file = arg.substr(std::string("--right-calibration=").size());
+        }
+        else if (starts_with(arg, "--left-aim-to-wrist="))
+        {
+            config.left_aim_to_wrist = parse_aim_to_wrist(arg, *logger);
+        }
+        else if (starts_with(arg, "--right-aim-to-wrist="))
+        {
+            config.right_aim_to_wrist = parse_aim_to_wrist(arg, *logger);
         }
         else if (starts_with(arg, "--plugin-root-id="))
         {
