@@ -289,11 +289,13 @@ class JawState:
         """Take one jaw reading for ROBOT_STATE; the jaws are not moved.
 
         The agent decides from it what the jaws hold. Nothing is read while
-        the jaws are not referenced.
+        the jaws are not referenced. The reading is the arm port's
+        gripper_peek() where it has one: a read that cannot wait long and
+        cannot cost the jaws their reference. A failed one is unknown.
         """
         if not arm.gripper_referenced():
             return
-        value = _finite(arm.gripper_read())
+        value = _finite(getattr(arm, "gripper_peek", arm.gripper_read)())
         now = self._clock.monotonic()
         with self._lock:
             self._remember([] if value is None else [value], now)

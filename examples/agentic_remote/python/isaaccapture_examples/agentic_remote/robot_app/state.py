@@ -171,6 +171,19 @@ class IdleReader:
             with self._lock:
                 self._held -= 1
 
+    @contextlib.contextmanager
+    def extra_read(self) -> Iterator[bool]:
+        """A block for one more bus read on the idle reads' thread.
+
+        Yields whether the read may be made: the motors are on and the idle
+        reads are not paused. paused() waits for the block to end, as it
+        does for an idle read under way.
+        """
+        with self._read_lock:
+            with self._lock:
+                free = not self._held
+            yield free and self._arm.torque_on()
+
     def due_in(self, now: float) -> float | None:
         """Seconds until the next idle read is due, 0.0 when one is due now.
 
@@ -269,8 +282,14 @@ class IdleReader:
 
         0.0 while no joint is failing. A good reading that another reader stored
         after the failure ends the count. For a joint that began to fail after a
-        pause, the time before the idle reads resumed is not counted.
+        pause, the time before the idle reads resumed is not counted. 0.0 while
+        the idle reads are paused and while the motors are off: no read is made
+        then, so none is lost.
         """
+        with self._lock:
+            held = self._held
+        if held or not self._arm.torque_on():
+            return 0.0
         latest = self._history.latest()
         lost = 0.0
         with self._lock:

@@ -756,6 +756,7 @@ class RobotApp:
         self._link_lost = carrier is None
         self._state_forced = False  # a ROBOT_STATE is owed to a new carrier
         self._jaws_due = 0.0  # app-clock time of the next jaw reading in a hold
+        self._jaw_peek_misses = 0  # jaw peeks in a row without a reading
         # How long each idle joint read since the connect took, in s, until
         # READ_TIMING_READS of them were told; None from then on. Written by
         # the dispatcher, and by the thread that connects before it reads.
@@ -2104,14 +2105,32 @@ class RobotApp:
 
         The agent decides from it what the jaws hold: after a lift, before a
         release and between its skills. None is taken while a move sends
-        setpoints, a jaw command runs or the motors are off.
+        setpoints, a jaw command runs, the motors are off or a joint's idle
+        read is failing: the bus is the joints' then. After two readings in a
+        row that did not come, the next is taken five periods later, until
+        one comes: a jaw motor that stays silent costs each reading its
+        timeout, and the joints keep the bus.
         """
         if now < self._jaws_due or self._idle.due_in(now) is None:
             return
         if self._worker.busy():
             return
-        self._jaws_due = now + self._config.state.publish_period_s
-        self._jaw_state.refresh(self._arm)
+        if self._idle.consecutive_failures_s(self._clock.monotonic()) > 0.0:
+            return
+        period = self._config.state.publish_period_s
+        self._jaws_due = now + period
+        # A pause of the idle reads waits for this read too.
+        with self._idle.extra_read() as free:
+            if not free or not self._arm.gripper_referenced():
+                return  # no reading is taken
+            self._jaw_state.refresh(self._arm)
+            if self._jaw_state.gripper_state(self._arm).valid:
+                self._jaw_peek_misses = 0
+                return
+            self._jaw_peek_misses += 1
+            if self._jaw_peek_misses >= 2:
+                # Counted from the end of the reading that did not come.
+                self._jaws_due = self._clock.monotonic() + 5.0 * period
 
     def _poll_faults(self) -> None:
         if self._authority.stop_level is StopLevel.FAULT:

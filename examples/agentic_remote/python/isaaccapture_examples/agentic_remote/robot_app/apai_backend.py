@@ -62,11 +62,13 @@ from apai.config import Cfg, load_demo_config, load_profile
 from apai.control import arm_hold, rs_gripper
 from apai.control.arm_base import ContactFeedback, make_arm
 from apai.control.kinematics import Kinematics
+from apai.control.rebot_rs_arm import MECH_POS
 from apai.control.robstride import (
     GRIP_GRACE_S,
     GRIP_POLL_S,
     GRIP_REACH_RAD,
     GRIP_STALL_RAD,
+    plausible_position,
 )
 from apai.grasping.force import select_profile
 from apai.safety.contact import ContactMonitor, ContactMonitorConfig, format_summary
@@ -103,6 +105,9 @@ BOUNDS_MODULE = "thor_calibration_rig"
 BOUNDS_LABEL = "operation"
 # The pause between two looks at the motors' fault reports, in s.
 _FAULT_POLL_S = 0.5
+# "Holding" is said of a joint only while its newest reading at the target
+# it holds is at most this old, in s.
+HOLD_READ_AGE_S = 1.0
 
 _EPS = 1e-9
 # The harness keeps the text of every refusal; the checker caps the list at this.
@@ -822,12 +827,13 @@ class ApaiChecker:
         """The joint margin a setpoint onto the rest pose is checked with, else None.
 
         The joint margin is the band the harness keeps clear of each joint
-        stop. The last fold step of APAI's rest tool drives onto the rest
-        pose with the margin at 0, as its harness allows for that step. 0.0
-        for a setpoint that enters the margin only at joints whose rest value
-        lies in it, goes no further than that value and moves no joint away
-        from the rest pose. None, the harness's own margin, for every other
-        setpoint. The check ahead has the same rule (agent/checkahead.py).
+        stop. The rest pose lies on joint stops, and the fold of APAI's rest
+        tool is streamed with the margin at 0. 0.0 for a setpoint that is
+        inside the margin only at joints whose rest value lies in it, and at
+        each of them goes no further than that value or moves back toward
+        it. None, the harness's own margin, for every other setpoint. With
+        0.0 the harness still stops every joint at its stop and runs every
+        other gate. The check ahead has the same rule (agent/checkahead.py).
         """
         rest = self._fold_onto
         if rest is None or rest.shape != target.shape:
@@ -841,11 +847,10 @@ class ApaiChecker:
             return None
         onto = np.where(
             under,
-            (rest < low + margin) & (target >= rest - _EPS),
-            (rest > high - margin) & (target <= rest + _EPS),
+            (rest < low + margin) & ((target >= rest - _EPS) | (target > start)),
+            (rest > high - margin) & ((target <= rest + _EPS) | (target < start)),
         )
-        nearer = np.abs(target - rest) <= np.abs(start - rest) + _EPS
-        return 0.0 if onto[under | over].all() and nearer.all() else None
+        return 0.0 if onto[under | over].all() else None
 
     def check_pose(self, q: Sequence[float]) -> None:
         self._check_pose(q, low_tip=False)
@@ -1217,6 +1222,32 @@ class _GuardJaws:
     def read(self) -> float | None:
         return self._guard.position()
 
+    def peek(self, timeout_s: float) -> float | None:
+        """One read of the jaw motor that waits timeout_s at most; None if unknown.
+
+        For the reading taken at each ROBOT_STATE on the thread that serves
+        a STOP: unlike the guard's position() it counts no failed read and
+        never drops the reference. An answer that is no position, or lies
+        outside the jaw travel, is None.
+        """
+        guard, backend = self._guard, self._backend
+        offset, arm = guard.offset, backend._arm
+        if offset is None or arm is None or not arm.has_gripper:
+            return None
+        timeout_ms = max(1, round(timeout_s * 1000.0))
+        try:
+            with backend._lock:
+                motor = arm.gripper._mm[arm.gripper.joint_names[0]]
+                raw = motor.robstride_get_param_f32(MECH_POS, timeout_ms)
+        except Exception as exc:
+            log.debug("jaw peek failed: %s", exc)
+            return None
+        if not plausible_position(raw):
+            return None
+        jaw = float(raw) - offset
+        tol = rs_gripper.TRAVEL_TOL_RAD
+        return jaw if guard.lo - tol <= jaw <= guard.hi + tol else None
+
     def target(self) -> float | None:
         return self._guard._last_target
 
@@ -1328,6 +1359,9 @@ class _MockJaws:
     def read(self) -> float | None:
         return self._measure() if self._referenced else None
 
+    def peek(self, timeout_s: float) -> float | None:
+        return self.read()  # the mock arm answers at once
+
     def target(self) -> float | None:
         return self._target
 
@@ -1419,18 +1453,33 @@ class _HoldWatch:
                     )
         return None
 
-    def evidence(self, target: tuple[list[float], float] | None) -> tuple[str, str]:
-        """What the readings say of the hold: (state, why)."""
+    def evidence(
+        self,
+        target: tuple[list[float], float] | None,
+        now: float,
+        max_age_s: float = HOLD_READ_AGE_S,
+    ) -> tuple[str, str]:
+        """What the readings say of the hold at `now`: (state, why).
+
+        A joint whose newest reading at its target is older than max_age_s
+        says nothing of the hold now.
+        """
         problem = self.problem()
         if problem is not None:
             return MOTORS_NOT_HOLDING, problem
         if target is None:
             return MOTORS_UNKNOWN, "no joint target was sent since the connect"
         with self._lock:
-            unread = [name for name, at in zip(self._names, self._at) if at is None]
+            ages = list(zip(self._names, self._at))
+        unread = [name for name, at in ages if at is None]
         if unread:
             return MOTORS_UNKNOWN, (
                 f"{', '.join(unread)} not read at the target in force yet"
+            )
+        stale = [name for name, at in ages if now - at > max_age_s]
+        if stale:
+            return MOTORS_UNKNOWN, (
+                f"{', '.join(stale)} not read for more than {max_age_s:g} s"
             )
         return MOTORS_HOLDING, "every joint reads at the target it holds"
 
@@ -1554,14 +1603,17 @@ class ApaiArm:
             raise RuntimeError("the arm is connected once and never again")
         with _no_confirmation_claim():
             self._backend.connect()
-        self._connected = True
-        # What each motor reports as its fault right after the connect cleared
-        # them: only a later change to a fault counts.
-        self._fault_baseline = dict(self._fault_reports())
-        # A connect leaves no joint target in force: nothing is held yet.
-        self._last_target = None
-        if self._hold is not None:
-            self._hold.target_sent()
+        try:
+            # What each motor reports as its fault right after the connect
+            # cleared them: only a later change to a fault counts.
+            self._fault_baseline = dict(self._fault_reports())
+            # A connect leaves no joint target in force: nothing is held yet.
+            self._last_target = None
+            if self._hold is not None:
+                self._hold.target_sent()
+        finally:
+            # Last: faults() of another thread finds the baseline taken.
+            self._connected = True
 
     def torque_on(self) -> bool:
         # Whether this program switched the motors on and has not released
@@ -1681,7 +1733,7 @@ class ApaiArm:
             return MOTORS_NOT_HOLDING, "; ".join(faults)
         if self._hold is None:
             return MOTORS_UNKNOWN, "this arm's hold is not watched"
-        return self._hold.evidence(self._last_target)
+        return self._hold.evidence(self._last_target, self._clock.monotonic())
 
     def temperatures(self) -> list[float] | None:
         return None
@@ -1703,6 +1755,19 @@ class ApaiArm:
             jaw = self._jaws.read()
         except Exception as exc:
             log.debug("jaw read failed: %s", exc)
+            return None
+        return None if jaw is None or not math.isfinite(jaw) else self._opening(jaw)
+
+    def gripper_peek(self) -> float | None:
+        """The jaw opening for ROBOT_STATE, read like an idle joint read.
+
+        It waits read_timeout_s at most. None if unknown or the read failed;
+        a failed one never costs the jaws their reference.
+        """
+        try:
+            jaw = self._jaws.peek(self._read_timeout_s)
+        except Exception as exc:
+            log.debug("jaw peek failed: %s", exc)
             return None
         return None if jaw is None or not math.isfinite(jaw) else self._opening(jaw)
 

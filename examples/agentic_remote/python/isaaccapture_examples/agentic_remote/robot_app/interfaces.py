@@ -202,7 +202,13 @@ class ArmPort(Protocol):
         """
 
     def gripper_read(self) -> float | None:
-        """Jaw opening, 0 closed to 1 open; None if unknown or the read failed."""
+        """Jaw opening, 0 closed to 1 open; None if unknown or the read failed.
+
+        An arm port whose read can wait long, or can cost the jaws their
+        reference, also has gripper_peek(): the same reading with a short
+        wait and neither effect. ROBOT_STATE's periodic reading asks for it
+        by name (JawState.refresh).
+        """
 
     def gripper_last_target(self) -> float | None:
         """The jaw target in force, set by the reference and by each command."""
