@@ -17,6 +17,10 @@ robot app for the motors off. The robot app switches them off only at
 measured rest. "Standby" is APAI's word for an arm whose motors are off until
 its next motion.
 
+The tests marked on_the_rig build the same stack from the rig's robot file
+and the rig's ready pose, which lies 0.025 rad above the two stops, with a
+motor that ends a few mrad from every command.
+
 They need an APAI checkout (AGENTIC_REMOTE_APAI_SRC).
 """
 
@@ -35,6 +39,7 @@ from unittest import mock
 
 import numpy as np
 import pytest
+import yaml
 from isaaccapture_examples.agentic_remote.agent import task_gate
 from isaaccapture_examples.agentic_remote.agent.arm_adapter import (
     ArmSettings,
@@ -53,15 +58,19 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
 )
 from isaaccapture_examples.agentic_remote.robot_app import rest as rest_module
 from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
-from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
+from isaaccapture_examples.agentic_remote.robot_app.config import (
+    RobotAppConfig,
+    load_config,
+)
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     MotionState,
     Refusal,
 )
+from repo_paths import repo_root
 from test_apai_backend import MotorSdk, make_config
 from test_arm_adapter import PERIOD_S, EveryFrame
 
-from conftest import AppHarness, FakeGridClient, apai_runtime_env
+from conftest import AppHarness, FakeGridClient, apai_runtime_env, import_experiment
 
 try:
     from isaaccapture_examples.agentic_remote.robot_app import apai_backend
@@ -74,6 +83,7 @@ except ModuleNotFoundError as missing:
 
 pytestmark = pytest.mark.apai
 link = pytest.mark.link
+experiment = pytest.mark.experiment
 
 # Real seconds a test gives another thread before it fails, and a whole
 # return to rest: the fold alone takes four steps of 2.5 s.
@@ -88,6 +98,21 @@ FOLDS = 4  # the fold steps of APAI's rest tool
 # Real seconds the arm is left in standby: longer than the workstation's
 # obstacle grid takes to refresh, and than the robot app's watch of a hold.
 STANDBY_S = 1.0
+# The rig's robot file, and the file of the experiment that holds its ready pose.
+ROBOT_RIG = repo_root() / "examples/agentic_remote/configs/robot_app_rebot.yaml"
+RIG_ARM = "configs/thor_operation.yaml"
+# Motors of the rig that end this far from every command, in rad. The first
+# three leave a joint nearer the rest pose than its next fold waypoint; the
+# last leaves the second joint about 3 mrad below its stop when the last
+# fold step starts.
+SETTLES = [
+    pytest.param({"motor4": -0.003}, id="a-wrist-joint-3-mrad-off"),
+    pytest.param({"motor1": +0.006}, id="the-base-joint-6-mrad-off"),
+    pytest.param({"motor6": -0.016}, id="the-last-joint-16-mrad-off"),
+    pytest.param({"motor2": -0.009}, id="a-stop-joint-below-its-stop"),
+]
+# A test on the stack of the rig, once per entry of SETTLES.
+on_the_rig = pytest.mark.parametrize("settles", SETTLES, indirect=True)
 
 
 def rest_pose() -> Any:
@@ -102,17 +127,21 @@ class Motors(MotorSdk):
     name of every jaw routine of the driver that was called, and
     ("disconnect", measured pose) for every torque cut. `floor` keeps a
     motor from going below a value: a joint that stops short of its stop.
+    `settles` is how far a motor ends from every command, in rad.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, settles: dict[str, float] | None = None) -> None:
         super().__init__()
         self.events: list[Any] = []
         self.floor: dict[str, float] = {}
+        self.settles = dict(settles or {})
         send = self.arm.send_mit
 
         def send_mit(q: Any, *args: Any, **kwargs: Any) -> None:
             self.events.append(("joints", [float(value) for value in q]))
             send(q, *args, **kwargs)
+            for name, off in self.settles.items():
+                self.arm._mm[name].value += off
             for name, least in self.floor.items():
                 motor = self.arm._mm[name]
                 motor.value = max(motor.value, least)
@@ -148,15 +177,24 @@ class Thor:
 
     It has the functional rest's route and can build the driver anew, so a
     typed rest ends with the motors off and they can be switched on again.
+    With rig_home it is the rig's: that ready pose and the rig's robot file.
     """
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        rig_home: list[float] | None = None,
+        settles: dict[str, float] | None = None,
+    ) -> None:
         import apai.control.rs_gripper as rs_gripper
 
-        self.profile = apai_backend.load_apai_profile("rebot_rs")
-        self.config = thor_config(self.profile)
+        self.rig = rig_home is not None
+        ready = {"arm": {"home_q": list(rig_home)}} if self.rig else None
+        self.profile = apai_backend.load_apai_profile("rebot_rs", ready)
+        self.config = thor_config(self.profile, rig=self.rig)
+        self.speed = self.config.limits.agent.max_joint_speed
         self.clock = SystemClock()
-        self.motors = Motors()
+        self.motors = Motors(settles)
         self.drivers: list[Any] = []  # APAI's driver objects, one per connect
         monkeypatch.setattr(sys, "path", list(sys.path))  # the driver's SDK path
         # The gripper guard's waits pass without real time.
@@ -222,8 +260,13 @@ class Thor:
         self.h.close()
 
 
-def thor_config(profile: Any) -> RobotAppConfig:
-    """The robot app's file for APAI's arm model, the return to rest at SPEED."""
+def thor_config(profile: Any, rig: bool = False) -> RobotAppConfig:
+    """The robot app's file for APAI's arm model, the return to rest at SPEED.
+
+    With rig it is the rig's robot file as it stands.
+    """
+    if rig:
+        return apai_backend.config_for_profile(load_config(ROBOT_RIG), profile)
     base = make_config()
     limits = base.limits
     assert limits.agent.max_joint_speed == SPEED
@@ -236,8 +279,11 @@ def thor_config(profile: Any) -> RobotAppConfig:
     return apai_backend.config_for_profile(base, profile)
 
 
-def scene(folder: Path) -> Any:
-    """APAI's configuration of the rebot_rs arm on the robot link, a mock camera."""
+def scene(folder: Path, speed: float = SPEED, home: list[float] | None = None) -> Any:
+    """APAI's configuration of the rebot_rs arm on the robot link, a mock camera.
+
+    speed is the Thor's agent speed limit; home replaces the ready pose.
+    """
     config = importlib.import_module("apai.config")
     loaded = config.load_demo_config(camera="mock", arm="rebot_rs", llm="mock")
     data = loaded.as_dict()
@@ -247,9 +293,13 @@ def scene(folder: Path) -> Any:
         view["occupancy"]["enabled"] = True
         view["occupancy"]["required"] = True
         view["arm"]["type"] = "robot_link"
-        view["safety"]["max_joint_vel"] = SPEED  # the Thor's agent speed limit
+        view["safety"]["max_joint_vel"] = speed
+        if home is not None:
+            view["arm"]["home_q"] = list(home)
     for arm in data["arms"]:
         arm["type"] = "robot_link"
+        if home is not None and "home_q" in arm:
+            arm["home_q"] = list(home)
     return type(loaded)(data)
 
 
@@ -280,15 +330,18 @@ class Agent:
         self.answer: Callable[[str], str] = lambda prompt: "yes"
         settings = ArmSettings(
             expected_profile_id=thor.config.profile_id,
+            calibration_id=thor.config.camera_calibration_id,
             allow_unnamed_calibration=True,
-            agent_max_joint_speed=SPEED,
+            agent_max_joint_speed=thor.speed,
         )
         with (
             mock.patch.object(occupancy, "OccupancyClient", FakeGridClient),
             mock.patch.object(demo, "make_arm", arm_factory(made, settings)),
         ):
             self.runtime, self.raw = demo.build_runtime(
-                scene(folder), folder / "run", lazy_arm=False
+                scene(folder, thor.speed, thor.home if thor.rig else None),
+                folder / "run",
+                lazy_arm=False,
             )
         self.safe = self.runtime.arm
         self.adapter, self.harness = self.safe.raw, self.safe.harness
@@ -299,7 +352,7 @@ class Agent:
         self.gate = task_gate.TaskGate(
             made,
             None,
-            types.SimpleNamespace(max_joint_speed=SPEED, end_wait_s=WAIT_S),
+            types.SimpleNamespace(max_joint_speed=thor.speed, end_wait_s=WAIT_S),
             ask=self._ask,
             say=self.lines.append,
             motion_skills=frozenset(runtime_module._MOTION_SKILLS),
@@ -348,12 +401,28 @@ class Agent:
 
 
 @pytest.fixture
-def thor(monkeypatch: pytest.MonkeyPatch) -> Iterator[Thor]:
+def settles(request: pytest.FixtureRequest) -> dict[str, float] | None:
+    """How far each motor ends from every command, for a test on_the_rig."""
+    return getattr(request, "param", None)
+
+
+@pytest.fixture
+def thor(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+    settles: dict[str, float] | None,
+) -> Iterator[Thor]:
     """The robot app at rest on the rebot_rs profile, with no robot connection.
 
-    After the test: every torque cut the motor layer saw was at measured rest.
+    For a test on_the_rig: with the rig's robot file and ready pose. After
+    the test: every torque cut the motor layer saw was at measured rest.
     """
-    made = Thor(monkeypatch)
+    rig_home = None
+    if settles is not None:
+        folder = request.getfixturevalue("experiment_dir")
+        arm = yaml.safe_load((folder / RIG_ARM).read_text(encoding="utf-8"))
+        rig_home = [float(value) for value in arm["home_q"]]
+    made = Thor(monkeypatch, rig_home, settles)
     try:
         yield made
     finally:
@@ -528,13 +597,14 @@ def test_after_standby_the_motors_come_on_again_and_the_next_move_runs(
     assert thor.said("rest")[-1].startswith(rest_module.MOTORS_ON_AGAIN)
 
 
-def test_the_last_fold_step_passes_both_checks_and_no_other_step_does(
+def test_a_step_inside_the_margin_at_the_rest_poses_stops_passes_both_checks(
     loopback: Agent, thor: Thor
 ) -> None:
-    """The fold's last step drives onto two joint stops, inside the joint margin.
+    """The fold drives onto two joint stops, inside the joint margin.
 
     The joint margin is the band a checker keeps clear of every joint stop.
-    APAI's rest tool streams that one step with the margin at 0.
+    APAI's rest tool streams its fold with the margin at 0; the check ahead
+    and the Thor's agent checker take the margin away by one rule.
     """
     agent = loopback
     workstation, robot = agent.harness, thor.h.checkers.agent
@@ -549,40 +619,68 @@ def test_the_last_fold_step_passes_both_checks_and_no_other_step_does(
         """The pose with the two joints this far above their stops."""
         return np.array([0.0, by, by, 0.0, 0.0, 0.0])
 
-    # The steps onto the rest pose: the checker's own vet refuses them, and
-    # both sides take the margin away for them.
+    # Steps inside the margin at the two stops: the checker's own vet refuses
+    # them, and both sides take the margin away for them. The second ends on
+    # the rest pose. The third also moves another joint away from the rest
+    # pose, as a fold step does from a pose a motor settled off its command.
     into, onto = (folded(margin - 0.001), folded(margin - 0.001 - step))
     last = (folded(step), np.array(REST))
+    away = onto.copy()
+    away[0] = step
+    under, back = folded(0.001), folded(0.001)
+    under[1], back[1] = -0.003, -0.003 + step
     robot.feed_watchdog()
     robot.begin_motion(robot.halt_count())
     try:
-        for start, target in ((into, onto), last):
+        for start, target in ((into, onto), last, (into, away)):
             assert "outside [" in workstation.vet_step(start, target, PERIOD_S)
             assert fold_margin(workstation, start, target) == 0.0
             assert check._vet_step(start, target) is None
             robot.check_setpoint(start, target, PERIOD_S)
-        # Any other step into the margin keeps it. One that also moves a
-        # joint away from the rest pose; one at a stop the rest pose does not
-        # lie on; one past the rest value.
-        away = onto.copy()
-        away[0] = step
+        # A joint that reads below its stop may come back up. The agent's
+        # envelope of this robot file ends at the stop; the rig's ends below it.
+        assert "outside [" in workstation.vet_step(under, back, PERIOD_S)
+        assert fold_margin(workstation, under, back) == 0.0
+        assert robot._fold_margin(under, back) == 0.0
+        assert check._vet_step(under, back) is None
+        with pytest.raises(Refusal, match="outside the agent envelope"):
+            robot.check_setpoint(under, back, PERIOD_S)
+        # A step keeps the margin at a stop the rest pose does not lie on,
+        # past the rest value, and when it is not a pose.
         clear, top = np.array(thor.home), np.array(thor.home)
         clear[4], top[4] = high[4] - margin - 0.001, high[4] - margin + 0.001
         past = np.array(REST)
         past[1] = -0.001
-        for start, target in ((into, away), (clear, top), (np.array(REST), past)):
+        for start, target in ((clear, top), (np.array(REST), past), (under, under)):
             assert fold_margin(workstation, start, target) is None
             assert "outside [" in check._vet_step(start, target)
             with pytest.raises(Refusal, match="outside"):
                 robot.check_setpoint(start, target, PERIOD_S)
+        broken = onto.copy()
+        broken[0] = np.nan
+        assert fold_margin(workstation, into, broken) is None
+        assert "non-finite" in check._vet_step(into, broken)
+        with pytest.raises(Refusal, match="finite"):
+            robot.check_setpoint(into, broken, PERIOD_S)
         # The rule adds nothing outside the margin.
         assert fold_margin(workstation, folded(0.3), folded(0.3 - step)) is None
         robot.check_setpoint(folded(0.3), folded(0.3 - step), PERIOD_S)
     finally:
         robot.end_motion()
+    # One rule on both sides: steps around the stops get the same answer.
+    rng = np.random.default_rng(0)
+    answers = []
+    for _ in range(2000):
+        stop = np.where(rng.random(6) < 0.5, low, high) + rng.uniform(-0.03, 0.03, 6)
+        start = np.where(rng.random(6) < 0.3, stop, np.array(thor.home))
+        target = start + rng.uniform(-2 * step, 2 * step, 6)
+        answers.append(fold_margin(workstation, start, target))
+        assert answers[-1] == robot._fold_margin(start, target)
+    assert answers.count(0.0) > 50 and answers.count(None) > 50
     # A person and the Thor's own return to rest keep their rules.
     for other in (thor.h.checkers.human, thor.h.checkers.recovery):
-        assert other._fold_margin(into, onto) is None
+        for start, target in ((into, onto), last, (into, away), (under, back)):
+            assert other._fold_margin(start, target) is None
 
 
 def test_the_rest_tool_is_refused_with_a_held_load_in_apais_words(
@@ -754,3 +852,73 @@ def test_the_operators_typed_rest_folds_closes_the_jaws_and_cuts_the_motors(
         console.request_owner(REQUEST_MOTORS_ON), timeout_s=WAIT_S
     )
     assert (again.status, again.reason) == ("refused", rest_module.MOTORS_ARE_ON)
+
+
+# On the rig: the ready pose lies 0.025 rad above the two stops, so the fold
+# is inside the joint margin from its first step, and each fold step starts
+# from the pose the motors settled at.
+
+
+def on_the_rigs_stack(thor: Thor) -> None:
+    """The stack is the rig's: its robot file's speeds and its ready pose."""
+    rig = load_config(ROBOT_RIG)
+    assert thor.rig and thor.speed == rig.limits.agent.max_joint_speed
+    assert thor.config.rest.recovery_speed == rig.rest.recovery_speed
+    margin = thor.h.checkers.agent.harness.limits.joint_margin
+    assert 0.0 < thor.home[1] - REST[1] < margin + 0.01
+    thor.hold_at(list(thor.home))
+
+
+def settled_off(thor: Thor) -> None:
+    """Rest was measured with every motor as far off as the test made it."""
+    off = [thor.motors.settles.get(name, 0.0) for name in thor.motors.arm.joint_names]
+    assert thor.motors.pose() == pytest.approx(off, abs=1e-6)
+    assert any(off) and thor.motors.targets()[-1] == pytest.approx(REST, abs=1e-9)
+    assert thor.motors.cuts() == [pytest.approx(off, abs=1e-6)]
+    assert thor.motors.names() == ["close_gripper_torque", "disconnect"]
+
+
+@experiment
+@on_the_rig
+def test_on_the_rig_apais_rest_tool_folds_onto_rest_with_a_motor_that_settles_off(
+    loopback: Agent, thor: Thor
+) -> None:
+    """The fold as the launcher runs it: each step with the joint margin at 0.
+
+    The experiment's motion adapters, which the launcher enters for every
+    task of the full stack, make APAI's rest tool stream every fold step so.
+    """
+    agent, functional = loopback, rest_pose()
+    on_the_rigs_stack(thor)
+    with import_experiment("thor_motion").motion_adapters(agent.runtime.cfg):
+        assert [functional._margin(i, FOLDS) for i in range(FOLDS)] == [0.0] * FOLDS
+        (result,) = agent.task(task_gate.REST_SKILL)
+    assert result.get("ok", True) is True, result
+    assert (result["at"], result["route"]) == ("rest", ["fold"]), result
+    assert (result["gripper"], result["torque"]) == ("closed", "released")
+    assert len(agent.moves) == FOLDS
+    assert agent.harness.violations == []  # no check refused a setpoint
+    settled_off(thor)
+    agent.state(unpowered, "rest with the motors off")
+
+
+@link
+@experiment
+@on_the_rig
+def test_on_the_rig_the_operators_typed_rest_folds_with_a_motor_that_settles_off(
+    thor: Thor, stack: Any
+) -> None:
+    console = stack.console.ws
+    on_the_rigs_stack(thor)
+    done = console.wait_result(console.rest(confirmed=True), timeout_s=REST_WAIT_S)
+    assert (done.status, done.detail) == (
+        "completed",
+        {"outcome": rest_module.AT_REST, "motors": "off"},
+    )
+    told = [text for text in thor.said("rest") if "moves for" in text]
+    assert [text.split(": ")[1] for text in told] == [
+        rest_module.LEG_FOLD.format(step=step, steps=FOLDS)
+        for step in range(1, FOLDS + 1)
+    ]
+    settled_off(thor)
+    console.wait_state(unpowered, WAIT_S)

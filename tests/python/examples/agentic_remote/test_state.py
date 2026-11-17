@@ -729,6 +729,96 @@ def test_the_time_the_reads_were_paused_is_not_lost_feedback(arm, reader, clock)
     assert reader.consecutive_failures_s(clock.monotonic()) == pytest.approx(0.2)
 
 
+def test_a_read_that_failed_before_a_wanted_release_is_no_lost_feedback(
+    arm, reader, clock
+):
+    """One idle read gets no answer, then the release pauses the reads."""
+    idle_steps(reader, clock, 3)
+    arm.failing = {0}
+    assert reader.step(clock.monotonic()) is None
+    arm.failing = set()  # the bus is well again: the next read would be good
+    with reader.paused():
+        clock.advance(0.5)  # the driver's disconnect
+        assert reader.step(clock.monotonic()) is None  # no read is made
+        assert reader.consecutive_failures_s(clock.monotonic()) == 0.0
+        arm.powered = False  # the release went through
+    # The fault poll can come before the next idle step.
+    assert reader.consecutive_failures_s(clock.monotonic()) == 0.0
+    assert reader.step(clock.monotonic()) is None
+    clock.advance(1.0)
+    assert reader.consecutive_failures_s(clock.monotonic()) == 0.0
+    assert arm.asked == [0, 1, 2, 0]
+
+
+def test_a_pause_that_ends_with_the_motors_on_hides_no_lost_feedback(
+    arm, history, reader, clock
+):
+    """A release that is refused or raises: the joint is still silent after it."""
+    idle_steps(reader, clock, 3)
+    last_good = history.latest()[0].t_end
+    arm.failing = {0}
+    assert reader.step(clock.monotonic()) is None
+    with reader.paused():
+        clock.advance(0.5)
+        assert reader.consecutive_failures_s(clock.monotonic()) == 0.0
+    now = clock.monotonic()
+    assert reader.consecutive_failures_s(now) == pytest.approx(now - last_good)
+    assert reader.step(now) is None  # read again at once: still no answer
+    clock.advance(0.2)
+    now = clock.monotonic()
+    assert reader.consecutive_failures_s(now) == pytest.approx(now - last_good)
+    # The joint answers again: the count ends.
+    arm.failing = set()
+    idle_steps(reader, clock, 3)
+    assert reader.consecutive_failures_s(clock.monotonic()) == 0.0
+
+
+def test_a_pause_is_lifted_when_its_block_raises(arm, reader, clock):
+    idle_steps(reader, clock, 1)
+    with pytest.raises(ArmFault), reader.paused():
+        raise ArmFault("the driver's disconnect failed")
+    assert reader.due_in(clock.monotonic()) == 0.0
+    assert reader.step(clock.monotonic()).joint == 1
+
+
+def test_an_extra_read_is_free_only_with_the_motors_on_and_the_reads_not_paused(
+    arm, reader
+):
+    with reader.extra_read() as free:
+        assert free is True
+    with reader.paused(), reader.extra_read() as free:
+        assert free is False
+    arm.powered = False
+    with reader.extra_read() as free:
+        assert free is False
+
+
+def test_pausing_waits_for_an_extra_read_under_way(reader):
+    reading_now, go_on, paused = (threading.Event() for _ in range(3))
+
+    def extra() -> None:
+        with reader.extra_read() as free:
+            assert free
+            reading_now.set()
+            assert go_on.wait(JOIN_S)
+            assert not paused.is_set()  # the pause has not begun during the read
+
+    def pause() -> None:
+        with reader.paused():
+            paused.set()
+
+    extra_reader = threading.Thread(target=extra)
+    extra_reader.start()
+    assert reading_now.wait(JOIN_S)
+    pauser = threading.Thread(target=pause)
+    pauser.start()
+    assert not paused.wait(0.05)
+    go_on.set()
+    extra_reader.join(JOIN_S)
+    pauser.join(JOIN_S)
+    assert paused.is_set()
+
+
 def test_pausing_waits_for_the_idle_read_under_way(arm, history, config, clock):
     reader = IdleReader(arm, history, config.state, clock)
     reading_now, go_on, paused = (threading.Event() for _ in range(3))

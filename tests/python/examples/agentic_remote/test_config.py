@@ -413,8 +413,12 @@ def test_load_config_accepts_a_string_path():
         ),
         (
             "robot_app_human_check.yaml",
-            # The speed limit of the rig's file for a person.
-            {"human.enabled": True, "limits.human.max_joint_speed": 0.8},
+            # The speed limit and the step limit of the rig's file for a person.
+            {
+                "human.enabled": True,
+                "limits.human.max_joint_speed": 0.8,
+                "limits.human.max_step_rad": 0.05,
+            },
         ),
     ],
 )
@@ -441,6 +445,7 @@ def test_the_demo_2_robot_files_are_the_shipped_file_with_the_keys_they_list(
         rig = load_config(CONFIG_YAML.with_name("robot_app_rebot.yaml"))
         speed = loaded.limits.human.max_joint_speed
         assert speed == rig.limits.human.max_joint_speed
+        assert loaded.limits.human.max_step_rad == rig.limits.human.max_step_rad
 
 
 def test_settings_left_out_take_their_defaults(tmp_path):

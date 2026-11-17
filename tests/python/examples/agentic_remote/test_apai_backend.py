@@ -17,6 +17,7 @@ import re
 import sys
 import threading
 import time
+import types
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -454,6 +455,134 @@ def test_setpoint_inside_the_harness_joint_margin_is_refused(
         lambda: human.check_setpoint(moved(HOME, 4, 1.556), moved(HOME, 4, 1.56), 0.02),
         r"joint 5 target 1\.560 rad outside \[-1\.550, 1\.550\]",
     )
+
+
+def test_on_the_rig_file_only_the_agent_enters_the_joint_margin_at_the_rest_stops(
+    clock: FakeClock,
+) -> None:
+    """What the fold rule lets the Thor's agent checker accept, and nobody else's.
+
+    The joint margin is the 0.02 rad a harness keeps clear of each joint
+    stop. The rest pose lies on the lower stops of the second and third
+    joint. An agent setpoint may be inside the margin at these two stops
+    whatever the other joints do: down to the stop and no further, and at
+    the agent's speed limit. A joint that reads below its stop may come back
+    up. Every other stop keeps its margin, and so does a person's checker.
+    """
+    from isaaccapture_examples.agentic_remote.robot_app.config import load_config
+    from repo_paths import repo_root
+
+    file = repo_root() / "examples/agentic_remote/configs/robot_app_rebot.yaml"
+    profile = apai_backend.load_apai_profile("rebot_rs")
+    rig = apai_backend.config_for_profile(load_config(file), profile)
+    checkers = apai_backend.build_apai_checkers(rig, profile, clock)
+    agent, human, recovery = checkers.agent, checkers.human, checkers.recovery
+    for checker in checkers.all():
+        start_motion(checker)
+    margin = 0.02
+    assert agent.harness.limits.joint_margin == margin
+    assert human.harness.limits.joint_margin == margin
+    assert recovery.harness.limits.joint_margin == 0.0  # it reaches the stops itself
+    speed = rig.limits.agent.max_joint_speed
+    assert agent.harness.limits.max_joint_vel == speed
+    step = 0.5 * speed * STEP_S  # rad a period: half the agent's speed limit
+    low, high = (np.asarray(s, float) for s in profile.kinematics.joint_limits)
+    assert list(low[1:3]) == list(rig.rest.rest_q[1:3]) == [0.0, 0.0]
+    # The arm raised, the second joint half a step above its margin.
+    raised = [0.3, margin + step / 2, 0.5, 0.0, 0.2, 0.0]
+    inside = margin - step / 2
+    on_stop = moved(raised, 1, 0.0)
+    refused = rf"joint 2 target {inside:.3f} rad outside \[0\.020, 3\.120\]"
+
+    def own_margin(start: Sequence[float], target: Sequence[float]) -> str | None:
+        return agent.harness.vet_step(np.array(start), np.array(target), STEP_S)
+
+    # Inside the margin at the two stops; the harness's own margin refuses each.
+    accepted = {
+        "into the margin, the arm raised": (raised, moved(raised, 1, inside)),
+        "that, while the base turns away from the rest pose": (
+            raised,
+            moved(moved(raised, 1, inside), 0, 0.3 + step),
+        ),
+        "down onto the stop": (moved(raised, 1, step), on_stop),
+        "a hold on the stop": (on_stop, on_stop),
+        "the third joint": (
+            [0.3, 0.5, margin + step / 2, 0.0, 0.2, 0.0],
+            [0.3 + step, 0.5, inside, 0.0, 0.2, 0.0],
+        ),
+        "one joint back up from below its stop while the other folds": (
+            [0.0, -2 * step, 2 * step, 0.0, 0.0, 0.0],
+            [0.0, -step, step, 0.0, 0.0, 0.0],
+        ),
+    }
+    for name, (start, target) in accepted.items():
+        assert "outside [0.020" in own_margin(start, target), name
+        assert agent._fold_margin(np.array(start), np.array(target)) == 0.0, name
+        agent.check_setpoint(start, target, STEP_S)
+        # A person's checker and the return to rest have no such rule.
+        assert human._fold_margin(np.array(start), np.array(target)) is None, name
+        assert recovery._fold_margin(np.array(start), np.array(target)) is None, name
+        refusal_of(
+            lambda s=start, t=target: human.check_setpoint(s, t, STEP_S),
+            r"rad outside \[0\.020, 3\.120\]",
+        )
+
+    # Never below the stop, never faster than the agent's speed limit.
+    below = moved(raised, 1, -0.001)
+    for start in (moved(raised, 1, 0.001), below):
+        refusal_of(
+            lambda start=start: agent.check_setpoint(start, below, STEP_S),
+            r"joint 2 target -0\.001 rad outside \[0\.020, 3\.120\]",
+        )
+    refusal_of(
+        lambda: agent.check_setpoint(moved(raised, 1, 3 * step), on_stop, STEP_S),
+        rf"joint 2 velocity {1.5 * speed:.2f} rad/s exceeds {speed:.2f}",
+    )
+    # A stop the rest pose does not lie on keeps its margin, alone and
+    # together with a step into the margin at the second joint.
+    edge = high[4] - margin
+    kept = {
+        r"joint 5 target 1\.551 rad outside \[-1\.550, 1\.550\]": (
+            moved(raised, 4, edge - 0.001),
+            moved(raised, 4, edge + 0.001),
+        ),
+        r"joint 4 target -1\.671 rad outside \[-1\.670, 1\.770\]": (
+            moved(raised, 3, -1.669),
+            moved(raised, 3, -1.671),
+        ),
+        refused: (
+            moved(raised, 4, edge - 0.001),
+            moved(moved(raised, 1, inside), 4, edge + 0.001),
+        ),
+    }
+    for text, (start, target) in kept.items():
+        assert agent._fold_margin(np.array(start), np.array(target)) is None, text
+        refusal_of(lambda s=start, t=target: agent.check_setpoint(s, t, STEP_S), text)
+
+    # Random steps around the stops: where a setpoint the agent's checker
+    # accepts lies inside a margin, it is at one of the two stops and not
+    # below it, or the joint moves back out of the margin as the harness
+    # lets any joint. A person's checker accepts only the latter.
+    rng = np.random.default_rng(0)
+    entered = 0
+    for _ in range(3000):
+        stop = np.where(rng.random(6) < 0.5, low, high) + rng.uniform(-0.03, 0.03, 6)
+        near = rng.random(6) < 0.3
+        near[1:3] |= rng.random(2) < 0.5
+        start = np.where(near, stop, np.array(raised))
+        target = start + rng.uniform(-1.5 * step, 1.5 * step, 6)
+        under, over = target < low + margin - 1e-9, target > high - margin + 1e-9
+        leaves = (under & (target > start)) | (over & (target < start))
+        at_rest_stop = under & np.isin(np.arange(6), (1, 2)) & (target >= low - 1e-9)
+        for checker, allowed in ((agent, leaves | at_rest_stop), (human, leaves)):
+            try:
+                checker.check_setpoint(start, target, STEP_S)
+            except Refusal:
+                continue
+            assert (allowed | ~(under | over)).all(), (checker.name, start, target)
+            if checker is agent and (at_rest_stop & ~leaves).any():
+                entered += 1
+    assert entered > 100
 
 
 def test_each_owner_has_its_own_speed_limit(checkers: CheckerSet) -> None:
@@ -1341,6 +1470,64 @@ def test_jaws_are_unknown_until_referenced(arm: apai_backend.ApaiArm) -> None:
     assert arm.backend.get_state().gripper_pos == 1.0
 
 
+def test_the_mock_arms_peek_is_its_jaw_read(arm: apai_backend.ApaiArm) -> None:
+    arm.connect()
+    assert arm.gripper_peek() is None  # not referenced
+    arm.gripper_reference()
+    arm.gripper_command(0.4, 0.5, "plain", threading.Event())
+    assert arm.gripper_peek() == arm.gripper_read() == pytest.approx(0.4)
+
+
+def test_holding_is_said_only_of_joint_readings_at_most_a_second_old(
+    arm: apai_backend.ApaiArm, clock: FakeClock
+) -> None:
+    holding = (apai_backend.MOTORS_HOLDING, "every joint reads at the target it holds")
+    arm.connect()
+    arm.hold_measured()
+    clock.advance(arm._hold._after_s + 0.01)
+    arm.read_all()
+    assert arm.hold_evidence() == holding
+    clock.advance(apai_backend.HOLD_READ_AGE_S - 0.1)
+    assert arm.hold_evidence() == holding
+    # The joints stop answering: nothing reads the hold any more.
+    clock.advance(0.2)
+    names = ", ".join(arm.joint_names)
+    assert arm.hold_evidence() == (
+        apai_backend.MOTORS_UNKNOWN,
+        f"{names} not read for more than 1 s",
+    )
+    assert arm.faults() == []  # a missing reading is no joint off its hold
+    # Each joint that is read at its target again counts again.
+    arm.read_joint(2)
+    assert arm.hold_evidence() == (
+        apai_backend.MOTORS_UNKNOWN,
+        "joint1, joint2, joint4, joint5, joint6 not read for more than 1 s",
+    )
+    arm.read_all()
+    assert arm.hold_evidence() == holding
+
+
+def test_no_motor_fault_is_judged_before_the_connect_has_its_baseline(
+    arm: apai_backend.ApaiArm,
+) -> None:
+    during: list[Any] = []
+
+    class StandingFault:
+        """A motor whose fault word stays set after the driver cleared it."""
+
+        def robstride_get_fault_report(self) -> tuple[int, int]:
+            if not during:
+                # As the fault poll of another thread, while the baseline is read.
+                during.append(None)
+                during[0] = (arm.torque_on(), arm.faults())
+            return 4, 0
+
+    arm.backend._arm = types.SimpleNamespace(_motor_map={"joint2": StandingFault()})
+    arm.connect()
+    assert during == [(False, [])]
+    assert arm.torque_on() and arm.faults() == []
+
+
 def test_reference_fails_with_something_between_the_jaws(
     arm: apai_backend.ApaiArm,
 ) -> None:
@@ -1778,6 +1965,65 @@ def test_rs_jaws_go_through_the_gripper_guard(
     sends = len(jaw.sent)
     arm.gripper_light_hold()
     assert jaw.sent[sends:] == [([0.0], [0.01])]
+
+
+def test_rs_the_peek_reads_the_jaw_motor_with_the_idle_reads_timeout(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    arm, sdk = rs
+    jaw = sdk.gripper._mm["jaw"]
+    reads = len(jaw.reads)
+    assert arm.gripper_peek() is None  # not referenced: nothing is read
+    assert len(jaw.reads) == reads
+    arm.gripper_reference()
+    arm.gripper_command(0.5, 0.5, "plain", threading.Event())
+    sends, reads = len(sdk.gripper.sent), len(jaw.reads)
+    assert arm.gripper_peek() == pytest.approx(0.5)
+    # One read of the motor's position, with an idle joint read's timeout in ms.
+    assert jaw.reads[reads:] == [(0x7019, 50)]
+    assert arm.read_joint(2).valid and sdk.arm._mm["motor3"].reads[-1] == (0x7019, 50)
+    # The driver's own read passes none: the motor library waits 1 s.
+    assert arm.gripper_read() == pytest.approx(0.5)
+    assert jaw.reads[reads + 1 :] == [(0x7019, None)]
+    assert sdk.gripper.sent[sends:] == []  # neither moves the jaws
+
+
+@pytest.mark.parametrize("answer", [None, 2.3e18, math.nan, 9.0, -1.0])
+def test_rs_a_peek_without_a_jaw_position_is_unknown_and_keeps_the_reference(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk], answer: float | None
+) -> None:
+    """None: no answer. 2.3e18: read on the rig. 9.0, -1.0: outside the travel."""
+    arm, sdk = rs
+    arm.gripper_reference()
+    arm.gripper_command(0.5, 0.5, "plain", threading.Event())
+    jaw, guard = sdk.gripper._mm["jaw"], arm.backend._grip_guard
+    at = jaw.value
+    for _ in range(5):  # the guard gives up its reference at the third
+        if answer is None:
+            jaw.missed = 1
+        else:
+            jaw.value = answer
+        assert arm.gripper_peek() is None
+    assert arm.gripper_referenced() and guard._read_failures == 0
+    assert arm.gripper_last_target() == pytest.approx(0.5)
+    jaw.value = at
+    assert arm.gripper_peek() == pytest.approx(0.5)
+    # The driver's own read, a jaw command's, counts them as before.
+    jaw.missed = 3
+    assert [arm.gripper_read() for _ in range(3)] == [None] * 3
+    assert not arm.gripper_referenced()
+    assert arm.gripper_peek() is None
+
+
+def test_rs_no_peek_reaches_a_driver_that_was_released(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    arm, sdk = rs
+    arm.gripper_reference()
+    arm.release_torque()
+    reads = len(sdk.gripper._mm["jaw"].reads)
+    assert arm.gripper_peek() is None
+    assert len(sdk.gripper._mm["jaw"].reads) == reads
 
 
 def test_rs_the_driver_references_the_jaws_before_their_first_command(
@@ -3375,6 +3621,115 @@ def test_a_stop_between_the_drivers_disconnect_and_the_arm_ports_note_is_no_faul
     assert (state.motion, state.stop_level) == ("rest_unpowered", "stop")
     assert h.heard("fault") == []
     assert sdk.disconnects == 1
+
+
+def one_idle_read_fails_before_the_pause(
+    h: AppHarness, sdk: MotorSdk, clock: FakeClock
+) -> threading.Event:
+    """The idle joint read under way when a release pauses the reads gets no answer.
+
+    Returns the event that is set once that read began.
+    """
+    armed, in_flight = threading.Event(), threading.Event()
+
+    def unanswered_once(read: Callable[..., float]) -> Callable[..., float]:
+        def get(param: int, timeout_ms: int | None = None) -> float:
+            # Only a read of one joint passes a timeout.
+            if timeout_ms is not None and armed.is_set() and not in_flight.is_set():
+                in_flight.set()
+                time.sleep(0.03)
+                raise OSError("no answer")
+            return read(param, timeout_ms)
+
+        return get
+
+    for motor in sdk.arm._mm.values():
+        motor.robstride_get_param_f32 = unanswered_once(motor.robstride_get_param_f32)
+    paused = h.app._rest._reads_paused
+
+    def paused_after_that_read() -> Any:
+        armed.set()
+        clock.advance(0.05)  # an idle read is due
+        assert in_flight.wait(WAIT_S), "no idle read came"
+        return paused()
+
+    h.app._rest._reads_paused = paused_after_that_read
+    return in_flight
+
+
+RELEASE_ENDS: dict[str, tuple[Exception | None, bool]] = {
+    "the disconnect returns": (None, False),
+    "a STOP during the disconnect": (None, True),
+    "the disconnect raises": (OSError("bus off"), False),
+}
+
+
+@pytest.mark.parametrize("how", RELEASE_ENDS)
+def test_a_joint_read_that_failed_just_before_a_release_is_no_lost_feedback(
+    rs_app: tuple[AppHarness, MotorSdk], clock: FakeClock, how: str
+) -> None:
+    h, sdk = rs_app
+    error, stop = RELEASE_ENDS[how]
+    idle = h.app._idle
+    missed = one_idle_read_fails_before_the_pause(h, sdk, clock)
+    inside, go = hold_disconnect(sdk, error)
+    try:
+        release_id = h.client.release()
+        assert inside.wait(WAIT_S), "the release never reached the disconnect"
+        assert missed.is_set() and sum(idle.failures()) >= 1
+        if stop:
+            stop_over_the_link(h)
+        # The driver's disconnect takes half a second, as on the arm.
+        clock.advance(0.5)
+        h.step()
+        h.step()
+        assert idle.consecutive_failures_s(clock.monotonic()) == 0.0
+        assert h.heard("fault") == []
+    finally:
+        go.set()
+    result = final(h, release_id)
+    assert idle._held == 0  # the pause is lifted, however the release ended
+    if error is None:
+        assert (result.status, result.reason) == ("completed", "")
+        state = h.client.wait_state(lambda s: not s.torque_on)
+        level = "stop" if stop else "none"
+        assert (state.motion, state.stop_level) == ("rest_unpowered", level)
+        h.advance(1.0, 0.1)
+        assert h.heard("fault") == []
+    else:
+        # A release that failed is a fault-stop of its own; the motors count
+        # as on, so the idle reads and their count of lost feedback go on.
+        assert result.status == "failed"
+        state = h.client.wait_state(lambda s: s.stop_level == "fault")
+        assert (state.motion, state.torque_on) == ("release_failed", True)
+        assert idle.due_in(clock.monotonic()) is not None
+
+
+def test_no_jaw_reading_is_taken_while_a_joints_idle_read_fails(
+    rs_app: tuple[AppHarness, MotorSdk], clock: FakeClock
+) -> None:
+    h, sdk = rs_app
+    jaw, idle = sdk.gripper._mm["jaw"], h.app._idle
+    mark = len(jaw.reads)
+    h.advance(0.3, 0.02)
+    # In a hold the jaw reading of each ROBOT_STATE is the bounded one.
+    periodic = jaw.reads[mark:]
+    assert len(periodic) >= 3 and set(periodic) == {(0x7019, 50)}
+    sdk.arm._mm["motor3"].missed = 10**9  # one joint stops answering
+    h.advance_until(
+        lambda: idle.consecutive_failures_s(clock.monotonic()) > 0.0, 0.02, 1.0
+    )
+    mark, began = len(jaw.reads), clock.monotonic()
+    h.advance(0.1, 0.02)
+    assert jaw.reads[mark:] == []  # the bus is the joints'
+    assert h.heard("fault") == []
+    # The reading the agent had keeps its own time: none is made up.
+    shown = h.client.wait_state(lambda s: s.clock_mono_s >= began + 0.05)
+    assert shown.gripper.valid and shown.gripper.t <= began
+    sdk.arm._mm["motor3"].missed = 0
+    h.advance(0.3, 0.02)
+    assert (0x7019, 50) in jaw.reads[mark:]
+    assert h.heard("fault") == []
 
 
 def test_rs_arm_port_sends_the_driver_nothing_while_its_disconnect_runs(

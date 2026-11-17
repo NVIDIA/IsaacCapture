@@ -334,6 +334,44 @@ def test_refresh_reads_nothing_from_jaws_without_their_reference(jaw_state):
     assert jaw_state.gripper_state(jaws).valid is False
 
 
+class PeekedJaws(ScriptedJaws):
+    """Jaws whose arm port has the bounded read; its answers are `peeks`."""
+
+    def __init__(self, peeks, readings=(), target=None):
+        super().__init__(readings, target)
+        self.peeks = list(peeks)
+
+    def gripper_peek(self) -> float | None:
+        return self.peeks.pop(0)
+
+
+def test_refresh_takes_the_arm_ports_peek_where_it_has_one(jaw_state, clock):
+    # A gripper_read() would raise: there is nothing to pop.
+    jaws = PeekedJaws([0.4, None, 0.42], target=0.4)
+    jaw_state.refresh(jaws)
+    first = clock.monotonic()
+    state = jaw_state.gripper_state(jaws)
+    assert (state.opening, state.t, state.valid) == (0.4, first, True)
+    # A peek without an answer is unknown: the reading from before is not
+    # shown again, and gets no new time.
+    clock.advance(0.05)
+    jaw_state.refresh(jaws)
+    state = jaw_state.gripper_state(jaws)
+    assert (state.opening, state.t, state.valid) == (None, None, False)
+    assert state.referenced is True
+    clock.advance(0.05)
+    jaw_state.refresh(jaws)
+    state = jaw_state.gripper_state(jaws)
+    assert (state.opening, state.t, state.valid) == (0.42, clock.monotonic(), True)
+
+
+def test_classify_keeps_the_drivers_own_read(jaw_state):
+    # A gripper_peek() would raise: there is nothing to pop.
+    jaws = PeekedJaws([], readings=[0.0] * 3, target=0.0)
+    assert jaw_state.classify(jaws) is JawLoad.EMPTY
+    assert jaws.readings == []
+
+
 # JawState: the "may be holding" flag
 
 

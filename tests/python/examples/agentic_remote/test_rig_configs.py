@@ -12,6 +12,7 @@ profile and run the robot app with it on a stand-in motor SDK.
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import math
 import re
 import sys
@@ -25,7 +26,6 @@ import pytest
 import yaml
 from isaaccapture_examples.agentic_remote.agent import config as agent_config
 from isaaccapture_examples.agentic_remote.human.ik import Solver
-from isaaccapture_examples.agentic_remote.human.types import IkSettings
 from isaaccapture_examples.agentic_remote.link_service import __main__ as service_main
 from isaaccapture_examples.agentic_remote.link_service import config as service_config
 from isaaccapture_examples.agentic_remote.protocol.messages import HumanSetpoint
@@ -78,6 +78,12 @@ PROFILE_ID = "rebot-b601-rs-thor"
 # rest, and the bound on a person's motion.
 OWNER_SPEED = 0.2
 HUMAN_SPEED = 0.8
+# The farthest a human target may lie from the arm at a squeeze, and from the
+# last joint target sent after it, rad: limits.human.max_step_rad of the rig's
+# robot file. Below it, the farthest the human program lets its own joint
+# target run ahead: ik.max_ahead_rad of configs/human_rebot.yaml.
+HUMAN_STEP = 0.05
+HUMAN_AHEAD = 0.045
 # The joint limits of APAI's arm model of the rebot_rs profile, rad.
 MODEL_LOW = (-2.8, 0.0, 0.0, -1.69, -1.57, -3.14)
 MODEL_HIGH = (2.8, 3.14, 3.14, 1.79, 1.57, 3.14)
@@ -151,7 +157,7 @@ def test_the_rig_robot_file_holds_the_rigs_values(robot_rig):
         HUMAN_LOW,
         HUMAN_HIGH,
     )
-    assert limits.human.max_step_rad == 0.1
+    assert limits.human.max_step_rad == HUMAN_STEP
     assert (limits.agent.envelope_min, limits.agent.envelope_max) == (
         ENVELOPE_LOW,
         ENVELOPE_HIGH,
@@ -231,13 +237,14 @@ def test_what_scales_with_the_speeds_still_holds_at_the_owners(robot_rig):
         ROBOT_RIG.read_text(encoding="utf-8").replace("#", " ").split()
     )
     assert rest.recovery_speed <= robot_rig.limits.recovery.max_joint_speed
-    # A person: the Thor clamps one step of a human drive well inside the
-    # farthest a human target may lie from the last joint target sent, so the
-    # clamp is met before a target is refused for its distance.
+    # A person: the Thor clamps one step of a human drive inside the farthest
+    # a human target may lie from the last joint target sent, so the clamp is
+    # met before a target is refused for its distance. The farthest target
+    # that is taken is reached with the fourth setpoint, after 0.08 s.
     human = robot_rig.limits.human
     step = SPEED_MARGIN * human.max_joint_speed * executor.period_s
     assert step == pytest.approx(0.01568)
-    assert 5 * step < human.max_step_rad
+    assert 3 * step < human.max_step_rad < 4 * step
     # The hand speed limits of the rig's human file ask a joint for less than
     # the Thor's bound, so the arm follows the hand without the clamp: on the
     # arm model 1 m/s at the gripper tip asks a joint for at most 13 rad/s,
@@ -616,14 +623,17 @@ def test_a_takeover_and_a_lift_run_from_each_rig_reading_with_the_rig_file(
         # in a few setpoints. From there the hand's speed limit of the rig's
         # human file sets the pace, far below the clamp.
         first = np.array(solver.inside(reading))
-        catch_up = math.ceil(np.abs(first - np.array(reading)).max() / clamp)
+        off_the_stops = np.abs(first - np.array(reading)).max()
+        catch_up = math.ceil(off_the_stops / clamp)
         assert 1 <= catch_up <= 3
         assert steps[:catch_up].max() == pytest.approx(clamp, abs=1e-12)
         assert steps[catch_up:].max() < HAND_PACE * period
-        # No solution lay as far ahead of the last setpoint sent as makes the
-        # human program end the squeeze: ik.max_ahead_rad, here the default of
-        # human/types.py (0.08), which configs/human_rebot.yaml repeats.
-        assert hand.ahead < IkSettings().max_ahead_rad
+        # The squeeze's first target is the farthest of all from what the arm
+        # was sent: about 0.03 rad, on the second joint. It lies inside what
+        # the human program lets a solution run ahead (ik.max_ahead_rad of
+        # configs/human_rebot.yaml), and that inside the Thor's step limit.
+        assert 0.031 < off_the_stops < 0.033 < HUMAN_AHEAD < human.max_step_rad
+        assert hand.ahead < off_the_stops
         start_tip = solver.fk(solver.inside(reading))[:3, 3]
         rise = solver.fk(sent[-1])[:3, 3] - start_tip
         assert rise == pytest.approx([0.0, 0.0, LIFT_M], abs=1e-3)
@@ -651,7 +661,16 @@ def test_the_rig_human_file_names_the_hand_speed_and_the_ahead_limit_of_the_lift
     # names the speed its hand rises with and the ahead limit it is held to.
     rig = shipped("human_rebot.yaml")
     assert rig["retarget"]["max_linear_velocity"] == HAND_SPEED
-    assert rig["ik"]["max_ahead_rad"] == IkSettings().max_ahead_rad
+    assert rig["ik"]["max_ahead_rad"] == HUMAN_AHEAD
+    # The human program ends an engagement before the Thor refuses its target:
+    # its limit lies below the Thor's, in the rig's robot file and in the file
+    # of the headset checks before power, which runs with the same human file.
+    for name in ("robot_app_rebot.yaml", "robot_app_human_check.yaml"):
+        step = shipped(name)["limits"]["human"]["max_step_rad"]
+        assert HUMAN_AHEAD < step == HUMAN_STEP, name
+    # The one-machine demos keep their own pair.
+    demo = shipped("robot_app.yaml")["limits"]["human"]["max_step_rad"]
+    assert shipped("human.yaml")["ik"]["max_ahead_rad"] == 0.08 < demo == 0.1
 
 
 # The edge of the rig file's human joint box. A STOP makes nobody the control
@@ -867,18 +886,21 @@ def test_below_the_two_bounds_without_the_margin_a_typed_rest_is_refused(
 TIP_LOW = [0.0, 1.68, 0.7, 0.0, 0.5, 0.0]
 TIP_LOWER = [0.0, 1.69, 0.7, 0.0, 0.5, 0.0]
 TIP_CLEAR = [0.0, 1.62, 0.7, 0.0, 0.5, 0.0]
-STRIDE = 0.05  # rad a hand's target runs ahead of the last joint target sent
+# rad a hand's target runs ahead of the last joint target sent: inside the
+# Thor's step limit.
+STRIDE = 0.04
 
 
 class JointHand:
     """A hand that squeezes toward a pose: keep_human_fed's setpoint.
 
-    Its target runs at most STRIDE per joint ahead of the last joint target
+    Its target runs at most `stride` per joint ahead of the last joint target
     the motors got. The grip is released once they got the goal.
     """
 
-    def __init__(self, rig: PersonRig) -> None:
+    def __init__(self, rig: PersonRig, stride: float = STRIDE) -> None:
         self.rig = rig
+        self.stride = stride
         self.goal: list[float] | None = None  # None: the grip is released
         keep_human_fed(rig.h, self)
 
@@ -893,8 +915,9 @@ class JointHand:
 
     def ahead(self, last: Sequence[float]) -> list[float]:
         """The target that leads `last` toward the goal."""
+        stride = self.stride
         return [
-            at + max(-STRIDE, min(STRIDE, to - at)) for at, to in zip(last, self.goal)
+            at + max(-stride, min(stride, to - at)) for at, to in zip(last, self.goal)
         ]
 
     def squeeze(self, measured: Sequence[float], goal: Sequence[float]) -> None:
@@ -954,6 +977,137 @@ def test_a_person_lifts_a_low_gripper_tip_out_with_the_rig_file(person_rig):
     assert h.app.motion_state is MotionState.REST_HOLD
     assert sent()[-1] == list(h.config.rest.rest_q)
     assert h.arm.torque_on() and h.app.takeover_open
+
+
+# The step limit of the rig file: limits.human.max_step_rad. A squeeze starts a
+# human drive. Its first target is held against the measured pose and every
+# later one against the last joint target sent; one beyond the limit ends the
+# drive, refused, and the arm holds.
+
+# The home pose of APAI's rebot_rs profile: the arm raised over the table.
+READY = [0.0, 1.2, 1.2, 0.0, 0.0, 0.0]
+ONE_JOINT, EVERY_JOINT = (0,), (0, 1, 2, 3, 4, 5)
+# Two more poses of the arm model: stretched forward, and folded near rest.
+STRETCHED = [0.0, 1.5, 0.6, 0.0, 0.3, 0.0]
+NEAR_REST = [0.0, 0.1, 0.1, 0.0, 0.0, 0.0]
+by_joints = pytest.mark.parametrize(
+    "joints", [ONE_JOINT, EVERY_JOINT], ids=["one joint", "every joint"]
+)
+
+
+def away(joints: Sequence[int], by: float) -> list[float]:
+    """READY with these joints moved on by `by` rad."""
+    return [q + (by if joint in joints else 0.0) for joint, q in enumerate(READY)]
+
+
+def squeezing_at_ready(
+    rig: PersonRig, goal: Sequence[float], stride: float
+) -> tuple[JointHand, list[Any]]:
+    """A person takes the arm over at READY and squeezes toward goal.
+
+    The hand's target runs `stride` ahead of the last joint target sent.
+    Returns the hand and how each human drive ended.
+    """
+    rig.place(READY)
+    take_over(rig.h)
+    ended = drives(rig.h)
+    hand = JointHand(rig, stride)
+    hand.squeeze(READY, goal)
+    return hand, ended
+
+
+@by_joints
+def test_the_first_target_of_a_squeeze_is_taken_just_inside_the_step_limit(
+    person_rig, joints
+):
+    # The largest jump a person can ask of the arm at a squeeze: 0.05 rad, 2.9
+    # degrees, on every joint at once. On APAI's rebot_rs model that moves the
+    # gripper tip up to 7.3 cm from READY, 6.6 cm with the arm stretched
+    # forward and 6.1 cm near rest: the test of the tip's travel below.
+    h, _, sent = person_rig
+    goal = away(joints, 0.049)
+    _, ended = squeezing_at_ready(person_rig, goal, stride=1.0)
+    targets = sent()
+    # Taken in four setpoints, 0.08 s: three at the speed clamp and the rest.
+    assert [(end.status, end.sent) for end in ended] == [("released", 4)]
+    assert targets[-1] == pytest.approx(goal, abs=1e-12)
+    clamp = SPEED_MARGIN * HUMAN_SPEED * h.config.executor.period_s
+    steps = np.abs(np.diff(np.array([READY, *targets]), axis=0))
+    assert steps.max() == pytest.approx(clamp, abs=1e-12)
+    assert steps[:3, list(joints)] == pytest.approx(clamp, abs=1e-12)
+    assert h.heard("human") == [] and h.arm.torque_on()
+
+
+@by_joints
+def test_a_first_target_beyond_the_step_limit_is_refused_and_the_arm_holds(
+    person_rig, joints
+):
+    h, _, sent = person_rig
+    hand, ended = squeezing_at_ready(person_rig, away(joints, 0.051), stride=1.0)
+    assert [(end.status, end.sent) for end in ended] == [("refused", 0)]
+    assert re.fullmatch(
+        r"the target is 0\.051 rad from the arm on joint index \d, "
+        r"the limit is 0\.05 rad",
+        ended[0].reason,
+    )
+    # Refused, not clipped: nothing was sent, and the arm holds with its
+    # motors on under the person.
+    assert sent() == [] and h.arm.torque_on()
+    assert h.app.snapshot().owner is Owner.HUMAN
+    assert h.app.motion_state is MotionState.HOLD
+    assert len(h.heard("human")) == 1
+    # A new squeeze with a nearer target is taken.
+    near = away(joints, 0.03)
+    hand.squeeze(READY, near)
+    assert [(end.status, end.sent) for end in ended[1:]] == [("released", 2)]
+    assert sent()[-1] == pytest.approx(near, abs=1e-12)
+
+
+def test_a_target_that_stays_inside_the_step_limit_is_followed_at_the_speed_clamp(
+    person_rig,
+):
+    # The step limit bounds the jump, not the travel. A target that keeps
+    # 0.049 rad ahead of the last joint target sent is followed at the Thor's
+    # clamp, 0.98 of the owner's 0.8 rad/s: 0.7 rad in 0.9 s. What keeps a
+    # person's hand from asking for that is the human program: its hand speed
+    # limits, and the end of an engagement whose target runs ahead.
+    h, _, sent = person_rig
+    goal = away(ONE_JOINT, 0.7)
+    _, ended = squeezing_at_ready(person_rig, goal, stride=0.049)
+    targets = sent()
+    assert [(end.status, end.sent) for end in ended] == [("released", 45)]
+    assert targets[-1] == pytest.approx(goal, abs=1e-9)
+    clamp = SPEED_MARGIN * HUMAN_SPEED * h.config.executor.period_s
+    steps = np.abs(np.diff(np.array([READY, *targets]), axis=0))[:, 0]
+    assert steps[:-1] == pytest.approx(clamp, abs=1e-12) and steps[-1] <= clamp
+    assert h.heard("human") == []
+
+
+@apai
+def test_the_largest_jump_at_a_squeeze_moves_the_gripper_tip_by_centimetres(
+    robot_rig,
+):
+    kinematics = rs.apai_backend.load_apai_profile("rebot_rs").kinematics
+    step = robot_rig.limits.human.max_step_rad
+
+    def travel(pose: Sequence[float]) -> float:
+        """The farthest the tip goes with every joint `step` away, either way."""
+        at = kinematics.fk(np.array(pose))[:3, 3]
+        return max(
+            float(np.linalg.norm(kinematics.fk(np.array(pose) + by)[:3, 3] - at))
+            for by in itertools.product((-step, step), repeat=len(pose))
+        )
+
+    reached = [travel(pose) for pose in (READY, STRETCHED, NEAR_REST)]
+    assert reached == pytest.approx([0.0728, 0.0656, 0.0608], abs=5e-4)
+    # The rig file's comment names the largest jump.
+    assert math.degrees(step) == pytest.approx(2.9, abs=0.05)
+    comment = " ".join(ROBOT_RIG.read_text(encoding="utf-8").replace("#", " ").split())
+    assert (
+        "the largest jump at a squeeze is 2.9 degrees a joint: 7.3 cm at the "
+        "gripper tip in the ready pose, up to 9 cm with the arm reaching out, "
+        "taken in 0.08 s"
+    ) in comment
 
 
 # agent_rebot.yaml

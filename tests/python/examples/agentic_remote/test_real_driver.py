@@ -1525,6 +1525,117 @@ def test_the_real_driver_runs_the_typed_reference_only_with_the_setting(
     assert left_threads() == []
 
 
+@rig
+@pytest.mark.link
+def test_no_hold_is_said_of_joints_that_stopped_answering(bench, folder, monkeypatch):
+    bench.reading = list(RIG_REST_READINGS[0])
+    with program(bench, folder, monkeypatch, "yes", "yes", "yes") as session:
+        client = session.client
+        client.wait_welcome(WAIT_S)
+        client.wait_state(lambda s: s.gripper.referenced, WAIT_S)
+        (sdk,) = bench.sdks
+        # A typed rest stopped on its way: a joint target stands and the
+        # joints read at it.
+        session.typed.type("rest")
+        session.typed.type("path is clear")
+        client.wait_state(lambda s: s.motion == "moving" and s.target_q, WAIT_S)
+        time.sleep(1.0)
+        session.typed.type("stop")
+        client.wait_state(lambda s: s.health["motors"]["state"] == "holding", WAIT_S)
+        # Every joint motor stops answering, as when the 48 V supply goes.
+        for motor in sdk.arm._mm.values():
+            motor.missed = 10**9
+        client.wait_state(lambda s: s.stop_level == "fault", WAIT_S)
+        state = client.wait_state(
+            lambda s: s.health["motors"]["state"] != "holding", WAIT_S
+        )
+        assert state.health["motors"]["state"] == "unknown"
+        assert state.health["motors"]["reason"].endswith("not read for more than 1 s")
+        assert state.fault_reason.startswith("joint feedback lost for ")
+        # The program has not switched the motors off; it only cannot see them.
+        assert state.torque_on and sdk.disconnects == 0
+        # The joints answer again: they are read at the target they hold.
+        for motor in sdk.arm._mm.values():
+            motor.missed = 0
+        client.wait_state(lambda s: s.health["motors"]["state"] == "holding", WAIT_S)
+    assert sdk.disconnects == 0
+
+
+@rig
+@pytest.mark.link
+def test_a_joint_read_without_an_answer_just_before_a_wanted_motors_off_is_no_fault(
+    bench, folder, monkeypatch
+):
+    armed, in_flight = threading.Event(), threading.Event()
+    read = RigMotor.robstride_get_param_f32
+
+    def unanswered_once(self, param, timeout_ms=None):
+        # Only a read of one joint passes a timeout.
+        one_joint = timeout_ms is not None and self.name.startswith("joint")
+        if one_joint and armed.is_set() and not in_flight.is_set():
+            in_flight.set()
+            time.sleep(0.03)
+            raise OSError("no answer")
+        return read(self, param, timeout_ms)
+
+    monkeypatch.setattr(RigMotor, "robstride_get_param_f32", unanswered_once)
+
+    def half_a_second(sdk):
+        """The driver's disconnect takes as long as it was seen to on the arm."""
+        disconnect = sdk.disconnect
+
+        def slow():
+            time.sleep(0.5)
+            disconnect()
+
+        sdk.disconnect = slow
+
+    bench.prepare = half_a_second
+    with program(bench, folder, monkeypatch, "yes", "yes", "yes") as session:
+        client = session.client
+        client.wait_welcome(WAIT_S)
+        client.wait_state(lambda s: s.gripper.referenced, WAIT_S)
+        (app,) = session.apps
+        (sdk,) = bench.sdks
+        paused = app._rest._reads_paused
+
+        def paused_after_that_read():
+            # The idle read under way when the release pauses the reads.
+            armed.set()
+            assert in_flight.wait(2.0), "no idle read came"
+            return paused()
+
+        app._rest._reads_paused = paused_after_that_read
+        session.typed.type("release")
+        state = client.wait_state(lambda s: s.motion == "rest_unpowered", REST_WAIT_S)
+        time.sleep(0.6)
+        state = client.wait_state(lambda s: s.seq > state.seq, WAIT_S)
+        assert (state.stop_level, state.fault_reason) == ("none", "")
+        assert in_flight.is_set() and sdk.disconnects == 1
+        assert max(abs(value) for value in sdk.released_at[0]) <= 0.05
+        # No reset is needed: the motors come on again and the joints are read.
+        session.typed.type("on")
+        session.typed.type("yes")
+        on = client.wait_state(lambda s: s.torque_on, WAIT_S)
+        assert app.wait_motion_idle(WAIT_S)  # the jaw reference of `on` ended
+
+        def read_again(s) -> bool:
+            age = s.health["reading_age_s"]
+            return s.seq > on.seq and age is not None and age < 0.5
+
+        state = client.wait_state(read_again, WAIT_S)
+        assert (state.stop_level, state.fault_reason) == ("none", "")
+        # ROBOT_STATE's jaw reading is the new driver's, read as a joint is.
+        jaw = bench.sdks[1].gripper._mm["jaw"]
+        by = time.monotonic() + WAIT_S
+        while (0x7019, 50) not in jaw.reads:
+            assert time.monotonic() < by, "no jaw reading after on"
+            time.sleep(0.02)
+        session.typed.type("quit")
+        assert session.running.result() == 0
+    assert left_threads() == []
+
+
 # Typed-ahead input: the questions on a pseudo-terminal
 
 

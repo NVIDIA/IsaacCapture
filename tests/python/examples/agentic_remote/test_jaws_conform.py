@@ -20,18 +20,30 @@ They need an APAI checkout (AGENTIC_REMOTE_APAI_SRC).
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import inspect
+import math
 import threading
+import time
 import types
 from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
 from isaaccapture_examples.agentic_remote.protocol import messages
+from isaaccapture_examples.agentic_remote.robot_app.app import LOST_FEEDBACK_S
 from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
-from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
-from isaaccapture_examples.agentic_remote.robot_app.interfaces import GripperOutcome
+from isaaccapture_examples.agentic_remote.robot_app.config import (
+    RobotAppConfig,
+    load_config,
+)
+from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
+    GripperOutcome,
+    StopLevel,
+)
+from link_bench import until
+from repo_paths import repo_root
 from test_apai_backend import GuardTime, MotorSdk, make_config, rs_arm
 from test_arm_adapter import SimRig
 
@@ -251,6 +263,27 @@ class Split(Side):
         return self.rig.link.state()
 
 
+def started_split(
+    config: RobotAppConfig,
+    profile: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    shared: GuardTime,
+) -> Iterator[Split]:
+    """The robot app on APAI's driver, at rest, with the agent as control owner."""
+    clock = SystemClock()
+    port, sdk = stand_in(config, profile, clock, monkeypatch, shared)
+    checkers = apai_backend.build_apai_checkers(config, profile, clock)
+    h = AppHarness(config, port, checkers, clock, connected=False, step_period_s=None)
+    h.start()
+    rig = SimRig(h, expected_profile_id=config.profile_id)
+    try:
+        rig.own()
+        yield Split(rig, sdk, profile)
+    finally:
+        rig.close()
+        h.close()
+
+
 @pytest.fixture
 def split(
     rig_config: RobotAppConfig,
@@ -259,20 +292,7 @@ def split(
     driver_time: GuardTime,
 ) -> Iterator[Split]:
     """The robot app on APAI's driver, at rest, with the agent as control owner."""
-    clock = SystemClock()
-    port, sdk = stand_in(rig_config, rs_profile, clock, monkeypatch, driver_time)
-    checkers = apai_backend.build_apai_checkers(rig_config, rs_profile, clock)
-    h = AppHarness(
-        rig_config, port, checkers, clock, connected=False, step_period_s=None
-    )
-    h.start()
-    rig = SimRig(h, expected_profile_id=rig_config.profile_id)
-    try:
-        rig.own()
-        yield Split(rig, sdk, rs_profile)
-    finally:
-        rig.close()
-        h.close()
+    yield from started_split(rig_config, rs_profile, monkeypatch, driver_time)
 
 
 def width(side: Side) -> float | None:
@@ -571,6 +591,329 @@ def test_the_jaw_reading_in_robot_state_is_taken_anew_while_the_arm_holds(
         deadline.wait(0.02)
     assert width(split) == pytest.approx(5.0 / travel)
     assert split.arm.get_state().gripper_valid is True
+
+
+# That reading on a motor bus that misses answers, in real time
+
+ROBOT_RIG = repo_root() / "examples/agentic_remote/configs/robot_app_rebot.yaml"
+LIBRARY_TIMEOUT_S = 1.0  # the motor library's, for a read that passes none
+BUS_READ_S = 0.008  # one answered read on the rig's bus
+
+
+class Bus:
+    """The stand-in motors on a bus where an answer takes time, or does not come.
+
+    A read without an answer returns after the timeout it passed, after the
+    motor library's own when it passed none, and raises as the library does.
+    """
+
+    def __init__(self, sdk: MotorSdk, read_s: float = BUS_READ_S) -> None:
+        self.read_s = read_s  # one answered read
+        self.silent_until = 0.0  # no read that begins before this is answered
+        self.jaw_misses = 0  # the next reads of the jaw motor without an answer
+        self.joint_misses = 0  # the next reads of joint motors without an answer
+        self.jaw_wrong: list[float] = []  # its next answers, in place of where it is
+        # Of every read of the jaw motor: (begin, end, timeout in ms, answered).
+        self.jaw_reads: list[tuple[float, float, int | None, bool]] = []
+        self.joint_reads: list[float] = []  # when each read of a joint motor began
+        self._lock = threading.Lock()
+        for group in (sdk.arm, sdk.gripper):
+            for motor in group._mm.values():
+                motor.robstride_get_param_f32 = self._reader(
+                    motor, group is sdk.gripper
+                )
+
+    def _reader(self, motor: Any, jaw: bool) -> Callable[..., float]:
+        def read(param: int, timeout_ms: int | None = None) -> float:
+            begin = time.monotonic()
+            value = motor.value
+            with self._lock:
+                answered = begin >= self.silent_until
+                if jaw and answered and self.jaw_misses > 0:
+                    self.jaw_misses -= 1
+                    answered = False
+                elif jaw and answered and self.jaw_wrong:
+                    value = self.jaw_wrong.pop(0)
+                elif not jaw and answered and self.joint_misses > 0:
+                    self.joint_misses -= 1
+                    answered = False
+                if not jaw:
+                    self.joint_reads.append(begin)
+            if answered:
+                time.sleep(self.read_s)
+            else:
+                time.sleep(
+                    LIBRARY_TIMEOUT_S if timeout_ms is None else timeout_ms / 1000.0
+                )
+            if jaw:
+                self.jaw_reads.append((begin, time.monotonic(), timeout_ms, answered))
+            if not answered:
+                raise OSError("no answer")
+            return value
+
+        return read
+
+    def unanswered(self, mark: int) -> list[tuple[float, float, int | None, bool]]:
+        """The jaw reads from number `mark` on that got no answer."""
+        return [read for read in list(self.jaw_reads[mark:]) if not read[3]]
+
+    def answered(self, mark: int) -> list[tuple[float, float, int | None, bool]]:
+        """The jaw reads from number `mark` on that got an answer."""
+        return [read for read in list(self.jaw_reads[mark:]) if read[3]]
+
+    def joint_reads_a_second(self, begin: float, end: float) -> float:
+        """How many joint reads a second began between two times."""
+        return sum(begin <= t < end for t in list(self.joint_reads)) / (end - begin)
+
+
+@pytest.fixture
+def rig_split(
+    rs_profile: Any, monkeypatch: pytest.MonkeyPatch, driver_time: GuardTime
+) -> Iterator[Split]:
+    """split, with the rig file's ROBOT_STATE period and idle read period."""
+    rig = load_config(ROBOT_RIG).state
+    base = make_config()
+    state = dataclasses.replace(
+        base.state,
+        publish_period_s=rig.publish_period_s,
+        idle_read_period_s=rig.idle_read_period_s,
+    )
+    config = apai_backend.config_for_profile(
+        dataclasses.replace(base, state=state), rs_profile
+    )
+    yield from started_split(config, rs_profile, monkeypatch, driver_time)
+
+
+def holding_with_jaw_readings(split: Split, read_s: float = BUS_READ_S) -> Bus:
+    """The bus under the split, once ROBOT_STATE's jaw readings come over it."""
+    bus = Bus(split.sdk, read_s)
+    until(lambda: len(bus.jaw_reads) >= 3, "the jaw readings of a hold")
+    until(lambda: split.state().gripper.valid is True, "a jaw reading")
+    return bus
+
+
+def test_a_jaw_read_without_an_answer_in_a_hold_waits_as_an_idle_joint_read_does(
+    rig_split: Split,
+) -> None:
+    split = rig_split
+    bus = holding_with_jaw_readings(split)
+    authority = split.h.app._authority
+    stops, mark = authority.stop_number, len(bus.jaw_reads)
+    bus.jaw_misses = 1
+    until(lambda: bus.jaw_misses == 0, "the jaw read without an answer")
+    # That read is under way on the thread that serves a STOP.
+    sent = time.monotonic()
+    split.rig.link.stop("operator pressed stop", "console")
+    until(lambda: authority.stop_number != stops, "the STOP")
+    served = time.monotonic() - sent
+    until(lambda: bus.unanswered(mark), "the end of that read")
+    ((begin, end, timeout_ms, _),) = bus.unanswered(mark)
+    # The idle joint reads' 50 ms, not the motor library's 1 s.
+    assert timeout_ms == round(1000 * split.h.arm._read_timeout_s) == 50
+    assert end - begin < 0.5 * LIBRARY_TIMEOUT_S
+    assert served < 0.5 * LIBRARY_TIMEOUT_S
+    # One read without an answer costs one ROBOT_STATE its jaw reading.
+    assert authority.stop_level is not StopLevel.FAULT
+    assert split.h.arm.gripper_referenced()
+    until(lambda: split.state().gripper.valid is True, "the next jaw reading")
+
+
+def test_a_short_bus_disturbance_in_a_hold_is_no_fault_stop_and_lost_feedback_is_one(
+    rig_split: Split,
+) -> None:
+    split = rig_split
+    bus = holding_with_jaw_readings(split)
+    authority = split.h.app._authority
+    # 150 ms without an answer: a joint read fails, and so would a jaw read.
+    bus.silent_until = time.monotonic() + 0.15
+    time.sleep(1.5)
+    state = authority.snapshot()
+    assert state.stop_level is not StopLevel.FAULT, state.fault_reason
+    assert split.h.arm.gripper_referenced()
+    assert split.state().gripper.valid is True
+    # Joints that stay silent are a fault-stop, as before.
+    bus.silent_until = math.inf
+    until(lambda: authority.stop_level is StopLevel.FAULT, "the fault-stop")
+    bus.silent_until = 0.0
+    assert authority.snapshot().fault_reason.startswith("joint feedback lost for ")
+
+
+def test_bad_jaw_answers_in_a_hold_do_not_cost_the_jaws_their_reference(
+    rig_split: Split,
+) -> None:
+    split = rig_split
+    open_wide(split)
+    split.sdk.gripper.stop = BOX_RAD  # the jaws close on an object
+    grasp_close(split, "rigid")
+    travel = split.skills._grip_open - split.skills._grip_closed
+    assert width(split) == pytest.approx(BOX_RAD / travel, abs=0.01)
+    bus = holding_with_jaw_readings(split)
+    # Three answers in a row that are no position, as the rig's jaw motor
+    # gave one (+2.3e18): to a jaw command they are a lost reference.
+    bus.jaw_wrong = [2.3e18] * 3
+    until(lambda: not bus.jaw_wrong, "the three answers")
+    time.sleep(0.3)
+    assert split.h.arm.gripper_referenced()
+    assert width(split) == pytest.approx(BOX_RAD / travel, abs=0.01)
+    # The object can still be let go.
+    split.sdk.gripper.stop = 0.0
+    release(split)
+    assert split.sdk.gripper.at() == pytest.approx(travel, abs=0.01)
+
+
+# A jaw motor that stays silent in a hold: each jaw reading costs its 50 ms
+# timeout, and the joints must keep the bus.
+
+SILENT = 10**6  # reads without an answer: until the test ends
+
+
+def state_period(split: Split) -> float:
+    """The ROBOT_STATE period of the split's robot app, in s."""
+    return split.h.app._config.state.publish_period_s
+
+
+@pytest.mark.parametrize("read_s", [0.002, BUS_READ_S])
+def test_jaw_motor_silent_for_good_in_a_hold(rig_split: Split, read_s: float) -> None:
+    split = rig_split
+    bus = holding_with_jaw_readings(split, read_s)
+    authority = split.h.app._authority
+    began = time.monotonic()
+    time.sleep(0.6)
+    healthy = bus.joint_reads_a_second(began, time.monotonic())
+    # Control: one joint answer that does not come while the jaw motor answers.
+    bus.joint_misses = 1
+    time.sleep(0.5)
+    control = authority.snapshot()
+    assert control.stop_level is not StopLevel.FAULT, control.fault_reason
+
+    bus.jaw_misses = SILENT
+    silent_at = time.monotonic()
+    time.sleep(1.2)
+    silent = bus.joint_reads_a_second(silent_at + 0.4, time.monotonic())
+    # The joints are read nearly as often as before: not once per jaw timeout.
+    assert silent > 0.5 * healthy, (silent, healthy)
+    # The agent still gets the arm's state, with the jaws unknown.
+    for _ in range(10):
+        assert split.arm.get_state().gripper_valid is False
+        time.sleep(0.037)
+    quiet = authority.snapshot()
+    assert quiet.stop_level is not StopLevel.FAULT, quiet.fault_reason
+    assert split.h.arm.gripper_referenced()
+
+    # One joint answer that does not come, three times over: no lost feedback.
+    for _ in range(3):
+        bus.joint_misses = 1
+        time.sleep(0.4)
+    missed = authority.snapshot()
+    assert missed.stop_level is not StopLevel.FAULT, missed.fault_reason
+    # A STOP waits for one jaw timeout at most.
+    stops, sent = authority.stop_number, time.monotonic()
+    split.rig.link.stop("operator pressed stop", "console")
+    until(lambda: authority.stop_number != stops, "the STOP")
+    assert time.monotonic() - sent < 0.5 * LIBRARY_TIMEOUT_S
+
+
+def test_jaw_motor_silent_for_half_a_second_then_one_missed_joint_answer(
+    rig_split: Split,
+) -> None:
+    split = rig_split
+    bus = holding_with_jaw_readings(split, 0.002)
+    authority = split.h.app._authority
+    bus.jaw_misses = SILENT
+    time.sleep(0.45)
+    bus.joint_misses = 1
+    time.sleep(0.1)
+    bus.jaw_misses = 0  # the jaw motor answers again
+    time.sleep(0.6)
+    state = authority.snapshot()
+    assert state.stop_level is not StopLevel.FAULT, state.fault_reason
+    assert split.state().gripper.valid is True
+
+
+def test_a_healthy_jaw_motor_is_read_every_robot_state_period_in_a_hold(
+    rig_split: Split,
+) -> None:
+    split = rig_split
+    bus = holding_with_jaw_readings(split)
+    period = state_period(split)
+    stamps: list[float | None] = []  # the jaw reading's time in each ROBOT_STATE
+    split.rig.link.add_state_listener(lambda state: stamps.append(state.gripper.t))
+    mark, began = len(bus.jaw_reads), time.monotonic()
+    time.sleep(1.0)
+    reads, took = list(bus.jaw_reads[mark:]), time.monotonic() - began
+    seen = list(stamps)
+    assert all(answered for _, _, _, answered in reads)
+    assert len(reads) >= 0.7 * took / period
+    begins = [begin for begin, _, _, _ in reads]
+    assert max(b - a for a, b in zip(begins, begins[1:])) < 2.5 * period
+    # Each ROBOT_STATE carries a reading, and nearly each a new one.
+    assert None not in seen
+    assert len(set(seen)) >= 0.7 * took / period
+
+    # One answer that does not come costs one reading: the next is not put off.
+    mark = len(bus.jaw_reads)
+    bus.jaw_misses = 1
+    until(lambda: bus.unanswered(mark), "the end of the read without an answer")
+    ((_, ended, _, _),) = bus.unanswered(mark)
+    until(lambda: bus.answered(mark), "the next jaw reading")
+    assert bus.answered(mark)[0][0] - ended < 2.0 * period
+
+
+def test_the_first_jaw_answer_after_an_outage_brings_the_reading_back(
+    rig_split: Split,
+) -> None:
+    split = rig_split
+    bus = holding_with_jaw_readings(split)
+    app, period = split.h.app, state_period(split)
+    mark = len(bus.jaw_reads)
+    bus.jaw_misses = SILENT
+    time.sleep(0.6)
+    # Two readings in a row, then one per five periods: not one per timeout.
+    assert 2 <= len(bus.unanswered(mark)) <= 5
+    assert app._jaw_state.gripper_state(split.h.arm).valid is False
+
+    mark = len(bus.jaw_reads)
+    bus.jaw_misses = 0  # the jaw motor answers again
+    back = time.monotonic()
+    until(
+        lambda: app._jaw_state.gripper_state(split.h.arm).valid,
+        "the jaw reading after the outage",
+    )
+    # Within one wait of five periods, and a read that began before the answer.
+    assert time.monotonic() - back < 5.0 * period + 0.15
+    # From then on there is one reading per ROBOT_STATE period again.
+    until(lambda: bus.answered(mark), "the end of that read")
+    mark, began = len(bus.jaw_reads), time.monotonic()
+    time.sleep(0.5)
+    took = time.monotonic() - began
+    assert len(bus.answered(mark)) >= 0.7 * took / period
+    assert bus.unanswered(mark) == []
+    assert split.state().gripper.valid is True
+    assert app._authority.stop_level is not StopLevel.FAULT
+
+
+@pytest.mark.parametrize("jaw_silent", [False, True])
+def test_silence_of_every_joint_motor_still_latches_joint_feedback_lost(
+    rig_split: Split, jaw_silent: bool
+) -> None:
+    split = rig_split
+    bus = holding_with_jaw_readings(split)
+    authority = split.h.app._authority
+    if jaw_silent:
+        bus.jaw_misses = SILENT
+        time.sleep(0.6)
+    assert authority.stop_level is not StopLevel.FAULT
+    bus.joint_misses = SILENT
+    began = time.monotonic()
+    until(lambda: authority.stop_level is StopLevel.FAULT, "the fault-stop")
+    latched = time.monotonic() - began
+    time.sleep(0.3)
+    bus.joint_misses = 0
+    assert authority.snapshot().fault_reason.startswith("joint feedback lost for ")
+    # The limit, and the one read without an answer under way when it is passed.
+    assert latched < LOST_FEEDBACK_S + 0.15, latched
+    # Once a joint read has failed, no jaw reading takes the bus from the joints.
+    assert [read for read in list(bus.jaw_reads) if read[0] > began + 0.1] == []
 
 
 def test_the_adapters_jaw_routines_are_the_drivers(rs_profile: Any) -> None:

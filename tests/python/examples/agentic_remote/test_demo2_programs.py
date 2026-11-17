@@ -1711,6 +1711,7 @@ DIFFERS: dict[Path, dict[str, Any]] = {
     ROBOT_HUMAN_CHECK: {
         "human.enabled": True,
         "limits.human.max_joint_speed": 0.8,
+        "limits.human.max_step_rad": 0.05,
         **INSIDE_REGION,
     },
 }
@@ -1734,7 +1735,8 @@ def test_the_demo_2_robot_files_differ_from_the_shipped_one_only_where_listed(
         assert all(line.startswith("#") for line in head.splitlines() if line)
         assert "differs from configs/robot_app.yaml in exactly these keys" in head
         listed = [line for line in head.splitlines() if line.startswith("# - ")]
-        assert len(listed) == 3, file.name
+        # One line per key; the two bounds of the human joint box share one.
+        assert len(listed) == len(differs) - 1, file.name
         for key in differs:
             assert key in head, (file.name, key)
         assert "/home/" not in text and "~" not in text, file.name
@@ -1772,10 +1774,14 @@ def test_the_demo_2_robot_files_differ_from_the_shipped_one_only_where_listed(
         assert refused is not None and "only with a simulated driver" in refused
         assert app_module.live_view_problem(check, driver) is None
     assert check.human.require_live_view is True
-    # The speed of the headset checks is the rig's.
+    # The speed of the headset checks is the rig's, and so is the farthest a
+    # human target may lie from the last joint target sent: the checks run
+    # with the rig's human file, whose own limit lies below that one.
     rig = load_config(CONFIGS / "robot_app_rebot.yaml")
     assert check.limits.human.max_joint_speed == rig.limits.human.max_joint_speed
     assert rig.limits.human.max_joint_speed == 0.8  # the owner's cap for a person
+    assert check.limits.human.max_step_rad == rig.limits.human.max_step_rad == 0.05
+    assert demo.limits.human.max_step_rad == 0.1  # the one-machine demo's own
 
 
 # The waits of this file

@@ -1464,24 +1464,33 @@ def test_ahead_is_measured_against_the_measured_pose_until_the_thor_drives():
     bench.engage()
     bench.solver.answer = lambda target, seed: IkStep(near, "")
 
+    def driving(sent: int = 3, **facts: Any) -> RobotState:
+        """A ROBOT_STATE of a human drive that has sent `sent` setpoints."""
+        state = robot_state(driving=True, **facts)
+        return dataclasses.replace(state, move_index=sent)
+
     # No human drive runs: the Thor's last joint target is of an earlier move.
-    bench.state = robot_state(target_q=(0.5, 0.5, 0.5, 0.0, 0.0, 0.0))
+    far = (0.5, 0.5, 0.5, 0.0, 0.0, 0.0)
+    bench.state = robot_state(target_q=far)
+    assert setpoint(bench.step(squeeze=1.0)).engaged
+    # A drive that has sent nothing yet: the target is still the earlier one.
+    bench.state = driving(sent=0, q=near, target_q=far)
     assert setpoint(bench.step(squeeze=1.0)).engaged
 
     # The Thor drives: its last joint target counts, the measured pose does not.
     target = (0.02, 0.02, 0.02, 0.0, 0.0, 0.0)
     measured = (0.3, 0.3, 0.3, 0.0, 0.0, 0.0)
-    bench.state = robot_state(q=measured, target_q=target, driving=True)
+    bench.state = driving(q=measured, target_q=target)
     assert setpoint(bench.step(squeeze=1.0)).engaged
-    bench.state = robot_state(q=near, driving=True)  # no target known
+    bench.state = driving(q=near)  # no target known
     assert setpoint(bench.step(squeeze=1.0)).engaged
     # A joint target that is not six finite numbers is no reference either.
     for target in ((0.5, 0.5), (float("nan"),) * N_JOINTS):
-        bench.state = robot_state(q=near, target_q=target, driving=True)
+        bench.state = driving(q=near, target_q=target)
         assert setpoint(bench.step(squeeze=1.0)).engaged
 
     target = (0.2, 0.2, 0.2, 0.0, 0.0, 0.0)
-    bench.state = robot_state(q=near, target_q=target, driving=True)
+    bench.state = driving(q=near, target_q=target)
     ended = setpoint(bench.step(squeeze=1.0))
     assert (ended.engaged, ended.q) == (False, None)
     assert ended.note == AGAIN + "the solution is 0.150 rad ahead of the arm"

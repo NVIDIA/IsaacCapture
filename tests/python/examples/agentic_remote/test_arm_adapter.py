@@ -109,6 +109,7 @@ class Checker:
         self.violations: list[str] = []
         self.estopped = False
         self.halted: str | None = None
+        self.halts: list[str] = []  # the reason of every halt() call
         self._grasp_exempt: tuple | None = None
         self.approved_commands = 0
         self.blocked: Callable[[np.ndarray], str | None] = lambda q: None
@@ -132,6 +133,10 @@ class Checker:
         if reason is not None:
             raise types().SafetyViolation(reason)
         self.approved_commands += 1
+
+    def halt(self, reason: str) -> None:
+        self.halted = reason
+        self.halts.append(reason)
 
     def clear_grasp_exemption(self) -> None:
         self._grasp_exempt = None
@@ -497,6 +502,19 @@ def in_thread(call: Callable[[], Any]) -> threading.Thread:
     thread = threading.Thread(target=call, daemon=True)
     thread.start()
     return thread
+
+
+# How the robot app refuses a command that quotes the stop number from before
+# a STOP (authority.py, _mismatch).
+STALE_NUMBER = "stop number 0 does not match the current 1"
+# How the robot link service refuses one itself, until a ROBOT_STATE shows it
+# that the STOP took effect (service.py, _from_client).
+STOP_GATE = "a STOP was sent after stop number 0; the {} quotes stop number 0"
+
+
+def stop_at(thor: ScriptedThor) -> None:
+    """What a STOP leaves in the robot side's next ROBOT_STATE."""
+    thor.fields.update(owner="nobody", owner_number=2, stop_number=1, stop_level="stop")
 
 
 # The module and the class
@@ -1065,11 +1083,15 @@ def test_motion_and_jaws_need_an_open_task_a_bound_checker_and_ownership(
     rig.adapter.bind_checker(rig.check)
     rig.thor.fields["owner"] = "nobody"
     until(lambda: rig.link.lost_reason() is not None, "the lost ownership")
-    with pytest.raises(violation, match="control owner is nobody, not the agent"):
+    text = "control owner is nobody, not the agent; no motion sent"
+    with pytest.raises(types().MotionHalted, match=text) as ended:
         rig.move(SHORT, 0.5)
     assert rig.adapter._latched is True  # the mirror of the Thor's state
-    with pytest.raises(violation, match="arm stop latched"):
+    # The robot app said so itself: the checker is halted, once.
+    assert rig.checker.halts == [str(ended.value)]
+    with pytest.raises(violation, match="arm stop latched") as latched:
         rig.adapter.set_gripper(3.0)
+    assert type(latched.value) is violation and len(rig.checker.halts) == 1
     rig.adapter.close_task()
     assert rig.link.pinned is None
     with pytest.raises(violation):
@@ -1530,6 +1552,10 @@ def test_old_numbers_are_never_requoted(sim: SimRig) -> None:
     pinned = Pinned(new.session_id, new.owner_number, new.stop_number)
     sim.adapter.open_task(pinned)
     assert sim.link.pinned == pinned != old
+    # The first refusal halted the checker, once. APAI clears a halt at the
+    # next skill's first motion; this checker has no APAI above it.
+    assert len(sim.checker.halts) == 1 and "owner number" in sim.checker.halts[0]
+    sim.checker.halted = None
     assert sim.move(SHORT, 0.5) is True
     move = sim.of("move")[-1]
     assert sim.h.sent() == [np.asarray(row).tolist() for row in move[4]]
@@ -1742,6 +1768,7 @@ def test_a_completed_move_returns_true_and_one_not_settled_false(
     )
     assert scripted.move(SHORT, 0.5) is False
     assert len(thor.moves) == 2 and scripted.adapter._latched is False
+    assert scripted.checker.halts == []
     move = thor.moves[0]
     assert (move.session_id, move.owner_number, move.stop_number) == ("s1", 1, 0)
     assert move.period_s == PERIOD_S and move.start_tol_rad == pytest.approx(0.004)
@@ -1816,6 +1843,9 @@ def test_the_final_result_of_a_move_becomes_what_apai_expects(
         scripted.move(SHORT, 0.5)
     assert type(raised.value) is kind
     assert scripted.adapter._latched is bool(latched)
+    # Only a move the robot app stopped halts the workstation checker.
+    halts = [str(raised.value)] if error == "MotionHalted" else []
+    assert scripted.checker.halts == halts
     assert [p.through_index for p in scripted.thor.permits if p.through_index < 0] == []
     warned = "refused after the first permit with nothing sent" in caplog.text
     assert warned is ("waited 0.5 s" in text or "no permit for this move" in text)
@@ -1836,6 +1866,20 @@ def test_a_cancelled_move_latches_the_adapter_when_the_ownership_is_gone(
     with pytest.raises(types().MotionHalted, match="stopped the move: stop: operator"):
         scripted.move(SHORT, 0.5)
     assert scripted.adapter._latched is True
+    assert scripted.checker.halted == "the robot app stopped the move: stop: operator"
+
+
+@apai
+def test_a_stopped_move_keeps_a_halt_that_already_stands(
+    scripted: ScriptedRig,
+) -> None:
+    checker = scripted.checker
+    scripted.thor.at_first_permit = ("cancelled", "stop: operator", {"sent": 2}, None)
+    # The checker is halted while the first setpoints are cleared.
+    checker.before_approve = lambda count: setattr(checker, "halted", "wrong cup")
+    with pytest.raises(types().MotionHalted):
+        scripted.move(SHORT, 0.5)
+    assert checker.halted == "wrong cup" and checker.halts == []
 
 
 @apai
@@ -1920,6 +1964,13 @@ def test_an_early_end_without_contact_is_marked_on_the_monitor(
             "the robot app stopped the move: stop: operator",
             False,
         ),
+        (
+            # A number the robot app does not take, with the ownership intact.
+            Result("", "refused", STALE_NUMBER),
+            "SafetyViolation",
+            f"robot app refused the move: {STALE_NUMBER}",
+            False,
+        ),
     ],
 )
 def test_a_move_that_ends_at_admission_reaches_no_callback(
@@ -1927,10 +1978,13 @@ def test_a_move_that_ends_at_admission_reaches_no_callback(
 ) -> None:
     scripted.thor.admit = admit
     kind = RobotLinkError if error == "RobotLinkError" else getattr(types(), error)
-    with pytest.raises(kind, match=text):
+    with pytest.raises(kind, match=text) as raised:
         scripted.move(SHORT, 0.5)
+    assert type(raised.value) is kind
     assert not scripted.of("approve") and not scripted.thor.permits
     assert scripted.adapter._latched is latched
+    halts = [str(raised.value)] if error == "MotionHalted" else []
+    assert scripted.checker.halts == halts
 
 
 @apai
@@ -2037,6 +2091,7 @@ def test_lost_ownership_ends_the_permits_at_once_with_a_cancel(
         scripted.move(SHORT, 0.5)
     thread.join(5.0)
     assert "the agent no longer owns the arm" in str(raised.value)
+    assert scripted.checker.halts == [str(raised.value)]
     last, cancel = thor.permits[-2], thor.permits[-1]
     assert cancel.through_index == -1 and last.through_index >= 0
     assert cancel.evidence_wall_s == last.evidence_wall_s
@@ -2369,9 +2424,23 @@ def jaw_result(status: str, reason: str = "", **detail: Any) -> Callable:
             False,
         ),
         (
+            # A number the robot app does not take, with the ownership intact.
+            jaw_result("refused", STALE_NUMBER),
+            "SafetyViolation",
+            f"robot app refused the jaw command: {STALE_NUMBER}",
+            False,
+        ),
+        (
             jaw_result("cancelled", "dropped by a stop", outcome="cancelled"),
             "MotionHalted",
             "the robot app stopped the jaw command: dropped by a stop",
+            False,
+        ),
+        (
+            # The robot app gives a jaw command a STOP cancelled no reason.
+            jaw_result("cancelled", "", outcome="cancelled"),
+            "MotionHalted",
+            "the robot app stopped the jaw command: a STOP or an owner change$",
             False,
         ),
         (
@@ -2400,6 +2469,8 @@ def test_the_result_of_a_jaw_command_becomes_what_apai_expects(
         scripted.adapter.set_gripper(6.2)  # an opening command
     assert type(raised.value) is kind
     assert scripted.adapter._latched is latched  # the adapter's stop latch
+    halts = [str(raised.value)] if error == "MotionHalted" else []
+    assert scripted.checker.halts == halts
     if error == "GripperFault":
         assert "GripperFault" in repr(raised.value)  # what APAI's result code reads
 
@@ -2500,6 +2571,125 @@ def test_giving_up_on_a_jaw_command_sends_no_stop_once_the_arm_is_another_owners
     assert rig.adapter._latched is True
     with pytest.raises(types().SafetyViolation, match="arm stop latched"):
         rig.adapter.set_gripper(3.0)
+
+
+# A STOP with no command in flight: between two commands, or just before one
+
+
+@apai
+@pytest.mark.parametrize(
+    ("call", "what"),
+    [
+        (lambda rig: rig.move(SHORT, 0.5), "motion"),
+        (lambda rig: rig.adapter.set_gripper(3.0), "jaw command"),
+        (lambda rig: rig.adapter.open_gripper(), "jaw command"),
+        (lambda rig: rig.adapter.close_gripper_torque(), "jaw command"),
+        (lambda rig: rig.adapter.close_gripper_two_stage(), "jaw command"),
+    ],
+)
+def test_an_ownership_that_ended_between_two_commands_halts_the_checker_once(
+    scripted: ScriptedRig, call: Callable[[ScriptedRig], Any], what: str
+) -> None:
+    """No command comes back cancelled: the next one finds the STOP in ROBOT_STATE."""
+    thor, checker, adapter = scripted.thor, scripted.checker, scripted.adapter
+    stop_at(thor)
+    until(lambda: scripted.link.state().owner == "nobody", "the STOP")
+    with pytest.raises(types().MotionHalted) as raised:
+        call(scripted)
+    assert str(raised.value) == (
+        "the agent no longer owns the arm: the control owner is nobody, not the "
+        f"agent; no {what} sent"
+    )
+    assert checker.halts == [str(raised.value)] and adapter._latched is True
+    # What follows meets the adapter's latch; the checker is halted once.
+    with pytest.raises(types().SafetyViolation, match="arm stop latched") as again:
+        call(scripted)
+    assert type(again.value) is types().SafetyViolation
+    assert len(checker.halts) == 1
+    assert not thor.moves and not thor.grippers and not thor.stops
+    assert not scripted.of("vet") and not scripted.of("approve")
+    # The halt is no latch of the adapter's: the next task's jaws move.
+    adapter.close_task()
+    thor.fields.update(owner="agent", owner_number=3, stop_level="none")
+    until(lambda: scripted.link.state().owner == "agent", "the new owner")
+    adapter.open_task(Pinned("s1", 3, 1))
+    adapter.set_gripper(3.0)
+    assert len(thor.grippers) == 1 and checker.halted is not None
+
+
+@apai
+def test_a_robot_app_gone_silent_between_two_commands_halts_nothing(
+    scripted: ScriptedRig,
+) -> None:
+    """Without a fresh ROBOT_STATE nothing says a STOP: a plain refusal."""
+    scripted.thor.publishing = False
+    until(lambda: scripted.link.lost_reason() is not None, "the old ROBOT_STATE")
+    with pytest.raises(types().SafetyViolation, match="no longer owns the arm") as old:
+        scripted.adapter.set_gripper(3.0)
+    assert type(old.value) is types().SafetyViolation
+    assert "the newest ROBOT_STATE is" in str(old.value)
+    assert scripted.checker.halts == [] and scripted.adapter._latched is True
+    assert not scripted.thor.grippers
+
+
+@apai
+def test_a_link_lost_between_two_commands_halts_nothing(sim: SimRig) -> None:
+    sim.robot_end.break_link()
+    until(lambda: sim.link.lost_reason() is not None, "the lost link")
+    with pytest.raises(types().SafetyViolation, match="service is gone") as lost:
+        sim.move(SHORT, 0.5)
+    assert type(lost.value) is types().SafetyViolation
+    assert "the agent no longer owns the arm" in str(lost.value)
+    assert sim.checker.halts == [] and sim.adapter._latched is True
+    assert not sim.of("move")
+
+
+@apai
+@pytest.mark.parametrize("reason", [STALE_NUMBER, STOP_GATE.format("GRIPPER")])
+def test_a_jaw_command_refused_for_a_stop_that_came_first_halts_the_checker(
+    scripted: ScriptedRig, reason: str
+) -> None:
+    thor = scripted.thor
+
+    def refused(message: Gripper) -> Result:
+        stop_at(thor)  # shown by the ROBOT_STATE behind the RESULT
+        return Result(message.command_id, "refused", reason)
+
+    thor.jaw_reply = refused
+    with pytest.raises(types().MotionHalted) as raised:
+        scripted.adapter.close_gripper_two_stage()
+    assert str(raised.value) == f"robot app refused the jaw command: {reason}"
+    assert scripted.checker.halts == [str(raised.value)]
+    assert scripted.adapter._latched is True
+    assert len(thor.grippers) == 1 and thor.stops == []
+
+
+@apai
+@pytest.mark.parametrize("reason", [STALE_NUMBER, STOP_GATE.format("MOVE")])
+def test_a_move_refused_for_a_stop_that_came_first_halts_the_checker(
+    scripted: ScriptedRig, reason: str
+) -> None:
+    thor = scripted.thor
+    real = thor._take
+
+    def crossed(message: Any) -> None:
+        if isinstance(message, Move):
+            # The ROBOT_STATE that shows the STOP comes 0.05 s behind the RESULT.
+            thor.publishing = False
+            stop_at(thor)
+            threading.Timer(0.05, setattr, (thor, "publishing", True)).start()
+        real(message)
+
+    thor.admit = Result("", "refused", reason)
+    thor._take = crossed
+    with pytest.raises(types().MotionHalted) as raised:
+        scripted.move(SHORT, 0.5)
+    assert str(raised.value) == f"robot app refused the move: {reason}"
+    assert scripted.checker.halts == [str(raised.value)]
+    assert scripted.adapter._latched is True
+    # Nothing was cleared or permitted, and the move was not sampled again.
+    assert not scripted.of("approve") and not thor.permits
+    assert len(thor.moves) == 1 and thor.stops == []
 
 
 # Under APAI's own SafeArm and SafetyHarness
@@ -2717,6 +2907,89 @@ def test_a_halt_during_a_move_ends_it_and_the_agent_keeps_the_arm(
     assert abs(rig.safe.get_state().q[0] - goal[0]) > 0.05  # it stopped short
     # A halt is of that motion only: the next move runs.
     assert rig.safe.move_joints(nearby(rig, by=0.02), duration_s=0.5) is True
+
+
+@apai
+def test_a_stop_at_the_thor_halts_apais_checker_until_the_next_skill_moves(
+    apai_rig: ApaiRig,
+) -> None:
+    """A STOP that ends a move reaches APAI's checker as a halt of its own does.
+
+    The skill that ran the move ends on it. The next skill's first motion
+    clears it; nothing else of the workstation has to.
+    """
+    rig = apai_rig
+    rig.own()
+    harness = rig.harness
+    count = harness._halt_generation
+
+    def operator() -> None:
+        until(lambda: rig.link.state().move_index >= 10, "ten setpoints sent")
+        rig.h.app.stop("operator", "thor_terminal")
+
+    thread = in_thread(operator)
+    # execute() scopes a motion skill so.
+    with harness.skill_halt_baseline():
+        with pytest.raises(types().MotionHalted):
+            rig.safe.move_joints(nearby(rig, by=0.3), duration_s=1.5)
+        thread.join(5.0)
+        assert (
+            "stopped the move" in harness.halted or "no longer owns" in harness.halted
+        )
+        assert harness._halt_generation == count + 1 and harness.estopped is False
+        # The same skill moves no more, as after APAI's own halt.
+        sent = len(rig.moves)
+        with pytest.raises(types().MotionHalted, match="halt received"):
+            rig.safe.move_joints(nearby(rig, by=0.02), duration_s=0.5)
+        assert len(rig.moves) == sent and harness.halted is not None
+    rig.h.idle()
+    assert rig.stops == [] and rig.adapter._latched is True
+    # The next task takes the arm anew; its first motion clears the halt.
+    rig.adapter.close_task()
+    rig.own()
+    with harness.skill_halt_baseline():
+        assert harness.halted is not None
+        assert rig.safe.move_joints(nearby(rig, by=0.02), duration_s=0.5) is True
+    assert harness.halted is None and harness._halt_generation == count + 1
+    assert harness.estopped is False and rig.adapter._latched is False
+
+
+@apai
+def test_a_stop_between_two_commands_halts_apais_checker_until_the_next_skill_moves(
+    apai_rig: ApaiRig,
+) -> None:
+    """A STOP with no command in flight: the skill's next command ends as a halt."""
+    rig = apai_rig
+    rig.own()
+    harness = rig.harness
+    count = harness._halt_generation
+    with harness.skill_halt_baseline():
+        assert rig.safe.move_joints(nearby(rig, by=0.02), duration_s=0.5) is True
+        rig.h.app.stop("operator", "thor_terminal")
+        until(lambda: rig.link.state().owner == "nobody", "the STOP")
+        sent = len(rig.moves)
+        # APAI's grasp close goes to the driver, not through its SafeArm.
+        with pytest.raises(types().MotionHalted, match="no longer owns") as raised:
+            rig.adapter.close_gripper_two_stage(
+                width_frac_stage1=0.5, width_frac_stage2=0.85, effort=0.6
+            )
+        assert harness.halted == str(raised.value)
+        assert harness._halt_generation == count + 1 and harness.estopped is False
+        # The same skill moves no more, as after APAI's own halt.
+        with pytest.raises(types().MotionHalted, match="halt received"):
+            rig.safe.move_joints(nearby(rig, by=0.02), duration_s=0.5)
+        assert len(rig.moves) == sent and harness._halt_generation == count + 1
+    assert rig.stops == [] and rig.adapter._latched is True
+    # The next task takes the arm anew. Its jaw command is not held back and
+    # clears nothing; its first motion clears the halt.
+    rig.adapter.close_task()
+    rig.own()
+    with harness.skill_halt_baseline():
+        rig.safe.set_gripper(0.4)
+        assert harness.halted is not None
+        assert rig.safe.move_joints(nearby(rig, by=0.02), duration_s=0.5) is True
+    assert harness.halted is None and harness._halt_generation == count + 1
+    assert harness.estopped is False and rig.adapter._latched is False
 
 
 @apai

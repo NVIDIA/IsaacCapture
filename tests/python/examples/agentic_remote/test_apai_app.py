@@ -180,6 +180,7 @@ class BackendSpy:
     _JAW_CALLS = (
         "gripper_reference",
         "gripper_read",
+        "gripper_peek",
         "gripper_command",
         "gripper_light_hold",
     )
@@ -684,21 +685,22 @@ def test_a_move_faster_than_the_agents_speed_limit_is_refused_by_the_harness(
     assert h.sent() == slow
 
 
-def test_a_move_along_the_joint_stops_is_refused_by_the_harness_joint_margin(
+def test_a_move_on_the_rest_poses_stops_is_taken_and_none_below_them(
     apai_app: ApaiHarness,
 ) -> None:
     h = apai_app
     h.new_task()
-    # The first joint turns while the second and third stay on their stops.
-    turn = straight(REST, moved(REST, 0, 0.1), 25)
-    result = run(h, turn, REST)
-    assert result.status == "refused"
-    assert result.reason == "joint 2 target 0.000 rad outside [0.020, 3.120]"
-    assert h.spy.targets == []
-    # Off the stops first, the same turn is taken.
-    assert run(h, LIFT, REST).status == "completed"
-    turn = straight(RAISED, moved(RAISED, 0, 0.1), 25)
-    assert run(h, turn, RAISED).status == "completed"
+    # The first joint turns while the second and third stay on their stops:
+    # inside the joint margin only at stops the rest pose lies on.
+    turned = moved(REST, 0, 0.1)
+    assert run(h, straight(REST, turned, 25), REST).status == "completed"
+    # Below a stop nothing is taken.
+    under = run(h, straight(turned, moved(turned, 1, -0.03), 10), turned)
+    assert under.status == "refused"
+    assert under.reason == (
+        "joint 2 target -0.003 rad is outside the agent joint limits 0.000..3.140"
+    )
+    assert h.sent() == straight(REST, turned, 25)
 
 
 def test_a_grasp_region_opens_the_table_rule_for_its_move_only(

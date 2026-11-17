@@ -844,9 +844,11 @@ def test_a_stop_from_the_console_ends_the_task_and_the_next_one_runs(
     )
     assert scene.h.heard("help_needed") == []
     assert scene.said("refused by the robot: stop number 0 does not match")
-    # The STOP latched the adapter, not the workstation checker: the next task
-    # took the arm with new numbers, without a restart of the program.
+    # The STOP latched the adapter and halted the workstation checker. A halt
+    # is no latch: the next task took the arm with new numbers, without a
+    # restart of the program and without a skill stop to clear.
     assert not scene.said(task_gate.RESTART)
+    assert task_gate.SKILL_STOP_NOTE not in scene.asked[1]
     assert scene.order == [
         "agent:completed",
         "nobody:refused",
@@ -857,8 +859,338 @@ def test_a_stop_from_the_console_ends_the_task_and_the_next_one_runs(
     assert trace.owners == ["nobody", "agent", "nobody", "agent", "nobody"]
     # The stopped task did not succeed: exit code 1 for the session.
     assert opened["success"] is True and code == launcher.EXIT_FAILED
+    # The next task's jaw command was not held back by the halt, and cleared
+    # none: APAI clears a halt at the next skill's first arm motion.
+    harness = trace.built["harness"]
+    assert harness.estopped is False and harness._halt_generation == 1
+    assert harness.halted is not None
     assert scene.h.app.snapshot().stop_number == 1
     scene.holds()
+
+
+def watch_grasp(
+    scene: Scene, at_first: Callable[[], None] | None = None
+) -> tuple[list[tuple[str, np.ndarray, Any]], dict[str, Any]]:
+    """Note a run's MOVEs, where a grasp's descent begins and what a STOP left.
+
+    Returns (moves, seen). moves gets (move id, setpoints, grasp region) of
+    every MOVE the agent sends. seen gets "descent", the place in moves of
+    the descent's MOVE, and at the second task's question "kept", the
+    approach column APAI kept, "checker", the workstation checker's (halt
+    reason, e-stop latched, halts so far), and "sent", the count of MOVEs
+    and GRIPPERs sent. at_first runs at the first task's question.
+    """
+    trace = scene.trace
+    stop_retrace = importlib.import_module("apai.skills.stop_retrace")
+    moves: list[tuple[str, np.ndarray, Any]] = []
+    seen: dict[str, Any] = {}
+
+    def on_attach(made: AgentLink) -> None:
+        send_move = made.send_move
+
+        def noted(move_id: str, start: Any, tol: Any, q: Any, *rest: Any) -> None:
+            moves.append((move_id, np.asarray(q, dtype=float), rest[0]))
+            send_move(move_id, start, tol, q, *rest)
+
+        made.send_move = noted
+
+    def on_ask() -> None:
+        runtime, harness = trace.built["runtime"], trace.built["harness"]
+        if len(scene.asked) == 1:
+            # As in the rig's arm profile: the approach may enter the column
+            # above its target, which is what a grasp keeps.
+            runtime.cfg._data["grasp"]["approach_target_exemption"] = True
+            allow = harness.allow_grasp_descent
+
+            def descent_opened(*args: Any, **kwargs: Any) -> Any:
+                seen["descent"] = len(moves)  # the place of the next MOVE
+                return allow(*args, **kwargs)
+
+            harness.allow_grasp_descent = descent_opened
+            if at_first is not None:
+                at_first()
+        elif len(scene.asked) == 2:
+            seen["kept"] = stop_retrace.live(runtime)
+            seen["checker"] = (
+                harness.halted,
+                harness.estopped,
+                harness._halt_generation,
+            )
+            seen["sent"] = len(scene.motion)
+
+    scene.on_attach, scene.on_ask = on_attach, on_ask
+    return moves, seen
+
+
+def check_the_kept_column_and_its_retrace(
+    scene: Scene, seen: dict[str, Any], approach: tuple, retrace: tuple, home: tuple
+) -> None:
+    """After a STOP below a grasp's hover and the task "go to the initial pose".
+
+    approach, retrace and home are rows of watch_grasp()'s moves: the grasp's
+    approach, and the two MOVEs of the second task.
+    """
+    trace = scene.trace
+    stop_retrace = importlib.import_module("apai.skills.stop_retrace")
+    # At the next task's question the workstation checker was halted and not
+    # latched, and the grasp had kept its approach column and its hover.
+    reason, latched, halts = seen["checker"]
+    assert reason is not None and latched is False and halts == 1
+    assert task_gate.SKILL_STOP_NOTE not in scene.asked[1]
+    assert not scene.said(task_gate.RESTART)
+    kept, column = seen["kept"], approach[2]
+    assert kept is not None and column is not None
+    assert (kept.column[1], kept.column[2]) == (column.radius_m, column.z_min)
+    assert kept.q_pre == pytest.approx(approach[1][-1], abs=1e-6)
+
+    # The next task: move_home retraced up the kept column to the hover, in
+    # one MOVE whose every setpoint raised the gripper tip, and then went home.
+    (result,) = scene.results("move_home")
+    assert result["ok"] is True and result["at"] == "home"
+    assert result["stop_retrace"].startswith("completed: the TCP rose")
+    region = retrace[2]
+    assert (region.radius_m, region.z_min) == (column.radius_m, column.z_min)
+    assert region.z_max == pytest.approx(kept.z_max)
+    assert retrace[1][-1] == pytest.approx(kept.q_pre, abs=1e-6)
+    harness = trace.built["harness"]
+    heights = [float(harness.kin.fk(q)[2, 3]) for q in retrace[1]]
+    assert all(above > below for below, above in zip(heights, heights[1:]))
+    assert heights[0] < kept.hover_z - 0.01
+    assert heights[-1] == pytest.approx(kept.hover_z, abs=1e-6)
+    assert home[2] is None
+    for move_id, _, _ in (retrace, home):
+        assert trace.results[move_id].status == "completed"
+    trace.check_every_target_was_permitted()
+    # The halt was cleared where APAI clears its own, at the retrace's first
+    # motion; the column is used up and nothing is latched.
+    assert harness.halted is None and harness.estopped is False
+    assert harness._halt_generation == 1
+    assert stop_retrace.kept(trace.built["runtime"]) is None
+    assert scene.order == [
+        "agent:completed",
+        "nobody:refused",
+        "agent:completed",
+        "nobody:completed",
+        "close:nobody",
+    ]
+    stopped, back = scene.reports()
+    assert stopped["success"] is False and back["success"] is True
+    assert scene.h.app.snapshot().stop_number == 1
+    scene.holds()
+
+
+@apai
+@link
+def test_after_a_stop_in_a_grasp_descent_the_next_task_retraces_up_the_kept_column(
+    service_scene: Scene,
+) -> None:
+    """A console STOP below the pregrasp hover, then "go to the initial pose".
+
+    The hover is where a grasp's approach ends, above its target. APAI's
+    grasp keeps the column it approached through when a stop of its checker
+    ended it below the hover, and the next move_home first retraces up that
+    column to the hover (apai.skills.stop_retrace). Without the retrace a
+    gripper tip beside the object cannot leave it: no step gains clearance.
+    """
+    scene, trace = service_scene, service_scene.trace
+    console = scene.stack.stations[0]
+    moves, seen = watch_grasp(scene)
+
+    def press(number: int) -> None:
+        at = seen.get("descent")
+        if "pressed" in seen or at is None or at >= len(moves):
+            return
+        move_id, index, _ = scene.h.app._executor.progress()
+        if move_id == moves[at][0] and index >= 0.6 * len(moves[at][1]):
+            seen["pressed"] = index
+            console.ws.stop("typed stop", "console")
+
+    scene.h.spy.after_target.append(press)
+    scene.typed = [PICK, "go to the initial pose"]  # the second: move_home
+    scene.answers = ["yes", "yes"]
+    code = scene.run("--interactive")
+
+    # The STOP ended the descent below the hover. The grasp ended on it as on
+    # a stop of APAI's own: no retreat, no retry, nothing more was sent.
+    assert "pressed" in seen
+    approach, descent, retrace, home = moves[seen["descent"] - 1 :]
+    ended = trace.results[descent[0]]
+    assert (ended.status, ended.reason) == (
+        "cancelled",
+        "STOP from console: typed stop",
+    )
+    (halted,) = scene.results("pick_and_place")
+    assert halted["error"] == (
+        "MotionHalted: the robot app stopped the move: STOP from console: typed stop"
+    )
+    check_the_kept_column_and_its_retrace(scene, seen, approach, retrace, home)
+    assert code == launcher.EXIT_FAILED  # the stopped task did not succeed
+
+
+# Where a console STOP lands below a grasp's hover with no command of the
+# agent in flight, and what pick_and_place then ends with.
+OWNER_GONE = (
+    "the agent no longer owns the arm: the control owner is nobody, not the agent"
+)
+STALE_NUMBER = "stop number 0 does not match the current 1"
+STOP_MOMENTS = {
+    # The descent's MOVE has ended and the close is not sent yet.
+    "after_descent": f"{OWNER_GONE}; no jaw command sent",
+    # The close's GRIPPER has ended and the lift is not sent yet.
+    "after_close": f"{OWNER_GONE}; no motion sent",
+    # The STOP reaches the Thor just before the close's GRIPPER.
+    "crossing_close": f"robot app refused the jaw command: {STALE_NUMBER}",
+    # The same, with the STOP's effect not yet shown to the robot link
+    # service: the service refuses the GRIPPER itself.
+    "crossing_close_at_the_service": (
+        "robot app refused the jaw command: a STOP was sent after stop number 0; "
+        "the GRIPPER quotes stop number 0"
+    ),
+    # The STOP reaches the Thor just before the lift's MOVE.
+    "crossing_lift": f"robot app refused the move: {STALE_NUMBER}",
+    "crossing_lift_at_the_service": (
+        "robot app refused the move: a STOP was sent after stop number 0; "
+        "the MOVE quotes stop number 0"
+    ),
+}
+
+
+@apai
+@link
+@pytest.mark.parametrize("moment", list(STOP_MOMENTS))
+def test_a_stop_that_cancels_no_command_of_a_grasp_ends_it_as_a_halt_all_the_same(
+    service_scene: Scene, moment: str
+) -> None:
+    """A console STOP below the hover between two commands, or just before one.
+
+    No command comes back cancelled. The next one finds the ownership ended
+    in ROBOT_STATE, or the robot app or the robot link service refuses it by
+    its numbers. Either ends the grasp as a STOP in the descent does: the
+    workstation checker is halted once, APAI keeps the approach column and
+    retries nothing, and "go to the initial pose" retraces up the column.
+    """
+    scene, trace = service_scene, service_scene.trace
+    console, service = scene.stack.stations[0], scene.stack.service
+    # What the adapter refused unsent in the first task, after the STOP.
+    unsent: list[str] = []
+
+    def due() -> bool:
+        """The descent's MOVE is the last one sent and no STOP was pressed."""
+        at = seen.get("descent")
+        return "pressed" not in seen and at is not None and len(moves) == at + 1
+
+    def press(shown: Callable[[], bool], what: str) -> None:
+        seen["pressed"] = len(scene.motion)
+        console.ws.stop("typed stop", "console")
+        until(shown, what)
+
+    def hook() -> None:
+        adapter = trace.built["adapter"]
+        made = adapter._link
+        move, jaw, refuse = adapter._move, adapter._jaw, adapter._refuse_unless_task
+        gripper, send_move = made.gripper, made.send_move
+
+        def in_state() -> bool:
+            return made.state().owner == "nobody"
+
+        def at_the_thor() -> bool:
+            # And shown to the service, which then lets the command through.
+            return scene.h.app.snapshot().stop_number == 1 and service._gate is None
+
+        def at_the_service() -> bool:
+            return service._gate is not None
+
+        def press_before_a_command() -> None:
+            if not moment.endswith("at_the_service"):
+                press(at_the_thor, "the STOP at the robot app")
+                return
+            # The service does not see the STOP take effect until the
+            # command has come back refused (seen_again).
+            seen["lift"], service._lift_gate = service._lift_gate, lambda: None
+            press(at_the_service, "the STOP at the service")
+
+        def seen_again() -> None:
+            if "lift" in seen:
+                service._lift_gate = seen.pop("lift")
+
+        def move_then(*args: Any, **kwargs: Any) -> Any:
+            try:
+                out = move(*args, **kwargs)
+            finally:
+                seen_again()
+            if moment == "after_descent" and due():
+                press(in_state, "the STOP in ROBOT_STATE")
+            return out
+
+        def jaw_then(*args: Any, **kwargs: Any) -> Any:
+            out = jaw(*args, **kwargs)
+            if moment == "after_close" and due():
+                seen["close"] = out.status
+                press(in_state, "the STOP in ROBOT_STATE")
+            return out
+
+        def stop_then_gripper(*args: Any, **kwargs: Any) -> Any:
+            if not (moment.startswith("crossing_close") and due()):
+                return gripper(*args, **kwargs)
+            press_before_a_command()
+            try:
+                out = gripper(*args, **kwargs)
+            finally:
+                seen_again()
+            seen["crossed"] = (out.status, out.reason)
+            return out
+
+        def stop_then_move(*args: Any, **kwargs: Any) -> None:
+            if moment.startswith("crossing_lift") and due():
+                press_before_a_command()
+            send_move(*args, **kwargs)
+
+        def noted_refusal(what: str) -> None:
+            try:
+                refuse(what)
+            except Exception as error:
+                if "pressed" in seen and len(scene.asked) == 1:
+                    unsent.append(f"{type(error).__name__}: {error}")
+                raise
+
+        adapter._move, adapter._jaw = move_then, jaw_then
+        adapter._refuse_unless_task = noted_refusal
+        made.gripper, made.send_move = stop_then_gripper, stop_then_move
+
+    moves, seen = watch_grasp(scene, hook)
+    scene.typed = [PICK, "go to the initial pose"]  # the second: move_home
+    scene.answers = ["yes", "yes"]
+    code = scene.run("--interactive")
+
+    # The grasp ended as a halt at the first command after the STOP: one
+    # failed step, no retry against the adapter's latch, no help request.
+    # Nothing was sent after the STOP but the command that crossed it.
+    assert "pressed" in seen
+    crossing = moment.startswith("crossing")
+    error = STOP_MOMENTS[moment]
+    assert [step["error"] for step in scene.results("pick_and_place")] == [
+        f"MotionHalted: {error}"
+    ]
+    assert unsent == ([] if crossing else [f"MotionHalted: {error}"])
+    assert seen["sent"] == seen["pressed"] + (1 if crossing else 0)
+    assert scene.h.heard("help_needed") == []
+    assert len(scene.h.heard("stop")) == 1
+    # The checker was halted once, with the text APAI got.
+    assert seen["checker"] == (error, False, 1)
+    # The STOP came below the hover, after the descent had ended.
+    at = seen["descent"]
+    assert trace.results[moves[at][0]].status == "completed"
+    if moment.startswith("crossing_lift"):
+        approach, _, lift, retrace, home = moves[at - 1 :]
+        ended = trace.results[lift[0]]
+        seen["crossed"] = (ended.status, ended.reason)
+    else:
+        approach, _, retrace, home = moves[at - 1 :]
+    refused = ("refused", error.partition(": ")[2]) if crossing else None
+    assert seen.get("crossed") == refused
+    assert seen.get("close") == ("completed" if moment == "after_close" else None)
+    check_the_kept_column_and_its_retrace(scene, seen, approach, retrace, home)
+    assert code == launcher.EXIT_FAILED  # the stopped task did not succeed
 
 
 @apai
