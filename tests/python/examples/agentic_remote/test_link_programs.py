@@ -1467,7 +1467,7 @@ def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
     assert (done.returncode, done.stderr) == (0, "")
     lines = done.stdout.splitlines()
     printed = {
-        line[2:].split()[0]: command
+        line[2:].split()[0].rstrip(":"): command
         for line, command in zip(lines, lines[1:])
         if line.startswith("# ")
     }
@@ -1524,6 +1524,19 @@ def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
     nowhere = str(tmp_path / "no-python")
     no_python = workstation_script(tmp_path, AGENTIC_REMOTE_AGENT_PYTHON=nowhere)
     assert (no_python.returncode, no_python.stdout) == (2, "")
+    # The optional variable: the address the viewer listens on, with no token.
+    host = "AGENTIC_REMOTE_VIEWER_HOST"
+    assert f"#   {host} " in script and host not in variables
+    open_to = workstation_script(tmp_path, **{host: "0.0.0.0"}).stdout
+    assert " ./run_viewer.sh --host 0.0.0.0 --no-auth\n" in open_to
+    assert f"`{host}` names the address the experiment's viewer listens on" in told
+    assert "is `./run_viewer.sh --host <that address> --no-auth`" in told
+    assert "without a token. Without it the viewer listens on `127.0.0.1`" in told
+    not_plain = workstation_script(tmp_path, **{host: "0.0.0.0:8766"})
+    assert (not_plain.returncode, not_plain.stdout) == (2, "")
+    assert host in not_plain.stderr and not_plain.stderr.count("\n") == 1
+    step = readme_section("### 3. The variables of each machine, in one file")
+    assert f"\n# {host}=0.0.0.0\n" in step
     # The session's name, and the row of the programs' table.
     session = re.search(r'^session="(\w+)"$', script, re.M)
     assert session is not None

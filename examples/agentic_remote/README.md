@@ -1196,6 +1196,15 @@ bash run_workstation.sh [--env FILE] [--thor ADDRESS] [--session NAME]
   Isaac Capture Python package built for that Python), `AGENTIC_REMOTE_APAI_SRC`,
   `AGENTIC_REMOTE_EXPERIMENT_DIR` and `AGENTIC_REMOTE_CAMERA_PR`. Each pane's command
   carries them itself, so a tmux server that runs already changes nothing.
+- **One more variable is optional**: `AGENTIC_REMOTE_VIEWER_HOST` names the address the
+  experiment's viewer listens on, for example the workstation's address on the internal
+  network, or `0.0.0.0` for every interface. With it the command of the pane `viewer`
+  is `./run_viewer.sh --host <that address> --no-auth`. Anyone who can reach that
+  address can then see the camera pictures, the maps and the timings of the runs,
+  without a token. Without it the viewer listens on `127.0.0.1` and asks for its token.
+  The script's last line, `viewer: ...`, names the page's address in both cases. A
+  value that is not an IPv4 address or a host name of letters, digits, dots and hyphens
+  is refused with exit code 2 and one line.
 - **Exit code 2 and nothing started**: an unknown argument, a variable that is not set,
   a Python that cannot be run, a folder that is none, no `tmux` on `PATH`, or a tmux
   session of that name that exists already.
@@ -4561,7 +4570,15 @@ AGENTIC_REMOTE_ISAAC_CAPTURE_PY=<checkout>/build/python_package/Release
 AGENTIC_REMOTE_APAI_SRC=<APAI checkout>/src
 AGENTIC_REMOTE_EXPERIMENT_DIR=<experiment folder>
 AGENTIC_REMOTE_CAMERA_PR=<camera streamer folder>
+# Optional: the address the experiment's viewer listens on, without a token.
+# AGENTIC_REMOTE_VIEWER_HOST=0.0.0.0
 ```
+
+`AGENTIC_REMOTE_VIEWER_HOST` is optional, and only `run_workstation.sh` reads it. It
+names the address the experiment's viewer listens on: the workstation's address on the
+internal network, or `0.0.0.0` for every interface. With it anyone who can reach that
+address can see the camera pictures, the maps and the timings of the runs, without a
+token. Without it the viewer listens on `127.0.0.1` only and asks for its token.
 
 ```bash
 set -a; source <environment folder>/workstation.env; set +a
@@ -4733,6 +4750,13 @@ of a pane and how to leave. Started by hand, one terminal each, the order is:
 | 5 | The experiment's viewer | `./run_viewer.sh` | Its address and how to open the page with its token (see [The experiment's viewer](#the-experiments-viewer)) |
 | 6 | Agent program | `./run_agent.sh --config configs/agent_rebot.yaml --interactive` | Only once the console shows the robot connection up: `[agent] robot connection up: ... driver real ...`, `[agent] obstacle grid: live ...` and the prompt `task> ` |
 
+**The address of the viewer's page** is in the last line `run_workstation.sh` prints,
+`viewer: ...`. Without `AGENTIC_REMOTE_VIEWER_HOST` in the workstation's file, open
+`http://127.0.0.1:8766/?token=<the token>` in a browser on the workstation, with the
+text of `.state/viewer.token` as the token. With the variable, open
+`http://<that address>:8766/` in a browser on any machine that can reach that address:
+the page asks for no token. With `0.0.0.0`, open it under the workstation's address.
+
 ### 8. The camera, from the Thor to the workstation
 
 The camera sender runs on the Thor and listens. The camera receiver runs on the
@@ -4844,6 +4868,12 @@ in the example's folder with the shipped files.
   agent program was started with `--record-debug`. The second is written by the agent
   program of this commit at its start; a run recorded by an older checkout has none and
   is not listed. See [The experiment's viewer](#the-experiments-viewer).
+- **Which address to open.** Without `AGENTIC_REMOTE_VIEWER_HOST` the page is
+  `http://127.0.0.1:8766/?token=<the token>`, in a browser on the workstation; the token
+  is the text of `.state/viewer.token`. With the variable in the workstation's file,
+  `run_workstation.sh` starts the viewer on that address and without a token: the page
+  is `http://<that address>:8766/`, in a browser on any machine that can reach it. With
+  `0.0.0.0`, use the workstation's address.
 - **The debug recording stops at 16 GiB, after about ten minutes of a session.** The
   pane `agent` of `run_workstation.sh` starts the agent program with `--record-debug`.
   That recording stops when its folder reaches `--debug-max-gib`, 16 GiB by default.

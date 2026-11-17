@@ -28,6 +28,15 @@
 #   AGENTIC_REMOTE_EXPERIMENT_DIR    the experiment folder
 #   AGENTIC_REMOTE_CAMERA_PR         the camera_streamer example of the camera
 #                                    pull request
+# Optional, from FILE or the environment:
+#   AGENTIC_REMOTE_VIEWER_HOST       the address the viewer listens on, for
+#                                    example this machine's address on the
+#                                    internal network, or 0.0.0.0 for every
+#                                    interface. Without it: 127.0.0.1 and the
+#                                    viewer's token. With it anyone who can
+#                                    reach that address can see the camera
+#                                    pictures, the maps and the timings of the
+#                                    runs, without a token
 #
 # Exit code 2 and nothing started: an argument or a variable that cannot be used,
 # no tmux, or a session of this name that exists already.
@@ -59,7 +68,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --print) print_only=1; shift ;;
-    --help | -h) sed -n '5,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help | -h) sed -n '5,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)
       known="--env FILE, --thor ADDRESS, --session NAME, --socket-wait SECONDS, --print"
       refuse "unknown argument '$1' (${known})"
@@ -92,6 +101,11 @@ for folder in AGENTIC_REMOTE_ISAAC_CAPTURE_PY AGENTIC_REMOTE_APAI_SRC \
   AGENTIC_REMOTE_EXPERIMENT_DIR AGENTIC_REMOTE_CAMERA_PR; do
   [[ -d "${!folder}" ]] || refuse "${folder} names no folder: ${!folder}"
 done
+viewer_host="${AGENTIC_REMOTE_VIEWER_HOST:-}"
+if [[ -n "${viewer_host}" && ! "${viewer_host}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
+  plain="an IPv4 address or a host name (letters, digits, dots, hyphens)"
+  refuse "AGENTIC_REMOTE_VIEWER_HOST must be ${plain}"
+fi
 
 # One prefix for every window: a tmux server that runs already does not hand
 # this script's environment to a new window.
@@ -112,6 +126,17 @@ camera="${prefix} ./run_camera_receiver.sh --host ${thor:-THOR_ADDRESS}"
 agent="${prefix} ./run_agent.sh --config ${agent_config} --operate --interactive"
 agent+=" --record-debug --depth-backend ffs --motion-approval task --batch-milestones"
 viewer="${prefix} ./run_viewer.sh"
+# Where the viewer's page is, on the viewer's own port.
+page="http://127.0.0.1:8766/ ; it asks for the token in .state/viewer.token:"
+page+=" open http://127.0.0.1:8766/?token=<the token>"
+if [[ -n "${viewer_host}" ]]; then
+  viewer+=" --host ${viewer_host} --no-auth"
+  shown="${viewer_host}"
+  if [[ "${viewer_host}" == "0.0.0.0" ]]; then
+    shown="<this machine's address>"
+  fi
+  page="http://${shown}:8766/ (no token; open to everyone who can reach that address)"
+fi
 
 # The service's local socket, as link_service/local.py finds it: socket_path of
 # the service's file, else the default path.
@@ -137,7 +162,7 @@ if ((print_only)); then
   echo "cd $(printf '%q' "${here}")"
   printf '%s\n' "# service" "${service}" "# console (${once})" "${console}" \
     "# view (${once})" "${view}" \
-    "# camera receiver" "${camera}" "# viewer" "${viewer}" \
+    "# camera receiver" "${camera}" "# viewer: ${page}" "${viewer}" \
     "# agent (when the robot connection is up)" "${agent}"
   exit 0
 fi
@@ -218,3 +243,4 @@ fi
 echo "  attach with: tmux attach -t ${session}   (click a pane to type in it)"
 echo "  the agent's command waits for Enter in its pane; the pane viewer shows its"
 echo "  run in a browser"
+echo "  viewer: ${page}"

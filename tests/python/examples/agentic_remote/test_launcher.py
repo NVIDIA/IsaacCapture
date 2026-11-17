@@ -757,6 +757,127 @@ def test_the_workstation_script_waits_on_the_socket_the_service_makes(
     assert stand.keys() == []  # --print starts nothing
 
 
+# run_workstation.sh: where the experiment's viewer listens. The experiment's
+# viewer is the web page on the recorded runs, in the pane viewer. Its token is
+# the secret a browser must open the page with once. AGENTIC_REMOTE_VIEWER_HOST
+# names the address the viewer listens on; with it the viewer asks for no token.
+
+VIEWER_HOST = "AGENTIC_REMOTE_VIEWER_HOST"
+PAGE_OPEN = "(no token; open to everyone who can reach that address)"
+PAGE_TOKEN = (
+    "viewer: http://127.0.0.1:8766/ ; it asks for the token in .state/viewer.token:"
+    " open http://127.0.0.1:8766/?token=<the token>"
+)
+
+
+def panes_started(
+    stand: TmuxStand, log: str, *arguments: str
+) -> tuple[dict[str, tuple[str, bool]], str]:
+    """Run the script to its end with the stand-in tmux and no service.
+
+    Returns each pane's (command, whether Enter followed) and what the script
+    printed. `log` names the file the stand-in notes this run's calls in.
+    """
+    stand.log = stand.log.with_name(log)
+    stand.env["FAKE_TMUX_LOG"] = str(stand.log)
+    process = stand.start(*arguments, "--thor", "192.0.2.7", "--socket-wait", "0")
+    output, errors = process.communicate(timeout=30)
+    assert (process.returncode, errors) == (0, "")
+    return {pane: (command, entered) for pane, command, entered in stand.keys()}, output
+
+
+def test_the_workstation_script_serves_the_viewer_on_the_address_its_file_names(
+    tmux_stand: TmuxStand, tmp_path: Path
+) -> None:
+    import shlex
+
+    stand = tmux_stand
+    # Without the variable: this machine only, and the token.
+    before, said = panes_started(stand, "before.log")
+    command, entered = before.pop("viewer")
+    assert entered and command.endswith(" ./run_viewer.sh")
+    assert f"\n  {PAGE_TOKEN}\n" in said
+    # The file holds every variable and the environment none.
+    names = [name for name in stand.env if name.startswith("AGENTIC_REMOTE_")]
+    lines = [f"{name}={shlex.quote(stand.env.pop(name))}" for name in names]
+    file = tmp_path / "workstation.env"
+    file.write_text("\n".join([*lines, f"{VIEWER_HOST}=192.0.2.9", ""]))
+    after, said = panes_started(stand, "after.log", "--env", str(file))
+    assert after.pop("viewer") == (f"{command} --host 192.0.2.9 --no-auth", True)
+    # The other five panes get the commands they got without it.
+    assert sorted(after) == ["agent", "camera", "console", "service", "view"]
+    assert after == before
+    assert f"\n  viewer: http://192.0.2.9:8766/ {PAGE_OPEN}\n" in said
+    assert "token=" not in said
+
+
+def test_the_workstation_script_takes_the_viewers_address_from_the_environment(
+    tmux_stand: TmuxStand,
+) -> None:
+    stand = tmux_stand
+
+    def printed() -> list[str]:
+        process = stand.start("--print")
+        output, errors = process.communicate(timeout=30)
+        assert (process.returncode, errors) == (0, "")
+        return output.splitlines()
+
+    plain = printed()
+    at = plain.index(f"# {PAGE_TOKEN}")
+    assert plain[at + 1].endswith(" ./run_viewer.sh")
+    stand.env[VIEWER_HOST] = ""  # set and empty is as not set
+    assert printed() == plain
+    # Every interface: the page is at whichever address reaches this machine.
+    stand.env[VIEWER_HOST] = "0.0.0.0"
+    everywhere = printed()
+    assert everywhere[at] == (
+        f"# viewer: http://<this machine's address>:8766/ {PAGE_OPEN}"
+    )
+    assert everywhere[at + 1] == f"{plain[at + 1]} --host 0.0.0.0 --no-auth"
+    assert everywhere[:at] == plain[:at] and everywhere[at + 2 :] == plain[at + 2 :]
+    stand.env[VIEWER_HOST] = "ws-1.example.com"
+    named = printed()
+    assert named[at] == f"# viewer: http://ws-1.example.com:8766/ {PAGE_OPEN}"
+    assert named[at + 1] == f"{plain[at + 1]} --host ws-1.example.com --no-auth"
+    assert not stand.log.exists()  # --print never calls tmux
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "-h",
+        "0.0.0.0:8766",
+        "http://192.0.2.9",
+        "192.0.2.9 --port 80",
+        "192.0.2.9;id",
+        "$(id)",
+        "::1",
+        "ws_1",
+    ],
+)
+def test_the_workstation_script_refuses_a_viewer_address_that_is_not_plain(
+    tmux_stand: TmuxStand, tmp_path: Path, value: str
+) -> None:
+    import shlex
+
+    stand = tmux_stand
+    file = tmp_path / "viewer.env"
+    file.write_text(f"{VIEWER_HOST}={shlex.quote(value)}\n")
+    for arguments in (("--env", str(file)), ("--env", str(file), "--print")):
+        process = stand.start(*arguments)
+        output, errors = process.communicate(timeout=30)
+        assert (process.returncode, output) == (2, ""), arguments
+        assert errors.startswith(f"run_workstation.sh: {VIEWER_HOST} must be ")
+        assert errors.count("\n") == 1
+    # The same from the environment.
+    stand.env[VIEWER_HOST] = value
+    process = stand.start()
+    output, errors = process.communicate(timeout=30)
+    assert (process.returncode, output) == (2, "")
+    assert VIEWER_HOST in errors and errors.count("\n") == 1
+    assert not stand.log.exists()  # tmux was never called: nothing started
+
+
 # Source rules of the agent program's own files
 
 
