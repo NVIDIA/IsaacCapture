@@ -359,6 +359,10 @@ ManusTracker::ManusTracker(const ConstructionArgs& args) noexcept(false) : m_con
                                              .wrist_tracking_pull =
                                                  m_config.human ? std::optional(kWristSourceConfig) : std::nullopt },
             std::move(trackers));
+        if (!m_plugin_session)
+        {
+            throw std::runtime_error("ManusTracker plugin session factory returned a null plugin session");
+        }
 
         if (monitoring_enabled)
         {
