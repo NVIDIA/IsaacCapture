@@ -26,7 +26,7 @@ jobs:
 
   # Keep small CI helper tests in this workflow, outside local pre-commit hooks.
   docs-preview-tests:
-    name: Test docs preview selection
+    name: Test docs preview selection and agent docs check
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,8 +39,10 @@ jobs:
         python-version: "3.12"
     - name: Install test dependencies
       run: python3 -m pip install pyyaml==6.0.2
-    - name: Test CI helper scripts
-      run: python3 -m unittest discover -s tests/python/ci -p 'test_*.py' -v
+    - name: Test preview selection
+      run: python3 -m unittest discover -s tests/python/ci -p test_docs_preview.py -v
+    - name: Test the agent docs check
+      run: python3 -m unittest discover -s tests/python/ci -p test_check_agent_docs.py -v
 
   wheel-publication-tests:
     name: Test wheel publication lookup
