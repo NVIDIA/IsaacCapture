@@ -250,8 +250,8 @@ async def test_a_result_is_as_old_as_its_facts_however_long_the_disk_took(tmp_pa
     # The facts were sampled before the stall, so a result that arrives this late is already too old to admit.
     world.now += 11
     world.disk_gate.set()
-    await evaluation
-    assert setup.block_reason() == CHECKS_PENDING
+    late = await evaluation
+    assert late.items and setup.block_reason() == CHECKS_PENDING
 
 
 async def test_a_take_is_held_until_the_station_in_use_has_been_evaluated(tmp_path):

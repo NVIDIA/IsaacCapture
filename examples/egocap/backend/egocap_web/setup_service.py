@@ -111,7 +111,7 @@ class Evaluation:
     key: tuple[tuple[str, str | None], ...] | None
     facts: CaptureFacts
     items: tuple[CheckItem, ...]
-    #: Monotonic time the judgement finished.
+    #: Monotonic time its facts were sampled, so slow file checks age it.
     at: float
 
 
