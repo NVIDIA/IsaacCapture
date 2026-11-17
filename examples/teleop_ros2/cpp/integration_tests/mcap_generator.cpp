@@ -224,6 +224,7 @@ std::shared_ptr<core::HeadPoseT> make_head_sample(int frame)
     auto sample = std::make_shared<core::HeadPoseT>();
     sample->pose = std::make_shared<core::Pose>(core::Point(0.0f, kHeadHeightM, -0.10f - delta), identity_quaternion());
     sample->is_valid = true;
+    sample->is_tracked = true;
     return sample;
 }
 
