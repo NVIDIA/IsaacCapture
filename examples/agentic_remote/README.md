@@ -855,7 +855,11 @@ the tests of `test_viewer.py`.
    it. It refuses with APAI's own words while the jaws hold something. Otherwise it
    moves the arm up to the ready pose with a planned move, folds it onto the rest pose in
    four measured steps, closes the jaws with the driver's close to the stop, and sends
-   OWNER_REQUEST "motors_off". The robot app then switches the motors off, only with the
+   OWNER_REQUEST "motors_off". The fold ends on the stops of the second and third joint,
+   inside the 0.02 rad the checkers otherwise keep free at a joint limit: the check
+   ahead and the Thor's agent checker take that margin away for a setpoint that is
+   inside it only at stops the rest pose lies on, and goes no further than the rest
+   pose there. Both machines need the same rule. The robot app then switches the motors off, only with the
    arm measured at rest, and sends the jaws nothing more. If the robot app keeps the motors
    on, the skill reports `switching the motors off failed: ...` and the arm holds at rest
    with the motors on. After the rest tool the program says `...: the arm lies at rest
@@ -884,7 +888,11 @@ the tests of `test_viewer.py`.
 8. **A STOP from the console ends the task as well.** The running move ends `cancelled` and
    APAI's skill ends as halted. Nobody owns the arm then, so the task's help request, which
    quotes the stop number from before the STOP, is refused. The next task can take the arm;
-   the program needs no restart.
+   the program needs no restart. The workstation checker is halted for the STOP, as by a
+   stop of APAI's own: a grasp stopped below its hover keeps the column it approached
+   through, and a next task "go to the initial pose", given within five minutes and before
+   any other motion task, first lifts the gripper straight up that column and then moves
+   home. The halt ends at the next task's first arm motion.
 9. **After a skill stop the next task clears the workstation checker's latch.** The task
    itself ended as in step 5, and the program says `the task ended in a skill stop: the next
    task clears it after its typed yes`. The next task's question begins `Note: the last task
@@ -1447,7 +1455,7 @@ What it prints, one line each:
   |---|---|
   | `torque on (holding)` | Every joint reads at the target it was told to hold |
   | `torque NOT HOLDING` | A joint has left the target it was told to hold, or a motor reports a fault: it is pushed, blocked, or its motor is off. A fault-stop says which joint. Keep a hand on the arm |
-  | `torque on, hold unknown` | No joint target was sent since the connect, or a joint was not read at the target in force yet |
+  | `torque on, hold unknown` | No joint target was sent since the connect, a joint was not read at the target in force yet, or a joint was not read for more than 1 s |
   | `torque on` | The robot app reports nothing about the hold, as on the simulated arm |
   | `torque off` | The robot app released the motors at measured rest; `on` switches them on again |
   | `torque unknown` | A torque release failed: the motors may be on or off |
@@ -1930,7 +1938,8 @@ the arm; [What was run](#what-was-run) says what the tests ran.
 - **Fresh controller data**: the newest HUMAN_SETPOINT has the stage `ready` and a sample
   age of at most `human.sample_age_limit_s` (0.25 s).
 - **Ahead**: how far a target lies ahead of what follows it. Two distances have a limit:
-  the IK solution ahead of the last joint target the Thor sent (`ik.max_ahead_rad`), and
+  the IK solution ahead of the last joint target the Thor sent for the person, or of the
+  measured pose before the drive's first setpoint (`ik.max_ahead_rad`), and
   the hand's target ahead of the speed-limited target (`ik.max_ahead_m`). **Jump**: a large
   difference between two IK solutions that follow each other.
 - **Needs-release flag**: the Thor's note that the next human drive needs a released grip
@@ -2471,8 +2480,8 @@ value means, where it is switched and what a change waits for.
 | `human.trigger_jaws: true` and `human.jaw_match_tol: 0.05` in every robot app file | Under a person the trigger drives the jaws once the opening it asks for has come within `human.jaw_match_tol`, a share of the jaw travel between 0 and 1, of the grip level. With `human.trigger_jaws: false` the trigger does nothing and no jaw command is sent under a person. Neither acts where `human.enabled` is false | The person's trigger has not moved the real jaws. Before step 15 the owner decides whether the first headset session on the arm runs with it: `human.trigger_jaws: false` in `configs/robot_app_rebot.yaml` is the session without it |
 | `operator.typed_takeover: false` in both service files | `takeover` and `handback` typed at the console are refused by the robot link service | Step F6: if right A or right B does not arrive, or a controller that dies during a takeover. Switching it on needs a restart of the robot link service |
 | `retarget.max_linear_velocity: 0.01` m/s and `retarget.max_angular_velocity: 0.03` rad/s in `configs/human_rebot.yaml` | The gripper tip moves about 1 cm per second under a person: the human program limits the hand's target, whatever the Thor's joint speed cap. `limits.human.max_joint_speed` in the rig file, 0.8 rad/s by the rig owner's decision, is the cap the Thor clamps a person's joint motion at | A bench test on this arm that supports a higher hand speed |
-| `ik.max_ahead_m: 0.05`, `ik.max_ahead_rad: 0.08` in both human files | A hand's target more than 5 cm ahead of the speed-limited target ends the engagement; each end costs a release and a new squeeze | Nothing. A larger value lets the arm go on until it has caught up with the hand |
-| `limits.human.max_step_rad: 0.1` | A human target farther than that from the last setpoint sent is refused, not clipped | Nothing. A larger value takes a farther target; no value clips one |
+| `ik.max_ahead_m: 0.05` in both human files; `ik.max_ahead_rad: 0.08` in `configs/human.yaml` and `0.045` in `configs/human_rebot.yaml` | A hand's target more than 5 cm ahead of the speed-limited target ends the engagement, and so does an IK solution more than `ik.max_ahead_rad` ahead of the arm; each end costs a release and a new squeeze. The solution is measured from the measured pose until the person's drive has sent a setpoint, and from the Thor's last joint target after that, so an arm that holds short of an earlier target can still be driven. In the rig file the value lies 0.005 rad below `limits.human.max_step_rad` of `configs/robot_app_rebot.yaml`, so a solution that runs away from the arm ends the engagement in the human program and is not refused by the Thor | Nothing for `ik.max_ahead_m`. `ik.max_ahead_rad` stays below `limits.human.max_step_rad` and not below 0.04: a squeeze at rest begins 0.033 rad ahead |
+| `limits.human.max_step_rad: 0.05` in `configs/robot_app_rebot.yaml` and `configs/robot_app_human_check.yaml` (`0.1` in the one-machine files) | A human target farther than that, on any joint, from the arm at a squeeze, or from the last setpoint sent after it, is refused, not clipped, and the arm holds. It bounds the jump at a squeeze: 2.9 degrees on every joint, which is 7.3 cm at the gripper tip in the ready pose and up to 9 cm with the arm reaching out, taken in 0.08 s. It does not bound the travel: a target that stays inside it is followed at up to 0.98 of `limits.human.max_joint_speed` | A bench test on this arm that supports a larger jump. Not below 0.04: a squeeze at rest begins 0.033 rad from the arm, where the second and third joint lie on their stops |
 | `teleop.attempts: 720` in `configs/human.yaml`, `8640` in `configs/human_rebot.yaml` | The human program gives up on the Teleop Session Server after that many failed attempts in a row, 5 s apart: about an hour and a half, or a session day | Nothing. A larger count keeps the program trying for longer |
 | `experiment.grid: bridge` in `configs/agent.yaml` and `configs/agent_rebot.yaml` | The obstacle grid comes from a grid bridge. `clear` only in `configs/agent_mock.yaml`, with the minimal stack and a simulated driver | Nothing: the clear grid is for the one-machine recipe |
 | `jaws.allow_reference: false` in every robot app file | The typed `reference` is refused (see [What the jaws do](#what-the-jaws-do)) | A decision on that jaw rule, which the design does not have |
@@ -2778,11 +2787,12 @@ measured on a robot or with a headset.
   solves on every pass. A lift at the limiter's full speed ends about 39 cm above rest
   with `IK jump`: the end of the arm's reach.
 - **`configs/human_rebot.yaml`** is the file for the rig, where the program runs on the
-  Thor. It differs in exactly six keys: `socket_path: "~/.agentic_remote/human.sock"`,
+  Thor. It differs in exactly seven keys: `socket_path: "~/.agentic_remote/human.sock"`,
   the robot app's own socket; `teleop.endpoint: "192.0.2.1:47600"`, a placeholder for
   the workstation's address on the wired link; `ik.apai_arm: rebot_rs`;
-  `retarget.max_linear_velocity: 0.01`; `retarget.max_angular_velocity: 0.03`; and
-  `teleop.attempts: 8640`. The two speeds are low for a first session: by the numbers
+  `retarget.max_linear_velocity: 0.01`; `retarget.max_angular_velocity: 0.03`;
+  `teleop.attempts: 8640`; and `ik.max_ahead_rad: 0.045`, which lies below
+  `limits.human.max_step_rad: 0.05` of the rig's robot file. The two speeds are low for a first session: by the numbers
   above 0.01 m/s asks a joint for 0.10 to 0.13 rad/s, far below the cap the Thor clamps
   a person's joint motion at (`limits.human.max_joint_speed`, 0.8 rad/s in the rig file).
   `configs/human.yaml` is the file of the
@@ -3326,7 +3336,10 @@ reset, open, close, quit or help`. It prints every operator event of the robot a
   (`state.publish_period_s`, 0.05 s), and once more right after every move. It does not
   read them while a move sends setpoints, while a jaw command runs or with the motors
   off. The agent decides from that reading whether it holds something, closed on
-  nothing or let go.
+  nothing or let go. Such a read waits for the jaw motor no longer than an idle joint
+  read does (0.05 s with the rig's profile). One without an answer shows the jaws as
+  unknown in that ROBOT_STATE and does not count against the jaw reference; after two
+  in a row the next read comes five periods later, so that the joints keep the bus.
 - **The numbers of "jaws proven empty" are APAI's** with `--arm apai`, and replace the
   `gripper` block's: closed below the profile's `grasp.air_grasp_frac`, at the target
   within the driver's reach (0.1 rad of the jaw travel), fully open within what the
