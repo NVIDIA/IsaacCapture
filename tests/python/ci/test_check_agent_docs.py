@@ -69,9 +69,24 @@ class CheckAgentDocsTests(unittest.TestCase):
         self.append("llms.txt", "- [Gone](skills/gone/SKILL.md)\n")
         self.assert_one_problem("llms.txt:", "`skills/gone/SKILL.md` does not exist")
 
+    def test_relative_link_must_stay_in_what_the_wheel_ships(self):
+        self.write("README.md", "# Repo\n")
+        self.append("llms.txt", "- [Readme](README.md)\n")
+        self.assert_one_problem(
+            "llms.txt:", "`README.md` is outside llms.txt and skills/"
+        )
+
     def test_relative_link_must_stay_in_the_repository(self):
         self.append("skills/README.md", "- [Out](../../outside.md)\n")
-        self.assert_one_problem("skills/README.md:", "resolves outside the repository")
+        self.assert_one_problem("skills/README.md:", "is outside llms.txt and skills/")
+
+    def test_relative_links_in_skills_are_checked(self):
+        self.append("skills/demo-skill/SKILL.md", "\nSee [the index](../README.md).\n")
+        self.assertEqual(agent_docs.check(self.root), [])
+        self.append("skills/demo-skill/SKILL.md", "Or [gone](gone.md).\n")
+        self.assert_one_problem(
+            "skills/demo-skill/SKILL.md:", "`gone.md` does not exist"
+        )
 
     def test_anchors_and_external_urls_are_not_paths(self):
         self.append("llms.txt", "- [Top](#demo)\n- [GitHub](https://github.com/x/y)\n")
@@ -96,7 +111,27 @@ class CheckAgentDocsTests(unittest.TestCase):
         self.append("llms.txt", f"- [Devices]({SITE}/device/llms.txt)\n")
         self.assertEqual(agent_docs.check(self.root), [])
         self.append("llms.txt", f"- [Nope]({SITE}/nope/llms.txt)\n")
-        self.assert_one_problem("docs/source/nope/, which does not exist")
+        self.assert_one_problem("docs/source/nope/, which holds no pages")
+
+    def test_section_index_needs_pages(self):
+        self.write("docs/source/_static/logo.svg", "<svg/>\n")
+        self.append("llms.txt", f"- [Static]({SITE}/_static/llms.txt)\n")
+        self.assert_one_problem("docs/source/_static/, which holds no pages")
+
+    def test_section_index_counts_pages_in_subdirectories(self):
+        self.write("docs/source/guides/lerobot/sim.rst", "Sim\n")
+        self.append("llms.txt", f"- [Guides]({SITE}/guides/llms.txt)\n")
+        self.assertEqual(agent_docs.check(self.root), [])
+
+    def test_section_index_ignores_redirect_stubs(self):
+        stub = ".. meta::\n   :http-equiv=refresh: 0; url=../teleop/quick_start.html\n"
+        self.write("docs/source/old/quick_start.rst", stub + "\nMoved\n")
+        self.append("llms.txt", f"- [Old]({SITE}/old/llms.txt)\n")
+        self.assert_one_problem("docs/source/old/", "other than redirect stubs")
+
+    def test_docs_link_must_be_a_normalized_path(self):
+        self.append("llms.txt", f"- [Up]({SITE}/teleop/../teleop/quick_start.md)\n")
+        self.assert_one_problem("'..' path segment")
 
     def test_bare_docs_urls_in_skills_are_checked(self):
         self.append(

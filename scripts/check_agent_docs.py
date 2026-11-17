@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Pre-commit hook: the agent indexes and skills must match the tree.
 
-1. Relative links in llms.txt and skills/README.md name files that exist.
+1. Relative links in llms.txt and skills/ name files that exist inside llms.txt or
+   skills/, the only part of the tree the wheel ships.
 2. Docs-site URLs in llms.txt, docs/llms.txt and skills/ name the Markdown copy of
    a page docs/source/ builds on main, or one of main's llms.txt indexes.
 3. Every skills/<name>/SKILL.md has Agent Skills frontmatter: a valid name that
@@ -20,6 +21,10 @@ import sys
 from pathlib import Path
 
 import yaml
+
+# The docs build's own test, so this check and llms.txt agree on what a stub is.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "docs/source/_ext"))
+from redirect_stubs import is_redirect_stub  # noqa: E402
 
 DOCS_SITE = "https://nvidia.github.io/IsaacCapture/"
 DOCS_SOURCE = "docs/source"
@@ -60,6 +65,12 @@ def _line(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+def _ships(root: Path, path: Path) -> bool:
+    """Whether the wheel ships path, which src/core/python/CMakeLists.txt decides."""
+    root = root.resolve()
+    return path == root / REPO_INDEX or path.is_relative_to(root / SKILLS)
+
+
 def _local_links(root: Path, rel: str) -> tuple[list[str], set[Path]]:
     """Return problems with rel's relative links, and the files they resolve to."""
     text = _read(root / rel)
@@ -73,8 +84,11 @@ def _local_links(root: Path, rel: str) -> tuple[list[str], set[Path]]:
             continue
         where = f"{rel}:{_line(text, match.start())}"
         resolved = ((root / rel).parent / target.split("#", 1)[0]).resolve()
-        if not resolved.is_relative_to(root.resolve()):
-            problems.append(f"{where}: `{target}` resolves outside the repository")
+        if not _ships(root, resolved):
+            problems.append(
+                f"{where}: `{target}` is outside {REPO_INDEX} and {SKILLS}/, "
+                "so it breaks in the wheel; link it by URL"
+            )
         elif not resolved.exists():
             problems.append(f"{where}: `{target}` does not exist")
         else:
@@ -93,11 +107,18 @@ def _docs_url_problem(root: Path, url: str) -> str | None:
     source = root / DOCS_SOURCE
     if page == "llms.txt":
         return None
+    if any(part in ("", ".", "..") for part in page.split("/")):
+        return "has an empty, '.' or '..' path segment"
     if page.endswith("/llms.txt"):
         section = page.removesuffix("/llms.txt")
-        if (source / section).is_dir():
+        # sphinx-llm indexes a directory with an indexed page at any depth below it,
+        # and conf.py leaves redirect stubs out of the index.
+        if any(not is_redirect_stub(p) for p in (source / section).rglob("*.rst")):
             return None
-        return f"names an index for {DOCS_SOURCE}/{section}/, which does not exist"
+        return (
+            f"names an index for {DOCS_SOURCE}/{section}/, which holds no pages "
+            "other than redirect stubs"
+        )
     if page.endswith(".md"):
         if (source / page).with_suffix(".rst").is_file():
             return None
@@ -192,16 +213,22 @@ def _skill_problems(root: Path, skill: Path) -> list[str]:
 def check(root: Path) -> list[str]:
     """Return one message per problem in the agent indexes and skills under root."""
     problems: list[str] = []
-    linked: dict[str, set[Path]] = {}
-    for index in (REPO_INDEX, SKILLS_INDEX):
-        found, linked[index] = _local_links(root, index)
-        problems += found
-
     skills_dir = root / SKILLS
+    skill_pages = sorted(skills_dir.rglob("*.md"))
+    linked: dict[str, set[Path]] = {REPO_INDEX: set(), SKILLS_INDEX: set()}
+    for rel in (
+        REPO_INDEX,
+        *(path.relative_to(root).as_posix() for path in skill_pages),
+    ):
+        found, targets = _local_links(root, rel)
+        problems += found
+        if rel in linked:
+            linked[rel] = targets
+
     for path in (
         root / REPO_INDEX,
         root / SITE_INDEX,
-        *sorted(skills_dir.rglob("*.md")),
+        *skill_pages,
     ):
         problems += _docs_links(root, path)
 
