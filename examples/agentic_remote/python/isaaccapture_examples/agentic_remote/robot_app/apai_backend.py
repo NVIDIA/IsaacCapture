@@ -18,6 +18,7 @@ import io
 import logging
 import math
 import os
+import sys
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -598,6 +599,12 @@ def _restrict_as_launcher(harness: SafetyHarness, profile: ApaiProfile) -> None:
     if spec is None or spec.loader is None:
         raise ValueError(f"the experiment's motion bounds cannot be loaded: {source}")
     module = importlib.util.module_from_spec(spec)
+    # The launcher runs as a script from its folder, so its modules import one
+    # another by name, also while a move is checked. Last on the path, the
+    # folder shadows nothing.
+    folder = str(profile.launcher_dir)
+    if folder not in sys.path:
+        sys.path.append(folder)
     said = io.StringIO()
     try:
         spec.loader.exec_module(module)

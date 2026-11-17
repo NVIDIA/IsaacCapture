@@ -4063,6 +4063,119 @@ def test_on_the_launchers_profile_only_a_person_may_be_faster_than_the_launcher(
         apai_backend.build_apai_checkers(fits, plain, clock)
 
 
+# The motion bounds of the experiment's launcher
+
+# Two modules beside the launcher's bounds module, which imports them by name
+# as the Thor's copy imports thor_motion: the first when it is loaded, the
+# second only when a move is checked.
+AT_LOAD, AT_CHECK = "rig_at_load", "rig_at_check"
+BOUNDS_SOURCE = f"""\
+from {AT_LOAD} import joint_limit
+
+
+def restrict_motion(harness, config, *, label="calibration"):
+    from apai.types import SafetyViolation
+
+    limit = joint_limit(config)
+    approve = harness.approve
+
+    def bounded(q_prev, q_next, *args, **kwargs):
+        from {AT_CHECK} import reason
+
+        why = reason(label, q_next, limit)
+        if why:
+            raise SafetyViolation(why)
+        return approve(q_prev, q_next, *args, **kwargs)
+
+    harness.approve = bounded
+    print(f"[{{label}}] Motion bounds: the first joint within {{limit:g}} rad")
+"""
+SIBLING_SOURCES = {
+    AT_LOAD: 'def joint_limit(config):\n    return float(config["first_joint_rad"])\n',
+    AT_CHECK: (
+        "def reason(label, q, limit):\n"
+        "    if abs(q[0]) > limit:\n"
+        '        return f"{label} motion bounds: the first joint is beyond {limit:g} rad"\n'
+        "    return None\n"
+    ),
+}
+
+
+@pytest.fixture
+def import_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """After the test the import path and the imported modules are as before."""
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    yield
+    for name in (AT_LOAD, AT_CHECK):
+        sys.modules.pop(name, None)
+
+
+def launcher_with_bounds(
+    root: Path, siblings: Sequence[str] = (AT_LOAD, AT_CHECK)
+) -> apai_backend.ApaiProfile:
+    """The launcher's arm profile with motion bounds, in a folder that holds
+    its bounds module and these of the two modules that one imports."""
+    arm = thor_arm_profile(root, motion_bounds={"first_joint_rad": 0.5})
+    files = {apai_backend.BOUNDS_MODULE: BOUNDS_SOURCE}
+    files.update({name: SIBLING_SOURCES[name] for name in siblings})
+    for name, source in files.items():
+        (root / f"{name}.py").write_text(source, encoding="utf-8")
+    return apai_backend.load_apai_profile(arm)
+
+
+def test_the_launchers_bounds_module_imports_the_modules_beside_it(
+    tmp_path: Path, config: RobotAppConfig, clock: FakeClock, import_state: None
+) -> None:
+    """As in the launcher, which is started as a script from its folder."""
+    thor = launcher_with_bounds(tmp_path)
+    checkers = apai_backend.build_apai_checkers(config, thor, clock)
+    assert AT_LOAD in sys.modules and AT_CHECK not in sys.modules
+    agent = checkers.agent
+    start_motion(agent)
+    agent.check_setpoint(HOME, NEAR_HOME, STEP_S)
+    assert AT_CHECK in sys.modules  # imported by the first setpoint check
+    inside, beyond = moved(HOME, 0, 0.499), moved(HOME, 0, 0.501)
+    refusal_of(
+        lambda: agent.check_setpoint(inside, beyond, STEP_S),
+        r"operation motion bounds: the first joint is beyond 0\.5 rad",
+    )
+    agent.end_motion()
+    # The human's checker keeps its own limits.
+    start_motion(checkers.human)
+    checkers.human.check_setpoint(inside, beyond, STEP_S)
+
+
+def test_the_launcher_folder_goes_last_on_the_import_path_and_only_once(
+    tmp_path: Path, config: RobotAppConfig, clock: FakeClock, import_state: None
+) -> None:
+    # A module of the same name that is on the path already.
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / f"{AT_LOAD}.py").write_text(
+        "def joint_limit(config):\n    return 0.25\n", encoding="utf-8"
+    )
+    sys.path.insert(0, str(earlier))
+    before = list(sys.path)
+    thor = launcher_with_bounds(tmp_path / "experiment")
+    for _ in range(2):
+        apai_backend.build_apai_checkers(config, thor, clock)
+        assert sys.path == [*before, str(thor.launcher_dir)]
+    # The launcher folder's file of that name shadows nothing.
+    assert Path(sys.modules[AT_LOAD].__file__).parent == earlier
+
+
+def test_a_module_missing_beside_the_launchers_bounds_module_is_refused(
+    tmp_path: Path, config: RobotAppConfig, clock: FakeClock, import_state: None
+) -> None:
+    thor = launcher_with_bounds(tmp_path, siblings=(AT_CHECK,))
+    with pytest.raises(
+        ValueError,
+        match=r"the experiment's motion bounds \(.*thor_calibration_rig\.py\) could "
+        rf"not be applied: ModuleNotFoundError: No module named '{AT_LOAD}'",
+    ):
+        apai_backend.build_apai_checkers(config, thor, clock)
+
+
 # A new task from where the arm was left
 
 START_POSES = {
