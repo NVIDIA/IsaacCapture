@@ -18,6 +18,9 @@ namespace
 {
 
 constexpr float kJointRadiusM = 0.01F;
+constexpr float kSqrtHalf = 0.7071067811865476F;
+constexpr XrPosef kLeftThumbRoll{ { 0.0F, 0.0F, -kSqrtHalf, kSqrtHalf }, {} };
+constexpr XrPosef kRightThumbRoll{ { 0.0F, 0.0F, kSqrtHalf, kSqrtHalf }, {} };
 constexpr XrSpaceLocationFlags kValidFlags =
     XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
 
@@ -120,10 +123,14 @@ ConversionResult convert_post_data(const omniglove_post_data_t& post, bool is_le
         if (source.joint != XR_HAND_JOINT_WRIST_EXT)
         {
             // SDK finger frames point +Z toward the tip; OpenXR points -Z.
-            // Post-multiply by a local Y half-turn to preserve dorsal +Y.
             // The SDK wrist already has proximal +Z and must not be flipped.
             constexpr XrPosef kYHalfTurn{ { 0.0F, 1.0F, 0.0F, 0.0F }, { 0.0F, 0.0F, 0.0F } };
             destination.pose = oxr_utils::multiply_poses(destination.pose, kYHalfTurn);
+        }
+        if (source.joint >= XR_HAND_JOINT_THUMB_METACARPAL_EXT && source.joint <= XR_HAND_JOINT_THUMB_TIP_EXT)
+        {
+            // SDK thumb hinges use local Y; this local Z roll aligns them with OpenXR +X.
+            destination.pose = oxr_utils::multiply_poses(destination.pose, is_left ? kLeftThumbRoll : kRightThumbRoll);
         }
         destination.locationFlags = kValidFlags;
     }

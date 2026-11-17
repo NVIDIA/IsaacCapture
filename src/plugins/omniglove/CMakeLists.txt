@@ -25,6 +25,12 @@ install(FILES "${OMNIGLOVE_SDK_RELEASE_ROOT}/THIRD_PARTY_NOTICES.md"
     RENAME THIRD_PARTY_NOTICES.omniglove-sdk.md
     COMPONENT omniglove
 )
+install(FILES
+    "${OMNIGLOVE_SDK_RELEASE_ROOT}/licenses/fmt-LICENSE"
+    "${OMNIGLOVE_SDK_RELEASE_ROOT}/licenses/wjwwood-serial-LICENSE"
+    DESTINATION plugins/omniglove/licenses
+    COMPONENT omniglove
+)
 
 install(FILES plugin.yaml README.md 60-omniglove-usb.rules
     DESTINATION plugins/omniglove

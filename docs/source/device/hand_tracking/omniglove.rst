@@ -62,8 +62,7 @@ is supplied by the operating system.
    cmake --build build
    cmake --install build --component omniglove
 
-Existing build directories using ``OMNIGLOVE_SDK_ROOT`` or ``OMNIGLOVE_SDK_REF``
-should remove those cache entries. Local SDK checkouts use CMake's standard
+Local SDK checkouts use CMake's standard
 ``-DFETCHCONTENT_SOURCE_DIR_OMNIGLOVE_SDK=/path/to/agilink_omniglove_sdk`` override.
 
 Running
@@ -132,9 +131,11 @@ the host records them as ``core.HandPoseRecord`` from ``hand.fbs``.
 - Positions are metres and orientations are unit ``(x, y, z, w)``
   quaternions, in the base space passed to ``HandInjector``.
 - OpenXR joint ``+Z`` points away from the fingertip and ``+Y`` toward the
-  back of the hand. SDK finger orientations receive a local Y half-turn;
-  the right wrist basis is converted separately. Wrist and finger poses are
-  composed with the same world-space wrist transform.
+  back of each digit. SDK digit orientations receive a local Y half-turn,
+  followed for the thumb by a local Z rotation of -90 degrees on the left
+  and +90 degrees on the right to align the flexion hinge with local +X.
+  The right wrist basis is converted separately. Wrist and finger poses
+  are composed with the same world-space wrist transform.
 - SDK monotonic sample times are converted into runtime ``XrTime`` through
   ``XrTimeConverter``; the wrist is queried at that same time.
 - Unmapped, unconverged IK, invalid bone data, non-finite poses, zero

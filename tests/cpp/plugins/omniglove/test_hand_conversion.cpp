@@ -5,6 +5,7 @@
 #include <omniglove/omniglove.h>
 #include <omniglove_plugin/omniglove_hand_conversion.hpp>
 #include <openxr/openxr.h>
+#include <oxr_utils/math.hpp>
 
 #include <array>
 #include <cmath>
@@ -65,6 +66,27 @@ std::array<float, 3> rotate(const XrQuaternionf& q, const std::array<float, 3>& 
              v[2] + q.w * t[2] + q.x * t[1] - q.y * t[0] };
 }
 
+std::array<float, 3> subtract(const XrVector3f& a, const XrVector3f& b)
+{
+    return { a.x - b.x, a.y - b.y, a.z - b.z };
+}
+
+float dot(const std::array<float, 3>& a, const std::array<float, 3>& b)
+{
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+std::array<float, 3> normalized(const std::array<float, 3>& v)
+{
+    const float length = std::sqrt(dot(v, v));
+    return { v[0] / length, v[1] / length, v[2] / length };
+}
+
+std::array<float, 3> cross(const std::array<float, 3>& a, const std::array<float, 3>& b)
+{
+    return { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] };
+}
+
 bool openxr_axes(bool is_left, const XrQuaternionf& orientation)
 {
     omniglove_post_data_t post{};
@@ -102,6 +124,10 @@ bool openxr_axes(bool is_left, const XrQuaternionf& orientation)
                 expected[1] = -expected[1];
             }
             auto xr_axis = axis;
+            if (index >= XR_HAND_JOINT_THUMB_METACARPAL_EXT && index <= XR_HAND_JOINT_THUMB_TIP_EXT && axis[1] != 0.0F)
+            {
+                xr_axis = { is_left ? -1.0F : 1.0F, 0.0F, 0.0F };
+            }
             if (index != XR_HAND_JOINT_WRIST_EXT && axis[2] != 0.0F)
             {
                 xr_axis[2] = -xr_axis[2];
@@ -164,6 +190,79 @@ TEST_CASE("OmniGlove conversion preserves its OpenXR hand contract", "[omniglove
     fill_hand(post);
     post.index.landmarks.mcp.position_m[0] = std::numeric_limits<float>::quiet_NaN();
     CHECK(std::get<ConversionStatus>(plugins::omniglove::convert_post_data(post, true)) == ConversionStatus::InvalidPose);
+}
+
+TEST_CASE("OmniGlove bent thumb hinges align with local X", "[omniglove][conversion]")
+{
+    const float inverse_norm = 1.0F / std::sqrt(30.0F);
+    const std::array<XrPosef, 2> source_transforms = { XrPosef{ { 0.0F, 0.0F, 0.0F, 1.0F }, {} },
+                                                       XrPosef{ { inverse_norm, 2.0F * inverse_norm,
+                                                                  3.0F * inverse_norm, 4.0F * inverse_norm },
+                                                                { 0.11F, -0.07F, 0.09F } } };
+    constexpr std::array thumb_joints = { XR_HAND_JOINT_THUMB_METACARPAL_EXT, XR_HAND_JOINT_THUMB_PROXIMAL_EXT,
+                                          XR_HAND_JOINT_THUMB_DISTAL_EXT, XR_HAND_JOINT_THUMB_TIP_EXT };
+    for (bool is_left : { true, false })
+    {
+        for (const XrPosef& transform : source_transforms)
+        {
+            for (float ip_bend : { 0.4F, 1.1F })
+            {
+                CAPTURE(is_left, ip_bend, transform.orientation.x);
+                constexpr float mcp_bend = 0.45F;
+                const float distal_angle = mcp_bend + ip_bend;
+                const XrQuaternionf mcp_orientation{ 0.0F, std::sin(mcp_bend / 2.0F), 0.0F, std::cos(mcp_bend / 2.0F) };
+                const XrQuaternionf ip_orientation{ 0.0F, std::sin(distal_angle / 2.0F), 0.0F,
+                                                    std::cos(distal_angle / 2.0F) };
+                const XrVector3f mcp{ 0.02F, 0.01F, 0.025F };
+                const XrVector3f ip{ mcp.x + 0.03F * std::sin(mcp_bend), mcp.y, mcp.z + 0.03F * std::cos(mcp_bend) };
+                const XrVector3f tip{ ip.x + 0.02F * std::sin(distal_angle), ip.y, ip.z + 0.02F * std::cos(distal_angle) };
+                // Thumb flexion is in the SDK XZ plane, with its hinge along Y.
+                const std::array<XrPosef, 4> local_poses = {
+                    XrPosef{ { 0.0F, 0.0F, 0.0F, 1.0F }, { 0.02F, 0.01F, 0.0F } }, XrPosef{ mcp_orientation, mcp },
+                    XrPosef{ ip_orientation, ip }, XrPosef{ ip_orientation, tip }
+                };
+                omniglove_post_data_t post{};
+                fill_hand(post);
+                const std::array landmarks = { &post.thumb.landmarks.cmc, &post.thumb.landmarks.mcp,
+                                               &post.thumb.landmarks.ip, &post.thumb.landmarks.tip };
+                std::array<XrVector3f, 4> expected_positions;
+                for (std::size_t i = 0; i < local_poses.size(); ++i)
+                {
+                    const XrPosef pose = oxr_utils::multiply_poses(transform, local_poses[i]);
+                    fill_pose(*landmarks[i], pose.position.x, pose.position.y, pose.position.z, pose.orientation);
+                    expected_positions[i] = pose.position;
+                    if (!is_left)
+                    {
+                        expected_positions[i].x = -expected_positions[i].x;
+                        expected_positions[i].y = -expected_positions[i].y;
+                    }
+                }
+                std::array<std::array<float, 3>, 4> bone_directions;
+                for (std::size_t i = 0; i < bone_directions.size() - 1; ++i)
+                {
+                    bone_directions[i] = normalized(subtract(expected_positions[i + 1], expected_positions[i]));
+                }
+                bone_directions.back() = bone_directions[2];
+                const auto ip_hinge = normalized(cross(bone_directions[2], bone_directions[1]));
+                const auto mcp_hinge = normalized(cross(bone_directions[1], bone_directions[0]));
+                const auto result = plugins::omniglove::convert_post_data(post, is_left);
+                REQUIRE(std::holds_alternative<HandJoints>(result));
+                const auto& joints = std::get<HandJoints>(result);
+                for (std::size_t i = 0; i < thumb_joints.size(); ++i)
+                {
+                    CAPTURE(i);
+                    const auto& pose = joints[thumb_joints[i]].pose;
+                    CHECK(near(pose.position.x, expected_positions[i].x));
+                    CHECK(near(pose.position.y, expected_positions[i].y));
+                    CHECK(near(pose.position.z, expected_positions[i].z));
+                    const auto x_axis = rotate(pose.orientation, { 1.0F, 0.0F, 0.0F });
+                    CHECK(dot(x_axis, ip_hinge) > 0.99999F);
+                    CHECK(dot(x_axis, mcp_hinge) > 0.99999F);
+                    CHECK(dot(rotate(pose.orientation, { 0.0F, 0.0F, -1.0F }), bone_directions[i]) > 0.99999F);
+                }
+            }
+        }
+    }
 }
 
 TEST_CASE("OmniGlove returns no joints when the last landmark is invalid", "[omniglove][conversion]")

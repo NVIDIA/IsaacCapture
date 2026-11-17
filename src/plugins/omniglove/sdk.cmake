@@ -66,7 +66,8 @@ function(omniglove_require_verified_file path)
 endfunction()
 
 foreach(_omniglove_required IN ITEMS
-    VERSION LICENSE THIRD_PARTY_NOTICES.md licenses/libusb-COPYING
+    VERSION LICENSE THIRD_PARTY_NOTICES.md
+    licenses/fmt-LICENSE licenses/wjwwood-serial-LICENSE
     "${_omniglove_platform}/cmake/OmnigloveSDKConfig.cmake"
     "${_omniglove_platform}/cmake/OmnigloveSDKConfigVersion.cmake"
     "${_omniglove_platform}/include/omniglove/omniglove.h"
