@@ -90,7 +90,8 @@ markdown_anchor_sections = True
 # A redirect stub's refresh and a hidden toctree mean nothing outside HTML.
 llms_txt_suppress_unknown_node_warnings = ["meta", "toctree"]
 # sphinx-llm indexes every *.md in its build, so a :download: of a README.md would be
-# listed as a page with no doctree, which -W turns into a failure.
+# listed as a page with no doctree, which -W turns into a failure. setup() adds the
+# redirect stubs, whose Markdown only says the page has moved.
 llms_txt_exclude = ["_downloads/**"]
 # The default is pyproject.toml's description, which still reads "Isaac Teleop".
 llms_txt_description = (
@@ -328,7 +329,23 @@ def _external_links_new_tab(app, doctree, docname):
             node["target"] = "_blank"
 
 
+def _exclude_redirect_stubs(app, config):
+    """Keep redirect stubs out of llms.txt; their Markdown pages still build."""
+    from redirect_stubs import is_redirect_stub
+
+    srcdir = app.srcdir
+    config.llms_txt_exclude = [
+        *config.llms_txt_exclude,
+        *(
+            path.relative_to(srcdir).with_suffix("").as_posix()
+            for path in sorted(srcdir.rglob("*.rst"))
+            if is_redirect_stub(path)
+        ),
+    ]
+
+
 def setup(app):
+    app.connect("config-inited", _exclude_redirect_stubs)
     app.connect("html-page-context", _versioning_context)
     app.add_role("code-file", _code_file_role)
     app.add_role("code-dir", _code_dir_role)
