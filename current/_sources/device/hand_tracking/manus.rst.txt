@@ -26,8 +26,6 @@ Components
   that prints tracked joint data to the terminal and opens a real-time
   **MANUS Data Visualizer** window showing the hand skeleton from two orthographic
   views per hand.
-- **Calibration worker** (``manus_glove_calibrator``) — runs the Manus SDK glove
-  calibration for the browser calibration example and exports MCAL files.
 
 Prerequisites
 -------------
@@ -130,7 +128,7 @@ build from the root:
 .. code-block:: bash
 
    cmake -S . -B build
-   cmake --build build --target manus_hand_plugin manus_hand_tracker_printer manus_glove_calibrator -j
+   cmake --build build --target manus_hand_plugin manus_hand_tracker_printer -j
    cmake --install build --component manus
 
 Running the Plugin
@@ -148,7 +146,7 @@ this shell, until you stop it with ``python -m isaaccapture.cloudxr.service stop
 
 .. code-block:: bash
 
-   python -m isaaccapture.cloudxr.service start --accept-eula
+   python -m isaaccapture.cloudxr.service start
 
 In the shell you will use to run the plugin, source the environment file
 that the runtime writes on startup. This points the OpenXR loader at CloudXR:
@@ -212,11 +210,6 @@ Either flag can be used alone. A file that cannot be read stops the plugin at
 startup with ``Failed to open Manus calibration file: <path>``. A file that
 MANUS Core rejects is logged as ``Failed to apply <side> glove calibration file``
 and that glove is reported as calibration failed.
-
-To record MCAL files, run the browser calibration page in
-:code-file:`examples/manus_calibration/README.md`. Its worker,
-``manus_glove_calibrator``, is installed next to the plugin in
-``./install/plugins/manus/``.
 
 Data paths
 ----------

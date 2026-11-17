@@ -35,8 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=36007acf" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=9c450ab6" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=5165c444"></script>
+    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.8.x" />
+  <meta name="docsearch:version" content="1.7.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -345,7 +345,6 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
@@ -506,8 +505,6 @@ integrates with the Teleop system via CloudXR / OpenXR.</p></li>
 that prints tracked joint data to the terminal and opens a real-time
 <strong>MANUS Data Visualizer</strong> window showing the hand skeleton from two orthographic
 views per hand.</p></li>
-<li><p><strong>Calibration worker</strong> (<code class="docutils literal notranslate"><span class="pre">manus_glove_calibrator</span></code>) — runs the Manus SDK glove
-calibration for the browser calibration example and exports MCAL files.</p></li>
 </ul>
 </section>
 <section id="prerequisites">
@@ -597,7 +594,7 @@ to install the dependencies and configure device permissions.</p></li>
 <p>Then, after the <a class="reference internal" href="../../development/build_from_source/index.html"><span class="doc">source-build prerequisites</span></a>,
 build from the root:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-S<span class="w"> </span>.<span class="w"> </span>-B<span class="w"> </span>build
-cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>manus_hand_plugin<span class="w"> </span>manus_hand_tracker_printer<span class="w"> </span>manus_glove_calibrator<span class="w"> </span>-j
+cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>manus_hand_plugin<span class="w"> </span>manus_hand_tracker_printer<span class="w"> </span>-j
 cmake<span class="w"> </span>--install<span class="w"> </span>build<span class="w"> </span>--component<span class="w"> </span>manus
 </pre></div>
 </div>
@@ -612,7 +609,7 @@ runtime, so the runtime must be running and its environment sourced in the
 shell that launches the plugin.</p>
 <p>Start the CloudXR runtime. It runs as a background service that outlives
 this shell, until you stop it with <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">isaaccapture.cloudxr.service</span> <span class="pre">stop</span></code>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start
 </pre></div>
 </div>
 <p>In the shell you will use to run the plugin, source the environment file
@@ -665,10 +662,6 @@ the space-separated form:</p>
 startup with <code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">open</span> <span class="pre">Manus</span> <span class="pre">calibration</span> <span class="pre">file:</span> <span class="pre">&lt;path&gt;</span></code>. A file that
 MANUS Core rejects is logged as <code class="docutils literal notranslate"><span class="pre">Failed</span> <span class="pre">to</span> <span class="pre">apply</span> <span class="pre">&lt;side&gt;</span> <span class="pre">glove</span> <span class="pre">calibration</span> <span class="pre">file</span></code>
 and that glove is reported as calibration failed.</p>
-<p>To record MCAL files, run the browser calibration page in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/manus_calibration/README.md" rel="noopener noreferrer" target="_blank">examples/manus_calibration/README.md</a>. Its worker,
-<code class="docutils literal notranslate"><span class="pre">manus_glove_calibrator</span></code>, is installed next to the plugin in
-<code class="docutils literal notranslate"><span class="pre">./install/plugins/manus/</span></code>.</p>
 </section>
 </section>
 <section id="data-paths">
@@ -972,7 +965,7 @@ by this project.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 14, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 17, 2026.
       <br/>
     
   </p>
