@@ -548,7 +548,7 @@ fi
 # pillow renders the XR controls HUD (isaaccapture_examples/camera_viz/controls/hud.py).
 PKGS=("pyyaml>=6.0" "$target_cupy" "numpy>=1.23" "scipy>=1.15" "pillow>=10.0")
 [[ "$MODE" == full ]] && PKGS=("$ISAACCAPTURE_PKG" "${PKGS[@]}")
-$WITH_V4L2 && PKGS+=("opencv-python>=4.5")
+$WITH_V4L2 && PKGS+=("opencv-python>=4.5,<5")
 $WITH_OAKD && PKGS+=("depthai>=3.0")
 $WITH_RTP  && PKGS+=("pybind11>=2.11" "PyGObject>=3.42,<3.52")
 
@@ -623,6 +623,12 @@ if $WITH_RTP; then
         fi
         deactivate
     fi
+fi
+
+if $WITH_V4L2; then
+    step "verifying OpenCV V4L2 backend"
+    "$PY" "$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/sources/_v4l2_backend.py" \
+        || die "V4L2 capture is unavailable — see the diagnostics above"
 fi
 
 # Native Argus camera source. Jetson-only and opt-in; failures are non-fatal
