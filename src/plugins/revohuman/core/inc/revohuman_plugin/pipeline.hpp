@@ -101,7 +101,6 @@ public:
     void on_glove(const GloveSample& sample, std::int64_t now_ns)
     {
         assert(meta_ && "the source delivers HandMeta before its first glove sample");
-        follow_generation(sample.generation);
         stream_.last_glove_ns = now_ns;
         glove_seen_ = true;
         // A device clock mapped slightly ahead of CLOCK_MONOTONIC must not put samples in the future.
@@ -119,7 +118,10 @@ public:
         stream_.joint_state_published = true;
 
         if (sample.tactile && meta_->has_tactile)
+        {
+            follow_tactile_generation(sample.generation);
             accept_tactile(*sample.tactile, now_ns);
+        }
 
         if (!stream_.hand)
         {
@@ -137,7 +139,7 @@ public:
     void on_tactile(std::uint32_t generation, const TactileSample& tactile, std::int64_t now_ns)
     {
         assert(meta_ && "the source delivers HandMeta before its first tactile sample");
-        follow_generation(generation);
+        follow_tactile_generation(generation);
         if (meta_->has_tactile)
             accept_tactile(tactile, now_ns);
     }
@@ -199,7 +201,7 @@ private:
     using InjectedHand = decltype(std::declval<Sink&>().create_hand());
     struct Stream
     {
-        std::optional<std::uint32_t> generation;
+        std::optional<std::uint32_t> tactile_generation; //!< Of the tactile samples only.
         TactileClock clock;
         std::optional<std::int64_t> last_glove_ns;
         std::optional<InjectedHand> hand; //!< Pushed from the glove samples.
@@ -244,14 +246,16 @@ private:
         held_push_ns_ = now_ns;
     }
 
-    void follow_generation(std::uint32_t generation)
+    //! Only tactile samples move it: glove samples drained after a split stream's tactile can still be of the stream
+    //! before its restart, and would clear the restarted stream's forces and clock.
+    void follow_tactile_generation(std::uint32_t generation)
     {
-        if (stream_.generation && *stream_.generation != generation)
+        if (stream_.tactile_generation && *stream_.tactile_generation != generation)
         {
             clear_tactile();
             stream_.clock = {};
         }
-        stream_.generation = generation;
+        stream_.tactile_generation = generation;
     }
 
     void accept_tactile(const TactileSample& tactile, std::int64_t now_ns)

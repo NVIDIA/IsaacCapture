@@ -395,6 +395,21 @@ TEST_CASE("pipeline: split tactile of a new stream generation may reuse ticks", 
     CHECK(f.sink.of("clear_tactile").size() == 1);
 }
 
+TEST_CASE("pipeline: glove samples queued before a split stream restarted leave its tactile alone", "[unit]")
+{
+    Fixture f;
+    f.pipeline.set_meta(meta());
+    f.pipeline.on_tactile(0, TactileSample{ 50, 10 * kMs, true, true, kTwoTaxels }, 10 * kMs);
+    // One poll: the restarted stream's tactile is drained before the glove samples still queued from the earlier one.
+    f.pipeline.on_tactile(1, TactileSample{ 5, 20 * kMs, true, true, kTwoTaxels }, 21 * kMs);
+    f.pipeline.on_glove(glove(19 * kMs), 21 * kMs);
+    CHECK(f.sink.of("clear_tactile").size() == 1);
+    CHECK(f.pipeline.health(21 * kMs).tactile_live);
+    // Its clock is kept too: the same sample is not pushed again.
+    f.pipeline.on_tactile(1, TactileSample{ 5, 20 * kMs, true, true, kTwoTaxels }, 22 * kMs);
+    CHECK(f.sink.of("tactile").size() == 2);
+}
+
 TEST_CASE("pipeline: split tactile of a glove without tactile sensors is ignored", "[unit]")
 {
     Fixture f;
