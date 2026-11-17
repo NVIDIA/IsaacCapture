@@ -85,6 +85,8 @@ copybutton_selector = "div.highlight pre, pre.literal-block"
 # build too.
 llms_txt_enabled = _smv_ref_name() in ("", "main")
 llms_txt_suffix_mode = "replace"
+# Anchor every section so in-page links (`Title`_ in RST) resolve in the Markdown.
+markdown_anchor_sections = True
 # A redirect stub's refresh and a hidden toctree mean nothing outside HTML.
 llms_txt_suppress_unknown_node_warnings = ["meta", "toctree"]
 # sphinx-llm indexes every *.md in its build, so a :download: of a README.md would be
