@@ -15,8 +15,13 @@ import posixpath
 
 from docutils import nodes
 from sphinx import addnodes
+from sphinx.errors import ExtensionError
 from sphinx_design.shared import PassthroughTextElement
+from sphinx_llm.markdown_builder import SphinxLlmMarkdownBuilder
 from sphinx_markdown_builder.contexts import WrappedContext
+
+MARKDOWN_BUILDER = SphinxLlmMarkdownBuilder.name
+FAIL_ON_WARNINGS = "markdown_fail_on_warnings"
 
 
 def _visit_as_paragraph(self, node):
@@ -102,7 +107,43 @@ def _visit_download_reference(self, node):
     self._push_context(WrappedContext("[", f"]({target})"))
 
 
+def _sphinx_private(app, name):
+    """Read a private Sphinx attribute, failing loudly if an upgrade removed it."""
+    try:
+        return getattr(app, name)
+    except AttributeError as error:
+        raise ExtensionError(f"markdown_nodes needs Sphinx.{name}") from error
+
+
+def _forward_fail_on_warnings(app):
+    """Hand the parent build's -W to the Markdown build sphinx-llm spawns.
+
+    sphinx-llm forwards -D overrides but not -W, and relays only unknown-node warnings.
+    """
+    if app.builder.name != MARKDOWN_BUILDER and _sphinx_private(
+        app, "_fail_on_warnings"
+    ):
+        app.config.overrides[FAIL_ON_WARNINGS] = True
+
+
+def _fail_on_warnings(app, exception):
+    """A non-zero exit is reported by the parent build as an error, failing its -W.
+
+    Only under -W: on that exit sphinx-llm publishes no Markdown and no llms.txt.
+    """
+    if (
+        exception is None
+        and app.builder.name == MARKDOWN_BUILDER
+        and app.config[FAIL_ON_WARNINGS]
+        and _sphinx_private(app, "_warncount")
+    ):
+        app.statuscode = 1
+
+
 def setup(app):
+    app.add_config_value(FAIL_ON_WARNINGS, False, "", bool)
+    app.connect("builder-inited", _forward_fail_on_warnings)
+    app.connect("build-finished", _fail_on_warnings)
     app.add_node(
         nodes.caption,
         override=True,
