@@ -153,20 +153,22 @@ def test_a_jaw_command_that_arrives_after_the_adapter_gave_up_moves_nothing(
     ids = command_ids(link)
     before = h.arm.gripper_read()
     assert before is not None and before > 0.9
+    stiffness = h.arm.jaw_stiffness
     rig.robot_end.keep_back()
     with pytest.raises(RobotLinkError, match="no RESULT for the jaw command within"):
         rig.adapter.set_gripper(position(0.0))
-    assert rig.adapter._stopped is True
+    assert rig.adapter._latched is True  # the adapter's stop latch
     assert h.arm.jaw_commands == []  # the GRIPPER is still on its way
     rig.robot_end.deliver()
     until(lambda: link.final_result(ids[-1]) is not None, "the RESULT of the GRIPPER")
     assert link.final_result(ids[-1]).status == "refused"
     h.idle()
     assert h.app._worker.wait_idle(WAIT_S)
-    # Nothing of the command reached the jaws.
+    # Nothing of the command reached the jaws, and the STOP found no jaw
+    # command running: they stay as they were.
     assert h.arm.jaw_commands == []
     assert h.arm.gripper_read() == before
-    assert h.arm.jaw_stiffness == sim_arm.LIGHT
+    assert h.arm.jaw_stiffness == stiffness and h.arm.light_holds == []
     # The adapter's STOP ended the agent's ownership; the motors stay on.
     _, text, data = h.wait_local_event("stop")
     assert data["sender"] == stop_module.AGENT_SENDER
@@ -240,13 +242,22 @@ def test_a_jaw_command_answered_in_time_sends_no_stop_and_keeps_the_arm(
     h = rig.h
     assert rig.adapter.set_gripper(position(0.5), effort=0.4) is None
     assert rig.adapter.close_gripper_two_stage(width_frac_stage2=0.85) is not None
+    # The two-stage close is one GRIPPER too, sent as the plain one is, with
+    # the scout stage's opening.
     assert [event[1:5] for event in rig.of("gripper")] == [
         (pytest.approx(0.5), 0.4, "plain", 12.0),
         (pytest.approx(0.15), 0.6, "close_until_contact", 12.0),
     ]
+    sent = rig.adapter.last_jaw
+    assert (sent["opening"], sent["effort"], sent["mode"]) == (
+        pytest.approx(0.15),
+        0.6,
+        "close_until_contact",
+    )
+    assert sent["scout_opening"] == pytest.approx(0.5)
     assert [command.status for command in h.arm.jaw_commands] == ["reached"] * 2
     assert rig.of("stop") == [] and h.heard("stop") == []
-    assert rig.adapter._stopped is False
+    assert rig.adapter._latched is False  # the adapter's stop latch
     state = rig.link.state()
     assert (state.owner, state.stop_number) == ("agent", 0)
 

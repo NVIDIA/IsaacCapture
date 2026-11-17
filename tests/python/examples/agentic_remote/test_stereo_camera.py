@@ -33,7 +33,6 @@ from isaaccapture_examples.agentic_remote.agent.camera.frame_source import (
     StereoPair,
 )
 from isaaccapture_examples.agentic_remote.agent.camera.stereo_camera import (
-    BEFORE_ARRIVAL_LIMIT_S,
     CAMERA_TYPE,
     CLOCK_STEP_QUIET_S,
     FUTURE_LIMIT_S,
@@ -179,51 +178,64 @@ def test_a_camera_frame_is_never_dated_later_than_it_arrived(
     assert stamp.raw_age_s == pytest.approx(-0.01, abs=CLOSE)
 
 
-def test_without_a_robot_state_there_is_no_time_for_a_camera_frame(
+def undated(stamp: FrameStamp, pair: StereoPair, says: str) -> bool:
+    """The stamp carries no evidence time, says why, and is the pair's arrival."""
+    assert stamp.evidence_wall_s is None and stamp.capture_thor_mono_s is None
+    assert stamp.t == pair.receiver_rx_mono_s and type(stamp.t) is float
+    assert says in stamp.problem, stamp.problem
+    return True
+
+
+def test_without_a_robot_state_a_camera_frame_is_dated_at_its_arrival_only(
     link: StubLink, now: Now
 ) -> None:
     pair = a_pair(link)
     link.has_state = False
-    with pytest.raises(CameraError, match="no ROBOT_STATE has arrived yet"):
-        stamp_pair(link, pair, now)
+    stamp = stamp_pair(link, pair, now)
+    assert undated(stamp, pair, "no ROBOT_STATE has arrived yet")
+    assert stamp.raw_age_s is None
 
 
-def test_a_robot_state_older_than_one_second_dates_no_camera_frame(
+def test_a_robot_state_older_than_one_second_gives_no_evidence_time(
     link: StubLink, now: Now
 ) -> None:
     assert STATE_MAX_AGE_S == 1.0
     pair = a_pair(link)
     link.state_age_s = 0.99
-    stamp_pair(link, pair, now)
+    assert stamp_pair(link, pair, now).problem == ""
     link.state_age_s = 1.01
-    with pytest.raises(CameraError, match=r"newest ROBOT_STATE is 1\.01 s old"):
-        stamp_pair(link, pair, now)
+    stamp = stamp_pair(link, pair, now)
+    assert undated(stamp, pair, "newest ROBOT_STATE is 1.01 s old")
+    # What the two clocks said is kept for the record.
+    assert stamp.raw_age_s == pytest.approx(0.08, abs=CLOSE)
 
 
-def test_a_capture_time_in_the_future_of_the_thors_clock_is_refused(
+def test_a_capture_time_in_the_future_of_the_thors_clock_gives_no_evidence_time(
     link: StubLink, now: Now
 ) -> None:
     assert FUTURE_LIMIT_S == 0.05
-    stamp_pair(link, a_pair(link, age_s=-0.049, arrived_ago_s=0.0), now)
-    with pytest.raises(CameraError, match=r"0\.051 s in the future"):
-        stamp_pair(link, a_pair(link, age_s=-0.051), now)
-    with pytest.raises(CameraError, match="in the future"):
-        stamp_pair(link, a_pair(link, age_s=-3600.0), now)
+    near = stamp_pair(link, a_pair(link, age_s=-0.049, arrived_ago_s=0.0), now)
+    assert near.problem == "" and near.evidence_wall_s is not None
+    pair = a_pair(link, age_s=-0.051)
+    assert undated(stamp_pair(link, pair, now), pair, "0.051 s in the future")
+    pair = a_pair(link, age_s=-3600.0)
+    assert undated(stamp_pair(link, pair, now), pair, "in the future")
 
 
 @pytest.mark.parametrize("arrived_ago_s", [0.5, 2.5])
-def test_a_capture_time_after_the_pairs_arrival_is_refused(
+def test_a_capture_time_after_the_pairs_arrival_gives_no_evidence_time(
     link: StubLink, now: Now, arrived_ago_s: float
 ) -> None:
     # Exposed 10 ms ago by the Thor's clock, yet here since arrived_ago_s.
     pair = a_pair(link, age_s=0.010, arrived_ago_s=arrived_ago_s)
-    with pytest.raises(CameraError, match=r"s after its arrival, over 0\.07 s"):
-        stamp_pair(link, pair, now)
+    stamp = stamp_pair(link, pair, now)
+    assert undated(stamp, pair, "s after the arrival, over 0.07 s")
     # The limit is the future limit plus the clock margin.
     edge = FUTURE_LIMIT_S + MARGIN + 0.010
-    stamp_pair(link, a_pair(link, age_s=0.010, arrived_ago_s=edge - 0.001), now)
-    with pytest.raises(CameraError, match="after its arrival"):
-        stamp_pair(link, a_pair(link, age_s=0.010, arrived_ago_s=edge + 0.001), now)
+    inside = a_pair(link, age_s=0.010, arrived_ago_s=edge - 0.001)
+    assert stamp_pair(link, inside, now).problem == ""
+    outside = a_pair(link, age_s=0.010, arrived_ago_s=edge + 0.001)
+    assert undated(stamp_pair(link, outside, now), outside, "after the arrival")
 
 
 def test_the_evidence_time_is_never_newer_than_the_arrival(
@@ -241,25 +253,27 @@ def test_the_evidence_time_is_never_newer_than_the_arrival(
     assert stamp.raw_age_s == pytest.approx(0.010, abs=CLOSE)
 
 
-def test_a_capture_time_long_before_the_arrival_is_refused(
+def test_a_capture_time_long_before_the_arrival_is_the_camera_frames_time(
     link: StubLink, now: Now
 ) -> None:
-    assert BEFORE_ARRIVAL_LIMIT_S == 1.0
-    # Converted time: age plus margin before now; the pair arrived 0.03 s ago.
-    stamp_pair(link, a_pair(link, age_s=1.0, arrived_ago_s=0.03), now)
-    with pytest.raises(CameraError, match=r"1\.0\d s before its arrival"):
-        stamp_pair(link, a_pair(link, age_s=1.02, arrived_ago_s=0.03), now)
+    """A late camera link is no refusal of its own: the frame is dated that old."""
+    assert not hasattr(stereo_camera, "BEFORE_ARRIVAL_LIMIT_S")
+    # Captured 2.5 s ago by the Thor's clock; the pair arrived 0.03 s ago.
+    pair = a_pair(link, age_s=2.5, arrived_ago_s=0.03)
+    stamp = stamp_pair(link, pair, now)
+    assert stamp.problem == "" and stamp.evidence_wall_s == min(pair.sof_wall_ns) / 1e9
+    assert stamp.t == pytest.approx(now.t - 2.5 - MARGIN, abs=CLOSE)
 
 
-def test_camera_frames_are_refused_for_three_seconds_after_a_clock_step(
+def test_for_three_seconds_after_a_clock_step_there_is_no_evidence_time(
     link: StubLink, now: Now
 ) -> None:
     assert CLOCK_STEP_QUIET_S == 3.0
     link.step_at = now.t - 2.9
-    with pytest.raises(CameraError, match=r"wall clock stepped 2\.90 s ago"):
-        stamp_pair(link, a_pair(link), now)
+    pair = a_pair(link)
+    assert undated(stamp_pair(link, pair, now), pair, "wall clock stepped 2.90 s ago")
     link.step_at = now.t - 3.0
-    stamp_pair(link, a_pair(link), now)
+    assert stamp_pair(link, a_pair(link), now).problem == ""
 
 
 def test_an_arrival_stamp_that_is_not_a_past_time_is_refused(
@@ -267,8 +281,12 @@ def test_an_arrival_stamp_that_is_not_a_past_time_is_refused(
 ) -> None:
     for arrival in (now.t + 0.5, math.nan, math.inf):
         pair = dataclasses.replace(a_pair(link), receiver_rx_mono_s=arrival)
-        with pytest.raises(CameraError, match="arrival stamp"):
-            stamp_pair(link, pair, now)
+        # With and without the robot link's clocks.
+        for has_state in (True, False):
+            link.has_state = has_state
+            with pytest.raises(CameraError, match="arrival stamp"):
+                stamp_pair(link, pair, now)
+        link.has_state = True
 
 
 def a_state(seq: int, mono: float, skew: float = SKEW) -> Any:
@@ -296,8 +314,8 @@ def test_the_times_come_from_the_agent_links_clock_calls() -> None:
         )
 
     try:
-        with pytest.raises(CameraError, match="no ROBOT_STATE has arrived yet"):
-            stamp_pair(link, pair_at(SKEW + 1000.0, 499.0), now)
+        first = pair_at(SKEW + 1000.0, 499.0)
+        assert undated(stamp_pair(link, first, now), first, "no ROBOT_STATE")
         # The Thor read its clocks at 1000.0 s; the state arrived at 500.0 here.
         arrive(a_state(1, 1000.0), at=500.0)
         now.t = 500.1  # the Thor's monotonic clock is estimated at 1000.1 s
@@ -306,13 +324,13 @@ def test_the_times_come_from_the_agent_links_clock_calls() -> None:
         assert stamp.raw_age_s == pytest.approx(0.1, abs=CLOSE)
         assert stamp.t == pytest.approx(500.0 - MARGIN, abs=CLOSE)
         now.t = 501.2
-        with pytest.raises(CameraError, match=r"ROBOT_STATE is 1\.20 s old"):
-            stamp_pair(link, pair_at(SKEW + 1001.1, 501.15), now)
+        late = pair_at(SKEW + 1001.1, 501.15)
+        assert undated(stamp_pair(link, late, now), late, "ROBOT_STATE is 1.20 s old")
         # The Thor's wall clock jumps by 5 s against its monotonic clock.
         arrive(a_state(2, 1001.2, SKEW + 5.0), at=501.2)
         assert link.clock_step_at_s() == 501.2
-        with pytest.raises(CameraError, match="wall clock stepped"):
-            stamp_pair(link, pair_at(SKEW + 5.0 + 1001.1, 501.15), now)
+        stepped = pair_at(SKEW + 5.0 + 1001.1, 501.15)
+        assert undated(stamp_pair(link, stepped, now), stepped, "wall clock stepped")
         arrive(a_state(3, 1004.3, SKEW + 5.0), at=504.3)
         stamp = stamp_pair(link, pair_at(SKEW + 5.0 + 1004.2, 504.25), now)
         assert stamp.capture_thor_mono_s == pytest.approx(1004.2, abs=CLOSE)
@@ -519,6 +537,7 @@ def test_a_pair_becomes_a_camera_frame_with_depth_times_and_its_calibration(
     assert capture["capture_thor_mono_s"] == pytest.approx(
         now.t + AHEAD - 0.08, abs=CLOSE
     )
+    assert capture["time_problem"] is None and bench.camera.undated == 0
     assert capture["receipt_monotonic_s"] == pair.receiver_rx_mono_s
     assert capture["clock_raw_age_s"] == pytest.approx(0.08, abs=CLOSE)
     # What a permit looks up, by exactly the float APAI's grid keeps.
@@ -648,22 +667,35 @@ def test_the_same_pair_twice_is_refused(bench: Bench, now: Now) -> None:
 
 
 @pytest.mark.apai
-def test_a_capture_time_that_does_not_grow_is_refused(bench: Bench, now: Now) -> None:
+def test_a_capture_time_that_does_not_grow_gives_no_evidence_time(
+    bench: Bench, now: Now
+) -> None:
     first = bench.pair(7)
     bench.source.items.append(first)
     bench.camera.get_frame()
     now.t += 0.14
+    # As after a step back of the Thor's wall clock: a later pair, the same time.
     same_time = dataclasses.replace(first, seq=8, receiver_rx_mono_s=now.t - 0.01)
     bench.source.items.append(same_time)
-    with pytest.raises(CameraError, match=r"capture time of stereo pair \(1, 8\)"):
-        bench.camera.get_frame()
+    frame = bench.camera.get_frame()
+    assert frame.capture["seq"] == 8 and frame.t == same_time.receiver_rx_mono_s
+    assert frame.capture["evidence_wall_s"] is None
+    assert "capture time did not grow" in frame.capture["time_problem"]
+    assert len(bench.frame_times) == 1 and bench.camera.undated == 1
+    # The mark is the last dated camera frame's: an older capture is undated too.
+    now.t += 0.14
     bench.source.items.append(bench.pair(9, age_s=0.5))
-    with pytest.raises(CameraError, match="did not grow"):
+    assert bench.camera.get_frame().capture["evidence_wall_s"] is None
+    # The camera frame's own time must grow, as on the Thor.
+    bench.source.items.append(bench.pair(10, age_s=0.3, arrived_ago_s=0.2))
+    with pytest.raises(CameraError, match="this machine's clock did not grow"):
         bench.camera.get_frame()
-    # The camera goes on with the next pair that is newer.
-    bench.source.items.append(bench.pair(10))
-    assert bench.camera.get_frame().capture["seq"] == 10
-    assert len(bench.frame_times) == 2
+    # The next pair that is newer has an evidence time again.
+    now.t += 0.14
+    bench.source.items.append(bench.pair(11))
+    frame = bench.camera.get_frame()
+    assert frame.capture["seq"] == 11 and frame.capture["time_problem"] is None
+    assert len(bench.frame_times) == 2 and bench.camera.undated == 2
 
 
 @pytest.mark.apai
@@ -719,45 +751,64 @@ def test_a_dead_bridge_is_a_camera_error_at_once(bench: Bench) -> None:
 
 
 @pytest.mark.apai
-def test_a_refused_time_hands_apai_no_camera_frame_and_notes_nothing(
-    bench: Bench, link: StubLink, now: Now
+def test_a_camera_frame_the_link_cannot_date_is_handed_on_and_notes_nothing(
+    bench: Bench, link: StubLink, now: Now, caplog: pytest.LogCaptureFixture
 ) -> None:
-    link.state_age_s = 1.5
-    bench.source.items.append(bench.pair(1))
-    with pytest.raises(CameraError, match=r"ROBOT_STATE is 1\.50 s old"):
-        bench.camera.get_frame()
-    assert bench.depth.images == []  # refused before any depth work
-    assert len(bench.frame_times) == 0 and bench.camera.delivered == 0
-    link.state_age_s = 0.01
-    link.step_at = now.t - 1.0
-    bench.source.items.append(bench.pair(2))
-    with pytest.raises(CameraError, match="wall clock stepped"):
-        bench.camera.get_frame()
-    link.step_at = None
-    bench.source.items.append(bench.pair(3, age_s=-3600.0))
-    with pytest.raises(CameraError, match="in the future"):
-        bench.camera.get_frame()
+    """The robot link's trouble refuses no camera frame; it withholds the evidence."""
+    caplog.set_level("INFO", logger=stereo_camera._log.name)
+    troubles = (
+        (lambda: setattr(link, "has_state", False), "no ROBOT_STATE has arrived"),
+        (lambda: setattr(link, "state_age_s", 1.5), "ROBOT_STATE is 1.50 s old"),
+        (lambda: setattr(link, "step_at", now.t - 1.0), "wall clock stepped"),
+    )
+    for seq, (trouble, says) in enumerate(troubles, start=1):
+        link.has_state, link.state_age_s, link.step_at = True, 0.01, None
+        pair = bench.pair(seq)
+        trouble()
+        bench.source.items.append(pair)
+        frame = bench.camera.get_frame()
+        capture = frame.capture
+        assert frame.t == frame.observed_t == pair.receiver_rx_mono_s
+        assert frame.t == capture["receipt_monotonic_s"]  # as on the Thor
+        assert capture["evidence_wall_s"] is None
+        assert capture["capture_thor_mono_s"] is None
+        assert says in capture["time_problem"]
+        assert frame.depth_m is not None and bench.depth.images
+        json.dumps(capture)
+        now.t += 0.14
     assert len(bench.frame_times) == 0
-    # A refused pair is no mark for the next: the camera goes on at once.
-    bench.source.items.append(bench.pair(4))
-    assert bench.camera.get_frame().capture["seq"] == 4
+    assert (bench.camera.delivered, bench.camera.undated) == (3, 3)
+    link.has_state, link.state_age_s, link.step_at = True, 0.01, None
+    bench.source.items.append(bench.pair(4, age_s=-3600.0))
+    assert "in the future" in bench.camera.get_frame().capture["time_problem"]
+    now.t += 0.14
+    # The next pair the link can date has its evidence time.
+    bench.source.items.append(bench.pair(5))
+    frame = bench.camera.get_frame()
+    assert frame.capture["time_problem"] is None
+    assert bench.frame_times.lookup(frame.t) == frame.capture["evidence_wall_s"]
+    # One line when the evidence goes and one when it is back, not one per frame.
+    lines = [record.getMessage() for record in caplog.records]
+    assert sum("carry no evidence time" in line for line in lines) == 1
+    assert sum("evidence time again" in line for line in lines) == 1
 
 
 @pytest.mark.apai
 def test_the_time_is_taken_again_after_depth(
     bench: Bench, link: StubLink, now: Now
 ) -> None:
-    """A ROBOT_STATE that stops arriving while depth runs refuses the camera frame."""
+    """A ROBOT_STATE that stops arriving while depth runs leaves no evidence time."""
 
     def states_stop() -> None:
         now.t += 0.4
         link.state_age_s = 1.2
 
     bench.depth.during = states_stop
-    bench.source.items.append(bench.pair(1))
-    with pytest.raises(CameraError, match=r"ROBOT_STATE is 1\.20 s old"):
-        bench.camera.get_frame()
-    assert bench.depth.images and len(bench.frame_times) == 0
+    pair = bench.pair(1)
+    bench.source.items.append(pair)
+    frame = bench.camera.get_frame()
+    assert "ROBOT_STATE is 1.20 s old" in frame.capture["time_problem"]
+    assert frame.t == pair.receiver_rx_mono_s and len(bench.frame_times) == 0
 
 
 @pytest.mark.apai
@@ -803,15 +854,16 @@ def test_apais_stream_gets_camera_frames_and_survives_a_refusal(
         now.t += 0.05
         return bench.pair(int(now.t * 1000))
 
-    link.state_age_s = 5.0  # the first grab is refused; the stream tries again
-    bench.source.items += [next_pair] * 200
+    def from_the_future() -> StereoPair:
+        return dataclasses.replace(next_pair(), receiver_rx_mono_s=now.t + 5.0)
+
+    # The first grab is refused; the stream tries again.
+    bench.source.items += [from_the_future, *[next_pair] * 200]
     bench.camera.close()
     stream = CameraStream(bench.camera, name="head", rate_hz=100.0)
     stream.open()
     try:
         until(lambda: "grab failed" in capsys.readouterr().err, "the refusal")
-        assert stream._latest is None
-        link.state_age_s = 0.01
         until(lambda: stream._latest_seq >= 3, "three camera frames")
         frame = stream._latest
     finally:

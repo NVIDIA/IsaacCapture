@@ -71,6 +71,7 @@ SIGNATURES = {
         "check_setpoint": ["q_prev", "q_next", "dt"],
         "check_pose": ["q"],
         "check_low_pose": ["q"],
+        "check_start_pose": ["q"],
         "check_path": ["q_start", "setpoints", "dt"],
         "check_grasp_region": ["region"],
         "set_grasp_region": ["region"],

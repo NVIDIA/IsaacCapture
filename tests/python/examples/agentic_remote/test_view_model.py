@@ -14,6 +14,7 @@ import dataclasses
 import hmac
 import json
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,6 +23,8 @@ from isaaccapture_examples.agentic_remote.agent.camera import stereo_camera
 from isaaccapture_examples.agentic_remote.protocol.local_messages import LocalStatus
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     Event,
+    GripperState,
+    JointSample,
     RobotState,
     ViewStatus,
 )
@@ -653,10 +656,18 @@ def test_the_status_holds_what_the_page_shows():
         "move_stage": "sending",
         "jaw_load": "unknown",
         "torque_on": True,
+        # This robot app reports nothing of the hold.
+        "torque": "on",
+        "torque_bad": False,
         "assistance_wait_s": 41.5,
         "permit": permit,
         "permit_refusal": "the grid is too old",
         "view_age_s": 0.3,
+        # This ROBOT_STATE carries no joint, no jaw reading and no count.
+        "joints": [],
+        "jaw": {"valid": False, "opening": None, "target": None, "diff": None},
+        "reading_age_s": None,
+        "missed_deadlines": None,
     }
     assert told["picture"] == {
         "seq": 5,
@@ -674,6 +685,163 @@ def test_the_status_holds_what_the_page_shows():
     told = model.status_json(T0 + 1.0, model.thor_wall_now(T0 + 1.0))
     assert told["robot"]["service_alive"] is False
     assert told["state"]["permit"] is None and told["state"]["permit_refusal"] == ""
+
+
+@pytest.mark.parametrize(
+    ("fields", "torque", "bad"),
+    [
+        # ROBOT_STATE's torque_on says only that the robot app has not
+        # released the motors; health["motors"] is what the joint readings say.
+        ({"health": {"motors": {"state": "holding"}}}, "on (holding)", False),
+        ({"health": {"motors": {"state": "not holding"}}}, "NOT HOLDING", True),
+        ({"health": {"motors": {"state": "unknown"}}}, "on, hold unknown", False),
+        ({"health": {"motors": "broken"}}, "on", False),
+        ({"torque_on": False, "motion": "rest_unpowered"}, "off", False),
+        # After a torque release that failed the motors may be on or off.
+        ({"motion": "release_failed"}, "unknown", True),
+        (
+            {"motion": "release_failed", "health": {"motors": {"state": "holding"}}},
+            "unknown",
+            True,
+        ),
+    ],
+    ids=["holding", "not holding", "unknown", "garbled", "off", "failed", "failed2"],
+)
+def test_the_page_is_told_what_the_motors_do(fields, torque, bad) -> None:
+    model = ViewModel()
+    model.on_message(state_at(WALL0, **fields), T0)
+    state = model.status_json(T0, model.thor_wall_now(T0))["state"]
+    assert (state["torque"], state["torque_bad"]) == (torque, bad)
+    # The page's Torque row writes that word, as a warning where it is one,
+    # and no longer its own reading of torque_on.
+    page = Path(view_model.__file__).with_name("page.html").read_text("utf-8")
+    assert 'row("Torque", state.torque, state.torque_bad);' in page
+    assert "state.torque_on" not in page
+
+
+# The measured joints, the last target sent and the setpoint stream's health.
+# A missed deadline is a setpoint of a move that the robot app sent late.
+
+MEASURED = [0.5, -0.05, -0.048, 1.0, -1.5707963267948966, 0.0]
+TARGET = [0.52, -0.05, -0.05, 0.9, -1.5707963267948966, 0.25]
+# What the page is told of the jaws when nothing about them is a number.
+NO_JAW = {"valid": False, "opening": None, "target": None, "diff": None}
+
+
+def with_joints(**fields: Any) -> RobotState:
+    """A ROBOT_STATE with six measured joints, a target and a jaw reading."""
+    made = {
+        "joints": [
+            JointSample(joint, value, 990.0, 990.001, True)
+            for joint, value in enumerate(MEASURED)
+        ],
+        "target_q": list(TARGET),
+        "target_t": 990.0,
+        "gripper": GripperState(0.4, 990.0, True, True, 0.5, False, "empty"),
+        "health": {"reading_age_s": 0.125, "missed_deadlines": 3},
+    }
+    return state_at(WALL0, **{**made, **fields})
+
+
+def state_told(state: RobotState) -> dict[str, Any]:
+    """What the page is told of that ROBOT_STATE; it must be strict JSON."""
+    model = ViewModel()
+    model.on_message(state, T0)
+    told = model.status_json(T0 + 0.5, None)
+    return json.loads(json.dumps(told, allow_nan=False))["state"]
+
+
+def test_the_status_holds_each_joint_beside_its_last_target():
+    told = state_told(with_joints())
+    assert [row["joint"] for row in told["joints"]] == [0, 1, 2, 3, 4, 5]
+    assert all(row["valid"] is True for row in told["joints"])
+    assert [row["q"] for row in told["joints"]] == MEASURED
+    assert [row["target"] for row in told["joints"]] == TARGET
+    # Degrees of the measured value; the difference is measured minus target.
+    assert [row["deg"] for row in told["joints"]] == pytest.approx(
+        [28.6479, -2.8648, -2.7502, 57.2958, -90.0, 0.0], abs=1e-4
+    )
+    assert [row["diff"] for row in told["joints"]] == pytest.approx(
+        [-0.02, 0.0, 0.002, 0.1, 0.0, -0.25], abs=1e-12
+    )
+    assert set(told["joints"][0]) == {"joint", "valid", "q", "deg", "target", "diff"}
+    # The jaws, as shares of the jaw travel.
+    assert told["jaw"] == {
+        "valid": True,
+        "opening": 0.4,
+        "target": 0.5,
+        "diff": pytest.approx(-0.1),
+    }
+    # As the robot app reported them with this ROBOT_STATE.
+    assert told["reading_age_s"] == 0.125 and told["missed_deadlines"] == 3
+
+
+def test_a_joint_without_a_valid_reading_is_marked_and_has_no_value():
+    # What the robot app sends for a joint that has no valid reading.
+    joints = with_joints().joints
+    joints[3] = JointSample(3, 0.0, 0.0, 0.0, False)
+    health = {"reading_age_s": None, "missed_deadlines": 0}
+    told = state_told(with_joints(joints=joints, health=health))
+    assert told["joints"][3] == {
+        "joint": 3,
+        "valid": False,
+        "q": None,
+        "deg": None,
+        "target": 0.9,
+        "diff": None,
+    }
+    # The other joints keep their values.
+    others = [row for row in told["joints"] if row["joint"] != 3]
+    assert all(row["valid"] is True for row in others)
+    assert [row["q"] for row in others] == MEASURED[:3] + MEASURED[4:]
+    assert told["reading_age_s"] is None and told["missed_deadlines"] == 0
+    # Jaws without a reading: the last jaw target is still told.
+    no_reading = GripperState(None, None, False, False, 0.5, False, "unknown")
+    assert state_told(with_joints(gripper=no_reading))["jaw"] == {
+        "valid": False,
+        "opening": None,
+        "target": 0.5,
+        "diff": None,
+    }
+
+
+def test_without_a_target_the_joints_have_no_target_and_no_difference():
+    never_sent = GripperState(0.4, 990.0, True, True, None, False, "empty")
+    told = state_told(with_joints(target_q=None, target_t=None, gripper=never_sent))
+    assert [row["q"] for row in told["joints"]] == MEASURED
+    assert all(row["target"] is None for row in told["joints"])
+    assert all(row["diff"] is None for row in told["joints"])
+    assert told["jaw"] == {"valid": True, "opening": 0.4, "target": None, "diff": None}
+    # A target with fewer joints than were measured: the rest have none.
+    short = state_told(with_joints(target_q=TARGET[:2]))
+    assert [row["target"] for row in short["joints"]] == [0.52, -0.05, *[None] * 4]
+    assert [row["diff"] for row in short["joints"]][2:] == [None] * 4
+    assert short["joints"][0]["diff"] == pytest.approx(-0.02)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), "0.1", True, None, [1]])
+def test_joint_numbers_that_are_not_json_are_told_as_unknown(bad: Any):
+    joints = with_joints().joints
+    joints[0] = dataclasses.replace(joints[0], value=bad)
+    told = state_told(
+        with_joints(
+            joints=joints,
+            target_q=[*TARGET[:5], bad],
+            gripper=GripperState(bad, 990.0, True, True, bad, False, "empty"),
+            health={"reading_age_s": bad, "missed_deadlines": bad},
+        )
+    )
+    assert told["joints"][0]["valid"] is False and told["joints"][0]["q"] is None
+    assert told["joints"][5]["target"] is None and told["joints"][5]["diff"] is None
+    assert told["joints"][1]["q"] == MEASURED[1]
+    assert told["jaw"] == NO_JAW
+    assert told["reading_age_s"] is None and told["missed_deadlines"] is None
+
+
+@pytest.mark.parametrize("count", [-1, 2.0, 2.5])
+def test_a_count_of_missed_deadlines_is_a_whole_number_of_0_or_more(count: Any):
+    told = state_told(with_joints(health={"missed_deadlines": count}))
+    assert told["missed_deadlines"] is None
 
 
 def test_the_view_token_is_not_in_the_status():

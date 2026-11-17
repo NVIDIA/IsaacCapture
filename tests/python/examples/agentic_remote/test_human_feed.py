@@ -689,6 +689,81 @@ def test_an_endpoint_isaac_capture_cannot_use_is_refused_and_no_failed_attempt()
     assert not bench.server.sessions[0].entered
 
 
+@pytest.mark.parametrize("before", ["a session that was lost", "a failed attempt"])
+def test_a_value_error_behind_the_first_attempt_is_no_refused_endpoint(before):
+    bench = TeleopBench(attempts=5, retry_s=2.0)
+    server = bench.server
+    if before == "a session that was lost":
+        assert bench.step().stage == "ready"
+        server.step_error = RuntimeError("Remote session lost: connection closed")
+        assert bench.step(PASS_S).stage == "no_server"
+        server.step_error = None
+    else:
+        server.entry_errors = [not_ready(_remote.SERVER_DID_NOT_ANSWER)]
+        assert bench.step().stage == "no_server"
+    # Isaac Capture read teleop.endpoint at that attempt. A ValueError now, as
+    # for an answer that is not UTF-8 text, is no error of the file.
+    wrong = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+    server.entry_errors = [wrong]
+    with pytest.raises(RuntimeError) as raised:
+        bench.step(2.1)
+    assert bench.attempts == 2 and raised.value.__cause__ is wrong
+    assert not isinstance(raised.value, (ValueError, AttemptsRanOut))
+    assert str(raised.value) == (
+        f"the attempt to enter a remote session at {ENDPOINT} failed: "
+        f"UnicodeDecodeError: {wrong}"
+    )
+
+
+def test_the_line_of_an_entered_session_waits_for_log_pass(caplog):
+    name = feed_module._log.name
+    caplog.set_level("INFO", logger=name)
+
+    def written() -> list[tuple[str, str]]:
+        """What the feed's logger has written so far."""
+        records = [record for record in caplog.records if record.name == name]
+        return [(record.levelname, record.getMessage()) for record in records]
+
+    entered = ("INFO", f"entered a remote session at {ENDPOINT}")
+    # The pass that enters a session reads the controller behind the entry,
+    # here with right B down. It logs nothing: a log call can block, and the
+    # program sends the STOP before it asks for the lines.
+    bench = TeleopBench()
+    bench.server.right = snapshot(HAND, b=True)
+    fed = bench.step()
+    assert fed.stage == "ready" and bench.graph.read(fed.outputs).b
+    assert written() == []
+    bench.feed.log_pass()
+    assert written() == [entered]
+    bench.feed.log_pass()  # each line once
+    bench.step(PASS_S)
+    bench.feed.log_pass()
+    assert written() == [entered]
+
+    # A session lost on the pass that entered it: the lines in their order.
+    caplog.clear()
+    lost = TeleopBench()
+    lost.server.step_error = RuntimeError("Remote session lost: connection closed")
+    assert lost.step().stage == "no_server"
+    gone = ("WARNING", f"the remote session was lost: {lost.server.step_error}")
+    assert written() == [entered, gone]
+    lost.feed.log_pass()
+    assert written() == [entered, gone]
+
+    # A line nobody asked for is written when the feed is closed.
+    caplog.clear()
+    closed = TeleopBench()
+    assert closed.step().stage == "ready" and written() == []
+    closed.feed.close()
+    assert written() == [entered] and closed.server.sessions[0].left
+
+    # A script feed keeps no line.
+    script = Bench([BASE])
+    caplog.clear()
+    script.feed.log_pass()
+    assert written() == []
+
+
 def test_the_feed_says_ready_and_never_running():
     bench = TeleopBench()
     seen = []
@@ -1015,4 +1090,33 @@ def test_a_server_that_closes_gives_no_server_and_is_entered_again(mini, remote)
     assert "Remote session lost" in lost.note
     again = bench.until("no_controller")
     assert again.outputs is not None and again.sample_age_s is not None
+    assert len(server.hellos) == 2
+
+
+def test_an_answer_that_is_not_utf8_at_a_later_attempt_is_no_refused_endpoint(
+    mini, remote
+):
+    def script(server: MiniServer, host: Any) -> None:
+        if len(server.hellos) == 1:
+            serve(server, host)
+            return
+        # The second connection: a HELLO_ACK that is not UTF-8 text.
+        host.send_hello_ack(b'{"session_id": "\xff\xfe"}')
+        server.idle(host)
+
+    server = mini(script)
+    bench = remote(server.endpoint, retry_s=0.3)
+    bench.until("no_controller")
+    server.drop.set()
+    bench.until("no_server")
+    # Isaac Capture raises a ValueError for it. The endpoint was read at the
+    # first attempt, so this is an error and not the file's.
+    with pytest.raises(RuntimeError) as raised:
+        bench.until("ready")
+    assert isinstance(raised.value.__cause__, UnicodeDecodeError)
+    assert not isinstance(raised.value, (ValueError, AttemptsRanOut))
+    assert str(raised.value).startswith(
+        f"the attempt to enter a remote session at {server.endpoint} failed: "
+        "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff"
+    )
     assert len(server.hellos) == 2

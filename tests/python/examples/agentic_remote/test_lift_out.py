@@ -10,6 +10,9 @@ grasp was allowed to go down in. A tip under the clearance or inside that
 region is low. A takeover makes a person the control owner; a human drive is
 one stretch of human motion toward human targets, the joint targets of
 HUMAN_SETPOINT link messages. A typed rest is the operator's return to rest.
+While the tip is low a person can only lift it: no target is followed that
+puts the tip more than 1 mm under the highest it was measured since the
+takeover. An arm settles low when it comes to rest under its joint target.
 
 On APAI's mock arm and its checkers, as test_apai_app.py sets them up; the
 last test is on the simulated arm's checkers.
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import threading
 from collections.abc import Callable, Iterator, Sequence
 
 import numpy as np
@@ -61,7 +65,15 @@ from test_apai_app import (
     statuses,
     straight,
 )
-from test_takeover import ask_takeover, feed, human_config, state_now, take_over
+from test_takeover import (
+    MOTION_WORKER,
+    ask_takeover,
+    feed,
+    human_config,
+    setpoint,
+    state_now,
+    take_over,
+)
 
 apai = pytest.mark.apai
 
@@ -79,6 +91,13 @@ LIFTED = moved(ABOVE, 1, 1.60)
 # table at one height, here 2 cm and 8 cm.
 SLID_LOW = moved(BELOW, 0, 0.05)
 SLID = moved(ABOVE, 0, 0.2)
+# Inside the human joint box of person_config(): the tip 1 mm over the table,
+# every link over the table plane, and two links of the gripper under 1 cm.
+LINK_AT_THE_TABLE = [-0.6716, 2.0581, 0.1814, -0.1053, -1.3877, -1.5782]
+LINK_COMPLAINT = r"link/joint 7 at z=0\.008 would hit the table"
+# How far a sagging arm settles under each joint target on the second joint,
+# rad: about 3 mm at the gripper tip.
+SAG = 0.008
 
 
 def person_config(profile, **human_limits: object) -> RobotAppConfig:
@@ -188,6 +207,94 @@ class TurningHand(Hand):
         return super().__call__()
 
 
+class SinkingHand(Hand):
+    """A hand that can also go down bit by bit, as a hand that pauses does.
+
+    While it sinks, each target lies `by` rad per joint from the last joint
+    target the driver took. The second joint lowers the gripper tip by about
+    0.37 mm per mrad. It lets go once it has given its targets.
+    """
+
+    by: Sequence[float] = (0.0,) * 6
+    left = 0  # targets it still gives while it sinks
+
+    def __call__(self) -> HumanSetpoint:
+        if self.left <= 0:
+            return super().__call__()
+        self.left -= 1
+        return setpoint(self.h, self.on_from(self.h.sent()[-1]))
+
+    def on_from(self, last: Sequence[float]) -> list[float]:
+        return [at + by for at, by in zip(last, self.by)]
+
+    def sink(self, by: Sequence[float], targets: int) -> None:
+        """Let go, then squeeze and sink; the human drive has ended on return."""
+        h = self.h
+        self.goal = None
+        feed(h)
+        self.by, self.left = by, targets - 1
+        feed(h, setpoint(h, self.on_from(h.spy.pose())))
+        h.idle()
+
+
+def down(rad: float) -> list[float]:
+    """The second joint this far on: the gripper tip goes straight down."""
+    return [0.0, rad, 0.0, 0.0, 0.0, 0.0]
+
+
+class PacedHand:
+    """A hand as the human program sends it: one HUMAN_SETPOINT per pass.
+
+    A pass is one period of a human drive, whether it sent a joint target or
+    not. While the hand squeezes, its target is the pose the squeeze began at
+    with the second joint `rise` rad further up at every pass; then it lets go.
+    """
+
+    def __init__(self, h: ApaiHarness) -> None:
+        self.h = h
+        self.at: list[float] = []
+        self.rise = 0.0
+        self.left = 0  # passes it still squeezes
+        sleep = h.clock.sleep
+
+        def fed(seconds: float) -> None:
+            sleep(seconds)
+            worker = threading.current_thread().name == MOTION_WORKER
+            if worker and h.app._human_drive.progress() is not None:
+                feed(h, self())
+
+        h.clock.sleep = fed
+
+    def __call__(self) -> HumanSetpoint:
+        if self.left <= 0:
+            return setpoint(self.h)
+        self.left -= 1
+        self.at[1] -= self.rise
+        return setpoint(self.h, self.at)
+
+    def squeeze(self, rise: float, passes: int) -> None:
+        """Let go, then squeeze for `passes`; the human drive has ended on return."""
+        h = self.h
+        self.left = 0
+        feed(h)
+        self.at = h.spy.pose()  # where the human program takes the hand's home
+        self.rise, self.left = rise, passes
+        feed(h, self())
+        h.idle()
+
+
+def settles_low(h: ApaiHarness) -> None:
+    """From here on the mock arm settles SAG under every joint target it takes."""
+    real = h.spy._real["send_joint_target"]
+
+    def sagging(q: np.ndarray) -> None:
+        settled = np.array(q, dtype=float)
+        settled[1] += SAG
+        real(settled)
+
+    h.spy._real["send_joint_target"] = sagging
+
+
 # The takeover
 
 
@@ -236,6 +343,22 @@ def test_a_takeover_above_the_clearance_is_told_as_before(
     assert h.heard("owner")[-1][1] == TAKEN_OVER.format(number=number)
 
 
+@apai
+def test_a_takeover_inside_the_last_grasp_region_is_told_as_one_with_a_low_tip(
+    app: ApaiHarness, profile
+) -> None:
+    h = app
+    region = low_in_a_grasp(h, profile)
+    # Above the table clearance, in the column of the agent's last grasp.
+    h.hold_at(ABOVE)
+    human = h.checkers.human
+    assert human.tip_state(ABOVE, None).low is None
+    assert human.tip_state(ABOVE, region).low == IN_REGION
+    result = take_over(h)
+    number = result.detail["owner_number"]
+    assert h.heard("owner")[-1][1] == TAKEN_OVER.format(number=number) + LOW_TIP
+
+
 def beside_the_workspace(profile) -> tuple[RobotAppConfig, list[float], str]:
     pose = moved(BELOW, 0, -0.9)
     assert tip_z(profile, pose) < FLOOR_M and tip(profile, pose)[1] > 0.3
@@ -264,11 +387,33 @@ def outside_the_human_joint_box(profile) -> tuple[RobotAppConfig, list[float], s
     return config, pose, reason
 
 
+def a_link_at_the_table(profile) -> tuple[RobotAppConfig, list[float], str]:
+    pose = LINK_AT_THE_TABLE
+    at = tip(profile, pose)
+    assert 0.0 < at[2] < FLOOR_M
+    # The links between the base and the gripper tip: none under the table
+    # plane, the lowest under 1 cm and more than 3 cm from the tip.
+    links = profile.kinematics.link_positions(np.array(pose))[1:-1]
+    lowest = min(links, key=lambda link: link[2])
+    assert 0.0 < lowest[2] < 0.01 and np.linalg.norm(lowest - at) > 0.03
+    return person_config(profile), pose, LINK_COMPLAINT
+
+
 @apai
 @pytest.mark.parametrize(
     "other",
-    [beside_the_workspace, under_the_table_plane, outside_the_human_joint_box],
-    ids=["beside the workspace", "under the table plane", "outside the joint box"],
+    [
+        beside_the_workspace,
+        under_the_table_plane,
+        outside_the_human_joint_box,
+        a_link_at_the_table,
+    ],
+    ids=[
+        "beside the workspace",
+        "under the table plane",
+        "outside the joint box",
+        "a link at the table",
+    ],
 )
 def test_a_low_tip_with_another_complaint_of_the_human_checker_is_still_refused(
     make_app: Callable[..., ApaiHarness],
@@ -439,6 +584,244 @@ def test_the_tip_is_held_against_where_it_is_measured_not_where_the_drive_began(
 
 
 @apai
+@pytest.mark.parametrize(
+    ("by", "followed"),
+    [(0.0019, 1), (0.0006, 4)],
+    ids=["0.7 mm per target", "0.2 mm per target"],
+)
+def test_a_hand_that_goes_down_bit_by_bit_is_followed_for_1_mm_in_all(
+    app: ApaiHarness, profile, by: float, followed: int
+) -> None:
+    h = app
+    low_in_a_grasp(h, profile)
+    take_over(h)
+    hand = SinkingHand(h)
+    hand.squeeze(ABOVE)
+    before = len(h.sent())
+    hand.sink(down(by), targets=40)
+    went = h.sent()[before:]
+    heights = [tip_z(profile, q) for q in (ABOVE, *went)]
+    # Each target lay less than the tolerance under the tip as it was measured
+    # then, and the human checker has nothing against the one after the last.
+    drops = [at - after for at, after in zip(heights, heights[1:])]
+    assert all(0.0 < drop < TIP_TOL_M for drop in drops)
+    refused = [at + more for at, more in zip(went[-1], down(by))]
+    human = h.checkers.human
+    assert human.harness.vet_step(np.array(went[-1]), np.array(refused), 1.0) is None
+    (event,) = h.heard("human")
+    assert (event[2]["status"], event[2]["sent"]) == ("refused", followed)
+    assert len(went) == followed
+    told = f"{LIFT}{IN_REGION}, and the target would lower it to z=0.03"
+    assert event[2]["reason"].startswith(told)
+    # What counts is the highest the tip was measured: in all it went down by
+    # less than the tolerance.
+    assert 0.0 < heights[0] - heights[-1] < TIP_TOL_M
+    assert heights[0] - tip_z(profile, refused) > TIP_TOL_M
+    holds_for_the_person(h, went[-1])
+    assert human.harness.violations == []
+
+
+@apai
+def test_a_slide_that_sinks_is_ended_once_the_tip_is_1_mm_down(
+    app: ApaiHarness, profile
+) -> None:
+    h = app
+    low_in_a_grasp(h, profile)
+    take_over(h)
+    hand = SinkingHand(h)
+    hand.squeeze(ABOVE)
+    before = len(h.sent())
+    # Sideways 0.7 mm per target and 0.2 mm down, as a hand that is not level.
+    hand.sink([0.0019, 0.0005, 0.0, 0.0, 0.0, 0.0], targets=40)
+    went = h.sent()[before:]
+    (event,) = h.heard("human")
+    assert (event[2]["status"], event[2]["sent"]) == ("refused", len(went))
+    assert event[2]["reason"].startswith(f"{LIFT}{IN_REGION}, and the target would")
+    assert 3 <= len(went) <= 6
+    start, end = tip(profile, ABOVE), tip(profile, went[-1])
+    assert 0.0 < start[2] - end[2] < TIP_TOL_M
+    assert np.linalg.norm(end[:2] - start[:2]) > 0.002
+    holds_for_the_person(h, went[-1])
+
+
+@apai
+def test_between_the_two_table_clearances_a_hand_that_goes_down_is_ended_too(
+    make_app: Callable[..., ApaiHarness], profile
+) -> None:
+    # rest.table_clearance_m of the app's file above APAI's own: low is under
+    # the higher one, and APAI's table rule begins under the lower.
+    config = person_config(profile)
+    rest = dataclasses.replace(config.rest, table_clearance_m=0.05)
+    h = make_app(dataclasses.replace(config, rest=rest))
+    h.hold_at(ABOVE)
+    take_over(h)
+    assert h.heard("owner")[-1][1].endswith(LOW_TIP)
+    hand = SinkingHand(h)
+    before = len(h.sent())
+    hand.sink(down(0.0019), targets=40)
+    (event,) = h.heard("human")
+    low = "the gripper tip is at z=0.032 m, below the table clearance 0.050 m"
+    why = f"{LIFT}{low}, and the target would lower it to z=0.031 m"
+    assert event[2] == {"status": "refused", "reason": why, "sent": 1}
+    (only,) = h.sent()[before:]
+    assert 0.0 < tip_z(profile, ABOVE) - tip_z(profile, only) < TIP_TOL_M
+    holds_for_the_person(h, only)
+
+
+@apai
+def test_no_number_of_squeezes_lowers_the_tip_by_more_than_the_tolerance(
+    app: ApaiHarness, profile
+) -> None:
+    h = app
+    low_in_a_grasp(h, profile)
+    take_over(h)
+    hand = SinkingHand(h)
+    hand.squeeze(ABOVE)
+    # One target 0.7 mm lower, then the grip is released: it is followed.
+    hand.sink(down(0.0019), targets=1)
+    assert h.heard("human") == []
+    low = h.spy.pose()
+    assert 0.0 < tip_z(profile, ABOVE) - tip_z(profile, low) < TIP_TOL_M
+    # The same squeeze again and again: each begins at the measured pose, and
+    # the tip was higher since the takeover than its target is.
+    for squeezes in range(1, 4):
+        before = len(h.sent())
+        hand.sink(down(0.0019), targets=1)
+        events = h.heard("human")
+        assert len(events) == squeezes
+        assert (events[-1][2]["status"], events[-1][2]["sent"]) == ("refused", 0)
+        told = f"{LIFT}{IN_REGION}, and the target would lower it to z=0.03"
+        assert events[-1][2]["reason"].startswith(told)
+        assert h.sent()[before:] == []
+        holds_for_the_person(h, low)
+    # A lift is followed as before.
+    hand.squeeze(LIFTED)
+    assert len(h.heard("human")) == 3
+    holds_for_the_person(h, LIFTED)
+
+
+@apai
+def test_the_highest_tip_counts_anew_once_the_tip_was_clear(
+    app: ApaiHarness, profile
+) -> None:
+    h = app
+    region = low_in_a_grasp(h, profile)
+    take_over(h)
+    hand = Hand(h)
+    hand.squeeze(LIFTED)
+    human = h.checkers.human
+    # Sideways out of the region, down by 7 mm there, and back in at that
+    # height: 7 mm under where the tip was in the region before.
+    out = moved(LIFTED, 0, 0.2)
+    assert human.tip_state(out, region).low is None
+    for goal in (out, SLID, ABOVE):
+        hand.squeeze(goal)
+        assert h.heard("human") == []
+        holds_for_the_person(h, goal)
+    assert human.tip_state(ABOVE, region).low == IN_REGION
+    # From there on it is held against where it came in.
+    hand.squeeze(SUNK)
+    (event,) = h.heard("human")
+    assert (event[2]["status"], event[2]["sent"]) == ("refused", 0)
+    holds_for_the_person(h, ABOVE)
+
+
+@apai
+def test_the_highest_tip_counts_anew_from_each_takeover(
+    app: ApaiHarness, profile
+) -> None:
+    h = app
+    low_in_a_grasp(h, profile)
+    take_over(h)
+    hand = Hand(h)
+    hand.squeeze(LIFTED)
+    # Right B: nobody owns the arm. Someone puts it 7 mm lower by hand.
+    h.client.stop(reason="right B", sender="controller")
+    h.client.wait_state(lambda s: s.stop_number == 1 and s.owner == "nobody")
+    h.hold_at(ABOVE)
+    take_over(h)
+    before = len(h.sent())
+    hand.squeeze(SLID)
+    assert h.heard("human") == []
+    assert len(h.sent()) > before
+    holds_for_the_person(h, SLID)
+
+
+@apai
+def test_squeezes_on_an_arm_that_settles_low_do_not_sink_it_further(
+    app: ApaiHarness, profile
+) -> None:
+    """The review's case: four squeezes of one target, each 0.4 mm up."""
+    h = app
+    low_in_a_grasp(h, profile)
+    settles_low(h)
+    take_over(h)
+    hand = PacedHand(h)
+    poses, sent = [h.spy.pose()], []
+    for _ in range(4):
+        before = len(h.sent())
+        hand.squeeze(rise=0.001, passes=1)
+        sent.append(len(h.sent()) - before)
+        poses.append(h.spy.pose())
+    heights = [tip_z(profile, pose) for pose in poses]
+    # The first squeeze begins at the measured pose, where the motors held
+    # the arm: its target is sent, and the arm settles under it once.
+    assert sent[0] == 1 and 0.002 < heights[0] - heights[1] < 0.003
+    # From then on the tip was higher since the takeover than a target is.
+    # Nothing is sent and the tip stays; no drive ends refused, since it was
+    # the arm that settled and not the hand that went down.
+    assert sent[1:] == [0, 0, 0]
+    assert poses[2:] == [poses[1]] * 3
+    assert h.heard("human") == []
+    state = state_now(h)
+    assert (state.owner, state.motion, state.torque_on) == ("human", "hold", True)
+    assert h.checkers.human.harness.violations == []
+
+
+@apai
+def test_a_lift_from_where_the_arm_settled_is_followed_and_not_ended(
+    app: ApaiHarness, profile
+) -> None:
+    h = app
+    low_in_a_grasp(h, profile)
+    settles_low(h)
+    take_over(h)
+    hand = PacedHand(h)
+    # A still hand: the arm settles under the targets of the first squeeze.
+    hand.squeeze(rise=0.0, passes=3)
+    top = tip_z(profile, BELOW)  # the highest the tip was measured
+    settled = h.spy.pose()
+    assert top - tip_z(profile, settled) > 2 * TIP_TOL_M
+    before = len(h.sent())
+    reads = h.spy.calls.count("read_positions_for_monitor")
+    hand.squeeze(rise=0.0, passes=5)
+    assert h.sent()[before:] == [] and h.spy.pose() == settled
+    # A pass that sends nothing reads the joints as any other does: the
+    # contact watch must not lose its feedback while the drive waits.
+    assert h.spy.calls.count("read_positions_for_monitor") - reads >= 5 * 6
+
+    # The hand goes up 0.55 mm per pass. For three passes its target is more
+    # than the tolerance under that top, and nothing is sent; then the arm
+    # follows.
+    passes = 30
+    hand.squeeze(rise=0.0015, passes=passes)
+    went = h.sent()[before:]
+    assert h.heard("human") == []
+    assert len(went) == passes - 3
+    # The first step begins where the arm is measured, as every drive's does.
+    step = 0.98 * 0.1 * 0.02
+    assert went[0] == pytest.approx(moved(settled, 1, settled[1] - step), abs=1e-9)
+    assert went[-1] == pytest.approx(
+        moved(settled, 1, settled[1] - passes * 0.0015), abs=1e-9
+    )
+    heights = [tip_z(profile, q) for q in (settled, *went)]
+    assert all(after > at for at, after in zip(heights, heights[1:]))
+    assert tip_z(profile, h.spy.pose()) > top
+    state = state_now(h)
+    assert (state.owner, state.motion, state.torque_on) == ("human", "hold", True)
+
+
+@apai
 def test_a_step_that_dips_on_the_way_to_a_higher_target_is_refused_too(
     make_app: Callable[..., ApaiHarness], profile
 ) -> None:
@@ -461,6 +844,33 @@ def test_a_step_that_dips_on_the_way_to_a_higher_target_is_refused_too(
     )
     assert h.sent()[before:] == []
     holds_for_the_person(h, ABOVE)
+
+
+@apai
+def test_steps_that_dip_bit_by_bit_are_followed_for_1_mm_in_all(
+    app: ApaiHarness, profile
+) -> None:
+    h = app
+    low_in_a_grasp(h, profile)
+    take_over(h)
+    hand = Hand(h)
+    hand.squeeze(ABOVE)
+    # The target of the test above, at the rig's speed: a step is 2 mrad per
+    # joint and lowers the tip by a fraction of a millimetre.
+    goal = [0.0, ABOVE[1] + 0.02, ABOVE[2] + 0.05, -0.02, ABOVE[4], 0.0]
+    before = len(h.sent())
+    hand.squeeze(goal)
+    went = h.sent()[before:]
+    heights = [tip_z(profile, q) for q in (ABOVE, *went)]
+    drops = [at - after for at, after in zip(heights, heights[1:])]
+    assert len(went) > 1 and all(0.0 < drop < TIP_TOL_M for drop in drops)
+    (event,) = h.heard("human")
+    assert (event[2]["status"], event[2]["sent"]) == ("refused", len(went))
+    assert event[2]["reason"].startswith(
+        f"{LIFT}{IN_REGION}, and the step toward the target would lower it to z=0.03"
+    )
+    assert 0.0 < heights[0] - heights[-1] < TIP_TOL_M
+    holds_for_the_person(h, went[-1])
 
 
 @apai
@@ -532,6 +942,11 @@ def test_apais_checker_tells_a_low_tip_from_its_other_complaints(
             human.check_low_pose(pose)
         assert low.value.reason == plain.value.reason
         assert "below table clearance" not in low.value.reason
+    # Only the tip is let under the clearance: a link there is still refused.
+    with pytest.raises(Refusal, match="below table clearance"):
+        human.check_pose(LINK_AT_THE_TABLE)
+    with pytest.raises(Refusal, match=LINK_COMPLAINT):
+        human.check_low_pose(LINK_AT_THE_TABLE)
     with pytest.raises(Refusal, match="a joint pose needs 6 values"):
         human.check_low_pose(BELOW[:5])
     # A pose with nothing against it passes both.

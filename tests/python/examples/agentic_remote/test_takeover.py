@@ -866,6 +866,57 @@ def test_a_jaw_reference_typed_during_the_takeovers_joint_read_refuses_it(
     assert take_over(h).status == "completed"
 
 
+def takeover_with_a_joint_read_of(h, seconds: float) -> Result:
+    """Ask for a takeover whose joint read takes this long; its final RESULT.
+
+    The read's own 0.048 s on the simulated arm come on top.
+    """
+    reached, release = h.hold_call("read_all")
+    command_id = h.client.request_owner("human", reason=RIGHT_B)
+    assert reached.wait(WAIT_S)  # both ages were asked; the joints are read next
+    h.clock.advance(seconds)
+    release.set()
+    return final(h, command_id)
+
+
+_READ_TOOK = r"; the joint read took 0\.[36]\d\d s"
+
+
+def test_a_takeover_is_refused_on_controller_data_that_ran_out_during_its_joint_read(
+    human_app,
+):
+    h = human_app
+    feed(h)  # controller data 0.02 s old, a live view of age 0
+    before = h.app.snapshot()
+    refused = takeover_with_a_joint_read_of(h, 0.3)
+    assert refused.status == "refused"
+    old = r"no fresh controller data: 0\.3\d\d s old, the limit is 0\.25 s"
+    assert re.fullmatch(old + _READ_TOOK, refused.reason), refused.reason
+    assert statuses(h, refused.command_id) == ["refused"]
+    assert_no_takeover(h, before)
+    # A read that leaves both ages inside their limits grants it.
+    feed(h)
+    taken = takeover_with_a_joint_read_of(h, 0.1)
+    assert taken.status == "completed", taken.reason
+    assert h.app.snapshot().owner is Owner.HUMAN and h.app.takeover_open
+
+
+def test_a_takeover_is_refused_on_a_live_view_that_ran_out_during_its_joint_read(
+    make_robot_app, config
+):
+    # Controller data may be older here, so that the view runs out first.
+    h = make_robot_app(config=human_config(config, sample_age_limit_s=2.0))
+    feed(h)
+    before = h.app.snapshot()
+    refused = takeover_with_a_joint_read_of(h, 0.6)
+    assert refused.status == "refused"
+    old = r"the live view is not fresh: 0\.6\d\d s old, the limit is 0\.5 s"
+    told = old + re.escape(OPEN_THE_VIEW) + _READ_TOOK
+    assert re.fullmatch(told, refused.reason), refused.reason
+    assert_no_takeover(h, before)
+    assert take_over(h).status == "completed"
+
+
 # Takeover open: no agent task until the hand-back
 
 

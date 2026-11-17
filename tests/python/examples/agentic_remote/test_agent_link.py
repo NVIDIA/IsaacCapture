@@ -227,6 +227,26 @@ def test_move_and_permit_expire_on_the_thors_monotonic_clock(rig: Rig) -> None:
     assert permit.evidence_wall_s == 1.7e9 + 1001.5
 
 
+def test_a_gripper_expires_on_the_thors_monotonic_clock(rig: Rig) -> None:
+    """The two machines' monotonic clocks differ by their uptimes."""
+    link = rig.ready()  # the state: Thor 1000.0 at workstation 500.0
+    rig.now.t = 502.0
+    with pytest.raises(CommandTimeout):
+        link.gripper(0.5, 0.5, "plain", 0.05)
+    gripper = rig.thor.next_message()
+    assert isinstance(gripper, Gripper)
+    # Its wait of 0.05 s from now, on the Thor's clock: 1002.0 there.
+    assert gripper.expires_mono_s == pytest.approx(1002.05)
+    assert gripper.scout_opening is None  # one close, no scout stage
+    # The scout stage of the driver's two-stage close travels in the same
+    # GRIPPER, with the same expiry rule.
+    with pytest.raises(CommandTimeout):
+        link.gripper(0.15, 0.6, "close_until_contact", 0.05, 0.5)
+    staged = rig.thor.next_message()
+    assert (staged.opening, staged.scout_opening) == (0.15, 0.5)
+    assert staged.expires_mono_s == pytest.approx(1002.05)
+
+
 def test_request_owner_quotes_the_newest_state_or_the_quote_given(rig: Rig) -> None:
     link = rig.ready()
     rig.arrive(a_state(2, owner="nobody", owner_number=4, stop_number=2))

@@ -38,6 +38,7 @@ from isaaccapture_examples.agentic_remote.link_service.service import RobotLinkS
 from isaaccapture_examples.agentic_remote.protocol.carrier import loopback_pair
 from isaaccapture_examples.agentic_remote.protocol.link_carrier import LinkCarrier
 from isaaccapture_examples.agentic_remote.robot_app import __main__ as robot_main
+from isaaccapture_examples.agentic_remote.robot_app import rest as rest_module
 from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
 from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
@@ -74,6 +75,13 @@ APAI = ["--config", ROBOT_YAML, "--arm", "apai"]
 REAL = [*APAI, "--driver", "real", "--apai-profile", "rebot_rs"]
 REST = [0.0] * 6
 PATH = [[0.004 * (index + 1)] * 6 for index in range(25)]
+# What the robot app's process says of a SIGTERM: with the arm at measured
+# rest, where it switches the motors off, and anywhere else.
+SIGTERM_AT_REST = (
+    "robot app: SIGTERM; closing; the arm lies at measured rest: the motors are off"
+)
+SIGTERM_MOTORS_ON = "robot app: SIGTERM; closing with the motors left on"
+SIGTERM_WHY = "robot app: the motors stay on because "
 # Threads of the programs; none may outlive one that ran in this process.
 THREADS = (
     "robot-app-",
@@ -687,13 +695,15 @@ def test_the_link_selftest_passes_on_the_shipped_configuration(capsys, folder):
         "the robot connection is cut during a move",
         "the robot app dials again",
         "rest from the console",
-        "release from the console",
         "close the robot app",
     ]
     assert "robot connection up after 1 dial(s)" in steps[1]
     assert "failed: robot connection lost" in steps[7]
     assert "after 2 dial(s) in all, the same session; nothing moved" in steps[8]
-    assert lines[-1].startswith("selftest-link: all 12 steps passed in ")
+    # The console's rest ends the session at rest: it switches the motors off.
+    assert steps[9].endswith(" rad from rest")
+    assert ": the motors are off, released 0.0" in steps[9]
+    assert lines[-1].startswith("selftest-link: all 11 steps passed in ")
     rest = RobotAppConfig.default().rest
     assert len(released) == 1
     assert released[0] == pytest.approx(list(rest.rest_q), abs=rest.rest_tol_rad)
@@ -709,7 +719,7 @@ def test_a_failed_step_of_the_link_selftest_gives_exit_code_1_and_closes_everyth
     )
     said: list[str] = []
     assert robot_main.run_link_selftest(config, said.append, str(folder)) == 1
-    assert said[-1] == "selftest-link: FAILED at step 5 of 12"
+    assert said[-1] == "selftest-link: FAILED at step 5 of 11"
     assert "FAILED  a move without a permit" in said[-2]
     assert not (folder / "robot_link.sock").exists()
     assert left_threads() == []
@@ -785,14 +795,62 @@ def test_the_robot_app_process_stops_on_ctrl_c_and_closes_on_sigterm(folder, pro
         state = client.wait_state(lambda s: s.stop_number == 1, WAIT_S)
         assert state.torque_on
         assert app.process.poll() is None
+        # SIGTERM with the arm at measured rest: the jaws close, the motors go
+        # off there, and the program ends.
         app.signal(signal.SIGTERM)
         assert app.wait_exit() == 0
-        assert "robot app: SIGTERM; closing with the motors left on" in app.lines
         status = console.wait_status(lambda s: not s.robot_connected, WAIT_S)
         assert status.close_reason
     finally:
         client.close()
         console.close()
+    said = app.lines
+    closed = said.index(f"[{rest_module.EVENT_JAWS}] {rest_module.JAWS_CLOSED}")
+    released = said.index(f"[{rest_module.EVENT_RELEASE}] {rest_module.RELEASED}")
+    ended = said.index(SIGTERM_AT_REST)
+    # The jaws close before the motors go off. The program's own line and the
+    # release's line come from two threads: either can be written first.
+    assert closed < released and closed < ended
+    assert not [line for line in said if "motors left on" in line]
+    service.signal(signal.SIGTERM)
+    assert service.wait_exit() == 0
+
+
+@link
+def test_sigterm_away_from_rest_ends_the_robot_app_with_the_motors_left_on(
+    folder, programs
+):
+    path = str(folder / "s.sock")
+    service = ServiceProcess(folder, path)
+    programs.append(service)
+    port = service.wait_ready()
+    app = Program(ROBOT_MODULE, *SIM, "--connect", f"{HOST}:{port}")
+    programs.append(app)
+    app.wait_line(f"dialing the robot link service at {HOST}:{port}")
+    agent = connect_local(path, "agent", "test", WAIT_S)
+    client = WorkstationClient(agent, SystemClock())
+    try:
+        agent.wait_status(lambda s: s.robot_connected, WAIT_S)
+        client.wait_state(lambda s: s.motion == "rest_hold" and s.torque_on, WAIT_S)
+        assert client.start_task(timeout_s=WAIT_S).status == "completed"
+        moved = client.run_move(PATH, WAIT_S, start_q=REST)
+        assert moved.status == "completed", moved.reason
+        client.wait_state(lambda s: s.motion == "hold" and s.torque_on, WAIT_S)
+        app.signal(signal.SIGTERM)
+        assert app.wait_exit() == 0
+    finally:
+        client.close()
+        agent.close()
+    said = app.lines
+    first = said.index(SIGTERM_MOTORS_ON)
+    # The Thor terminal writes on a thread of its own: a line of it can come
+    # between the program's two.
+    [why] = [line for line in said[first + 1 :] if line.startswith(SIGTERM_WHY)]
+    assert "rest" in why  # the arm is not measured at rest
+    # Nothing was sent to the jaws or the motors on the way out.
+    for kind in (rest_module.EVENT_JAWS, rest_module.EVENT_RELEASE):
+        assert not [line for line in said if line.startswith(f"[{kind}] ")], kind
+    assert SIGTERM_AT_REST not in said
     service.signal(signal.SIGTERM)
     assert service.wait_exit() == 0
 
@@ -1299,7 +1357,8 @@ def test_the_readme_quotes_the_rule_of_the_lift_as_the_robot_app_has_it():
     ended = "`human drive ended: " + human.LIFT + "<why the tip is low>, and the target"
     assert ended in rule
     tolerance = f"{human.TIP_TOL_M * 1000:g} mm"
-    assert f"puts the tip more than {tolerance} lower than it is measured" in rule
+    assert "The robot app keeps a **floor** for the gripper tip" in rule
+    assert f"puts the tip more than {tolerance} under that floor" in rule
     lowered = readme_row("| While the measured gripper tip is low")
     assert f"`human drive ended: {human.LIFT}...`" in lowered
     # APAI's own rule under its table clearance, and what stays refused.
@@ -1417,7 +1476,7 @@ def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
     panes += re.findall(r"\$\(pane (\w+)\)", script)
     rows = dict(re.findall(r"^\| `([a-z]+)` \| `([^`]+)`", told, re.M))
     assert sorted(rows) == sorted(panes) == sorted(printed)
-    assert len(rows) == 5
+    assert len(rows) == 6 and rows["viewer"] == "./run_viewer.sh"
     variables = workstation_variables()
     assert len(variables) == 6
     for pane, command in rows.items():
@@ -1437,8 +1496,27 @@ def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
     unknown = workstation_script(tmp_path, "--bogus")
     assert (unknown.returncode, unknown.stdout) == (2, "")
     assert unknown.stderr.count("\n") == 1
-    for argument in ("--env FILE", "--thor ADDRESS", "--session NAME", "--print"):
+    arguments = (
+        "--env FILE",
+        "--thor ADDRESS",
+        "--session NAME",
+        "--socket-wait SECONDS",
+        "--print",
+    )
+    for argument in arguments:
         assert argument in unknown.stderr and f"[{argument}]" in told, argument
+    # The wait for the service's socket: its default, and what cannot be one.
+    waited = re.search(r"^socket_wait_s=(\d+)$", script, re.M)
+    assert waited is not None
+    assert f"at most {waited.group(1)} s; `--socket-wait SECONDS`" in told
+    no_number = workstation_script(tmp_path, "--socket-wait", "soon")
+    assert (no_number.returncode, no_number.stdout) == (2, "")
+    assert no_number.stderr.count("\n") == 1
+    once = [line for line in lines if line.startswith(("# console ", "# view "))]
+    assert len(once) == 2
+    for line in once:
+        assert "once the service takes a connection on " in line, line
+    assert "**The console and the view start once the service listens.**" in told
     for name in variables:
         unset = workstation_script(tmp_path, **{name: None})
         assert (unset.returncode, unset.stdout) == (2, ""), name
@@ -1478,26 +1556,48 @@ def test_the_readme_names_every_argument_the_agent_program_takes(monkeypatch):
     assert set(re.findall(r"--[a-z-]+", usage)) == taken
     told = readme_section(LAUNCHER_OPTIONS)
     rows = dict(re.findall(r"^\| `(--[a-z-]+)[^|]*\| (.*) \|$", told, re.M))
-    assert len(rows) == 7 and set(rows) <= taken
+    # Every argument of the launcher's lines of the usage has its row.
+    theirs = usage[usage.index("[--batch-milestones]") :]
+    assert set(rows) == set(re.findall(r"--[a-z-]+", theirs))
+    assert len(rows) == 9 and set(rows) <= taken
 
     def run(settings: Any, *arguments: str) -> Any:
         args = parser.parse_args(["--config", "unused", *arguments])
         return launcher._run_options(args, settings)
 
-    # The command the README gives is taken on the rig's file, and the two
-    # arguments it calls ignored change nothing of the run.
+    # The command the README gives is the one the workstation's start script
+    # types, and it is taken on the rig's file. Of its arguments --operate and
+    # the stereo matcher decide nothing about what the run records.
     rig = agent_config.load_settings(CONFIGS / "agent_rebot.yaml")
     command = re.search(r"^\./run_agent\.sh --config \S+ (.*?)\n```", told, re.M | re.S)
     assert command is not None
     given = command.group(1).replace("\\\n", " ").split()
     assert {"--operate", "--depth-backend", "--motion-approval"} < set(given)
+    typed = " ".join(given)
+    script = one_line(WORKSTATION_SCRIPT.read_text(encoding="utf-8"))
+    assert typed in script.replace('" agent+=" ', " ")
     kept = [word for word in given if word not in ("--operate", "ffs")]
     kept.remove("--depth-backend")
     took = run(rig, *given)
     assert took == run(rig, *kept)
     assert (took.record_debug, took.batch_milestones) == (True, True)
-    for ignored in ("--operate", "--depth-backend"):
-        assert rows[ignored].startswith("Accepted and ignored"), ignored
+    # The arguments' values, as the parser has them.
+    parsed = parser.parse_args(["--config", "unused", *given])
+    assert (parsed.operate, parsed.depth_backend) == (True, "ffs")
+    assert (parsed.speed_profile, parsed.mounting) == (None, None)
+    assert rows["--operate"].startswith("Accepted: ")
+    assert "The stereo matcher of this run" in rows["--depth-backend"]
+    profiles = agent_config.SPEED_PROFILES
+    assert sorted(profiles) == ["conservative", "reference"]
+    for name in profiles:
+        assert f"`{name}`" in rows["--speed-profile"], name
+        assert parser.parse_args(["--config", "x", "--speed-profile", name])
+    assert f"`{agent_config.SPEED_REFERENCE}` (the default)" in rows["--speed-profile"]
+    slow = f"`conservative` is {agent_config.CONSERVATIVE_SPEED:g} rad/s"
+    assert slow in rows["--speed-profile"]
+    assert "`thor.agent_max_joint_speed`" in rows["--speed-profile"]
+    assert "`camera.hand_eye_json`" in rows["--mounting"]
+    assert "`accepted_fit` is true" in rows["--mounting"]
     # What the run does not take, as the README quotes it.
     text = one_line(told)
     mock = agent_config.load_settings(CONFIGS / "agent_mock.yaml")
@@ -1530,6 +1630,26 @@ def test_the_readme_names_every_argument_the_agent_program_takes(monkeypatch):
     [debug] = [line for line in lines if line.startswith("debug recording:")]
     for event in re.search(r"\(([^)]+)\)", debug).group(1).split(", "):
         assert f"`{event}`" in text, event
+
+
+@pytest.mark.apai
+def test_the_readme_quotes_operate_without_the_operators_terminal():
+    import re
+
+    from isaaccapture_examples.agentic_remote.agent import config as agent_config
+    from isaaccapture_examples.agentic_remote.agent import launcher
+
+    told = readme_section(LAUNCHER_OPTIONS)
+    rows = dict(re.findall(r"^\| `(--[a-z-]+)[^|]*\| (.*) \|$", told, re.M))
+    args = launcher._parser().parse_args(["--config", "unused", "--operate"])
+    # A test has no terminal: the program's own question could not be answered.
+    with pytest.raises(agent_config.ConfigError) as refused:
+        launcher._operator_terminal(args, launcher.terminal_ask)
+    assert f"exit code 2 and `{refused.value}`" in rows["--operate"]
+    # Without the argument, or with another way to ask, nothing is refused.
+    launcher._operator_terminal(args, lambda prompt: "yes")
+    plain = launcher._parser().parse_args(["--config", "unused"])
+    launcher._operator_terminal(plain, launcher.terminal_ask)
 
 
 def test_the_readme_quotes_a_grippers_expiry_as_the_robot_app_refuses_it(robot_app):
@@ -1607,3 +1727,763 @@ def test_the_readme_quotes_a_failed_torque_release_as_the_robot_app_says_it(robo
     assert f"refused with `{rest.reason}`" in rule
     assert f"refused with `{rest.reason}`" in commands
     assert "`test_release_failed.py`" in readme_section("## Run the tests")
+
+
+# The README on the experiment's viewer. The experiment's viewer is
+# thor_viewer.py of the experiment folder: a web page for a browser on what a
+# run of the agent program recorded. run_viewer.sh starts it. The debug
+# recording is what a run started with --record-debug keeps of the obstacle
+# map's inputs and of the joint feedback.
+
+VIEWER_SCRIPT = CONFIGS.parent / "run_viewer.sh"
+VIEWER = "### The experiment's viewer"
+
+
+def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it():
+    import re
+
+    from isaaccapture_examples.agentic_remote.agent import config as agent_config
+
+    script = VIEWER_SCRIPT.read_text(encoding="utf-8")
+    head = script[: script.index("\nset -euo pipefail")]
+    section = readme_section(VIEWER)
+    told = one_line(section)
+    # The usage line takes the arguments the script's head names.
+    usage = section[section.index("```text") : section.index("\n```\n")]
+    named = set(re.findall(r"^#   (--[a-z-]+)", head, re.M))
+    assert named == set(re.findall(r"--[a-z-]+", usage))
+    assert named == {"--runs", "--host", "--port", "--token-file", "--no-auth"}
+    # What the script gives the viewer: this machine, and its own two places.
+    assert "defaults=(--host 127.0.0.1)" in script
+    assert 'runs="${state}/runs"' in script
+    assert 'token="${state}/viewer.token"' in script
+    own = "behind the script's own `--host 127.0.0.1`, `--runs` and `--token-file`"
+    assert own in told
+    assert "The default is `.state/runs` beside the script" in told
+    assert "The file is `.state/viewer.token` beside the script" in told
+    link = '`echo "http://127.0.0.1:8766/?token=$(cat .state/viewer.token)"`'
+    assert link in told
+    assert "default: the viewer's own, 8766" in head
+    # Its three variables, and every refusal the script has.
+    variables = re.findall(r"^#   (AGENTIC_REMOTE_\w+)", head, re.M)
+    assert len(variables) == 3
+    for name in variables:
+        assert f"`{name}`" in told, name
+    refusals = told[told.index("**Exit code 2 and one line, nothing started**") :]
+    refusals = refusals[: refusals.index("**What differs")]
+    assert len(re.findall(r"\brefuse \"", script)) == 7
+    for piece in (
+        "one of the three variables cannot be used",
+        "the experiment folder holds no `thor_viewer.py`",
+        "`--runs` or `--token-file` has no value",
+        "`--runs` names no folder",
+        "the state folder cannot be made",
+    ):
+        assert piece in refusals, piece
+    # The viewer's rule for a run, with the file the agent program writes.
+    listed = f"holds `debug/events.jsonl` and `{agent_config.RESOLVED_CONFIG}`"
+    assert listed in told
+    assert "**The picture of the obstacle map needs `--record-debug`.**" in told
+    assert "**It reads files only.**" in told
+    folders = one_line(readme_section("### `state_dir` and the run folders"))
+    assert f"`{agent_config.RESOLVED_CONFIG}` (APAI's whole configuration" in folders
+
+
+def test_the_readme_says_what_the_viewer_lacks_against_the_thors_recordings():
+    import re
+    from pathlib import Path
+
+    from isaaccapture_examples.agentic_remote.agent import config as agent_config
+    from isaaccapture_examples.agentic_remote.agent import launcher, self_mask
+
+    told = one_line(readme_section(VIEWER))
+    differs = told[told.index("**What differs from the viewer") :]
+    # Where the measured joints come from, as the recording names it.
+    assert f"(source `{launcher.FEEDBACK_SOURCE}`)" in differs
+    assert f"(source `{self_mask.ALIGNMENT_SOURCE}`)" in differs
+    assert "receipt on the workstation less the age of its joint readings" in differs
+    assert "receipt on the workstation's monotonic clock" in launcher.FEEDBACK_CLOCK
+    # What the debug recording leaves out, as the program's first lines say it.
+    options = agent_config.RunOptions(timing=True, record_debug=True)
+    lines = launcher._option_lines(options, Path("run"))
+    [debug] = [line for line in lines if line.startswith("debug recording:")]
+    left_out = re.search(r"\(([^)]+)\)", debug).group(1).split(", ")
+    assert left_out == ["robot.call", "robot.return", "mask.state_source"]
+    for event in left_out:
+        assert f"`{event}`" in differs, event
+    assert "./run_viewer.sh shows it in a browser" in debug
+    assert "robot.feedback, is what this program read from ROBOT_STATE" in debug
+    told_options = one_line(readme_section(LAUNCHER_OPTIONS))
+    assert "Its joint feedback (`robot.feedback`) is not the motors' own" in (
+        told_options
+    )
+    # No sentence is left that says the feedback is missing, or that nothing
+    # shows a run's recordings.
+    whole = one_line(README.read_text(encoding="utf-8"))
+    assert "holds no motor feedback" not in whole
+    assert "the motors' feedback is not in the debug recording" not in whole
+    # The other places that name the viewer, and what was not run.
+    assert "`./run_viewer.sh`" in readme_row("| The experiment's viewer |")
+    gaps = one_line(readme_section("## Known gaps"))
+    only = (
+        "**The experiment's viewer shows a run only when it was recorded with "
+        "`--record-debug`.**"
+    )
+    assert only in gaps
+    never = one_line(readme_section("## What was run")).split(" Never run: ")[1]
+    assert "The experiment's viewer in a browser, on port 8766" in never
+    assert "Not run: the page in a browser" in told
+    assert (TESTS / "test_viewer.py").is_file()
+    assert "`test_viewer.py`" in readme_section("## Run the tests")
+
+
+# The README on setting the rig up. The rig is the real arm, its camera and
+# the Thor, the machine on the robot; the workstation is the GPU machine. A
+# git bundle is one file of commits that git clones from. The model client is
+# the program the agent asks its cloud model through. The calibration's name
+# is what both machines call the camera calibration in use.
+
+SETUP = "## Set up and start the rig"
+TROUBLE = "### Troubleshooting: what a program printed, and what to do"
+RIG_SERVICE_YAML = CONFIGS / "link_service_rebot.yaml"
+RIG_AGENT_YAML = CONFIGS / "agent_rebot.yaml"
+SETUP_SCRIPT = CONFIGS.parent / "setup_workstation_env.sh"
+
+
+def troubleshooting() -> str:
+    """The table of lines the programs print for a rig that is set up wrongly."""
+    setup = readme_section(SETUP)
+    return one_line(setup[setup.index(f"\n{TROUBLE}\n") :])
+
+
+def test_the_readme_quotes_the_service_whose_file_names_no_robot(folder, capsys):
+    # The rig's file listens on every address; a list without a peer is refused.
+    rig = yaml.safe_load(RIG_SERVICE_YAML.read_text(encoding="utf-8"))
+    everywhere = rig["listen"]["address"]
+    bad = service_yaml(
+        folder, listen={"address": everywhere, "port": 0}, allowed_peers=[]
+    )
+    assert service_main.main(["--config", bad]) == 2
+    printed = capsys.readouterr().err.strip()
+    line = printed[: printed.index(", got ")]
+    assert line.endswith("allowed_peers must be a non-empty list")
+    assert not (folder / "s.sock").exists()
+    assert f"| `{line}, ...` |" in troubleshooting()
+    edits = one_line(
+        readme_section("### 5. The edits each machine needs, which are not committed")
+    )
+    assert f"`{line}, ...`" in edits
+    assert f"(`listen.address: {everywhere}`)" in edits
+    assert "**Make each edit in the checkout the programs are started from.**" in edits
+    port = rig["listen"]["port"]
+    start = one_line(readme_section("### 7. Start the workstation's programs"))
+    assert f"waits for the robot app on {everywhere}:{port} (taken from" in start
+
+
+def test_the_readme_quotes_the_agent_program_that_meets_another_robot_app():
+    from types import SimpleNamespace
+
+    from isaaccapture_examples.agentic_remote.agent import arm_adapter
+    from isaaccapture_examples.agentic_remote.protocol.messages import PROTOCOL_VERSION
+
+    link = yaml.safe_load(RIG_AGENT_YAML.read_text(encoding="utf-8"))["link"]
+    assert link["allow_unnamed_calibration"] is False
+    sim = RobotAppConfig.default()  # what the robot app on the simulated arm says
+    arm = SimpleNamespace(
+        _settings=SimpleNamespace(
+            expected_profile_id=link["expected_profile_id"],
+            allow_unnamed_calibration=link["allow_unnamed_calibration"],
+            calibration_id="stereo-x+mount-y",
+        ),
+        n_joints=sim.n_joints,
+        motion_rate_hz=1.0 / sim.executor.period_s,
+    )
+    welcome = SimpleNamespace(
+        protocol_version=PROTOCOL_VERSION,
+        joint_names=["joint"] * sim.n_joints,
+        setpoint_period_s=sim.executor.period_s,
+        profile_id=sim.profile_id,
+        camera_calibration_id=sim.camera_calibration_id,
+    )
+    check = arm_adapter.RobotLinkArm.check_welcome
+    # The rig's agent file against the simulated arm: refused for its profile.
+    refusal = check(arm, welcome)
+    assert refusal is not None and repr(sim.profile_id) in refusal
+    told = troubleshooting()
+    assert f"| Agent program: `{refusal}` |" in told
+    robot = one_line(readme_section("### 9. Start the robot app on the Thor"))
+    assert f"with `{refusal}`" in robot
+    assert f"`{refusal}`" in readme_row("| 10 | Thor, then console |")
+    # The rig's profile with another calibration: refused for its name.
+    welcome.profile_id = link["expected_profile_id"]
+    welcome.camera_calibration_id = "stereo-a+mount-b"
+    other = check(arm, welcome) or ""
+    for name in (welcome.camera_calibration_id, arm._settings.calibration_id):
+        assert other.count(repr(name)) == 1, other
+        other = other.replace(repr(name), "'...'")
+    assert f"| Agent program: `{other}` |" in told
+    name = one_line(readme_section("### 6. The camera calibration and its name"))
+    assert f"`{other}`" in name
+    welcome.camera_calibration_id = arm._settings.calibration_id
+    assert check(arm, welcome) is None
+
+
+def test_the_readme_names_the_model_client_as_the_files_and_the_script_have_it(
+    tmp_path,
+):
+    import re
+    from types import SimpleNamespace
+
+    from isaaccapture_examples.agentic_remote.agent import config as agent_config
+
+    step = one_line(readme_section("### 4. The model client on the workstation"))
+    # The version the script pins, in the command the README gives for step 4.
+    script = SETUP_SCRIPT.read_text(encoding="utf-8")
+    pinned = re.search(r'^model_client="([^"]+)"$', script, re.M)
+    assert pinned is not None
+    by_script = 'npm install --prefix "${env_dir}/codex" --no-audit --no-fund'
+    assert f'{by_script} "${{model_client}}"' in one_line(script)
+    by_hand = by_script.replace("${env_dir}", "$AGENTIC_REMOTE_ENV_DIR")
+    assert f"{by_hand} {pinned.group(1)}" in step
+    assert 'refuse "${env_dir}/venv exists;' in script
+    # Where the rig's agent file looks for it.
+    rig = yaml.safe_load(RIG_AGENT_YAML.read_text(encoding="utf-8"))["experiment"]
+    assert rig["codex_bin"].startswith("${AGENTIC_REMOTE_ENV_DIR}/codex/")
+    assert f"names `{rig['codex_bin']}`" in step
+
+    def named(path: str) -> Any:
+        return SimpleNamespace(experiment=SimpleNamespace(codex_bin=path))
+
+    # An empty key takes the experiment's own; one that names nothing is refused.
+    theirs = tmp_path / "theirs"
+    assert agent_config._codex_bin(named(""), theirs) == str(theirs)
+    with pytest.raises(agent_config.ConfigError) as refused:
+        agent_config._codex_bin(named(str(tmp_path / "none")), theirs)
+    head = str(refused.value).split(": ")[0]
+    assert f"`{head}: ...`" in step
+
+
+def thor_script(name: str, *arguments: str) -> Any:
+    """Run one of the Thor's two start scripts with none of its variables set."""
+    import subprocess
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("AGENTIC_REMOTE_", "APAI_", "PYTHON"))
+    }
+    return subprocess.run(
+        ["bash", str(CONFIGS.parent / name), *arguments],
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
+def test_the_readme_gives_each_machine_a_file_of_the_variables_its_scripts_need(
+    tmp_path,
+):
+    import re
+
+    step = readme_section("### 3. The variables of each machine, in one file")
+    told = one_line(step)
+    # The workstation: the six variables of run_workstation.sh, one per line.
+    for name in workstation_variables():
+        assert f"\n{name}=" in step, name
+    assert "`run_workstation.sh --env FILE` reads the file itself" in told
+    # The Thor: each of its two start scripts reads such a file when --env
+    # FILE is its first argument, and the README's file holds every variable
+    # the scripts' heads name.
+    both = "`run_robot_app.sh --env FILE` and `run_human.sh --env FILE` read the file"
+    assert both in told
+    assert "`--env FILE` must be the first argument" in told
+    nowhere = tmp_path / "no-python"
+    file = tmp_path / "thor.env"
+    file.write_text(
+        f"AGENTIC_REMOTE_THOR_PYTHON={nowhere}\nAGENTIC_REMOTE_HUMAN_PYTHON={nowhere}\n",
+        encoding="utf-8",
+    )
+    for name in ("run_robot_app.sh", "run_human.sh"):
+        script = (CONFIGS.parent / name).read_text(encoding="utf-8")
+        head = script[: script.index("\nset -euo pipefail")]
+        needs = re.findall(r"^#   (AGENTIC_REMOTE_\w+)", head, re.M)
+        assert len(needs) == 3, name
+        for variable in needs:
+            assert f"\n{variable}=" in step, (name, variable)
+        assert f"\n./{name} --env ~/agentic_remote_thor.env " in step, name
+        # Without the file the script names the variable it misses.
+        bare = thor_script(name, "--help")
+        assert (bare.returncode, bare.stdout) == (2, ""), name
+        assert bare.stderr.count("\n") == 1 and "(it is '')" in bare.stderr, name
+        # With it the value is the file's: the refusal names that Python.
+        read = thor_script(name, "--env", str(file), "--help")
+        assert (read.returncode, read.stdout) == (2, ""), name
+        assert f"(it is '{nowhere}')" in read.stderr, name
+        # A file that is not there: one line, and nothing is started.
+        missing = thor_script(name, "--env", str(tmp_path / "none.env"))
+        assert (missing.returncode, missing.stdout) == (2, ""), name
+        line = f"{name}: --env needs a file of KEY=value lines (it is '"
+        assert missing.stderr.startswith(line) and missing.stderr.count("\n") == 1
+    quoted = "`run_robot_app.sh: --env needs a file of KEY=value lines (it is '...')`"
+    assert quoted in told
+    # The robot app itself does not get the argument: with a Python that
+    # runs, the file's variables start it, and it prints its own help.
+    file.write_text(
+        f"AGENTIC_REMOTE_THOR_PYTHON={sys.executable}\n"
+        f"AGENTIC_REMOTE_APAI_SRC={tmp_path}\n"
+        f"AGENTIC_REMOTE_ISAAC_CAPTURE_PY={tmp_path}\n",
+        encoding="utf-8",
+    )
+    started = thor_script("run_robot_app.sh", "--env", str(file), "--help")
+    assert started.returncode == 0, started.stderr
+    assert "--connect" in started.stdout and "--env" not in started.stdout
+    # Anywhere but in front the script does not read the file.
+    late = thor_script("run_robot_app.sh", "--help", "--env", str(file))
+    assert late.returncode == 2 and "AGENTIC_REMOTE_THOR_PYTHON" in late.stderr
+
+
+def test_the_readme_builds_isaac_capture_with_settings_the_build_has():
+    import re
+
+    root = repo_root()
+    step = readme_section("### 2. Build Isaac Capture on the Thor")
+    command = step[step.index("```bash") : step.index("\n```\n")]
+    flags = re.findall(r"-D([A-Z_]+)=", command)
+    assert len(flags) == 4 and len(set(flags)) == 4
+    options = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    for flag in flags:
+        assert re.search(rf"^\s*(option|set)\({flag}\b", options, re.M), flag
+        assert f"| `-D{flag}=" in step, flag
+    # The two stops of a configure without them, as the build's files say them.
+    told = troubleshooting()
+    for file, line in (
+        (
+            "ClangFormat.cmake",
+            "clang-format not found but ENABLE_CLANG_FORMAT_CHECK is ON",
+        ),
+        (
+            "CheckBuildDeps.cmake",
+            "glslangValidator (BUILD_VIZ=ON -- compiles Televiz shaders to SPIR-V)",
+        ),
+    ):
+        assert line in (root / "cmake" / file).read_text(encoding="utf-8"), file
+        assert f"`{line}`" in told, line
+    # The clone: no file of the example is one that Git LFS keeps.
+    kept = (root / ".gitattributes").read_text(encoding="utf-8")
+    suffixes = set(re.findall(r"^\*(\.\w+) filter=lfs", kept, re.M))
+    assert ".png" in suffixes
+    example = CONFIGS.parent
+    tracked = [
+        path
+        for folder in (example / "configs", example / "python")
+        for path in folder.rglob("*")
+        if path.suffix in suffixes
+    ]
+    assert tracked == [] and not [p for p in example.glob("*") if p.suffix in suffixes]
+    commit = one_line(readme_section("### 1. The same commit on both machines"))
+    assert "No file under `examples/agentic_remote` is kept in Git LFS" in commit
+    assert "GIT_LFS_SKIP_SMUDGE=1 git clone" in commit
+
+
+def test_the_readme_tells_the_camera_as_its_two_files_and_programs_have_it():
+    sender = yaml.safe_load(
+        (CONFIGS / "camera_sender_rebot.yaml").read_text(encoding="utf-8")
+    )["network"]
+    receiver = yaml.safe_load(
+        (CONFIGS / "camera_receiver_rebot.yaml").read_text(encoding="utf-8")
+    )
+    dialed = f"{receiver['receiver']['host']}:{receiver['receiver']['port']}"
+    assert sender["port"] == receiver["receiver"]["port"]
+    camera = one_line(
+        readme_section("### 8. The camera, from the Thor to the workstation")
+    )
+    told = troubleshooting()
+    # The receiver's file names itself as the sender: --host is the Thor's.
+    assert receiver["receiver"]["host"] == "127.0.0.1"
+    assert f"`waiting for AVS1 sender {dialed} (...)`" in camera
+    assert f"| Camera receiver: `waiting for AVS1 sender {dialed} (...)` |" in told
+    listening = f"`Listening for TCP receiver on {sender['bind']}:{sender['port']}`"
+    assert listening in camera
+    assert f"socket={receiver['ipc']['socket_path']}`" in camera
+    script = (CONFIGS.parent / "run_camera_receiver.sh").read_text(encoding="utf-8")
+    assert 'config="${here}/configs/camera_receiver_rebot.yaml"' in script
+    # The texts of the camera streamer and of the experiment folder, where
+    # those folders are named: both are outside this repository.
+    streamer = os.environ.get("AGENTIC_REMOTE_CAMERA_PR")
+    if streamer:
+        from pathlib import Path
+
+        sources = "".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for folder in ("argus_sender/src", "camera_receiver")
+            for path in sorted(Path(streamer, folder).glob("*.*"))
+            if path.suffix in (".cpp", ".py")
+        )
+        for text in (
+            "No camera devices are available",
+            "Listening for TCP receiver on ",
+            "Receiver connected from ",
+            "connected to AVS1 sender ",
+            "waiting for AVS1 sender ",
+        ):
+            assert text in sources, text
+            assert text.strip() in camera, text
+    experiment = os.environ.get("AGENTIC_REMOTE_EXPERIMENT_DIR")
+    if experiment:
+        from pathlib import Path
+
+        bring_up = Path(experiment, "thor_camera_bringup.sh").read_text(
+            encoding="utf-8"
+        )
+        assert "systemctl start sensing-camera-argus.service" in bring_up
+        [last] = [line for line in bring_up.splitlines() if "are ready for" in line]
+        assert f"`{last.split(chr(39))[1]}`" in camera
+    assert "sudo systemctl stop sensing-camera-argus.service" in camera
+
+
+# The README on rest, release and the motors on again, on the question about
+# the jaws, on the speeds of the rig and on the debug recording's size. A
+# typed rest returns the arm to rest, closes the jaws and switches the motors
+# off there; "on" switches them on again without a new start of the robot
+# app. The rig files are the robot app's and the agent program's files for
+# the real arm. The debug recording is what a run of the agent program
+# started with --record-debug keeps for the experiment's viewer.
+
+COMMANDS = "## What the operator's commands do"
+RIG_FILES = "## The rig files"
+
+
+@link
+def test_the_readme_quotes_what_rest_on_release_and_quit_print_at_the_thor_terminal(
+    programs,
+):
+    from isaaccapture_examples.agentic_remote.robot_app import app as app_module
+    from isaaccapture_examples.agentic_remote.robot_app import terminal
+
+    # No robot link service listens: the Thor terminal needs none.
+    app = Program(ROBOT_MODULE, *SIM, "--connect", f"{HOST}:{free_port()}")
+    programs.append(app)
+    app.wait_line("dialing the robot link service at ")
+    app.type("rest")
+    app.wait_line(terminal.CONFIRM_REST)
+    app.type("path is clear")
+    app.wait_line("rest: completed")
+    app.type("on")
+    app.wait_line(terminal.CONFIRM_POWER_ON)
+    app.type("yes")
+    app.wait_line("on: completed")
+    app.type("on")  # the motors are on: nothing is asked, so nothing confirms
+    app.wait_line("on: refused: ")
+    app.type("release")
+    app.wait_line("release: completed")
+    app.type("quit")
+    assert app.wait_exit() == 0
+    said = [line for line in app.lines if not line.startswith("robot app: ")]
+    assert said[0].startswith(terminal.BANNER)
+    # Every line of the terminal, in its order: the rest ends with the jaws
+    # closed and the motors off, "on" asks first, and a quit with the motors
+    # off at rest asks nothing and releases nothing more.
+    jaws = [
+        f"[{rest_module.EVENT_JAWS}] {rest_module.CLOSING_JAWS}",
+        f"[{rest_module.EVENT_JAWS}] {rest_module.JAWS_CLOSED}",
+        f"[{rest_module.EVENT_RELEASE}] {rest_module.RELEASED}",
+    ]
+    why = app_module.CONFIRM_POWER_ON
+    assert said[1:-1] == [
+        terminal.CONFIRM_REST,
+        "[rest] return to rest: the arm is at rest, motors on",
+        *jaws,
+        "rest: completed",
+        terminal.CONFIRM_POWER_ON,
+        f"[rest] {rest_module.MOTORS_ON_AGAIN}: motion rest_hold",
+        "on: completed",
+        f"[refused] on typed at the Thor terminal refused: {why}",
+        f"on: refused: {why}",
+        *jaws,
+        "release: completed",
+        "[shutdown] shutdown: the motors are off at rest; the robot app closes",
+        "quit: completed; the robot app closes",
+    ]
+    assert said[-1].startswith(terminal.INPUT_ENDED)
+    told = one_line(readme_section(COMMANDS))
+    typed = ("[", "rest:", "on:", "release")
+    quoted = [line for line in said if line.startswith(typed)]
+    first = [terminal.BANNER, terminal.CONFIRM_POWER_ON, "quit: completed; "]
+    for line in [*first, *quoted]:
+        if line.startswith(("[shutdown]", "[refused]")):
+            continue  # the shutdown's line is in the recipes; a refusal's twice
+        assert f"`{line}" in told, line
+
+
+def test_the_readme_quotes_the_questions_of_rest_on_and_the_jaws_as_they_are_asked():
+    from isaaccapture_examples.agentic_remote.agent import console_cmd, task_gate
+    from isaaccapture_examples.agentic_remote.robot_app import app, terminal
+
+    commands = one_line(readme_section(COMMANDS))
+    console = one_line(readme_section("### The operator console"))
+    task = one_line(readme_section("### A task from its start to its end"))
+    # The question about the jaws, at the Thor terminal and at the console.
+    assert f"`{terminal.ASK_JAWS_EMPTY.format(what='rest')}`" in commands
+    assert f"`{console_cmd.ASK_JAWS_EMPTY.format(command='rest')}`" in console
+    assert f"`{console_cmd.JAWS_NOT_CONFIRMED}`" in console
+    word = app.JAWS_EMPTY_WORD.format(what="a return to rest")
+    assert f"`[jaws] {word}`" in commands and f"`{word}`" in console
+    # The lines of a rest that the simulated arm at rest does not print: the
+    # legs of APAI's route, a release the driver only sent, jaws left as they
+    # were, a takeover that keeps the motors on, and motors that stay on.
+    fold = rest_module.LEG_FOLD.format(step="N", steps=4)
+    for line in (
+        f"[rest] return to rest: {rest_module.LEG_UP}: the arm moves for ",
+        f"[rest] return to rest: {fold}: the arm moves for ",
+        f"[release] {rest_module.RELEASE_SENT}`",
+        "[jaws] " + rest_module.JAWS_LEFT.format(why="<why>") + "`",
+        f"[rest] return to rest: {app.REST_KEEPS_MOTORS}`",
+        f"rest: failed: {app.AT_REST_MOTORS_ON}; release refused: <why>`",
+        "[refused] " + rest_module.NOT_ON_AGAIN.format(why="<the driver's error>"),
+    ):
+        assert f"`{line}" in commands, line
+    # What the robot app's process says of a SIGTERM; the process tests of
+    # this file wait for the same lines.
+    for line in (SIGTERM_AT_REST, SIGTERM_MOTORS_ON, f"{SIGTERM_WHY}<why>"):
+        assert f"`{line}`" in commands, line
+    # With the motors off already, and after a torque release that failed, a
+    # SIGTERM asks the robot app for nothing: this stand-in has no release.
+    for state, off in (
+        (MotionState.REST_UNPOWERED, True),
+        (MotionState.RELEASE_FAILED, False),
+    ):
+        stand_in = types.SimpleNamespace(motion_state=state, motors_off_at_rest=off)
+        [line] = robot_main._sigterm_lines(stand_in)
+        assert f"`{line}`" in commands, line
+    # The motors on again: the console's question, and what refuses meanwhile.
+    assert f"`{console_cmd.ASK_ON}`" in console
+    for told in (commands, console):
+        assert f"`{app.MOTORS_OFF}`" in told
+    assert console_cmd.question("on", None) == (console_cmd.ASK_ON, "yes")
+    # What the console command says when it stops waiting for a RESULT.
+    command = one_line(readme_section("### The console command"))
+    assert f"(...). {console_cmd.STILL_LIVE}`" in command
+    waits = console_cmd.RESULT_WAIT_S
+    assert f"`rest` {waits['rest']:g} s, `shutdown` {waits['shutdown']:g} s" in command
+    assert {waits["on"], waits["open"], waits["close"]} == {60.0}
+    assert "`on`, `open` and `close` 60 s" in command
+    # The agent program's two questions and what it says of the arm's end.
+    asked = f"{task_gate.MOTORS_OFF_NOTE} {task_gate.CONNECT_QUESTION} Type yes to"
+    assert f"`{asked} proceed: `" in task
+    assert f"`{task_gate.END_QUESTION}`" in task
+    assert f"`{task_gate.CONNECT_DECLINED}`" in task
+    assert f"; {task_gate.END_HOLDS}`" in task
+    assert f"{int(task_gate.PARK_WAIT_S)} s for its RESULT" in task
+    refusal = task_gate.NOT_ADMITTED.format(name="<skill>")
+    assert f"`{refusal}: <why>`" in task
+    # The rest tool is one of the skills that move, and what the model is told.
+    from isaaccapture_examples.agentic_remote.agent import launcher
+
+    assert f"the rest tool `{task_gate.REST_SKILL}` among them" in task
+    assert f"`{launcher.TOOLS_GUIDANCE}`" in task
+    assert task_gate.REST_SKILL not in launcher.TOOLS_GUIDANCE
+    # What the three request words are, and who may send them.
+    from isaaccapture_examples.agentic_remote.link_service import service
+    from isaaccapture_examples.agentic_remote.protocol import messages
+    from isaaccapture_examples.agentic_remote.protocol.local_messages import (
+        ROLE_AGENT,
+        ROLE_CONSOLE,
+    )
+
+    words = (
+        messages.REQUEST_MOTORS_OFF,
+        messages.REQUEST_MOTORS_ON,
+        messages.REQUEST_PARK,
+    )
+    assert words == ("motors_off", "motors_on", "park")
+    assert set(words) <= service.OWNER_REQUESTS[ROLE_AGENT]
+    assert service.OWNER_REQUESTS[ROLE_CONSOLE] & set(words) == {"motors_on"}
+    roles = readme_section("### The local API and its roles")
+    [agent] = [line for line in roles.splitlines() if line.startswith("| `agent` |")]
+    [console_row] = [
+        line for line in roles.splitlines() if line.startswith("| `console` |")
+    ]
+    for word in words:
+        assert f'"{word}"' in agent, word
+    assert '"motors_on"' in console_row and '"park"' not in console_row
+    assert '"motors_off"' not in console_row
+
+
+class PlainConfig:
+    """Stands in for APAI's configuration: a mapping that gives itself as a dict."""
+
+    def __init__(self, data: dict) -> None:
+        self.data = data
+
+    def as_dict(self) -> dict:
+        import copy
+
+        return copy.deepcopy(self.data)
+
+
+def test_the_readme_gives_the_rig_speeds_as_the_two_rig_files_hold_them(monkeypatch):
+    from isaaccapture_examples.agentic_remote.agent import config as agent_config
+
+    for name in agent_config.PATH_VARIABLES:
+        monkeypatch.setenv(name, "/absolute")
+    robot = yaml.safe_load(RIG_ROBOT_YAML.read_text(encoding="utf-8"))
+    agent = yaml.safe_load(RIG_AGENT_YAML.read_text(encoding="utf-8"))
+    limits, rest = robot["limits"], robot["rest"]
+    # One speed for the agent and the return to rest, on both machines.
+    speeds = {
+        "limits.agent.max_joint_speed": limits["agent"]["max_joint_speed"],
+        "limits.recovery.max_joint_speed": limits["recovery"]["max_joint_speed"],
+        "rest.recovery_speed": rest["recovery_speed"],
+        "thor.agent_max_joint_speed": agent["thor"]["agent_max_joint_speed"],
+    }
+    # The rig owner's decisions of 2026-11-16: 0.2 rad/s there, 0.8 for a person.
+    assert speeds == dict.fromkeys(speeds, 0.2)
+    speed, human = 0.2, limits["human"]["max_joint_speed"]
+    assert human == 0.8
+    rig = one_line(readme_section(RIG_FILES))
+    heading = (
+        f"**The speeds: the agent and the return to rest run at {speed:g} rad/s, and "
+        f"a person's drive is capped at {human:g} rad/s.**"
+    )
+    assert heading in rig
+    for key in speeds:
+        assert f"`{key}`" in rig, key
+    held = f"`limits.human.max_joint_speed` of the robot app's file holds the {human:g}"
+    assert held in rig
+    assert "**Change the speeds on both machines together.**" in rig
+    assert "**None of these speeds has run on the arm.**" in rig
+    # The agent never plans faster than the Thor's own limit, whatever its
+    # file says: the line it prints, on the file of the mock recipe, whose two
+    # speeds are higher than the rig's.
+    mock = agent_config.load_settings(CONFIGS / "agent_mock.yaml")
+    theirs = mock.thor.agent_max_joint_speed
+    assert mock.minimal and theirs > speed
+    built = PlainConfig({"safety": {"max_joint_vel": theirs}})
+    agreed, capped, line = agent_config.agree_joint_speed(mock, built, speed)
+    assert agreed.thor.agent_max_joint_speed == speed
+    assert capped.data["safety"]["max_joint_vel"] == speed
+    head = f"joint speed: the agent plans at {speed:g} rad/s, the lowest of "
+    tail = line[line.index("; the Thor's own agent speed limit is ") :]
+    assert line.startswith(head) and f"is {speed:g} (limits.agent." in tail
+    assert f"`{head}" in rig and f"(thor.agent_max_joint_speed){tail}`" in rig
+    # A robot app that names no limit: the file's key stands for it.
+    alone, _, _ = agent_config.agree_joint_speed(mock, built, None)
+    assert alone.thor.agent_max_joint_speed == theirs
+    # The idle joint reads, as often as the file has them.
+    period = robot["state"]["idle_read_period_s"]
+    assert f"`state.idle_read_period_s: {period:g}`" in rig
+    # What ran on the arm is said once, at the top, with its speed.
+    opening = one_line(README.read_text(encoding="utf-8")).split(" ## Terms ")[0]
+    assert "**One thing ran on the real arm**" in opening
+    assert "a pick, a lift, a hold and a place of an object, at 0.1 rad/s" in opening
+
+
+def test_the_readme_lists_the_motors_state_as_the_programs_print_it():
+    from isaaccapture_examples.agentic_remote.robot_app import app, text
+
+    # The six texts, by what ROBOT_STATE says of the motors and of the hold.
+    said = {
+        text.torque_text(True, text.MOTORS_HOLDING): "torque on (holding)",
+        text.torque_text(True, text.MOTORS_NOT_HOLDING): "torque NOT HOLDING",
+        text.torque_text(True, text.MOTORS_UNKNOWN): "torque on, hold unknown",
+        text.torque_text(True, None): "torque on",
+        text.torque_text(False, text.MOTORS_HOLDING): "torque off",
+        text.torque_text(True, text.MOTORS_HOLDING, True): "torque unknown",
+    }
+    assert list(said) == list(said.values())
+    console = one_line(readme_section("### The operator console"))
+    assert "one of six texts" in console
+    for line in said:
+        assert f"| `{line}` |" in console, line
+    words = (text.MOTORS_HOLDING, text.MOTORS_NOT_HOLDING, text.MOTORS_UNKNOWN)
+    carried = one_line(
+        readme_section(
+            "### What WELCOME, ROBOT_STATE and VIEW_STATUS carry for the operator"
+        )
+    )
+    assert "(" + ", ".join(f"`{word}`" for word in words[:2]) in carried
+    assert f"or `{words[2]}`) and `reason`" in carried
+    # The real driver's line after its connect, and the line on the bus.
+    real = one_line(readme_section("### The real driver"))
+    unknown = text.torque_text(True, text.MOTORS_UNKNOWN)
+    assert f"at measured rest: {unknown}, motion hold, jaws referenced`" in real
+    reads = app.READ_TIMING_READS
+    assert f"measures its first {reads} idle joint reads" in real
+    assert f"on the motor bus (median of {reads} idle reads; worst Y ms)" in real
+    period = yaml.safe_load(RIG_ROBOT_YAML.read_text(encoding="utf-8"))["state"]
+    asked = 1.0 / period["idle_read_period_s"]
+    assert f"state.idle_read_period_s asks for {asked:.0f}`" in real
+
+
+def test_the_readme_gives_the_debug_recordings_size_limit_and_how_to_raise_it(
+    monkeypatch,
+):
+    from isaaccapture_examples.agentic_remote.agent import config as agent_config
+    from isaaccapture_examples.agentic_remote.agent import launcher
+
+    limit = agent_config.DEBUG_MAX_GIB
+    for name in agent_config.PATH_VARIABLES:
+        monkeypatch.setenv(name, "/absolute")
+    rig = agent_config.load_settings(CONFIGS / "agent_rebot.yaml")
+    parser = launcher._parser()
+
+    def run(*arguments: str) -> Any:
+        args = parser.parse_args(["--config", "unused", "--record-debug", *arguments])
+        return launcher._run_options(args, rig)
+
+    # The start script records every run and names no size: the default holds.
+    script = one_line(WORKSTATION_SCRIPT.read_text(encoding="utf-8"))
+    assert " --record-debug " in script and "--debug-max-gib" not in script
+    assert run().debug_max_gib == limit
+    assert run("--debug-max-gib", "64").debug_max_gib == 64.0
+    options = one_line(readme_section(LAUNCHER_OPTIONS))
+    after = one_line(
+        readme_section("### 10. After a run: the viewer and the run's files")
+    )
+    assert f"`--debug-max-gib`, {limit:g} GiB by default" in options
+    assert f"`--debug-max-gib`, {limit:g} GiB by default" in after
+    for told in (options, after):
+        assert "`--debug-max-gib 64`" in told
+        # One GiB is 2**30 bytes: the limit in the unit a disk is sold in.
+        assert f"about {limit * 2**30 / 1e9:.0f} GB with the default" in told
+        assert "by hand" in told
+    assert f"**The debug recording stops at {limit:g} GiB" in after
+    assert f"reached its size limit, {limit:g} GiB by default" in troubleshooting()
+
+
+def test_the_readme_quotes_the_view_without_the_camera_streamers_variable(monkeypatch):
+    view_main = pytest.importorskip(
+        "isaaccapture_examples.agentic_remote.view.__main__"
+    )
+    shipped = CONFIGS / "view.yaml"
+    camera = yaml.safe_load(shipped.read_text(encoding="utf-8"))["camera"]
+    named = camera["bridge_python"]
+    variable = "AGENTIC_REMOTE_CAMERA_PR"
+    assert named.startswith(f"${{{variable}}}/")
+    rig = yaml.safe_load(RIG_AGENT_YAML.read_text(encoding="utf-8"))["camera"]
+    assert rig["bridge_python"] == named
+    # Without the variable the shipped file is refused, whatever the source.
+    monkeypatch.delenv(variable, raising=False)
+    with pytest.raises(view_main.ViewConfigError) as refused:
+        view_main.load_view_settings(shipped)
+    quoted = str(refused.value).replace(repr(named), "'...'")
+    view = one_line(readme_section("### The live view"))
+    assert f"`live view: the settings cannot be used: {quoted}`" in view
+    assert f"`{named}`" in view
+    # Any absolute folder serves a view that starts no camera frame bridge.
+    monkeypatch.setenv(variable, "/nowhere")
+    assert view_main.load_view_settings(shipped).bridge_python.startswith("/nowhere/")
+    recipe = readme_section("## Run demo 1 on one machine")
+    assert f'{variable}="$PWD" AGENTIC_REMOTE_VIEW_PYTHON=' in recipe
+    for row in ("| 4 | view |",):
+        rows = [
+            line
+            for line in README.read_text(encoding="utf-8").splitlines()
+            if line.startswith(row)
+        ]
+        assert len(rows) == 2
+        for line in rows:
+            assert f'`{variable}="$PWD" AGENTIC_REMOTE_VIEW_PYTHON="$PY" ' in line

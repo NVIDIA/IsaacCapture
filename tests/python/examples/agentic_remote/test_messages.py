@@ -395,6 +395,7 @@ MESSAGE_FIELDS = {
         "limit_set_versions": ...,
         "camera_calibration_id": "",
         "driver": "",
+        "agent_max_joint_speed": None,
     },
     Move: {
         "command_id": ...,
@@ -418,6 +419,7 @@ MESSAGE_FIELDS = {
         "max_effort": ...,
         "mode": ...,
         "expires_mono_s": None,
+        "scout_opening": None,
     },
     CheckerState: {
         "command_id": ...,
@@ -433,12 +435,15 @@ MESSAGE_FIELDS = {
         "reason": "",
         "timed_return": True,
         "confirmed": False,
+        "jaws_empty": False,
     },
     Reset: QUOTING,
-    Release: QUOTING,
-    Open: {**QUOTING, "confirmed": ...},
+    # jaws_empty: the operator typed that the jaws are empty.
+    Release: {**QUOTING, "jaws_empty": False},
+    # action: the typed opening of the jaws, or the typed close.
+    Open: {**QUOTING, "confirmed": ..., "action": "open"},
     # A shutdown says whether the path was confirmed (design sections 6 and 11).
-    Shutdown: {**QUOTING, "confirmed": False},
+    Shutdown: {**QUOTING, "confirmed": False, "jaws_empty": False},
     # end_q follows a field with a default, so it has one too.
     Result: {
         "command_id": ...,
@@ -707,6 +712,19 @@ def test_welcome_carries_the_driver_and_an_old_welcome_reads_as_not_declared():
     assert old == WELCOME and messages.PROTOCOL_VERSION == 1
     with pytest.raises(ProtocolError, match=r"driver: expected a string, got int"):
         decode(Welcome.TYPE, _changed(WELCOME, ("driver",), 1))
+
+
+def test_welcome_carries_the_agents_speed_limit_and_an_old_welcome_declares_none():
+    sent = dataclasses.replace(WELCOME, agent_max_joint_speed=0.2)
+    assert json.loads(sent.to_payload())["agent_max_joint_speed"] == 0.2
+    assert decode(Welcome.TYPE, sent.to_payload()) == sent
+    # A WELCOME from a robot app that knows no such field declares no limit,
+    # and the protocol version did not change for the field.
+    old = decode(Welcome.TYPE, _without(WELCOME, "agent_max_joint_speed"))
+    assert old.agent_max_joint_speed is None
+    assert old == WELCOME and messages.PROTOCOL_VERSION == 1
+    with pytest.raises(ProtocolError, match=r"agent_max_joint_speed"):
+        decode(Welcome.TYPE, _changed(WELCOME, ("agent_max_joint_speed",), "fast"))
 
 
 def test_human_setpoint_round_trips_and_is_newest_wins():

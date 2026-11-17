@@ -73,6 +73,9 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     COMMAND_TYPES,
     MESSAGE_TYPES,
     PROTOCOL_VERSION,
+    REQUEST_MOTORS_OFF,
+    REQUEST_MOTORS_ON,
+    REQUEST_PARK,
     CheckerState,
     Event,
     HumanSetpoint,
@@ -425,6 +428,73 @@ def test_the_human_role_may_ask_for_a_takeover_and_a_handback_only(bench):
     assert answer.reason == "no fresh controller data: stage stale"
 
 
+# The requests about the motors. "motors_off": the agent's rest tool has folded
+# the arm and asks for the motors off. "motors_on": they are asked on again.
+# "park": the agent program ends and asks for the robot app's return to rest.
+MOTOR_REQUESTS = {
+    "agent": {REQUEST_MOTORS_OFF, REQUEST_MOTORS_ON, REQUEST_PARK},
+    "console": {REQUEST_MOTORS_ON},
+    "human": set(),
+    "viewer": set(),
+    "tool": set(),
+}
+
+
+def test_the_requests_about_the_motors_are_the_agents_and_the_consoles_on():
+    words = {REQUEST_MOTORS_OFF, REQUEST_MOTORS_ON, REQUEST_PARK}
+    assert words == {"motors_off", "motors_on", "park"}
+    assert set(MOTOR_REQUESTS) == set(ROLES)
+    for role, mine in MOTOR_REQUESTS.items():
+        assert OWNER_REQUESTS.get(role, frozenset()) & words == mine, role
+    # Beside them each role keeps what it could ask for before.
+    assert OWNER_REQUESTS["agent"] - words == {"agent", "help_needed", "nobody"}
+    assert OWNER_REQUESTS["console"] - words == {"rest", "nobody"}
+
+
+@pytest.mark.parametrize("word", [REQUEST_MOTORS_OFF, REQUEST_MOTORS_ON, REQUEST_PARK])
+@pytest.mark.parametrize("role", ROLES)
+def test_a_request_about_the_motors_passes_for_its_roles_only(bench, role, word):
+    thor = bench.robot()
+    client = bench.client(role)
+    request = owner_request(word, f"own-{word}", confirmed=True)
+    send(client, request)
+    if word in MOTOR_REQUESTS[role]:
+        # Forwarded as it is, and its RESULT comes back to its sender.
+        assert thor.next() == (OwnerRequest.TYPE, request.to_payload())
+        thor.send(Result(request.command_id, "completed", detail={"motors": "x"}))
+        answer = received(client, Result, command_id=request.command_id)
+        assert answer.detail == {"motors": "x"}
+        return
+    refusal = received(client, Result, command_id=request.command_id)
+    assert refusal.status == "refused"
+    said = f"the {role} role may not send OWNER_REQUEST"
+    if OwnerRequest.TYPE in ROLE_TABLE[role]:
+        said += f' "{word}"'
+    assert refusal.reason == said
+    send(client, MARKER)
+    assert thor.next_message() == MARKER  # nothing went out ahead of it
+    assert client.alive
+
+
+def test_the_typed_fallback_adds_no_request_about_the_motors(folder):
+    # The typed fallback gives the console a takeover and a hand-back only.
+    bench = Bench(folder, typed_takeover=True)
+    try:
+        thor = bench.robot()
+        console = bench.client("console")
+        for word in (REQUEST_MOTORS_OFF, REQUEST_PARK):
+            send(console, owner_request(word, f"typed-{word}"))
+            refusal = received(console, Result, command_id=f"typed-{word}")
+            assert refusal.reason == (
+                f'the console role may not send OWNER_REQUEST "{word}"'
+            )
+        switch_on = owner_request(REQUEST_MOTORS_ON, "typed-on")
+        send(console, switch_on)
+        assert thor.next_message() == switch_on
+    finally:
+        bench.close()
+
+
 def test_a_second_human_program_is_refused(bench):
     thor = bench.robot()
     first = bench.client("human", "one")
@@ -509,7 +579,7 @@ def test_the_setting_of_one_service_does_not_change_the_module_tables(
         with_setting.close()
         without.close()
     assert (ROLE_TABLE, OWNER_REQUESTS) == tables
-    assert OWNER_REQUESTS["console"] == {"rest", "nobody"}
+    assert OWNER_REQUESTS["console"] == {"rest", "nobody", REQUEST_MOTORS_ON}
 
 
 def test_the_typed_fallback_is_switched_on_in_the_services_file(folder):

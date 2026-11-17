@@ -624,6 +624,26 @@ def test_motors_going_off_end_the_count_of_lost_feedback(arm, reader, clock):
     assert reader.failures() == [2, 0, 0]  # the total is kept
 
 
+def test_a_read_that_fails_as_the_motors_go_off_is_no_lost_feedback(arm, reader, clock):
+    """Seen on the arm: "joint feedback lost for 0.58 s in hold" after a release."""
+    idle_steps(reader, clock, 3)
+    began = clock.monotonic()
+
+    def released_meanwhile(joint: int) -> JointReading:
+        # The read waits for the driver while it switches its motors off,
+        # then finds a driver that cannot be read.
+        clock.advance(0.58)
+        arm.powered = False
+        raise ReadFailed(f"joint {joint} did not answer")
+
+    arm.read_joint = released_meanwhile
+    assert reader.step(began) is None
+    # The supervisor asks for the lost feedback right after that read.
+    assert reader.consecutive_failures_s(clock.monotonic()) == 0.0
+    assert reader.failures() == [0, 0, 0]
+    assert reader.due_in(clock.monotonic()) is None
+
+
 def test_idle_reads_resume_when_the_motors_come_on(arm, reader, clock):
     idle_steps(reader, clock, 3)
     arm.powered = False
@@ -854,6 +874,29 @@ def test_build_takes_every_field_from_its_source(world, clock, config):
         "human": {},
         "contact_hold": False,
     }
+
+
+@pytest.mark.parametrize(
+    ("hold", "why"),
+    [
+        ("holding", "every joint reads at the target it holds"),
+        ("not holding", "joint3 reads 0.412 rad, 0.212 rad from the target"),
+        ("unknown", "no joint target was sent since the connect"),
+    ],
+)
+def test_health_carries_what_the_arm_port_says_of_the_hold(world, hold, why):
+    # torque_on says that the app has not released the motors; an arm port
+    # that reads more of them says so in hold_evidence().
+    assert "motors" not in world.build().health
+    world.arm.hold_evidence = lambda: (hold, why)
+    state = world.build()
+    assert state.torque_on is True
+    assert state.health["motors"] == {"state": hold, "reason": why}
+    assert decode(RobotState.TYPE, state.to_payload()).health == state.health
+    # A reason is cut as every reason is, and stays on one line.
+    world.arm.hold_evidence = lambda: (hold, "x\n" * 400)
+    reason = world.build().health["motors"]["reason"]
+    assert len(reason) == 256 and reason.isprintable()
 
 
 def test_view_age_is_none_until_a_live_view_status_arrives(world, clock):

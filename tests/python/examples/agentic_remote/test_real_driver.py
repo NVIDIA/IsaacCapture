@@ -39,6 +39,7 @@ from isaaccapture_examples.agentic_remote.testing.client import WorkstationClien
 from repo_paths import repo_root
 
 from test_apai_backend import (
+    LAUNCHER_SPEED,
     RIG_REST_READINGS,
     GuardTime,
     JawGroup,
@@ -53,6 +54,15 @@ BACKEND = "isaaccapture_examples.agentic_remote.robot_app.apai_backend"
 LOGGER = "isaaccapture.examples.agentic_remote"
 ENDPOINT = "127.0.0.1:47610"
 WAIT_S = 20.0  # real seconds a test gives the program before it fails
+# Real seconds a typed rest may take on the rig's file: the leg up to the
+# ready pose takes 12.5 s at the file's 0.2 rad/s, the four fold steps 3 s each.
+REST_WAIT_S = 90.0
+# How the line begins that the program writes once the real driver is
+# connected at measured rest. No joint target is in force then: the motors are
+# switched on, and whether they hold is not known from a reading.
+CONNECTED = (
+    "robot app: the real driver is connected at measured rest: torque on, hold unknown"
+)
 QUESTIONS = [
     "Real driver, 1 of 3: Is the arm powered? Type yes to confirm.",
     "Real driver, 2 of 3: Connecting cuts motor torque. Is the arm at rest and "
@@ -70,6 +80,8 @@ BUILT = (
 THREADS = ("robot-app-", "robot-dialer", "gripper-worker", "thor-terminal-")
 # What the stand-in backend is asked at each look into APAI's hold folder.
 LOOKS = ["hold", "folder", "pending"]
+# Stands in for the route of APAI's rest tool (rest.functional_route()).
+ROUTE = "the functional rest's route"
 
 
 @pytest.fixture(autouse=True)
@@ -171,6 +183,8 @@ def fake_backend(
     module.confirmation_on_file = confirmation_on_file
     module.speed_cap = lambda of: 0.1
     monkeypatch.setitem(sys.modules, BACKEND, module)
+    # The route of APAI's rest tool, which the program reads from APAI itself.
+    monkeypatch.setattr(robot_main, "functional_route", lambda home_q=None: ROUTE)
     return asked
 
 
@@ -501,6 +515,10 @@ def test_three_yes_hand_the_built_arm_and_the_same_input_to_the_robot_app(
     # The Thor terminal reads on where the answers ended.
     assert call["typed"] is lines
     assert list(lines) == ["stop", "quit"]
+    # The robot app gets the functional rest's route, and a way to build the
+    # arm port anew for the motors to be switched on again after a rest.
+    assert call["rest_route"] is ROUTE
+    assert call["rebuild_arm"]() == "the arm" and asked[-1] == "arm"
 
 
 @pytest.mark.parametrize("late", ["hold", "confirmation"])
@@ -744,7 +762,10 @@ class Bench:
         self.sdks: list[RigSdk] = []
         self.holds = folder / "arm_holds"
         self.rest_log = folder / "rest_readings.jsonl"
-        self.profile = str(folder / "thor_arm")
+        # The arm profile lies as the rig's does on the Thor: in the configs
+        # folder of the experiment, whose launcher runs it. The experiment is
+        # the on-device agent this example was split from.
+        self.profile = str(folder / "experiment" / "configs" / "thor_arm")
         # Changes a new SDK object before the driver uses it.
         self.prepare: Any = None
 
@@ -780,7 +801,10 @@ def bench(monkeypatch, tmp_path) -> Bench:
     """APAI's reBot RS driver on a stand-in SDK, with a profile like the rig's.
 
     The profile extends APAI's rebot_rs as the rig's does: motor bus can4, a
-    speed cap of 0.1 rad/s. The gripper guard's clock does not wait.
+    fallback speed cap of 0.1 rad/s. The robot app loads it as on the Thor:
+    the experiment's launcher runs it, at the joint speed of its
+    rebot_workstation file, which is the profile's speed cap. The gripper
+    guard's clock does not wait.
     """
     import apai.control.rs_gripper as rs_gripper
 
@@ -794,7 +818,18 @@ def bench(monkeypatch, tmp_path) -> Bench:
         "channel": "can4",
         "overrides": {"safety": {"max_joint_vel": 0.1}},
     }
-    Path(bench.profile + ".yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
+    configs = Path(bench.profile).parent
+    configs.mkdir(parents=True)
+    files = {
+        "thor_arm.yaml": profile,
+        "thor_runtime.yaml": {"arm_profile": "configs/thor_arm.yaml"},
+        "rebot_workstation.yaml": {
+            "extends": "rebot_rs",
+            "overrides": {"safety": {"max_joint_vel": LAUNCHER_SPEED}},
+        },
+    }
+    for name, content in files.items():
+        (configs / name).write_text(yaml.safe_dump(content), encoding="utf-8")
     actuator = types.ModuleType("reBotArm_control_py.actuator")
     actuator.RebotArm = bench.make
     package = types.ModuleType("reBotArm_control_py")
@@ -844,7 +879,7 @@ def test_a_calibration_name_that_is_not_the_rig_files_is_refused(
     assert err.startswith(
         f"{NOT_CONNECTED}--calibration names "
         "'stereo-000000000000+mount-000000000000' but camera_calibration_id of "
-        "the file is 'stereo-c50bf5b2b899+mount-41d3ce701628'"
+        "the file is 'stereo-c50bf5b2b899+mount-fa6cfe676036'"
     )
 
 
@@ -1070,11 +1105,37 @@ def test_apais_claim_is_switched_off_for_the_connect_only(
 
 
 @rig
+@pytest.mark.parametrize(
+    ("owner", "speed", "refusal"),
+    [
+        # The agent and the return to rest: no faster than the launcher.
+        (
+            "agent",
+            0.5,
+            "limits.agent.max_joint_speed 0.5 rad/s is above the APAI profile's "
+            "speed cap of 0.4 rad/s (safety.max_joint_vel)",
+        ),
+        (
+            "recovery",
+            0.5,
+            "limits.recovery.max_joint_speed 0.5 rad/s is above the APAI profile's "
+            "speed cap of 0.4 rad/s (safety.max_joint_vel)",
+        ),
+        # A person: no faster than the cap of APAI's rebot_rs profile.
+        (
+            "human",
+            0.9,
+            "limits.human.max_joint_speed 0.9 rad/s is above the speed cap of "
+            "APAI's rebot_rs profile of 0.8 rad/s (safety.max_joint_vel)",
+        ),
+    ],
+)
 def test_a_file_faster_than_the_profiles_cap_is_refused_before_any_question(
-    bench, capsys, monkeypatch, tmp_path
+    bench, capsys, monkeypatch, tmp_path, owner, speed, refusal
 ):
+    assert LAUNCHER_SPEED == 0.4
     data = yaml.safe_load(RIG_YAML.read_text(encoding="utf-8"))
-    data["limits"]["human"]["max_joint_speed"] = 0.2
+    data["limits"][owner]["max_joint_speed"] = speed
     fast = tmp_path / "robot_app_fast.yaml"
     fast.write_text(yaml.safe_dump(data), encoding="utf-8")
     argv = bench.argv("--connect", ENDPOINT)
@@ -1083,8 +1144,7 @@ def test_a_file_faster_than_the_profiles_cap_is_refused_before_any_question(
     err = refused_before_the_bus(bench, capsys, monkeypatch)
     assert err == (
         f"{NOT_CONNECTED}APAI arm profile {bench.profile!r} cannot be used with "
-        f"{fast}: limits.human.max_joint_speed 0.2 rad/s is above the APAI "
-        "profile's speed cap of 0.1 rad/s (safety.max_joint_vel)\n"
+        f"{fast}: {refusal}\n"
     )
 
 
@@ -1189,7 +1249,7 @@ def test_a_question_that_is_not_confirmed_leaves_the_real_driver_unconnected(
     assert out[0] == (
         f"robot app: APAI arm profile {bench.profile}, the real driver on can4: "
         "built, not connected. No hold marker; calibration "
-        "stereo-c50bf5b2b899+mount-41d3ce701628; speed cap 0.1 rad/s; at rest at "
+        "stereo-c50bf5b2b899+mount-fa6cfe676036; speed cap 0.4 rad/s; at rest at "
         "start within 0.12 rad"
     )
     assert len(out) == 2 + at and out[-1].startswith(f"Real driver, {at + 1} of 3: ")
@@ -1364,11 +1424,22 @@ def test_three_yes_connect_the_arm_at_measured_rest_and_welcome_says_real(
         assert "send_mit arm" not in bench.calls
         assert "send_mit gripper" in bench.calls
 
-        # A typed rest brings the arm inside the 0.05 rad of a release.
+        # A typed rest takes the route of the functional rest, in real time:
+        # up to the ready pose, then the fold in steps. It ends inside the
+        # 0.05 rad of a release with the jaws closed and the motors off.
+        jaw_mark = len(sdk.gripper.sent)
         session.typed.type("rest")
         session.typed.type("path is clear")
-        session.client.wait_state(lambda s: s.motion == "rest_hold", WAIT_S)
-        assert sdk.disconnects == 0
+        state = session.client.wait_state(
+            lambda s: s.motion == "rest_unpowered", REST_WAIT_S
+        )
+        assert not state.torque_on and sdk.disconnects == 1
+        closes = sdk.gripper.sent[jaw_mark:]
+        assert closes and all(q == [0.0] for q, _ in closes)
+        # The wanted motors-off brings no fault-stop, also half a second on.
+        time.sleep(0.6)
+        state = session.client.wait_state(lambda s: s.seq > state.seq, WAIT_S)
+        assert (state.stop_level, state.fault_reason) == ("none", "")
         session.typed.type("quit")
         assert session.running.result() == 0
     assert sdk.disconnects == 1
@@ -1382,10 +1453,21 @@ def test_three_yes_connect_the_arm_at_measured_rest_and_welcome_says_real(
     # APAI's gripper guard writes its own lines between the program's.
     said = [line for line in out[4:] if line.startswith("robot app: ")]
     assert said[0] == robot_main.CONNECTING
-    assert said[1] == (
-        "robot app: the real driver is connected at measured rest: motors on, "
-        "motion hold, jaws referenced"
-    )
+    assert said[1] == f"{CONNECTED}, motion hold, jaws referenced"
+    # What the Thor terminal showed of the rest, and of the motors going off.
+    told = [line for line in out if line.startswith(("[rest]", "[jaws]", "[release]"))]
+    assert told[0].startswith("[rest] return to rest: up to the ready pose: the arm")
+    assert [line.split(": ")[1] for line in told[1:5]] == [
+        f"fold step {step} of 4" for step in range(1, 5)
+    ]
+    assert told[5:] == [
+        "[rest] return to rest: the arm is at rest, motors on",
+        "[jaws] at rest: closing the jaws with the driver's close",
+        "[jaws] at rest: the jaws are closed",
+        "[release] torque release sent at rest: the driver does not confirm that "
+        "the motors are off",
+    ]
+    assert "rest: completed" in out
     assert said[2].startswith("robot app: session ")
     assert left_threads() == []
 
@@ -1715,15 +1797,28 @@ def test_ctrl_c_during_the_start_is_a_stop_once_the_arm_is_connected(
     assert app._arm.gripper_referenced()
     assert bench.calls.count("enable") == 1 and sdk.disconnects == 0
     out = capsys.readouterr().out
-    assert "robot app: the real driver is connected at measured rest: motors on" in out
+    assert CONNECTED in out
     assert "Ctrl+C" in out
     assert left_threads() == []
 
 
+# What a SIGTERM leaves once the start has run to its end: at measured rest the
+# jaws closed and the motors off, as the experiment's launcher ends; away from
+# rest nothing moves and the motors stay on.
+SIGTERM_AT_REST = (
+    "robot app: SIGTERM; closing; the arm lies at measured rest: the motors are off"
+)
+SIGTERM_AWAY = "robot app: SIGTERM; closing with the motors left on"
+
+
 @rig
-def test_sigterm_during_the_start_closes_the_program_with_the_motors_left_on(
-    bench, capsys, monkeypatch, signals_kept
+@pytest.mark.parametrize("at_rest", [True, False], ids=["at rest", "away from rest"])
+def test_sigterm_during_the_start_lets_the_start_end_and_cuts_torque_only_at_rest(
+    bench, capsys, monkeypatch, signals_kept, at_rest
 ):
+    if not at_rest:
+        # Inside the 0.12 rad of APAI's connect, outside the 0.05 of a release.
+        bench.reading = list(RIG_REST_READINGS[0])
     seen = signal_during_the_jaw_reference(bench, signal.SIGTERM)
     no_dial(monkeypatch)
     apps = closed_once(monkeypatch, lambda app: not app.running)
@@ -1732,10 +1827,20 @@ def test_sigterm_during_the_start_closes_the_program_with_the_motors_left_on(
     assert seen == ["after 1 enable"] and signals_kept == []
     (sdk,) = bench.sdks
     (app,) = apps
-    assert app._arm.gripper_referenced()
-    assert bench.calls.count("enable") == 1 and sdk.disconnects == 0
+    assert bench.calls.count("enable") == 1
     out = capsys.readouterr().out.splitlines()
-    assert "robot app: SIGTERM; closing with the motors left on" in out
+    if at_rest:
+        assert SIGTERM_AT_REST in out and SIGTERM_AWAY not in out
+        assert sdk.disconnects == 1 and sdk.released_at == [[0.0] * 6]
+    else:
+        assert SIGTERM_AWAY in out and SIGTERM_AT_REST not in out
+        why = out[out.index(SIGTERM_AWAY) + 1]
+        assert why.startswith(
+            "robot app: the motors stay on because the arm is not at rest: joint "
+        )
+        assert sdk.disconnects == 0 and app._arm.torque_on()
+        assert app._arm.gripper_referenced()
+        assert "send_mit arm" not in bench.calls  # nothing moved the arm
     assert left_threads() == []
 
 
@@ -1790,19 +1895,19 @@ def test_a_signal_after_the_connecting_line_is_kept_until_the_arm_is_connected(
     # The signal does not end the program with "not confirmed": the arm is
     # connected first, its joints read twice before anything that cuts torque.
     assert NOT_CONFIRMED not in captured.err
-    assert "robot app: the real driver is connected at measured rest: motors on" in (
-        captured.out
-    )
+    assert CONNECTED in captured.out
     (sdk,) = bench.sdks
     reads = [f"read joint{i}" for i in range(1, 7)]
     assert bench.calls[:14] == ["open the bus", *reads, *reads, "mode_mit arm"]
-    assert bench.calls.count("enable") == 1 and sdk.disconnects == 0
+    assert bench.calls.count("enable") == 1
     (app,) = apps
     if stopped:
-        assert app.snapshot().stop_number == 1
+        assert app.snapshot().stop_number == 1 and sdk.disconnects == 0
         assert any("STOP from thor_terminal: Ctrl+C" in line for line in out)
     else:
-        assert "robot app: SIGTERM; closing with the motors left on" in out
+        # The arm lies at measured rest: the SIGTERM switches the motors off.
+        assert SIGTERM_AT_REST in out and sdk.disconnects == 1
+        assert sdk.released_at == [[0.0] * 6]
     assert left_threads() == []
 
 
@@ -1852,7 +1957,7 @@ def test_a_terminal_that_closes_during_the_start_does_not_end_it_half_way(
     assert app._arm.gripper_referenced()
     assert bench.calls.count("enable") == 1 and sdk.disconnects == 0
     out = capsys.readouterr().out
-    assert "robot app: the real driver is connected at measured rest: motors on" in out
+    assert CONNECTED in out
     assert left_threads() == []
 
 

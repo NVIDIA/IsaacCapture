@@ -66,6 +66,8 @@ ON_THE_LINK: dict[str, tuple[type, dict[str, Any]]] = {
     # The arm of these tests is at rest: a typed "yes", and nothing may move.
     "shutdown": (Shutdown, {"confirmed": False}),
 }
+# The commands that ask for a typed phrase in every state. Two more ask in
+# some: "close" while the jaws are not proven empty, "on" with the motors off.
 CONFIRMED = ("rest", "open", "release", "shutdown")
 # What each question asks for with the arm at rest.
 PHRASE = {"rest": PATH_IS_CLEAR, "open": YES, "release": YES, "shutdown": YES}
@@ -430,10 +432,32 @@ def test_send_command_sends_nothing_without_the_phrase_of_its_question() -> None
             self.sent: list[tuple[str, dict[str, Any]]] = []
 
         def __getattr__(self, name: str) -> Any:
-            return lambda **fields: self.sent.append((name, fields)) or f"{name}-1"
+            def call(*request: str, **fields: Any) -> str:
+                if request:  # an owner request's word is given by place
+                    (fields["request"],) = request
+                self.sent.append((name, fields))
+                return f"{name}-1"
+
+            return call
 
     client, state = Client(), robot_state(owner_number=4, stop_number=3)
-    assert console_cmd.CONFIRMED == (*CONFIRMED, "takeover", "handback")
+    assert console_cmd.CONFIRMED == (
+        "rest",
+        "open",
+        "close",
+        "release",
+        "on",
+        "shutdown",
+        "takeover",
+        "handback",
+    )
+    assert set(CONFIRMED) < set(console_cmd.CONFIRMED)
+    # "on" switches the motors on again after a rest or a release.
+    assert console_cmd.question("on", state) == (console_cmd.ASK_ON, YES)
+    assert console_cmd.send_command("on", client, state, phrase_typed="yes")
+    name, fields = client.sent.pop()
+    assert (name, fields["request"]) == ("request_owner", "motors_on")
+    assert (fields["owner_number"], fields["stop_number"]) == (4, 3)
     for command in console_cmd.CONFIRMED:
         for typed in ("", "no", "stop"):
             with pytest.raises(console_cmd.NotConfirmed):
@@ -726,6 +750,16 @@ def test_no_answer_ends_the_command_after_its_wait(console: Console) -> None:
     assert console.run("reset", "--timeout", "0.3") == console_cmd.EXIT_FAILED
     assert console.said[-1].startswith("reset: no final RESULT within 0.3 s")
     assert len(console.settled()) == 1  # sent once, not again
+    # A command carries no expiry: one that reaches the robot app later is
+    # still done there. The operator is told, with what ends it.
+    console.answer = PATH_IS_CLEAR
+    assert console.run("rest", "--timeout", "0.3") == console_cmd.EXIT_FAILED
+    assert console.said[-1].startswith("rest: no final RESULT within 0.3 s (")
+    assert console.said[-1].endswith(
+        "). What was sent is not withdrawn: the robot app may still do it. Run "
+        "the command stop before anyone goes near the arm"
+    )
+    assert len(console.settled()) == 2
 
 
 # STOP and state
@@ -985,10 +1019,12 @@ def test_each_command_sends_through_one_call_and_there_is_no_other_send() -> Non
         "shutdown",
     ]
     assert "connect_local(args.socket, ROLE_CONSOLE" in SOURCE.read_text()
-    # The one owner request it writes itself is a typed takeover or hand-back.
+    # The one owner request it writes itself is a typed takeover or hand-back,
+    # or "on", which switches the motors on again.
     (request,) = (node for node in calls_in_run if node.func.attr == "request_owner")
-    assert ast.unparse(request.args[0]) == "TYPED_REQUESTS[command]"
+    assert ast.unparse(request.args[0]) == "OWNER_WORDS[command]"
     assert console_cmd.TYPED_REQUESTS == dict(TYPED)
+    assert console_cmd.OWNER_WORDS == {**dict(TYPED), "on": "motors_on"}
     # Nothing here starts motion of its own or stands in for the agent.
     names = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     assert not names & {"move", "run_move", "permit", "send"}

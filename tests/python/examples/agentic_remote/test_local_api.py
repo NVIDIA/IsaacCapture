@@ -853,14 +853,19 @@ def test_the_shipped_service_files_keep_typed_takeover_off(tmp_path):
         shipped = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert shipped["operator"]["typed_takeover"] is False, path.name
     assert load_link_service_config(demo).typed_takeover is False
-    # The rig file loads only with the Thor's address written in.
-    text = rig.read_text(encoding="utf-8")
-    assert text.count("\nallowed_peers: []\n") == 1
-    written = tmp_path / rig.name
-    written.write_text(
-        text.replace("\nallowed_peers: []\n", "\nallowed_peers: [192.0.2.10]\n"),
-        encoding="utf-8",
+    # The rig file loads only with the Thor's address written in: it ships
+    # with an empty list, and a rig's copy holds that rig's address.
+    import re
+
+    text, lists = re.subn(
+        r"^allowed_peers: \[.*\]$",
+        "allowed_peers: [192.0.2.10]",
+        rig.read_text(encoding="utf-8"),
+        flags=re.M,
     )
+    assert lists == 1
+    written = tmp_path / rig.name
+    written.write_text(text, encoding="utf-8")
     loaded = load_link_service_config(written)
     assert loaded.typed_takeover is False
     assert loaded.service_options()["typed_takeover"] is False

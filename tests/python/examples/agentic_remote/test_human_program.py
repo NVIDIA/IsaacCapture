@@ -35,6 +35,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -499,7 +500,7 @@ def test_the_shipped_rig_speeds_keep_the_solution_under_the_ahead_limit(directio
     settings = load_human_settings(CONFIGS / "human_rebot.yaml")
     rig_file = yaml.safe_load((CONFIGS / "robot_app_rebot.yaml").read_text())
     thor_speed = rig_file["limits"]["human"]["max_joint_speed"]
-    assert thor_speed == 0.1
+    assert thor_speed == 0.8  # the owner's bound on a person's motion
     speed = settings.retarget.max_linear_velocity
     seconds = 3.0
     start = (0.0, 0.6, 0.9, 0.0, 0.0, 0.0)
@@ -1039,7 +1040,9 @@ def test_the_start_line_names_the_feed_the_driver_and_the_model(
     assert not any("Teleop Session Server" in text for text in program.said)
     # The WELCOME was checked once: no pass took it for a new session.
     logged = [record.getMessage() for record in caplog.records]
-    assert any("waiting for a WELCOME" in text for text in logged)
+    # The socket may be the robot link service's or the robot app's own.
+    attached = "attached to the robot link service or the robot app; "
+    assert logged.count(attached + "waiting for a WELCOME") == 1
     assert not any("new session" in text for text in logged)
 
 
@@ -1394,7 +1397,10 @@ def test_without_a_robot_link_service_the_program_ends_with_exit_code_1(folder, 
     )
     assert code == 1 and said == []
     error = capsys.readouterr().err
-    assert error.startswith("human program: cannot attach to the robot link service")
+    # The socket may be the robot link service's or the robot app's own.
+    assert error.startswith(
+        "human program: cannot attach to the robot link service or the robot app: "
+    )
 
 
 def test_the_program_ends_with_exit_code_1_when_the_teleop_attempts_run_out(
@@ -1873,6 +1879,47 @@ def paused_log() -> Iterator[PausedLog]:
             logger.setLevel(level)
 
 
+@pytest.fixture
+def handed(monkeypatch) -> list[Message]:
+    """What the program's client is given to send, in order.
+
+    The robot link service drops a HUMAN_SETPOINT behind a STOP that no
+    ROBOT_STATE shows yet: what it forwards is not all that was sent.
+    """
+    from isaaccapture_examples.agentic_remote.testing.client import WorkstationClient
+
+    sent: list[Message] = []
+    real = WorkstationClient.send
+
+    def send(self: Any, message: Message) -> None:
+        sent.append(message)
+        real(self, message)
+
+    monkeypatch.setattr(WorkstationClient, "send", send)
+    return sent
+
+
+class ScriptedSession:
+    """In place of a TeleopSession: a script's controller data, 10 ms old."""
+
+    def __init__(self, graph: Any, rows: Sequence[dict[str, Any]]) -> None:
+        self._script = ScriptFeed(graph, rows)
+        self.last_step_info = SimpleNamespace(remote_tick_age_s=0.01)
+        self.lost = threading.Event()  # set by a test: the next step loses it
+
+    def __enter__(self) -> ScriptedSession:
+        return self
+
+    def __exit__(self, *error: object) -> bool:
+        return False
+
+    def step(self, *, external_inputs: Any, execution_events: Any) -> Any:
+        if self.lost.is_set():
+            raise RuntimeError("Remote session lost: connection closed")
+        now = time.monotonic()
+        return self._script.step(external_inputs, execution_events, now).outputs
+
+
 def test_right_b_is_a_stop_ahead_of_the_log_line_of_its_pass(
     bench, folder, start, paused_log
 ):
@@ -1903,13 +1950,58 @@ def test_right_b_is_a_stop_ahead_of_the_log_line_of_its_pass(
     assert set(stops) == {RIGHT_B} and paused_log.written.count(line) == len(stops)
 
 
+def test_right_b_is_a_stop_ahead_of_the_log_line_of_the_session_it_arrives_with(
+    bench, folder, start, paused_log
+):
+    entering, go = threading.Event(), threading.Event()
+
+    class Late(ScriptedSession):
+        def __enter__(self) -> ScriptedSession:
+            entering.set()
+            go.wait(WAIT_S)
+            return self
+
+    def feed(graph: Any, newest_state: Any) -> Any:
+        # The teleop feed itself; right B is down in its session's first data.
+        rows = [{**BASE, "b": True}]
+        return feed_module.TeleopFeed(
+            graph,
+            TeleopSettings(endpoint=NO_SERVER),
+            session_factory=lambda config: Late(graph, rows),
+        )
+
+    line = f"entered a remote session at {NO_SERVER}"
+    # The agent owns the arm: right B is the wearer's STOP of the agent's move.
+    thor = robot(bench, owner="agent")
+    seen = Forwarded(thor)
+    program = start(write_config(folder, bench.path), feed=feed)
+    assert entering.wait(WAIT_S)  # the first pass is entering the session
+    paused_log.pause.set()  # from here on the terminal takes no log line
+    go.set()
+    try:
+        # That pass reads right B behind the entry. Its STOP is on its way to
+        # the Thor while the line of the entry waits.
+        until(lambda: seen.of(Stop), "the STOP of right B")
+        assert seen.of(Stop) == [RIGHT_B]
+        assert paused_log.waiting.wait(WAIT_S)
+        assert paused_log.held == [line] and line not in paused_log.written
+    finally:
+        paused_log.resume.set()
+    until(lambda: "right B is down: STOP sent" in paused_log.written, "the lines")
+    assert program.end() == 0
+    lines = [text for text in paused_log.written if text == line or "right B" in text]
+    assert lines[:2] == [line, "right B is down: STOP sent"] and lines.count(line) == 1
+
+
 class HeldB:
     """main()'s feed keyword: a script feed whose passes a test can hold up.
 
     Right B goes down once a ROBOT_STATE shows nobody as the owner.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, b: bool = True) -> None:
+        """b False: right B stays up."""
+        self.b = b
         self.hold = threading.Event()  # set by a test: the next pass waits
         self.holding = threading.Event()  # a pass waits
         self.go = threading.Event()  # set by a test: that pass goes on
@@ -1928,7 +2020,7 @@ class HeldB:
                 return super().step(external_inputs, events, now_mono)
 
         self.newest = newest_state
-        rows = [BASE, {"wait_for": "owner_nobody"}, {"t": 0.0, "b": True}]
+        rows = [BASE, {"wait_for": "owner_nobody"}, {"t": 0.0, "b": self.b}]
         return Held(graph, rows, state=newest_state)
 
     def between_two_passes(self, bench: Bench, thor: FakeThor, new: Message) -> None:
@@ -1990,7 +2082,7 @@ def paused_error(paused_log, monkeypatch) -> list[str]:
 
 @pytest.mark.parametrize("why", ["a real arm", "another arm model"])
 def test_right_b_is_a_stop_on_the_pass_that_ends_the_program_for_a_new_session(
-    why, bench, folder, start, paused_log, paused_error
+    why, bench, folder, start, paused_log, paused_error, handed
 ):
     feed = HeldB()
     # The agent owns the arm: right B is the wearer's STOP of the agent's move.
@@ -2028,6 +2120,35 @@ def test_right_b_is_a_stop_on_the_pass_that_ends_the_program_for_a_new_session(
     assert seen.of(Stop) == [RIGHT_B]
     others = [message for message in seen.messages if message != RIGHT_B]
     assert all(message.session_id == "s1" for message in others)
+    # Nor was anything handed to the client behind that STOP: the service
+    # would have dropped a HUMAN_SETPOINT there, so `seen` cannot tell.
+    assert handed[handed.index(RIGHT_B) :] == [RIGHT_B]
+    assert all(message.session_id == "s1" for message in handed[:-1])
+
+
+def test_the_last_pass_for_a_session_not_to_be_driven_sends_no_human_setpoint(
+    bench, folder, start, handed
+):
+    # Right B stays up: no STOP of that pass makes the service drop what follows.
+    feed = HeldB(b=False)
+    thor = robot(bench, owner="agent")
+    seen = Forwarded(thor)
+    program = start(write_config(folder, bench.path), feed=feed)
+    program.wait_said("right controller seen")
+    until(lambda: handed, "a HUMAN_SETPOINT for the session the program took")
+    new = dataclasses.replace(welcome("s2"), driver="real")
+    feed.between_two_passes(bench, thor, new)
+    time.sleep(0.2)  # a HUMAN_SETPOINT is due: 20 per second as a status
+    feed.go.set()
+    until(lambda: not program.running, "the program's end")
+    assert program.code == 1
+    time.sleep(0.2)
+    # Every link message of the program was a HUMAN_SETPOINT for the session
+    # it took. For the one it must not drive it sent nothing, also no status.
+    assert handed and {type(message) for message in handed} == {HumanSetpoint}
+    assert {message.session_id for message in handed} == {"s1"}
+    assert {message.session_id for message in seen.of(HumanSetpoint)} == {"s1"}
+    assert seen.of(Stop) == []
 
 
 @pytest.mark.parametrize(
@@ -2040,8 +2161,10 @@ def test_right_b_is_a_stop_on_the_pass_that_ends_the_program_for_a_new_session(
             "a synthetic controller may drive only a simulated arm; "
             "the robot app declares driver real",
         ),
+        # As Ctrl+C and SIGTERM end the program: exit code 0, no line of its own.
+        ("the stop event was set", None),
     ],
-    ids=["an error", "the attempts ran out", "a new session"],
+    ids=["an error", "the attempts ran out", "a new session", "the stop event"],
 )
 def test_the_programs_own_stop_goes_out_ahead_of_the_lines_of_its_end(
     why, said, bench, folder, start, paused_log, paused_error
@@ -2066,21 +2189,28 @@ def test_the_programs_own_stop_goes_out_ahead_of_the_lines_of_its_end(
         errors.append(ValueError("the feed broke"))
     elif why == "no Teleop Session Server":
         errors.append(feed_module.AttemptsRanOut(said))
+    elif why == "the stop event was set":
+        program.stop.set()
     else:
         thor.send(dataclasses.replace(welcome("s2"), driver="real"))
     reason = f"the human program ends ({why})"
+    stop_line = f"STOP sent: the person owned the arm; {reason}"
     try:
         # The person owns the arm: the end is a STOP, a hold, and it is on its
         # way to the Thor while the first line that tells of it waits.
         until(lambda: seen.of(Stop), "the program's STOP")
         assert seen.of(Stop) == [Stop(reason=reason, sender="human_program")]
         assert paused_log.waiting.wait(WAIT_S)
-        assert paused_log.held == [f"STOP sent: the person owned the arm; {reason}"]
+        assert paused_log.held == [stop_line]
         assert paused_error == [] and program.running
     finally:
         paused_log.resume.set()
     until(lambda: not program.running, "the program's end")
-    assert program.code == 1 and paused_error == [said]
+    if said is None:
+        assert program.code == 0 and paused_error == []
+        assert paused_log.written[-2:] == [stop_line, f"{why}; closing"]
+    else:
+        assert program.code == 1 and paused_error == [said]
     time.sleep(0.2)
     assert len(seen.of(Stop)) == 1
 
@@ -2328,6 +2458,49 @@ def test_an_endpoint_isaac_capture_cannot_use_ends_the_program_with_exit_code_2(
     # This program drove nothing: no link message of it went to the Thor.
     until(lambda: not bench.service.roles().get("human"), "the program's leaving")
     assert thor.drain() == []
+
+
+def test_a_value_error_at_a_later_teleop_attempt_ends_the_program_with_its_stop(
+    bench, folder, start, capsys
+):
+    sessions: list[ScriptedSession] = []
+    # As for an answer of the peer at teleop.endpoint that is not UTF-8 text.
+    wrong = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    def feed(graph: Any, newest_state: Any) -> Any:
+        def factory(config: Any) -> ScriptedSession:
+            if sessions:
+                raise wrong
+            sessions.append(ScriptedSession(graph, [BASE]))
+            return sessions[0]
+
+        # The teleop feed itself, on a session that is entered and then lost.
+        settings = TeleopSettings(endpoint=NO_SERVER, retry_s=0.3, attempts=5)
+        return feed_module.TeleopFeed(graph, settings, session_factory=factory)
+
+    # The person owns the arm, and this program sends its HUMAN_SETPOINTs.
+    thor = robot(bench, driver="real", owner="human")
+    seen = Forwarded(thor)
+    program = start(write_config(folder, bench.path), feed=feed)
+    program.wait_said("right controller seen")
+    until(lambda: len(seen.of(HumanSetpoint)) > 5, "HUMAN_SETPOINTs")
+    sessions[0].lost.set()
+    until(lambda: not program.running, "the program's end")
+    # Isaac Capture read teleop.endpoint before: this is no error of the file.
+    # The program ends as on any error: its STOP, a hold, and exit code 1.
+    assert program.code == 1
+    until(lambda: seen.of(Stop), "the program's STOP")
+    time.sleep(0.2)
+    reason = "the human program ends (it failed)"
+    assert seen.of(Stop) == [Stop(reason=reason, sender="human_program")]
+    error = RuntimeError(
+        f"the attempt to enter a remote session at {NO_SERVER} failed: "
+        f"UnicodeDecodeError: {wrong}"
+    )
+    said = capsys.readouterr().err.splitlines()
+    assert [text for text in said if text.startswith("human program: ")] == [
+        f"human program: failed: {error!r}"
+    ]
 
 
 def test_a_robot_state_of_an_earlier_session_is_no_reason_for_the_stop_at_the_end(
@@ -2660,6 +2833,54 @@ def test_run_human_sh_names_its_variables_and_execs_the_human_program(tmp_path):
     done = run(env, "--help")
     assert done.returncode == 0 and done.stdout.split()[:4] == USAGE
     assert list(tmp_path.rglob("*.pyc")) == []
+
+
+def test_run_human_sh_reads_its_variables_from_an_env_file(tmp_path):
+    script_file = EXAMPLE / "run_human.sh"
+    fake = tmp_path / "python"
+    fake.write_text('#!/usr/bin/env bash\necho "$PYTHONPATH $*"\n', encoding="utf-8")
+    fake.chmod(0o755)
+    apai_src, package = tmp_path / "apai_src", tmp_path / "isaac_capture_py"
+    apai_src.mkdir()
+    package.mkdir()
+    file = tmp_path / "thor.env"
+    file.write_text(
+        f"AGENTIC_REMOTE_HUMAN_PYTHON={fake}\n"
+        f"AGENTIC_REMOTE_APAI_SRC={apai_src}\n"
+        f"AGENTIC_REMOTE_ISAAC_CAPTURE_PY={package}\n",
+        encoding="utf-8",
+    )
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["bash", str(script_file), *args],
+            check=False,
+            env={"PATH": os.environ["PATH"]},  # none of the three variables
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=tmp_path,
+        )
+
+    # As the first argument: the file's variables count, the program gets the rest.
+    done = run("--env", str(file), "--config", "configs/human_rebot.yaml")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == [
+        f"{EXAMPLE}/python:{package}:{apai_src}",
+        *("-m", "isaaccapture_examples.agentic_remote.human"),
+        *("--config", "configs/human_rebot.yaml"),
+    ]
+    # Anywhere else the script reads no file: its variables are missing.
+    done = run("--config", "configs/human_rebot.yaml", "--env", str(file))
+    assert done.returncode == 2 and done.stdout == ""
+    assert done.stderr.startswith("run_human.sh: AGENTIC_REMOTE_HUMAN_PYTHON ")
+    # Without a file, or with one that is not there: one line and exit code 2.
+    for args, named in ((["--env"], ""), (["--env", "none.env"], "none.env")):
+        done = run(*args)
+        assert done.returncode == 2 and done.stdout == ""
+        assert done.stderr == (
+            f"run_human.sh: --env needs a file of KEY=value lines (it is '{named}')\n"
+        )
 
 
 def imports(source: str, top_only: bool = False) -> list[tuple[str, tuple[str, ...]]]:

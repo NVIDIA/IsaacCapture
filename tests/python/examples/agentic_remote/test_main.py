@@ -48,7 +48,7 @@ BACKEND = "isaaccapture_examples.agentic_remote.robot_app.apai_backend"
 LOGGER = "isaaccapture.examples.agentic_remote"
 # Real seconds the whole self-test may take; it needs about 5 on a free machine.
 SELFTEST_BOUND_S = 30.0
-STEPS = 11
+STEPS = 12
 # Threads the self-test starts; none may outlive it.
 THREADS = ("robot-app-", "gripper-worker", "thor-terminal-", "workstation-client")
 NO_MODE = "--arm sim needs --connect HOST:PORT, --selftest or --selftest-link"
@@ -165,6 +165,7 @@ def test_help_names_every_argument_and_exits_with_0(capsys):
         "--driver {mock,real}",
         "--apai-profile NAME",
         "--calibration NAME",
+        "--human-socket PATH",
     ):
         assert argument in out
 
@@ -279,9 +280,13 @@ def test_the_selftest_passes_on_the_shipped_configuration(capsys, releases):
         "the agent asks for help",
         "stop typed at the Thor terminal",
         "rest typed at the Thor terminal",
+        "on typed at the Thor terminal",
         "release at rest",
         "quit typed at the Thor terminal",
     ]
+    # The typed rest ends as the functional rest: at rest, the motors off.
+    assert steps[8].endswith("rad from rest") and "the motors are off" in steps[8]
+    assert "the motors are on again at rest" in steps[9]
     assert "refused, no setpoint sent" in steps[3]
     assert steps[4].endswith("the arm holds, stop number 1")
     assert steps[5].endswith(
@@ -308,13 +313,18 @@ def test_the_selftest_passes_on_the_shipped_configuration(capsys, releases):
     assert shown.index("> rest") < shown.index(asked) < shown.index("> path is clear")
     # The quit comes with the motors off at rest: it moves nothing and asks nothing.
     assert shown.count(asked) == 1
-    assert "nothing was asked: the arm did not move" in steps[10]
+    assert "nothing was asked: the arm did not move" in steps[11]
     typed_stop = "[stop] STOP from thor_terminal: typed stop; the arm holds"
     assert any(line.startswith(typed_stop) for line in shown)
-    # One release, at rest, and nothing left running.
+    # The motors were switched on again after a typed yes, without a new start.
+    assert "> on" in shown and "on: completed" in shown
+    assert shown.index("> on") < shown.index("> yes") < shown.index("on: completed")
+    # Two releases, the typed rest's and the release's, each at rest, and
+    # nothing left running.
     rest = RobotAppConfig.default().rest
-    assert len(releases) == 1
-    assert releases[0] == pytest.approx(list(rest.rest_q), abs=rest.rest_tol_rad)
+    assert len(releases) == 2
+    for released in releases:
+        assert released == pytest.approx(list(rest.rest_q), abs=rest.rest_tol_rad)
     assert left_threads() == []
 
 
@@ -323,8 +333,9 @@ def test_the_selftest_follows_another_configuration(tmp_path, capsys, releases):
     code, lines = selftest(quick_config(tmp_path, {"rest.rest_q": rest_q}), capsys)
     assert code == 0, "\n".join(lines)
     assert len(step_lines(lines)) == STEPS
-    assert len(releases) == 1
-    assert releases[0] == pytest.approx(rest_q, abs=0.05)
+    assert len(releases) == 2
+    for released in releases:
+        assert released == pytest.approx(rest_q, abs=0.05)
 
 
 def test_a_configuration_without_permits_fails_the_no_permit_step(
@@ -432,10 +443,10 @@ def test_a_release_away_from_rest_fails_the_selftest(tmp_path, capsys, monkeypat
     code, lines = selftest(quick_config(tmp_path), capsys)
     assert code == 1
     assert step_lines(lines)[-1] == (
-        f"selftest 10/{STEPS} FAILED  release at rest: torque was released 0.300 rad "
-        "away from rest"
+        f"selftest  9/{STEPS} FAILED  rest typed at the Thor terminal: torque was "
+        "released 0.300 rad away from rest"
     )
-    assert lines[-1] == f"selftest: FAILED at step 10 of {STEPS}"
+    assert lines[-1] == f"selftest: FAILED at step 9 of {STEPS}"
     assert left_threads() == []
 
 
@@ -810,6 +821,71 @@ def test_run_connected_declares_the_driver_its_caller_names(monkeypatch):
     with pytest.raises(ValueError, match="driver must be one of"):
         robot_main.run_connected(config, arm, checkers, clock, "h:1", driver="mock")
     assert [kwargs["driver"] for kwargs in built] == ["", "mock"]
+    assert left_threads() == []
+
+
+@pytest.mark.parametrize(
+    "form",
+    ["--human-socket={}", "--human-socket {}"],
+    ids=["one word", "two words"],
+)
+def test_a_tilde_in_human_socket_is_taken_from_the_home_folder(
+    form, tmp_path_factory, monkeypatch, capsys
+):
+    """--human-socket and socket_path of the human program's file name one path.
+
+    The human program is the program through which a person drives the arm;
+    it attaches to the socket the robot app serves with --human-socket. A
+    shell hands the `~` of both forms on as it is: of the one word, and of the
+    two when the path is quoted.
+    """
+    from isaaccapture_examples.agentic_remote.human.__main__ import (
+        load_human_settings,
+    )
+    from isaaccapture_examples.agentic_remote.link_service.local import (
+        connect_local,
+    )
+
+    home = tmp_path_factory.mktemp("hs")  # short: a socket path holds 107 bytes
+    cwd = home / "c"
+    cwd.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(cwd)
+    text = "~/.agentic_remote/human.sock"  # as configs/human_rebot.yaml has it
+    rig = load_human_settings(CONFIG_YAML.parent / "human_rebot.yaml").socket_path
+    assert rig == str(home / ".agentic_remote" / "human.sock")
+    typed, returned = TypedLines(), []
+    monkeypatch.setattr(robot_main, "LinkCarrier", Dialed())
+    monkeypatch.setattr(robot_main, "_remote_link_missing", lambda: None)
+    monkeypatch.setattr(robot_main, "typed_lines", lambda: typed)
+    argv = ["--config", str(CONFIG_YAML), "--arm", "sim"]
+    argv += ["--connect", "robot-link.invalid:1"]  # never dialed: Dialed stands in
+    argv += form.format(text).split()
+    program = threading.Thread(
+        target=lambda: returned.append(robot_main.main(argv)), daemon=True
+    )
+    program.start()
+    try:
+        end = time.monotonic() + 10.0
+        while program.is_alive() and time.monotonic() < end:
+            if os.path.exists(rig) or (cwd / "~").exists():
+                break
+            time.sleep(0.005)
+        assert not (cwd / "~").exists(), "the socket is under a folder named ~"
+        # The path of the human program's file reaches the robot app's socket.
+        attached = connect_local(rig, "human", "human", 10.0)
+        try:
+            assert attached.status.roles == {"human": 1}
+        finally:
+            attached.close()
+        typed.type("quit")
+        program.join(20.0)
+    finally:
+        typed.end()
+    assert returned == [0]
+    said = capsys.readouterr().out.splitlines()
+    assert f"robot app: the human program's socket is {rig}" in said
+    assert not os.path.exists(rig)
     assert left_threads() == []
 
 
@@ -1376,3 +1452,51 @@ def test_run_robot_app_sh_sets_the_environment_and_names_what_is_missing(tmp_pat
         *("-m", "isaaccapture_examples.agentic_remote.robot_app"),
         *("--config", "configs/robot_app.yaml", "--arm", "sim"),
     ]
+
+
+def test_run_robot_app_sh_reads_its_variables_from_an_env_file(tmp_path):
+    script = EXAMPLE / "run_robot_app.sh"
+    fake = tmp_path / "python"
+    fake.write_text('#!/usr/bin/env bash\necho "$PYTHONPATH $*"\n', encoding="utf-8")
+    fake.chmod(0o755)
+    package = tmp_path / "isaac_capture_py"
+    package.mkdir()
+    file = tmp_path / "thor.env"
+    file.write_text(
+        f"AGENTIC_REMOTE_THOR_PYTHON={fake}\n"
+        f"AGENTIC_REMOTE_APAI_SRC={tmp_path}\n"
+        f"AGENTIC_REMOTE_ISAAC_CAPTURE_PY={package}\n",
+        encoding="utf-8",
+    )
+
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [str(script), *args],
+            check=False,
+            env={"PATH": os.environ["PATH"]},  # none of the three variables
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=tmp_path,
+        )
+
+    # As the first argument: the file's variables count, the program gets the rest.
+    done = run("--env", str(file), "--config", "configs/robot_app.yaml")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == [
+        f"{EXAMPLE}/python:{package}",
+        *("-m", "isaaccapture_examples.agentic_remote.robot_app"),
+        *("--config", "configs/robot_app.yaml"),
+    ]
+    # Anywhere else the script reads no file: its variables are missing.
+    done = run("--config", "configs/robot_app.yaml", "--env", str(file))
+    assert done.returncode == 2 and done.stdout == ""
+    assert done.stderr.startswith("run_robot_app.sh: AGENTIC_REMOTE_THOR_PYTHON must")
+    # Without a file, or with one that is not there: one line and exit code 2.
+    for args, named in ((["--env"], ""), (["--env", "none.env"], "none.env")):
+        done = run(*args)
+        assert done.returncode == 2 and done.stdout == ""
+        assert done.stderr == (
+            "run_robot_app.sh: --env needs a file of KEY=value lines (it is "
+            f"'{named}')\n"
+        )

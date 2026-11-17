@@ -12,6 +12,7 @@ profile and run the robot app with it on a stand-in motor SDK.
 from __future__ import annotations
 
 import dataclasses
+import math
 import re
 import sys
 import types
@@ -45,12 +46,17 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     MotionState,
     Owner,
     Refusal,
+    StopLevel,
+)
+from isaaccapture_examples.agentic_remote.robot_app.rest import (
+    planned_duration_s,
+    setpoint_count,
 )
 from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
 from repo_paths import repo_root
 
 import test_apai_backend as rs
-from conftest import AppHarness, basic_checkers
+from conftest import AppHarness, basic_checkers, import_experiment
 from test_takeover import (
     ask_takeover,
     drives,
@@ -66,8 +72,12 @@ ROBOT_RIG = CONFIGS / "robot_app_rebot.yaml"
 AGENT_RIG = CONFIGS / "agent_rebot.yaml"
 SERVICE_RIG = CONFIGS / "link_service_rebot.yaml"
 RIG_FILES = (ROBOT_RIG, AGENT_RIG, SERVICE_RIG)
-CALIBRATION_ID = "stereo-c50bf5b2b899+mount-41d3ce701628"
+CALIBRATION_ID = "stereo-c50bf5b2b899+mount-fa6cfe676036"
 PROFILE_ID = "rebot-b601-rs-thor"
+# The owner's values of 2026-11-16, rad/s: the agent's moves and the return to
+# rest, and the bound on a person's motion.
+OWNER_SPEED = 0.2
+HUMAN_SPEED = 0.8
 # The joint limits of APAI's arm model of the rebot_rs profile, rad.
 MODEL_LOW = (-2.8, 0.0, 0.0, -1.69, -1.57, -3.14)
 MODEL_HIGH = (2.8, 3.14, 3.14, 1.79, 1.57, 3.14)
@@ -94,6 +104,16 @@ def robot_rig() -> RobotAppConfig:
     return load_config(ROBOT_RIG)
 
 
+def rig_profile(folder: Path) -> Any:
+    """The rig's arm profile as the robot app loads it on the Thor.
+
+    Laid out in `folder` as the experiment's files are there
+    (rs.thor_arm_profile): APAI's rebot_rs profile, run by the experiment's
+    launcher, whose joint speed is the profile's speed cap.
+    """
+    return rs.apai_backend.load_apai_profile(rs.thor_arm_profile(folder))
+
+
 @pytest.fixture
 def path_variables(monkeypatch, tmp_path) -> dict[str, str]:
     """The three variables the rig's agent file names in its paths."""
@@ -117,10 +137,12 @@ def test_the_rig_robot_file_holds_the_rigs_values(robot_rig):
     assert robot_rig.n_joints == 6
     assert robot_rig.joint_names == tuple(f"joint{i}" for i in range(1, 7))
     limits = robot_rig.limits
-    for limit_set in (limits.agent, limits.human, limits.recovery):
-        assert limit_set.max_joint_speed == 0.1
+    # The owner's speeds. test_motion_conform.py holds the agent's and the
+    # recovery speed against the experiment launcher's, which bounds them.
+    assert limits.human.max_joint_speed == HUMAN_SPEED
     for limit_set in (limits.agent, limits.recovery):
-        assert limit_set.version == "rebot-p2-1"
+        assert limit_set.max_joint_speed == OWNER_SPEED
+        assert limit_set.version == "rebot-p4-1"
         assert (limit_set.joint_min, limit_set.joint_max) == (BOX_LOW, MODEL_HIGH)
     # The human joint box lies inside the recovery region, which is the agent's
     # working box: by HUMAN_BOX_MARGIN_RAD on every bound but the two ON_STOPS.
@@ -137,7 +159,7 @@ def test_the_rig_robot_file_holds_the_rigs_values(robot_rig):
     rest = robot_rig.rest
     assert rest.rest_q == (0.0,) * 6
     assert (rest.rest_tol_rad, rest.start_rest_tol_rad) == (0.05, 0.05)
-    assert rest.recovery_speed == 0.1
+    assert rest.recovery_speed == OWNER_SPEED
     # The recovery region is the agent's working box; no timed return.
     assert (rest.region_min, rest.region_max) == (ENVELOPE_LOW, ENVELOPE_HIGH)
     assert rest.auto_return is False
@@ -146,25 +168,85 @@ def test_the_rig_robot_file_holds_the_rigs_values(robot_rig):
 
 def test_the_rig_robot_file_keeps_the_shipped_values_elsewhere(robot_rig):
     default = RobotAppConfig.default()
+    # The settle tolerance of APAI's reBot driver, which --arm apai reads from
+    # the driver itself (apai_backend.config_for_profile).
+    assert robot_rig.executor == dataclasses.replace(
+        default.executor, settle_tol_rad=0.05
+    )
     for block in (
-        "executor",
         "permits",
         "waits",
         "gripper",
         "grasp",
-        "state",
         "human",
         "connection",
     ):
         assert getattr(robot_rig, block) == getattr(default, block), block
+    # An idle joint is read as often as the experiment reads it.
+    assert robot_rig.state == dataclasses.replace(
+        default.state, idle_read_period_s=0.01
+    )
     rig, demo = shipped("robot_app_rebot.yaml"), shipped("robot_app.yaml")
     assert set(rig) == set(demo)
     assert {
         name: set(block) for name, block in rig.items() if isinstance(block, dict)
     } == {name: set(block) for name, block in demo.items() if isinstance(block, dict)}
-    changed = {"auto_return", "region_min", "region_max"}
+    changed = {"auto_return", "region_min", "region_max", "recovery_speed"}
     for key, value in demo["rest"].items():
         assert (rig["rest"][key] == value) == (key not in changed), key
+
+
+def test_the_owners_speeds_are_marked_as_the_owners_in_the_rig_file():
+    lines = ROBOT_RIG.read_text(encoding="utf-8").splitlines()
+    marked = [line.strip() for line in lines if "the owner's value of" in line]
+    assert marked == [
+        f"max_joint_speed: {OWNER_SPEED}  # the owner's value of 2026-11-16",
+        f"max_joint_speed: {HUMAN_SPEED}  # the owner's value of 2026-11-16",
+        f"max_joint_speed: {OWNER_SPEED}  # the owner's value of 2026-11-16",
+        f"recovery_speed: {OWNER_SPEED}  # the owner's value of 2026-11-16",
+    ]
+
+
+@pytest.mark.experiment
+def test_the_rig_reads_an_idle_joint_as_often_as_the_functional_sampler(robot_rig):
+    sampler = import_experiment("thor_self_mask").IdleJointSampler
+    assert robot_rig.state.idle_read_period_s == sampler.PERIOD_S
+    # One ROBOT_STATE carries the readings of several such reads.
+    assert robot_rig.state.publish_period_s >= 2 * sampler.PERIOD_S
+
+
+def test_what_scales_with_the_speeds_still_holds_at_the_owners(robot_rig):
+    rest, executor = robot_rig.rest, robot_rig.executor
+    # The longest leg of a return to rest, from the far end of the recovery
+    # region, fits a move: the loader checks it, and it is the count the
+    # file's comment names.
+    travel = max(
+        max(abs(low - q), abs(high - q))
+        for low, high, q in zip(rest.region_min, rest.region_max, rest.rest_q)
+    )
+    duration = planned_duration_s(travel, rest.recovery_speed, rest.min_duration_s)
+    count = setpoint_count(duration, executor.period_s)
+    assert count == 1091 <= executor.max_setpoints
+    assert f"{count} setpoints for {travel:g} rad at {OWNER_SPEED} rad/s" in " ".join(
+        ROBOT_RIG.read_text(encoding="utf-8").replace("#", " ").split()
+    )
+    assert rest.recovery_speed <= robot_rig.limits.recovery.max_joint_speed
+    # A person: the Thor clamps one step of a human drive well inside the
+    # farthest a human target may lie from the last joint target sent, so the
+    # clamp is met before a target is refused for its distance.
+    human = robot_rig.limits.human
+    step = SPEED_MARGIN * human.max_joint_speed * executor.period_s
+    assert step == pytest.approx(0.01568)
+    assert 5 * step < human.max_step_rad
+    # The hand speed limits of the rig's human file ask a joint for less than
+    # the Thor's bound, so the arm follows the hand without the clamp: on the
+    # arm model 1 m/s at the gripper tip asks a joint for at most 13 rad/s,
+    # and 1 rad/s of the tip's turning for at most 3.
+    retarget = shipped("human_rebot.yaml")["retarget"]
+    asked = max(
+        13.0 * retarget["max_linear_velocity"], 3.0 * retarget["max_angular_velocity"]
+    )
+    assert asked == pytest.approx(0.13) and asked < human.max_joint_speed
 
 
 def test_the_human_settings_ship_in_the_safe_position(robot_rig):
@@ -235,14 +317,15 @@ def test_the_rig_files_name_no_machines_own_path():
 
 
 @apai
-def test_the_rig_file_loads_and_fits_the_rebot_profile(robot_rig, monkeypatch):
+def test_the_rig_file_loads_and_fits_the_rebot_profile(
+    robot_rig, monkeypatch, tmp_path
+):
     backend = rs.apai_backend
     monkeypatch.setattr(rs.sys, "path", list(rs.sys.path))  # the driver's SDK path
     clock = FakeClock()
-    # APAI's own profile (cap 0.8 rad/s) and the rig's two caps, 0.1 and 0.2.
-    for cap in (None, 0.1, 0.2):
-        overrides = None if cap is None else {"safety": {"max_joint_vel": cap}}
-        profile = backend.load_apai_profile("rebot_rs", overrides)
+    # APAI's own profile (cap 0.8 rad/s), and the rig's profile as the robot
+    # app loads it on the Thor: capped at the experiment launcher's speed.
+    for profile in (backend.load_apai_profile("rebot_rs"), rig_profile(tmp_path)):
         config = backend.config_for_profile(robot_rig, profile)
         # At rest at start: the profile's rest check tolerance; a release keeps 0.05.
         assert (config.rest.start_rest_tol_rad, config.rest.rest_tol_rad) == (
@@ -259,12 +342,29 @@ def test_the_rig_file_loads_and_fits_the_rebot_profile(robot_rig, monkeypatch):
         arm = backend.build_apai_arm(config, profile, clock)
         assert type(arm.backend).__name__ == "RebotRSArm"
         assert not arm.torque_on()
-    # A profile capped below the file's 0.1 rad/s refuses it.
-    slow = backend.load_apai_profile("rebot_rs", {"safety": {"max_joint_vel": 0.05}})
+        # Each owner's checker has its own speed of the file, whatever the cap.
+        speeds = [checker.harness.limits.max_joint_vel for checker in checkers.all()]
+        assert speeds == [OWNER_SPEED, HUMAN_SPEED, OWNER_SPEED]
+    # On the Thor the launcher's speed bounds the agent and the return to
+    # rest, and the cap of APAI's rebot_rs profile bounds a person.
+    assert backend.speed_cap(profile) == rs.LAUNCHER_SPEED >= OWNER_SPEED
+    assert backend.human_speed_cap(profile) == HUMAN_SPEED
+    # A launcher at the owner's speed takes the file, a slower one refuses it:
+    # the Thor's copy of the launcher's file cannot be below the file's speeds.
+    same = backend.load_apai_profile(rs.thor_arm_profile(tmp_path / "a", OWNER_SPEED))
+    backend.build_apai_checkers(robot_rig, same, clock)
+    slow = backend.load_apai_profile(rs.thor_arm_profile(tmp_path / "b", 0.1))
     with pytest.raises(
-        ValueError, match=r"above the APAI profile's speed cap of 0\.05"
+        ValueError,
+        match=r"limits\.agent\.max_joint_speed 0\.2 rad/s is above the APAI "
+        r"profile's speed cap of 0\.1 rad/s",
     ):
         backend.build_apai_checkers(robot_rig, slow, clock)
+    # A profile no launcher runs binds a person by its own cap: the rig's own
+    # fallback cap, 0.2, is below the file's human speed.
+    capped = backend.load_apai_profile("rebot_rs", {"safety": {"max_joint_vel": 0.2}})
+    with pytest.raises(ValueError, match=r"limits\.human\.max_joint_speed 0\.8"):
+        backend.build_apai_checkers(robot_rig, capped, clock)
     # The shipped demo file does not fit: its human limit set is too fast.
     demo = load_config(CONFIGS / "robot_app.yaml")
     stock = backend.load_apai_profile("rebot_rs")
@@ -309,16 +409,25 @@ def test_the_rig_joint_boxes_lie_in_the_arm_model_and_hold_the_rest_readings(
 @apai
 @pytest.mark.parametrize("reading", rs.RIG_REST_READINGS)
 def test_a_typed_rest_from_each_rig_reading_is_accepted_with_the_rig_file(
-    robot_rig, clock, monkeypatch, reading
+    robot_rig, clock, monkeypatch, reading, tmp_path
 ):
     backend = rs.apai_backend
-    profile = backend.load_apai_profile("rebot_rs", {"safety": {"max_joint_vel": 0.1}})
+    profile = rig_profile(tmp_path)
     config = backend.config_for_profile(robot_rig, profile)
     arm, sdk = rs.rs_arm(config, profile, clock, monkeypatch)
     for motor, value in zip(sdk.arm.joint_names, reading):
         sdk.arm._mm[motor].value = value
     checkers = backend.build_apai_checkers(config, profile, clock)
-    h = AppHarness(config, arm, checkers, clock)
+    # As the robot app's program builds it: with a new arm port for the motors
+    # to be switched on again, a typed rest ends with the motors off.
+    built: list[tuple[Any, rs.MotorSdk]] = []
+
+    def rebuild_arm() -> Any:
+        built.append(rs.rs_arm(config, profile, clock, monkeypatch))
+        return built[-1][0]
+
+    options = {"rebuild_arm": rebuild_arm}
+    h = AppHarness(config, arm, checkers, clock, app_options=options)
     try:
         h.start()
         state = h.client.state
@@ -331,18 +440,33 @@ def test_a_typed_rest_from_each_rig_reading_is_accepted_with_the_rig_file(
         # Only the typed phrase confirms the return.
         assert "rest: refused" in thor.ask("rest", "yes", answer="rest: ")
         assert sdk.arm.sent == []
+        jaw_mark = len(sdk.gripper.sent)
         assert thor.ask("rest", "path is clear", answer="rest: ") == "rest: completed"
-        assert h.app.motion_state is MotionState.REST_HOLD
+        # It ends as the functional rest: at rest, the jaws closed with the
+        # driver's close, the motors off.
+        assert h.app.motion_state is MotionState.REST_UNPOWERED
         assert sdk.arm.sent[-1][0] == [0.0] * 6
         # The return moved no joint farther than the reading lay from rest.
         travel = max(abs(value) for value in reading)
         assert all(
             max(abs(q) for q in sent) <= travel + 1e-9 for sent, _ in sdk.arm.sent
         )
-        assert sdk.disconnects == 0 and arm.torque_on()
-        released = h.client.wait_result(h.client.release(), timeout_s=5.0)
-        assert released.status == "completed", released.reason
+        closes = sdk.gripper.sent[jaw_mark:]
+        assert closes and all(q == [0.0] for q, _ in closes)
         assert sdk.disconnects == 1 and not arm.torque_on()
+        # The wanted motors-off brings no fault-stop.
+        h.advance(1.0, step_s=0.02)
+        assert h.heard("fault") == []
+        assert h.app.snapshot().stop_level is StopLevel.NONE
+        again = h.client.wait_result(h.client.release(), timeout_s=5.0)
+        assert (again.status, again.reason) == ("refused", "the motors are already off")
+        # A typed on switches them on again, on a new arm port, at measured rest.
+        assert built == []
+        assert thor.ask("on", "yes", answer="on: ") == "on: completed"
+        assert h.app.motion_state is MotionState.REST_HOLD
+        (new_arm, new_sdk) = built[0]
+        assert new_arm.torque_on() and new_sdk.disconnects == 0
+        assert new_sdk.arm.sent == [] and sdk.disconnects == 1
     finally:
         h.close()
 
@@ -350,10 +474,10 @@ def test_a_typed_rest_from_each_rig_reading_is_accepted_with_the_rig_file(
 @apai
 @pytest.mark.parametrize("reading", rs.RIG_REST_READINGS)
 def test_a_new_task_starts_from_each_rig_reading_with_the_rig_file(
-    robot_rig, clock, monkeypatch, reading
+    robot_rig, clock, monkeypatch, reading, tmp_path
 ):
     backend = rs.apai_backend
-    profile = backend.load_apai_profile("rebot_rs", {"safety": {"max_joint_vel": 0.1}})
+    profile = rig_profile(tmp_path)
     config = backend.config_for_profile(robot_rig, profile)
     arm, sdk = rs.rs_arm(config, profile, clock, monkeypatch)
     for motor, value in zip(sdk.arm.joint_names, reading):
@@ -363,14 +487,23 @@ def test_a_new_task_starts_from_each_rig_reading_with_the_rig_file(
     try:
         h.start()
         h.new_task()
-        # Off the two joint stops, at half the agent's 0.1 rad/s.
+        # Off the two joint stops, at half the agent's speed limit.
         raised = [reading[0], 0.1, 0.1, *reading[3:]]
-        moved = rs.rs_move(h, rs.straight(reading, raised, 110), reading)
+        travel = max(abs(to - at) for at, to in zip(reading, raised))
+        per_step = config.limits.agent.max_joint_speed * config.executor.period_s
+        assert per_step == pytest.approx(OWNER_SPEED * 0.02)
+        slow = math.ceil(travel / (0.5 * per_step))
+        moved = rs.rs_move(h, rs.straight(reading, raised, slow), reading)
         assert moved.status == "completed", moved.reason
         assert sdk.arm.sent[-1][0] == pytest.approx(raised)
-        # A move at twice the agent's speed limit is refused whole.
-        back = rs.rs_move(h, rs.straight(raised, list(reading), 25), raised)
-        assert back.status == "refused", back.reason
+        # A move at twice the agent's speed limit is refused whole: the
+        # launcher's speed, twice the owner's, does not reach the arm.
+        sent = len(sdk.arm.sent)
+        fast = int(travel / (2.0 * per_step))
+        back = rs.rs_move(h, rs.straight(raised, list(reading), fast), raised)
+        assert back.status == "refused" and "velocity" in back.reason, back.reason
+        assert f"exceeds {OWNER_SPEED:.2f}" in back.reason
+        assert len(sdk.arm.sent) == sent
         assert sdk.disconnects == 0 and arm.torque_on()
     finally:
         h.close()
@@ -387,6 +520,9 @@ def test_a_new_task_starts_from_each_rig_reading_with_the_rig_file(
 # keeps its orientation, so that file's limit on turning is not met.
 HAND_SPEED = 0.01
 LIFT_M = 0.03  # the first human motion planned on the rig: 3 cm straight up
+# The fastest a joint is asked to turn by a hand that rises at HAND_SPEED from
+# rest, rad/s: a fifth of the Thor's bound on a person's motion.
+HAND_PACE = 0.16
 
 
 class LiftingHand:
@@ -435,12 +571,12 @@ class LiftingHand:
 @apai
 @pytest.mark.parametrize("reading", rs.RIG_REST_READINGS)
 def test_a_takeover_and_a_lift_run_from_each_rig_reading_with_the_rig_file(
-    robot_rig, clock, monkeypatch, reading
+    robot_rig, clock, monkeypatch, reading, tmp_path
 ):
     backend = rs.apai_backend
     # Human driving ships switched off in the rig file: on here, in memory only.
     on = dataclasses.replace(robot_rig.human, enabled=True)
-    profile = backend.load_apai_profile("rebot_rs", {"safety": {"max_joint_vel": 0.1}})
+    profile = rig_profile(tmp_path)
     config = backend.config_for_profile(
         dataclasses.replace(robot_rig, human=on), profile
     )
@@ -470,10 +606,20 @@ def test_a_takeover_and_a_lift_run_from_each_rig_reading_with_the_rig_file(
         assert [(end.status, end.sent) for end in ended] == [("released", len(sent))]
         # APAI's human checker of the rig's profile approved every setpoint.
         assert checkers.human.harness.approved_commands == len(sent)
-        # No step is above the speed clamp of the rig's 0.1 rad/s.
+        # No step is above the Thor's speed clamp.
         human, period = config.limits.human, config.executor.period_s
+        clamp = SPEED_MARGIN * human.max_joint_speed * period
         steps = np.abs(np.diff(np.array([reading, *sent]), axis=0))
-        assert steps.max() <= SPEED_MARGIN * human.max_joint_speed * period + 1e-12
+        assert steps.max() <= clamp + 1e-12
+        # The squeeze begins inside the IK's joint margin, off the two joint
+        # stops the arm rests on: the arm takes that distance at the clamp,
+        # in a few setpoints. From there the hand's speed limit of the rig's
+        # human file sets the pace, far below the clamp.
+        first = np.array(solver.inside(reading))
+        catch_up = math.ceil(np.abs(first - np.array(reading)).max() / clamp)
+        assert 1 <= catch_up <= 3
+        assert steps[:catch_up].max() == pytest.approx(clamp, abs=1e-12)
+        assert steps[catch_up:].max() < HAND_PACE * period
         # No solution lay as far ahead of the last setpoint sent as makes the
         # human program end the squeeze: ik.max_ahead_rad, here the default of
         # human/types.py (0.08), which configs/human_rebot.yaml repeats.
@@ -564,12 +710,16 @@ class PersonRig(NamedTuple):
 
 
 @pytest.fixture(params=["sim", pytest.param("apai", marks=apai)])
-def person_rig(request, robot_rig, clock, monkeypatch) -> Iterator[PersonRig]:
+def person_rig(request, robot_rig, clock, monkeypatch, tmp_path) -> Iterator[PersonRig]:
     """The rig file's robot app at rest, started, with human driving switched on.
 
     Once on the simulated arm with its checkers, which read exactly what was
     sent and know no kinematics, and once on APAI's driver of the rebot_rs
-    profile over the stand-in motor SDK, with APAI's checkers.
+    profile over the stand-in motor SDK, with APAI's checkers. The app is
+    built without a new arm port for "motors on again", so a typed rest ends
+    at rest with the motors on, as it does on the rig while a takeover is
+    open; with nobody owning the arm the rig's typed rest also closes the
+    jaws and switches the motors off.
     """
     # Human driving ships switched off in the rig file: on here, in memory only.
     on = dataclasses.replace(robot_rig.human, enabled=True)
@@ -581,8 +731,7 @@ def person_rig(request, robot_rig, clock, monkeypatch) -> Iterator[PersonRig]:
         place, sent = h.hold_at, h.sent
     else:
         backend = rs.apai_backend
-        cap = {"safety": {"max_joint_vel": 0.1}}
-        profile = backend.load_apai_profile("rebot_rs", cap)
+        profile = rig_profile(tmp_path)
         config = backend.config_for_profile(config, profile)
         arm, sdk = rs.rs_arm(config, profile, clock, monkeypatch)
         checkers = backend.build_apai_checkers(config, profile, clock)
@@ -791,6 +940,11 @@ def test_a_person_lifts_a_low_gripper_tip_out_with_the_rig_file(person_rig):
     lift = sent()
     assert [(end.status, end.sent) for end in ended[1:]] == [("released", len(lift))]
     assert lift[-1] == pytest.approx(TIP_CLEAR, abs=1e-9)
+    # This hand runs ahead of the arm: the Thor clamps each step at 0.98 of
+    # the owner's 0.8 rad/s for a person.
+    steps = np.abs(np.diff(np.array([TIP_LOW, *lift]), axis=0))
+    clamp = SPEED_MARGIN * HUMAN_SPEED * h.config.executor.period_s
+    assert steps.max() == pytest.approx(clamp, abs=1e-12)
     heights = [human.tip_state(q, None).z for q in lift]
     assert all(b > a for a, b in zip([low.z, *heights], heights))
     assert heights[-1] > clearance and human.tip_state(lift[-1], None).low is None
@@ -812,17 +966,34 @@ def test_the_two_rig_files_agree_on_speed_waits_profile_and_calibration(
     thor = settings.thor
     assert thor.first_wait_s == robot_rig.permits.first_wait_s == 0.5
     assert thor.settle_timeout_s == robot_rig.executor.settle_timeout_s == 2.0
-    assert thor.agent_max_joint_speed == robot_rig.limits.agent.max_joint_speed == 0.1
-    assert settings.task.max_joint_speed == 0.1
+    # The agent's copy of the Thor's speed limit: its tasks are planned at the
+    # experiment launcher's speed and at most at this one, the owner's.
+    agent_speed = robot_rig.limits.agent.max_joint_speed
+    assert thor.agent_max_joint_speed == agent_speed == OWNER_SPEED
     assert settings.task.timed_return is False and robot_rig.rest.auto_return is False
     link = settings.link
     assert link.expected_profile_id == robot_rig.profile_id == PROFILE_ID
     # The name is made from the two files' hashes; a robot app must name one.
     assert link.calibration_id == "" and link.allow_unnamed_calibration is False
     assert robot_rig.camera_calibration_id
-    assert settings.rig.park_q == robot_rig.rest.rest_q
+    # The arm profile is the experiment's own: the file holds no copy of it.
+    assert settings.rig == agent_config.RigSettings()
+    assert "rig" not in shipped("agent_rebot.yaml")
+
+
+@pytest.mark.experiment
+def test_the_rig_agent_file_takes_its_arm_profile_from_the_experiment(
+    robot_rig, experiment_dir: Path
+):
+    arm = agent_config.experiment_arm_profile(experiment_dir)
+    theirs = yaml.safe_load(
+        (experiment_dir / "configs/thor_operation.yaml").read_text()
+    )
+    assert arm["home_q"] == theirs["home_q"]
+    assert arm["motion_bounds"] == theirs["motion_bounds"]
+    assert tuple(arm["park_q"]) == robot_rig.rest.rest_q
     # The agent's bound on the joints is not wider than the Thor's working box.
-    bound = settings.rig.motion_bounds["max_joint_deviation_rad"]
+    bound = arm["motion_bounds"]["max_joint_deviation_rad"]
     agent = robot_rig.limits.agent
     assert all(bound <= high or high < 2.0944 for high in agent.envelope_max)
     assert bound <= 2.0944
@@ -833,8 +1004,9 @@ def test_the_rig_agent_file_is_the_real_run(path_variables):
     camera, experiment = settings.camera, settings.experiment
     folder = path_variables[agent_config.EXPERIMENT_DIR_ENV]
     assert camera.calibration_dir == f"{folder}/.state/thor/calibration"
+    # The fit of 2026-11-16, made after the camera was moved.
     assert camera.hand_eye_json == (
-        f"{folder}/.state/thor/mounting/20261107T005443Z/handeye.json"
+        f"{folder}/.state/thor/handeye/20261116T235557Z-live-629d_gvb/handeye.json"
     )
     camera_pr = path_variables["AGENTIC_REMOTE_CAMERA_PR"]
     assert camera.bridge_python == f"{camera_pr}/cuda_ipc_consumer/.venv/bin/python"
@@ -863,6 +1035,8 @@ def test_the_rig_agent_file_differs_from_the_shipped_one_where_the_rig_does(
     }
     assert differs == {
         ("link", "expected_profile_id"),
+        # The copy of the rig robot file's agent speed limit.
+        ("thor", "agent_max_joint_speed"),
         ("camera", "bridge_python"),
         ("camera", "calibration_dir"),
         ("camera", "hand_eye_json"),
@@ -899,12 +1073,6 @@ def test_the_two_rig_files_name_the_calibration_of_the_experiments_files(
     assert Path(settings.camera.hand_eye_json).is_file()
     named = agent_config.calibration_id(settings, "link")
     assert named == robot_rig.camera_calibration_id == CALIBRATION_ID
-    # The rig block is the experiment's arm profile, as in the shipped file.
-    theirs = yaml.safe_load(
-        (experiment_dir / "configs/thor_operation.yaml").read_text()
-    )
-    assert list(settings.rig.home_q) == theirs["home_q"]
-    assert dict(settings.rig.motion_bounds) == theirs["motion_bounds"]
     # The motor file names the six joints the robot file names.
     motors = yaml.safe_load(
         (experiment_dir / ".state/thor/robot/sdk-can4.yaml").read_text()
@@ -919,12 +1087,25 @@ def test_the_two_rig_files_name_the_calibration_of_the_experiments_files(
 def test_the_shipped_rig_service_file_is_refused_until_the_address_is_written(
     tmp_path, capsys
 ):
+    # The file ships with an empty list. On a rig machine the Thor's address
+    # is written in, as the file's comment says: the file as shipped is then
+    # that file with the list emptied again.
+    text = SERVICE_RIG.read_text(encoding="utf-8")
+    lists = re.findall(r"^allowed_peers: \[(.*)\]$", text, re.M)
+    assert len(lists) == 1 and "#   allowed_peers: [192.0.2.10]\n" in text
+    as_shipped = tmp_path / "as_shipped.yaml"
+    as_shipped.write_text(
+        text.replace(f"\nallowed_peers: [{lists[0]}]\n", "\nallowed_peers: []\n"),
+        encoding="utf-8",
+    )
+    text = as_shipped.read_text(encoding="utf-8")
+    assert text.count("\nallowed_peers: []\n") == 1
     with pytest.raises(
         service_config.ConfigError, match="allowed_peers must be a non-empty list"
     ):
-        service_config.load_link_service_config(SERVICE_RIG)
+        service_config.load_link_service_config(as_shipped)
     # The program ends before it listens anywhere.
-    assert service_main.main(["--config", str(SERVICE_RIG)]) == 2
+    assert service_main.main(["--config", str(as_shipped)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith(
@@ -932,9 +1113,6 @@ def test_the_shipped_rig_service_file_is_refused_until_the_address_is_written(
         "be a non-empty list"
     )
     # With the Thor's address written in, as the file's comment shows.
-    text = SERVICE_RIG.read_text(encoding="utf-8")
-    assert text.count("\nallowed_peers: []\n") == 1
-    assert "#   allowed_peers: [192.0.2.10]\n" in text
     written = tmp_path / "link_service_rebot.yaml"
     written.write_text(
         text.replace("\nallowed_peers: []\n", "\nallowed_peers: [192.0.2.10]\n"),

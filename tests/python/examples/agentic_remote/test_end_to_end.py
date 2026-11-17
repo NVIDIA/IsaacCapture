@@ -769,8 +769,10 @@ def test_after_a_stop_in_mid_close_the_operator_opens_the_jaws_and_then_rests(
     open_id = h.client.open_jaws()
     assert final(h, open_id).status == "completed"
     assert statuses(h, open_id) == ["accepted", "completed"]
+    # The typed open is one opening to full open, the driver's own.
     openings = [command.opening for command in h.arm.jaw_commands[1:]]
-    assert openings == pytest.approx([0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0])
+    assert openings == [1.0]
+    assert h.arm.gripper_read() == pytest.approx(1.0)
     assert h.arm.sent == []
     rest = final(h, h.client.rest())
     assert rest.status == "completed", rest.reason
@@ -1458,13 +1460,38 @@ def test_release_cuts_no_torque_when_a_jaw_command_comes_while_it_is_checked(
     assert reached.wait(WAIT_S)
     taken = start_a_jaw_command(h, still_closing)
     release.set()
+    if still_closing and not taken:
+        # The jaw command was refused, so the close held part-way is the one
+        # the release itself makes before its torque cut. No torque is cut
+        # while the jaws close, and a STOP then keeps the motors on.
+        h.client.wait_until(
+            lambda: h.arm.gripper_read() <= 0.6 + 1e-9, WAIT_S, "the jaws closing"
+        )
+        assert h.arm.torque_on() and h.arm.released_at == []
+        stop(h)
+        result = final(h, release_id)
+        assert (result.status, result.reason) == (
+            "refused",
+            "a STOP was raised while the release was checked",
+        )
+        assert h.arm.torque_on() and h.arm.released_at == []
+        return
     result = final(h, release_id)
     # One of the two must be refused: torque is cut only with jaws proven empty.
     if taken:
         assert result.status == "refused", "torque was released all the same"
         assert h.arm.torque_on() and h.arm.released_at == []
     else:
-        assert h.arm.jaw_commands == []
+        # The jaws got one command: the close the release itself makes at
+        # measured rest, before its torque cut.
+        assert result.status == "completed", result.reason
+        settle(h)
+        assert next(event.text for event in events(h, "jaws")) == (
+            "at rest: closing the jaws with the driver's close"
+        )
+        assert len(h.arm.jaw_commands) == 1
+        (released_at,) = h.arm.released_at
+        assert released_at == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
 
 
 @pytest.mark.parametrize("sender", ["console", "thor_terminal"])
@@ -1501,6 +1528,10 @@ def test_release_at_measured_rest_switches_the_motors_off_for_the_rest_of_the_ru
     assert released_at == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
     state = h.client.wait_state(lambda s: s.motion == "rest_unpowered")
     assert not state.torque_on and not h.arm.torque_on()
+    # The release closed the jaws itself, once, before it cut the torque.
+    (closed,) = h.arm.jaw_commands
+    kinds = [kind for kind, _, _ in h.local_events]
+    assert closed.opening == 0.0 and kinds.index("jaws") < kinds.index("release")
     # Every motion command is refused from here on, whoever owns the arm.
     for owner in ("agent", "nobody"):
         for command_id in (
@@ -1516,11 +1547,15 @@ def test_release_at_measured_rest_switches_the_motors_off_for_the_rest_of_the_ru
         if owner == "agent":
             assert final(h, h.client.request_owner("nobody")).status == "completed"
             h.client.wait_state(lambda s: s.owner == "nobody")
-    assert refused.reason == "the motors are off; restart the robot app"
+    assert refused.reason == (
+        "the motors are off; switch them on again: type on at the Thor terminal "
+        "or run the console command on"
+    )
     h.advance(5.0)
     h.idle()
     assert len(h.arm.sent) == RETURN_SETPOINTS
-    assert h.arm.jaw_commands == [] and len(h.arm.released_at) == 1
+    # With the motors off the jaws and the motors got nothing more.
+    assert h.arm.jaw_commands == [closed] and len(h.arm.released_at) == 1
     assert now_state(h).stop_level == "none"  # no fault for the silent joints
 
 

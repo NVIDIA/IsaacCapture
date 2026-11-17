@@ -27,8 +27,8 @@ from isaaccapture_examples.agentic_remote.agent.link_client import (
     Pinned,
 )
 from isaaccapture_examples.agentic_remote.agent.task_gate import (
+    NOT_ADMITTED,
     READ_ONLY_TOOLS,
-    REST_REFUSAL,
     RESTART,
     SKILL_STOP_KEPT,
     SKILL_STOP_NOTE,
@@ -271,17 +271,20 @@ def test_any_answer_but_yes_refuses_and_nothing_is_sent(rig: Rig, answer: str) -
     def body() -> Any:
         first = rig.execute("grasp_object", label="cube")
         second = rig.execute("place_at", x=0.1)  # refused again, not asked again
-        assert first == second
-        return first
+        assert first == {**second, "error": first["error"]}
+        return second
 
     result = rig.task(body)
+    # The functional launcher's text for a tool that is not admitted, then the
+    # reason. No motion_blocked: the task goes on and the model can report.
     assert result == {
         "ok": False,
-        "error": "the operator did not type yes; no command sent",
+        "error": f"{NOT_ADMITTED.format(name='place_at')}: the operator did not "
+        "type yes",
         "refused": "consent",
-        "motion_blocked": True,
-        "motion_block_reason": "the operator did not type yes",
+        "reason": "the operator did not type yes",
     }
+    assert NOT_ADMITTED == "{name} not admitted in this session; no command sent"
     assert rig.kinds() == ["ask"]  # no request, no skill, no close of a task
     assert rig.gate.requests == [] and rig.h.heard("owner") == []
     assert rig.h.heard("help_needed") == [] and rig.owner() == "nobody"
@@ -300,30 +303,38 @@ def test_a_terminal_that_cannot_be_asked_refuses(rig: Rig) -> None:
 
     rig.on_ask = nobody
     result = rig.task(lambda: rig.execute("grasp_object"))
-    assert result["refused"] == "consent"
-    assert result["motion_block_reason"] == (
-        "no typed yes: motion needs the operator's terminal"
+    assert result["refused"] == "consent" and "motion_blocked" not in result
+    assert result["error"].endswith(
+        ": no typed yes: motion needs the operator's terminal"
     )
     assert rig.kinds() == ["ask"] and rig.owner() == "nobody"
 
 
-def test_motion_outside_a_task_and_move_to_rest_are_always_refused(rig: Rig) -> None:
-    outside = rig.execute("grasp_object")
-    assert outside["refused"] == "consent" and "needs a task" in outside["error"]
+def test_motion_outside_a_task_is_refused_and_move_to_rest_is_a_motion_skill(
+    rig: Rig,
+) -> None:
+    for name in ("grasp_object", "move_to_rest"):
+        outside = rig.execute(name)
+        assert outside["refused"] == "consent" and "needs a task" in outside["error"]
+        assert "motion_blocked" not in outside
+    # In a task APAI's rest tool runs, as in the functional launcher: it takes
+    # the arm with the typed yes as every motion skill does.
+    assert rig.task(lambda: rig.execute("move_to_rest")) == {"ok": True}
+    assert [entry[1:3] for entry in rig.of("skill")] == [("move_to_rest", "agent")]
+    (asked,) = rig.of("ask")
+    assert "return-to-rest within this task" in asked[1]
 
-    def body() -> Any:
-        rig.execute("grasp_object")
-        return rig.execute("move_to_rest")
 
-    rest = rig.task(body)
-    assert rest["ok"] is False and rest["motion_blocked"] is True
-    assert rest["error"] == f"{REST_REFUSAL}; no command sent"
-    assert (
-        "type rest at the Thor terminal or run the console command rest"
-        in rest["error"]
-    )
-    assert [entry[1] for entry in rig.of("skill")] == ["grasp_object"]
-    assert rig.execute("move_to_rest")["motion_blocked"] is True  # also outside a task
+def test_a_tool_that_is_neither_read_only_nor_a_motion_skill_is_not_admitted(
+    rig: Rig,
+) -> None:
+    # As the functional launcher's admission: APAI's instructions name
+    # preview_grasp, and open_live_view would start APAI's own web page.
+    for name in ("preview_grasp", "open_live_view"):
+        result = rig.task(lambda name=name: rig.execute(name))
+        assert result["ok"] is False and "motion_blocked" not in result
+        assert result["error"].startswith(NOT_ADMITTED.format(name=name))
+    assert rig.of("skill") == [] and rig.of("ask") == []
 
 
 def test_a_state_that_cannot_start_a_task_refuses_without_a_prompt(
@@ -334,8 +345,8 @@ def test_a_state_that_cannot_start_a_task_refuses_without_a_prompt(
     rig.h.app._authority.set_owner(Owner.HUMAN, "takeover")
     rig.shown("human")
     result = rig.task(lambda: rig.execute("grasp_object"))
-    assert result["refused"] == "ownership"
-    assert result["motion_block_reason"] == (
+    assert result["refused"] == "blocked" and result["motion_blocked"] is True
+    assert result["reason"] == (
         "takeover not finished: give the arm back with right A at rest"
     )
     assert rig.kinds() == [] and rig.h.heard("help_needed") == []
@@ -344,7 +355,7 @@ def test_a_state_that_cannot_start_a_task_refuses_without_a_prompt(
     rig.h.app._fault("motor fault")
     until(lambda: rig.link.state().stop_level == "fault", "the fault-stop")
     result = rig.task(lambda: rig.execute("grasp_object"))
-    assert result["motion_block_reason"] == (
+    assert result["reason"] == (
         "fault-stop (motor fault): run the console command reset"
     )
     assert rig.kinds() == []
@@ -353,7 +364,7 @@ def test_a_state_that_cannot_start_a_task_refuses_without_a_prompt(
     rig.robot_end.break_link()
     until(lambda: not rig.link._carrier.alive, "the lost link")
     result = rig.task(lambda: rig.execute("grasp_object"))
-    assert result["motion_block_reason"].startswith("robot connection lost: ")
+    assert result["reason"].startswith("robot connection lost: ")
     assert rig.kinds() == []
 
 
@@ -386,8 +397,8 @@ def test_a_task_is_not_started_while_a_takeover_is_open(rig: Rig) -> None:
 
     rig.link.state = state_with_the_takeover
     result = rig.task(lambda: rig.execute("grasp_object"))
-    assert result["refused"] == "ownership"
-    assert result["motion_block_reason"] == TAKEOVER_OPEN
+    assert result["refused"] == "blocked" and result["motion_blocked"] is True
+    assert result["reason"] == TAKEOVER_OPEN
     # Nobody was asked and nothing was sent.
     assert rig.kinds() == [] and rig.gate.requests == []
     assert rig.owner() == "nobody" and rig.h.heard("help_needed") == []
@@ -411,8 +422,8 @@ def test_the_gate_reads_an_open_takeover_from_the_robot_apps_own_robot_state(
         "the open takeover in the robot app's ROBOT_STATE",
     )
     result = rig.task(lambda: rig.execute("grasp_object"))
-    assert result["refused"] == "ownership"
-    assert result["motion_block_reason"] == TAKEOVER_OPEN
+    assert result["refused"] == "blocked" and result["motion_blocked"] is True
+    assert result["reason"] == TAKEOVER_OPEN
     # The gate refused by itself: nobody was asked and nothing was sent. The
     # robot app would refuse the request with the same text.
     assert rig.kinds() == [] and rig.gate.requests == []
@@ -438,7 +449,7 @@ def test_ownership_that_arrives_after_the_gate_gave_up_is_given_back_at_the_next
     answer_late(rig, 0.6)
     refused = rig.task(lambda: rig.execute("grasp_object"))
     assert refused["refused"] == "ownership"
-    assert "the robot did not answer" in refused["motion_block_reason"]
+    assert "the robot did not answer" in refused["reason"]
     assert rig.gate.requests == []  # the grant is still under way
     # The next task, typed at once: the gate waits for the late grant, gives
     # the arm back and starts as ever.
@@ -480,7 +491,7 @@ def unanswered_start(rig: Rig, command_id: str) -> None:
         refused = rig.task(lambda: rig.execute("grasp_object"))
     finally:
         rig.link.request_owner = real
-    assert "the robot did not answer" in refused["motion_block_reason"]
+    assert "the robot did not answer" in refused["reason"]
     rig.log.clear()
 
 
@@ -581,7 +592,7 @@ def test_an_end_request_without_an_answer_is_remembered(
     # A task typed then is refused before its question, and told the remedy.
     rig.answers = ["yes"]
     refused = rig.task(lambda: rig.execute("grasp_object"))
-    assert refused["motion_block_reason"] == (
+    assert refused["reason"] == (
         "control owner is agent (an owner request of this program got no "
         "answer: run the console command stop, then type the task again)"
     )
@@ -647,8 +658,9 @@ def test_a_refusal_by_the_thor_names_the_remedy_and_ends_the_tasks_motion(
         until(lambda: rig.link.state().stop_number == 1, "the STOP"),
     )
     result = rig.task(lambda: rig.execute("grasp_object"))
-    assert result["refused"] == "ownership" and result["motion_blocked"] is True
-    reason = result["motion_block_reason"]
+    # The model gets a failed result and goes on: it can look and report.
+    assert result["refused"] == "ownership" and "motion_blocked" not in result
+    reason = result["reason"]
     assert reason.startswith("task refused by the robot: stop number 0 does not match")
     assert reason.endswith("(the robot's state changed meanwhile: type the task again)")
     assert rig.kinds() == ["ask", "request", "result"]
@@ -666,7 +678,7 @@ def test_a_refusal_by_the_thor_names_the_remedy_and_ends_the_tasks_motion(
     ("reason", "remedy"),
     [
         ("session id does not match", "restart the agent"),
-        ("the motors are off; restart the robot app", "restart the robot app"),
+        (app_module.MOTORS_OFF, "run the console command on"),
         ("owner number 3 does not match the current 4", "type the task again"),
         ("control owner is human, not nobody", "give the arm back with right A"),
         (
@@ -710,8 +722,8 @@ def test_the_remedy_for_an_open_takeover_names_right_a(rig: Rig) -> None:
 
     rig.link.request_owner = taken_meanwhile
     result = rig.task(lambda: rig.execute("grasp_object"))
-    assert result["refused"] == "ownership"
-    assert result["motion_block_reason"] == (
+    assert result["refused"] == "ownership" and "motion_blocked" not in result
+    assert result["reason"] == (
         f"task refused by the robot: {TAKEOVER_OPEN} ({remedy})"
     )
     assert rig.kinds() == ["ask", "request"]
@@ -722,43 +734,22 @@ def test_the_remedy_for_an_open_takeover_names_right_a(rig: Rig) -> None:
 # During the task
 
 
-def test_three_failed_steps_in_a_row_end_the_task_as_stuck(rig: Rig) -> None:
-    failed = {"ok": False, "error": "no grasp found"}
-
-    def body() -> list[dict]:
-        return [
-            rig.execute("get_observation", {"ok": False}),  # before the agent owns
-            rig.execute("grasp_object", failed),
-            rig.execute("grasp_object", failed),
-            rig.execute("get_observation"),  # a success resets the count
-            rig.execute("grasp_object", failed),
-            rig.execute("get_observation", {"ok": False, "error": "nothing seen"}),
-            rig.execute("place_at", {"ok": False, "error": "unreachable", "x": 1}),
-        ]
-
-    results = rig.task(body)
-    assert [result.get("outcome") for result in results] == [None] * 6 + ["stuck"]
-    assert results[-1] == {
-        "ok": False,
-        "error": "unreachable",
-        "x": 1,
-        "outcome": "stuck",
-        "ask": "three steps failed in a row: unreachable",
-    }
-
-
-def test_the_failed_steps_limit_is_the_settings(make_rig: Callable[..., Rig]) -> None:
+def test_failed_steps_in_a_row_do_not_end_a_task(make_rig: Callable[..., Rig]) -> None:
+    # The functional launcher has no such rule: the model goes on until its
+    # step budget, and may succeed on a later try. The old setting counts for
+    # nothing.
     rig = make_rig(failed_steps_limit=1)
-    result = rig.task(lambda: rig.execute("grasp_object", {"ok": False}))
-    assert result["outcome"] == "stuck"
-    assert result["ask"] == "one step failed in a row: no reason given"
+    failed = {"ok": False, "error": "unreachable", "x": 1}
 
+    def body() -> Any:
+        results = [rig.execute("grasp_object", failed) for _ in range(5)]
+        assert results == [failed] * 5  # handed on as the skill gave them
+        assert rig.execute("grasp_object") == {"ok": True}  # the sixth try
+        return report(True)
 
-def test_a_blocked_step_is_not_rewritten_to_stuck(make_rig: Callable[..., Rig]) -> None:
-    rig = make_rig(failed_steps_limit=1)
-    blocked = {"ok": False, "error": "arm stop latched", "motion_blocked": True}
-    result = rig.task(lambda: rig.execute("grasp_object", blocked))
-    assert "outcome" not in result
+    rig.task(body)
+    assert len(rig.of("skill")) == 6 and rig.h.heard("help_needed") == []
+    assert rig.of("request")[-1][1] == "nobody"
 
 
 # The end
@@ -796,8 +787,11 @@ def test_a_blocked_step_is_not_rewritten_to_stuck(make_rig: Callable[..., Rig]) 
             "step budget ran out",
         ),
         (
+            # The model's own "could not do it": the arm is given back and no
+            # help request rings the Thor's bells, as the functional launcher
+            # prints the report and asks for the next task.
             lambda rig: report(summary="I give up: the box\nis not there"),
-            "help_needed",
+            "nobody",
             "task ended without success: I give up: the box is not there",
         ),
     ],
@@ -823,7 +817,7 @@ def test_the_end_of_a_task_gives_the_arm_back_or_asks_for_help(
     state = rig.shown("nobody")
     if sent == "nobody":
         assert rig.help_reasons() == [] and state.assistance_wait_s is None
-        assert rig.said[-1].startswith("task completed: the arm holds where it is")
+        assert rig.said[-1].startswith(f"{reason}: the arm holds where it is")
     else:
         assert rig.help_reasons() == [reason]
         until(lambda: rig.link.state().assistance_wait_s is not None, "the wait")
@@ -896,7 +890,8 @@ def test_the_timed_return_of_the_settings_goes_with_the_task(
     make_rig: Callable[..., Rig],
 ) -> None:
     rig = make_rig(timed_return=True)
-    rig.task(lambda: rig.execute("grasp_object") and report(summary="gave up"))
+    out_of_steps = report(summary="step budget exhausted")
+    rig.task(lambda: rig.execute("grasp_object") and out_of_steps)
     (event,) = rig.h.heard("help_needed")
     assert event[2]["timed_return"] is True
 
@@ -993,7 +988,7 @@ def test_the_latch_is_cleared_only_after_the_yes_and_the_grant(rig: Rig) -> None
     rig.answers = ["yes"]
     rig.on_ask = lambda: rig.h.app.stop("typed stop")
     refused = grasp(rig)
-    assert "stop number" in refused["motion_block_reason"]
+    assert "stop number" in refused["reason"]
     assert rig.kinds() == ["ask", "request", "result"]
     assert rig.of("result")[0][1:] == ("agent", "refused")
     assert rig.checker.estopped is True and rig.gate.restart_needed is False
@@ -1002,7 +997,7 @@ def test_the_latch_is_cleared_only_after_the_yes_and_the_grant(rig: Rig) -> None
     rig.on_ask = None
     rig.h.app._fault("motor fault")
     until(lambda: rig.link.state().stop_level == "fault", "the fault-stop")
-    assert grasp(rig)["motion_block_reason"].startswith("fault-stop (motor fault)")
+    assert grasp(rig)["reason"].startswith("fault-stop (motor fault)")
     assert rig.kinds() == [] and rig.checker.estopped is True
     assert rig.link.state().stop_level == "fault"  # nothing cleared it
 
@@ -1034,7 +1029,7 @@ def test_a_stop_of_the_checker_after_the_question_keeps_the_latch(rig: Rig) -> N
     rig.on_ask = rig.checker.estop
     refused = grasp(rig)
     assert refused["refused"] == "ownership"
-    assert refused["motion_block_reason"] == (
+    assert refused["reason"] == (
         f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
     )
     # The arm was granted and given back; no task was opened on it.
@@ -1055,7 +1050,7 @@ def test_a_latch_the_question_did_not_name_is_not_cleared(rig: Rig) -> None:
     rig.on_ask = rig.checker.estop  # not latched when the question was made
     refused = grasp(rig)
     assert SKILL_STOP_NOTE not in rig.of("ask")[0][1]
-    assert SKILL_STOP_KEPT in refused["motion_block_reason"]
+    assert SKILL_STOP_KEPT in refused["reason"]
     assert rig.of("reset") == [] and rig.of("open_task") == []
     assert rig.checker.estopped is True and rig.owner() == "nobody"
 
@@ -1072,7 +1067,7 @@ def test_a_stop_on_the_thor_after_the_grant_keeps_the_latch(rig: Rig) -> None:
 
     rig.gate._await_owner = stop_after_the_grant
     refused = grasp(rig)
-    assert refused["motion_block_reason"] == (
+    assert refused["reason"] == (
         f"control owner nobody, stop level stop after the grant: {SKILL_STOP_KEPT}"
     )
     assert rig.of("reset") == [] and rig.of("open_task") == []
@@ -1093,8 +1088,8 @@ def test_a_latch_that_does_not_clear_ends_in_the_restart_line(
     else:
         rig.gate.bind_arm(rig, types.SimpleNamespace(estopped=True))
     refused = grasp(rig)
-    assert refused["refused"] == "ownership"
-    assert refused["motion_block_reason"] == RESTART
+    assert refused["refused"] == "blocked"
+    assert refused["reason"] == RESTART
     # Granted, not cleared, given back; no task was opened and no skill ran.
     assert [kind for kind in rig.kinds() if kind != "reset"] == [
         "ask",
@@ -1135,8 +1130,8 @@ def test_clear_skill_stop_false_keeps_the_restart(
         result = rig.gate.execute(rig.skill(), "grasp_object", {})
     finally:
         rig.gate._current.reset(token)
-    assert result["refused"] == "ownership"
-    assert result["motion_block_reason"] == RESTART and rig.kinds() == []
+    assert result["refused"] == "blocked"
+    assert result["reason"] == RESTART and rig.kinds() == []
     # The latch stays for the run, whatever the checker says later.
     rig.checker.estopped = False
     assert rig.gate.restart_needed is True and rig.gate.tell_restart() is True
@@ -1154,7 +1149,7 @@ def test_a_stop_between_the_count_check_and_the_reset_is_not_erased(rig: Rig) ->
     count = rig.checker._observation_cancel_generation
     refused = grasp(rig)
     assert refused["refused"] == "ownership"
-    assert refused["motion_block_reason"] == (
+    assert refused["reason"] == (
         f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
     )
     # Latched again by the checker's own stop; granted, given back, not opened.
@@ -1202,7 +1197,7 @@ def test_a_checker_without_the_stop_count_keeps_its_latch(rig: Rig, count: str) 
     rig.on_ask = while_the_question_stands
     refused = grasp(rig)
     # Whether it was stopped again cannot be told: nothing is cleared.
-    assert refused["motion_block_reason"] == RESTART
+    assert refused["reason"] == RESTART
     assert checker.estopped is True and rig.of("reset") == []
     assert rig.kinds() == ["ask", "request", "result", "request", "result"]
     assert rig.of("result")[-1][1:] == ("nobody", "completed")
@@ -1233,7 +1228,7 @@ def test_a_stop_that_cannot_be_put_back_ends_in_the_restart_line(
     # The stop was erased and could not be latched again: the checker's word
     # is no longer worth anything, so the program takes no new task.
     assert calls == ["estop"] and rig.checker.estopped is False
-    assert refused["motion_block_reason"] == RESTART
+    assert refused["reason"] == RESTART
     assert rig.kinds() == ["ask", "request", "result", "reset", "request", "result"]
     assert rig.of("result")[-1][1:] == ("nobody", "completed")
     assert rig.gate.restart_needed is True and rig.gate.restart_told is True
@@ -1271,7 +1266,7 @@ def test_apais_checker_is_cleared_and_a_stop_meanwhile_is_put_back(rig: Rig) -> 
     real.reset_estop = stop_then_reset
     count = real._observation_cancel_generation
     refused = grasp(rig)
-    assert refused["motion_block_reason"] == (
+    assert refused["reason"] == (
         f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
     )
     # The stop and the gate's own latch after it: nothing was opened.
@@ -1297,7 +1292,7 @@ def test_a_stop_of_the_checker_right_after_its_latch_was_cleared_ends_the_start(
     del rig.said[:]
     refused = grasp(rig)
     assert refused["refused"] == "ownership"
-    assert refused["motion_block_reason"] == (
+    assert refused["reason"] == (
         f"the workstation checker was stopped again: {SKILL_STOP_KEPT}"
     )
     # The task was closed on the arm again and the arm given back: no skill ran.
@@ -1334,7 +1329,7 @@ def test_a_stop_of_the_checker_right_before_the_task_opens_ends_the_start(
 
     rig.link.pin = stop_then_pin
     refused = grasp(rig)
-    assert SKILL_STOP_KEPT in refused["motion_block_reason"]
+    assert SKILL_STOP_KEPT in refused["reason"]
     assert rig.kinds()[3:] == ["open_task", "close_task", "request", "result"]
     assert rig.of("reset") == [] and rig.of("skill") == []
     assert rig.checker.estopped is True and rig.owner() == "nobody"
@@ -1364,7 +1359,7 @@ def test_a_stop_under_way_at_the_link_service_keeps_the_latch(rig: Rig) -> None:
 
     after_the_grant(rig, stop_under_way)
     refused = grasp(rig)
-    assert refused["motion_block_reason"] == (
+    assert refused["reason"] == (
         f"a STOP was sent and the robot app has not shown it yet: {SKILL_STOP_KEPT}"
     )
     assert rig.of("reset") == [] and rig.of("open_task") == []
@@ -1390,7 +1385,7 @@ def test_a_robot_state_that_is_not_fresh_keeps_the_latch(
         del rig.link._take_state
         rig.link._monotonic = real
     rig.shown("nobody")
-    reason = refused["motion_block_reason"]
+    reason = refused["reason"]
     assert reason.startswith("robot connection lost: the newest ROBOT_STATE is 1.5")
     assert reason.endswith("s old, over 1 s")
     assert rig.of("reset") == [] and rig.of("open_task") == []
@@ -1438,7 +1433,7 @@ def test_a_give_back_without_an_answer_is_tried_again(
     rig.on_ask = rig.checker.estop  # the latch is kept: the arm is given back
     lose_the_next_give_back(rig)
     refused = rig.task(lambda: rig.execute("grasp_object"))
-    assert SKILL_STOP_KEPT in refused["motion_block_reason"]
+    assert SKILL_STOP_KEPT in refused["reason"]
     assert rig.gate.end_unanswered is True and rig.owner() == "agent"
     assert any(
         line.startswith("the arm could not be given back: no final RESULT")
@@ -1516,8 +1511,8 @@ def test_clear_skill_stop_false_clears_no_latch_seen_while_a_task_starts(
         rig.gate._await_owner = stop_after_the_grant
         expected = ["ask", "request", "result", "request", "result"]
     refused = grasp(rig)
-    assert refused["refused"] == "ownership"
-    assert refused["motion_block_reason"] == RESTART
+    assert refused["refused"] == "blocked"
+    assert refused["reason"] == RESTART
     assert rig.kinds() == expected
     assert all(SKILL_STOP_NOTE not in entry[1] for entry in rig.of("ask"))
     assert rig.checker.estopped is True and rig.owner() == "nobody"
@@ -1547,8 +1542,8 @@ def test_the_driver_of_the_quoted_session_is_checked_before_the_question(
     send(rig.robot_end, dataclasses.replace(was, driver="real"))
     until(lambda: rig.link.welcome.driver == "real", "the new WELCOME")
     refused = grasp(rig)
-    assert refused["refused"] == "ownership"
-    assert refused["motion_block_reason"] == "the driver 'real' is not driven"
+    assert refused["refused"] == "blocked"
+    assert refused["reason"] == "the driver 'real' is not driven"
     assert rig.kinds() == []  # no question, no owner request
     assert rig.gate.wrong_robot_app == "the driver 'real' is not driven"
     # No later task is run, whatever the robot app declares then.
@@ -1572,7 +1567,7 @@ def test_a_session_without_its_welcome_is_not_quoted(
     until(lambda: rig.link.welcome.session_id == "other", "the other WELCOME")
     refused = grasp(rig)
     session = rig.link.state().session_id
-    assert refused["motion_block_reason"] == (
+    assert refused["reason"] == (
         f"no WELCOME of session {session} has arrived (the newest is of session "
         "other): the driver of that robot app is not known"
     )
@@ -1635,10 +1630,8 @@ def test_the_arm_judges_the_rest_of_the_welcome_before_the_question(
         lambda: rig.link.welcome.camera_calibration_id == "another", "the new WELCOME"
     )
     refused = grasp(rig)
-    assert refused["refused"] == "ownership"
-    assert refused["motion_block_reason"] == (
-        "the robot app's camera calibration is 'another'"
-    )
+    assert refused["refused"] == "blocked"
+    assert refused["reason"] == ("the robot app's camera calibration is 'another'")
     assert rig.kinds() == [] and rig.owner() == "nobody"  # no question, no request
     # No later task is run.
     ran: list[str] = []
@@ -1652,4 +1645,4 @@ def test_the_arm_judges_the_rest_of_the_welcome_before_the_question(
     judged.clear()
     other = make_rig(driver_check=lambda driver: "not driven")
     other.check_welcome = check_welcome
-    assert grasp(other)["motion_block_reason"] == "not driven" and judged == []
+    assert grasp(other)["reason"] == "not driven" and judged == []

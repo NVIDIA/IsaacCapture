@@ -9,35 +9,49 @@ switched some or all of the motors off before it failed: the motion state is
 "release_failed", ROBOT_STATE keeps torque_on true, a fault-stop latches (the
 hold after a fault, until a person types reset) and nothing moves the arm. A
 later release at measured rest is tried again; a shutdown closes the robot
-app only once a release has worked.
+app only once a release has worked. The texts name a new start of the robot
+app as the way on: it works with every driver, and the reBot arm's driver
+takes no second release (test_apai_backend.py).
 
 On the simulated arm, and on APAI's mock driver as test_apai_app.py sets it up.
 """
 
 from __future__ import annotations
 
+import signal
 import threading
 from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
+from isaaccapture_examples.agentic_remote.robot_app import __main__ as robot_main
 from isaaccapture_examples.agentic_remote.robot_app import rest as rest_module
 from isaaccapture_examples.agentic_remote.robot_app.app import (
     MOTORS_OFF,
     MOTORS_UNKNOWN,
+    NEW_START,
     RELEASE_FAILED,
     TORQUE_UNKNOWN,
 )
 from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
+from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     ArmFault,
     GripperOutcome,
     MotionState,
 )
+from isaaccapture_examples.agentic_remote.robot_app.terminal import TypedLines
 
 import test_apai_app as on_apai
 from test_apai_app import ApaiHarness, BackendSpy
 from test_app import APP_LOGGER, RAISED, REST, WAIT_S, Done, closing_records, final
+from test_main import (
+    in_the_background,
+    left_threads,
+    sim_program,
+    started_apps,
+    until,
+)
 
 apai = pytest.mark.apai
 
@@ -99,6 +113,14 @@ def reset(h: Any) -> Any:
 def said_motors_off(h: Any) -> list[str]:
     """The operator events so far that say the motors are off."""
     return [text for _, text, _ in h.local_events if "motors are off" in text]
+
+
+# What the mock driver's jaws are sent by the close before a torque release,
+# once per release that got as far: the close, then the light hold.
+CLOSED_AT_REST = [
+    (on_apai.JAWS_CLOSED, 1.0),
+    (on_apai.JAWS_CLOSED, pytest.approx(on_apai.LIGHT)),
+]
 
 
 def mock_driver_connected(h: ApaiHarness) -> bool:
@@ -189,9 +211,11 @@ def test_after_a_failed_release_nothing_moves_the_arm(robot_app):
         "is not at rest: joint index 0"
     )
     assert h.heard("shutdown")[-1][1] == (
-        f"shutdown failed: {result.reason}; the robot app keeps running"
+        f"shutdown failed: {result.reason}; the robot app keeps running; {NEW_START}"
     )
-    assert h.arm.sent == [] and h.arm.jaw_commands == []
+    # The one jaw command is the first release's own close, before it failed.
+    assert h.arm.sent == []
+    assert [command.opening for command in h.arm.jaw_commands] == [0.0]
     assert h.app.running and h.arm.torque_on()
     assert h.app.motion_state is MotionState.RELEASE_FAILED
 
@@ -207,7 +231,7 @@ def test_a_second_release_at_measured_rest_is_tried_again(robot_app):
     refused = done.wait()
     assert refused.reason == f"fault-stop latched: {SIM_FAULT}"
     assert h.heard("refused")[-1][1] == (
-        f"release refused: {refused.reason}; {TORQUE_UNKNOWN}"
+        f"release refused: {refused.reason}; {TORQUE_UNKNOWN}; {NEW_START}"
     )
     reset(h)
     undo()
@@ -249,6 +273,71 @@ def test_close_after_a_failed_release_logs_the_torque_as_not_known(robot_app, ca
     ]
 
 
+def test_a_fault_stop_after_a_failed_release_names_a_new_start_not_a_reset(robot_app):
+    h = robot_app
+    fail_release(h)
+    assert final(h, h.client.release()).status == "failed"
+    state = latched(h)
+    assert h.heard("fault")[-1][1] == (
+        f"FAULT-STOP: {SIM_FAULT}; end the robot app with SIGTERM and start it "
+        f"again with the arm at rest, stop number {state.stop_number}"
+    )
+    reset(h)
+    # A later fault in that state: the arm may not hold, and a reset that
+    # clears the fault-stop still leaves nothing that moves the arm.
+    h.arm.set_fault("motor 3 over temperature")
+    h.step()
+    state = latched(h)
+    assert h.heard("fault")[-1][1] == (
+        f"FAULT-STOP: motor 3 over temperature; {MOTORS_UNKNOWN}, stop number "
+        f"{state.stop_number}"
+    )
+    assert not [text for _, text, _ in h.local_events if "types reset" in text]
+
+
+def test_sigterm_after_a_failed_release_does_not_say_that_the_motors_are_left_on(
+    monkeypatch,
+):
+    """The robot app as a program on the simulated arm, in real time."""
+    # No dial: the program is given a port that nothing may be dialed on.
+    monkeypatch.setattr(robot_main.RobotDialer, "start", lambda self: None)
+    apps = started_apps(monkeypatch)
+    program = sim_program(RobotAppConfig.default())
+    arm = program[1]
+
+    def failing() -> None:
+        raise ArmFault("bus off")
+
+    arm.release_torque = failing
+    # What the program's handler notes at a SIGTERM; no signal is raised here.
+    signals = robot_main._StartSignals()
+    typed, said = TypedLines(), []
+    thread, ended = in_the_background(
+        lambda: robot_main.run_connected(
+            *program, typed=typed, say=said.append, driver="sim", signals=signals
+        )
+    )
+    try:
+        until(lambda: apps and apps[0].running, "the start")
+        app = apps[0]
+        assert app.request_release() is None
+        until(lambda: app.motion_state is MotionState.RELEASE_FAILED, "the release")
+        signals.terminated.append(signal.SIGTERM)
+        thread.join(10.0)
+    finally:
+        typed.end()
+        for app in apps:
+            app.close()
+    assert ended == [0]
+    assert (
+        "robot app: SIGTERM; closing after a torque release that failed: the "
+        "motors may be on or off"
+    ) in said
+    assert not [line for line in said if "motors left on" in line]
+    assert arm.torque_on() and arm.released_at == []
+    assert left_threads() == []
+
+
 # On APAI's mock driver
 
 
@@ -283,7 +372,8 @@ def test_a_failed_release_then_reset_and_shutdown_on_apais_mock_driver(
     assert h.heard("shutdown")[-1][1] == SHUTDOWN_DONE
     assert not h.arm.torque_on() and h.arm.release_confirmed()
     assert not mock_driver_connected(h)
-    assert h.spy.targets == [] and h.spy.jaw_commands == jaws_at_start
+    assert h.spy.targets == []
+    assert h.spy.jaw_commands == [*jaws_at_start, *CLOSED_AT_REST]
 
 
 @apai
@@ -311,7 +401,8 @@ def test_a_release_that_fails_after_the_driver_disconnected_is_not_known_as_off(
     assert h.heard("release")[-1][1] == rest_module.RELEASED
     assert h.spy.calls.count("disconnect") == 2
     assert h.spy.released_at == [pytest.approx(REST), pytest.approx(REST)]
-    assert h.spy.targets == [] and h.spy.jaw_commands == jaws_at_start
+    assert h.spy.targets == []
+    assert h.spy.jaw_commands == [*jaws_at_start, *CLOSED_AT_REST]
     refused = h.client.start_task()
     assert (refused.status, refused.reason) == ("refused", MOTORS_OFF)
 

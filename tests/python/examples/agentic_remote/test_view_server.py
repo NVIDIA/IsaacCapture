@@ -24,7 +24,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from isaaccapture_examples.agentic_remote.protocol.messages import ViewStatus
+from isaaccapture_examples.agentic_remote.protocol.messages import (
+    GripperState,
+    JointSample,
+    RobotState,
+    ViewStatus,
+)
 from isaaccapture_examples.agentic_remote.view import server as view_server
 from isaaccapture_examples.agentic_remote.view.model import NO_PICTURE, ViewModel
 from isaaccapture_examples.agentic_remote.view.server import make_server
@@ -557,6 +562,149 @@ def test_the_page_writes_the_banner_over_the_picture(served):
     served.model.on_message(driving, NOW)
     told = json.loads(served.ask("GET", "/status.json")[2])
     assert told["banner"] == "HUMAN DRIVING"
+
+
+# The joints table. A missed deadline is a setpoint of a move that the robot
+# app sent late.
+
+
+def with_joints(**fields: Any) -> RobotState:
+    """A ROBOT_STATE with six joints; joint index 2 has no valid reading."""
+    values = [0.5, -0.05, 0.0, 1.0, -1.25, 0.0]
+    joints = [
+        JointSample(joint, value, 990.0, 990.001, joint != 2)
+        for joint, value in enumerate(values)
+    ]
+    made = {
+        "joints": joints,
+        "target_q": [0.5, -0.05, -0.05, 0.75, -1.25, 0.0],
+        "target_t": 990.0,
+        "gripper": GripperState(0.25, 990.0, True, True, 1.0, False, "empty"),
+        "health": {"reading_age_s": None, "missed_deadlines": 4},
+    }
+    return dataclasses.replace(robot_state(), **{**made, **fields})
+
+
+def test_status_json_carries_the_joints_the_targets_and_the_missed_deadlines(served):
+    served.model.on_message(with_joints(), NOW)
+    served.now = NOW + 0.25
+    status, headers, body = served.ask("GET", "/status.json")
+    assert status == 200 and headers["Content-Type"] == "application/json"
+    # Strict JSON: a browser's parser takes no NaN.
+    told = json.loads(body, parse_constant=pytest.fail)
+    state = told["state"]
+    assert [row["joint"] for row in state["joints"]] == [0, 1, 2, 3, 4, 5]
+    assert [row["valid"] for row in state["joints"]] == [True, True, False, *[True] * 3]
+    assert [row["q"] for row in state["joints"]] == [0.5, -0.05, None, 1.0, -1.25, 0.0]
+    assert [row["target"] for row in state["joints"]] == [
+        0.5,
+        -0.05,
+        -0.05,
+        0.75,
+        -1.25,
+        0.0,
+    ]
+    assert [row["diff"] for row in state["joints"]] == [0.0, 0.0, None, 0.25, 0.0, 0.0]
+    assert state["joints"][3]["deg"] == pytest.approx(57.2958, abs=1e-4)
+    assert state["jaw"] == {
+        "valid": True,
+        "opening": 0.25,
+        "target": 1.0,
+        "diff": -0.75,
+    }
+    assert state["reading_age_s"] is None and state["missed_deadlines"] == 4
+    assert told["state_age_s"] == pytest.approx(0.25)
+    # A value the link would never carry does not break the answer.
+    odd = with_joints(health={"reading_age_s": float("nan"), "missed_deadlines": 4})
+    served.model.on_message(odd, NOW)
+    status, _, body = served.ask("GET", "/status.json")
+    told = json.loads(body, parse_constant=pytest.fail)
+    assert status == 200 and told["state"]["reading_age_s"] is None
+
+
+def test_the_page_draws_the_joints_table_from_fields_the_status_carries(served):
+    page = page_tags()
+    script = page.text["script"]
+    # Below the status rows, above the events; the stage is not touched.
+    ids = [attrs.get("id") for _, attrs in page.tags if attrs.get("id")]
+    assert ids == [
+        "stage",
+        "picture",
+        "banner",
+        "overlay",
+        "rows",
+        "loop",
+        "joints",
+        "jointRows",
+        "events",
+    ]
+    # Every field the script reads is one the status carries, by its name.
+    served.model.on_message(with_joints(), NOW)
+    told = json.loads(served.ask("GET", "/status.json")[2])
+    state = told["state"]
+    assert set(re.findall(r"\bjoint\.(\w+)", script)) == set(state["joints"][0])
+    assert set(re.findall(r"\bjaw\.(\w+)", script)) == set(state["jaw"])
+    read = set(re.findall(r"\bstate\.(\w+)", script))
+    assert {"joints", "jaw", "reading_age_s", "missed_deadlines"} <= read <= set(state)
+    # Not the path "/status.json" and not a reply's status code.
+    assert set(re.findall(r"(?<![/.\w])status\.(\w+)", script)) <= set(told)
+    assert "for (const joint of state.joints) {" in script
+    assert "const jaw = state.jaw;" in script
+    # What is drawn: the measured value or the mark, degrees, target, difference.
+    assert (
+        'joint.valid ? figure(joint.q, 3) : "NOT VALID",\n'
+        "      figure(joint.deg, 1), figure(joint.target, 3), figure(joint.diff, 3)],\n"
+        "      !joint.valid);"
+    ) in script
+    assert 'jaw.valid ? figure(jaw.opening, 2) : "NOT VALID"' in script
+    assert "figure(jaw.target, 2), figure(jaw.diff, 2)], !jaw.valid);" in script
+    # The ages and the count, in one line over the table; red when one is off.
+    assert (
+        'loop.textContent = "Joint readings: age " + seconds(state.reading_age_s, 2) +\n'
+        '    " at the robot app; age of the ROBOT_STATE " + '
+        "seconds(status.state_age_s, 2) +\n"
+        '    "; missed setpoint deadlines: " + '
+        '(missed === null ? "not reported" : missed);'
+    ) in script
+    assert "const missed = state.missed_deadlines;" in script
+    assert (
+        "if (missed > 0 || state.reading_age_s === null || status.state_age_s > 1) {\n"
+        '    loop.className = "bad";'
+    ) in script
+    # It is drawn with every status, after what the page showed before.
+    assert script.count("showJoints(status);") == 1
+    shown = script[script.index("function show(status) {") :]
+    assert shown.index("banner.textContent") < shown.index("showJoints(status);")
+    assert shown.index("overlay.textContent") < shown.index("showJoints(status);")
+    # The table is built from text nodes only.
+    assert script.count("cell.textContent = text;") == 2
+
+
+def unbalanced(script: str) -> str:
+    """The first bracket of a script that has no partner; "" when all have one.
+
+    No browser runs the page's script in a test: this finds a dropped bracket.
+    """
+    bare = re.sub(r"//[^\n]*", "", script)
+    bare = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', bare)
+    partner = {")": "(", "]": "[", "}": "{"}
+    opened: list[tuple[str, int]] = []
+    for line_number, line in enumerate(bare.splitlines(), 1):
+        for char in line:
+            if char in "([{":
+                opened.append((char, line_number))
+            elif char in partner and (not opened or opened.pop()[0] != partner[char]):
+                return f"{char} in line {line_number} of the script"
+    return "" if not opened else "{} in line {} of the script".format(*opened[-1])
+
+
+def test_every_bracket_of_the_pages_script_has_its_partner():
+    script = page_tags().text["script"]
+    assert unbalanced(script) == ""
+    # The check sees a bracket that is dropped or added.
+    assert unbalanced(script.replace("!joint.valid);", "!joint.valid;", 1))
+    assert unbalanced(script.replace("function show(status) {", "function show(", 1))
+    assert unbalanced('row("a (", [1, 2)];') and not unbalanced('row("a (", [1, 2]);')
 
 
 def test_the_page_names_its_license():

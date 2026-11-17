@@ -29,6 +29,7 @@ import socket
 import stat
 import threading
 import time
+import types
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from isaaccapture_examples.agentic_remote.link_service.local import (
     LocalSocketInUse,
     connect_local,
     pack_record,
+    send_raw_stop,
 )
 from isaaccapture_examples.agentic_remote.link_service.service import (
     link_message_name,
@@ -52,6 +54,7 @@ from isaaccapture_examples.agentic_remote.protocol.local_messages import (
 )
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     HumanSetpoint,
+    OwnerRequest,
     Reset,
     Result,
     RobotState,
@@ -67,6 +70,7 @@ from isaaccapture_examples.agentic_remote.robot_app.app import (
     SECOND_HUMAN_PROGRAM,
     TAKEN_OVER,
 )
+from isaaccapture_examples.agentic_remote.robot_app.authority import Authority
 from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
 from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
 from isaaccapture_examples.agentic_remote.robot_app.human_socket import (
@@ -112,6 +116,8 @@ ROBOT_MODULE = "isaaccapture_examples.agentic_remote.robot_app"
 AT_SOCKET = "at the robot app's socket"
 OVER_LINK = "over the robot connection"
 NO_DATA = "no fresh controller data: no HUMAN_SETPOINT has arrived"
+# The socket as the rig's commands and configs/human_rebot.yaml write it.
+RIG_SOCKET = "~/.agentic_remote/human.sock"
 # What the Thor terminal prints for the STOP of right B, before its number.
 STOP_LINE = "[stop] STOP from controller: right B; the arm holds, stop number "
 # Threads of the robot app's program and of its socket; none may outlive it.
@@ -139,17 +145,78 @@ def folder(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("th")  # a short path, mode 0700
 
 
+class Gate:
+    """The robot app's end of the socket, with a gate on what it receives.
+
+    While the gate is shut, receive() keeps what arrived and gives nothing;
+    open again, it gives those first, in their order of arrival.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self._lock = threading.Lock()
+        self._shut = False
+        self._held: list[tuple[int, bytes]] = []
+
+    @property
+    def alive(self) -> bool:
+        return self._inner.alive
+
+    def send_reliable(self, msg_type: int, payload: bytes) -> None:
+        self._inner.send_reliable(msg_type, payload)
+
+    def send_latest(self, msg_type: int, payload: bytes) -> None:
+        self._inner.send_latest(msg_type, payload)
+
+    def close(self) -> None:
+        self._inner.close()
+
+    def receive(self, timeout_s: float) -> tuple[int, bytes] | None:
+        with self._lock:
+            if self._shut:
+                received = self._inner.receive(0.0)
+                while received is not None:
+                    self._held.append(received)
+                    received = self._inner.receive(0.0)
+                return None
+            if self._held:
+                return self._held.pop(0)
+        return self._inner.receive(timeout_s)
+
+    def held(self) -> list[int]:
+        """The type numbers of what is kept, in the order of arrival."""
+        with self._lock:
+            return [msg_type for msg_type, _ in self._held]
+
+    def shut(self) -> None:
+        with self._lock:
+            self._shut = True
+
+    def open(self) -> None:
+        with self._lock:
+            self._shut = False
+
+
 class Thor:
     """A robot app with a socket for the human program, and who attached there."""
 
-    def __init__(self, h: AppHarness, folder: Path, **service_options: Any) -> None:
+    def __init__(
+        self,
+        h: AppHarness,
+        folder: Path,
+        *,
+        gated: bool = False,
+        **service_options: Any,
+    ) -> None:
+        """gated puts a Gate, `gate`, on what the robot app takes off the socket."""
         self.h = h
         self.path = str(folder / "h.sock")
         assert len(self.path) < 100, f"socket path too long: {self.path}"
         options = {"status_period_s": 0.05, "poll_s": 0.01, **service_options}
         self.socket = HumanSocket(self.path, **options)
         self.socket.start()
-        h.app.attach_local(self.socket.carrier, self.socket.attached)
+        self.gate = Gate(self.socket.carrier) if gated else None
+        h.app.attach_local(self.gate or self.socket.carrier, self.socket.attached)
         self.stations: list[Station] = []
 
     def attach(self, name: str = "human") -> Station:
@@ -183,7 +250,7 @@ def on_thor(
     """Builds a robot app on the simulated arm with a socket for the human program.
 
     on_thor(config=None, connected=True, **service_options): the keywords of
-    make_robot_app, then those of the socket's service.
+    make_robot_app, then gated of Thor and those of the socket's service.
     """
     made: list[Thor] = []
 
@@ -299,6 +366,46 @@ def squeeze_at_socket(
 def at_socket(state: RobotState) -> bool:
     """Whether a ROBOT_STATE says a human program is attached at the socket."""
     return state.health["human"].get("local_program") is True
+
+
+def stop_at_socket(h: AppHarness, station: Station) -> str:
+    """Right B's STOP at the socket; its EVENT's text, once the STOP has run.
+
+    A STOP raises the stop number, then tells the running work why, then sends
+    its EVENT: with the EVENT heard, all of it is done.
+    """
+    number = h.app.snapshot().stop_number
+    stops = len(h.heard("stop"))
+    station.ws.stop(reason="right B", sender="controller")
+    text = h.wait_local_events("stop", stops + 1)[-1][1]
+    assert h.app.snapshot().stop_number == number + 1
+    return text
+
+
+@pytest.fixture(params=[0.0, 0.05], ids=["", "a pause inside the STOP"])
+def stop_paces(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runs a test twice: as it is, and with a pause inside every STOP.
+
+    The pause lies between the rise of the stop number and the STOP's next
+    step, where any machine may keep the thread that serves the STOP waiting.
+    """
+    pause_s = request.param
+    if not pause_s:
+        return
+    real = Authority.raise_stop
+
+    def raise_stop(self: Authority, reason: str, sender: str) -> int:
+        number = real(self, reason, sender)
+        time.sleep(pause_s)
+        return number
+
+    monkeypatch.setattr(Authority, "raise_stop", raise_stop)
+
+
+def second_told(h: AppHarness) -> list[str]:
+    """What the Thor terminal was told of a second human program, in order."""
+    start = SECOND_HUMAN_PROGRAM.split("{")[0]
+    return [text for _, text, _ in h.heard("refused") if text.startswith(start)]
 
 
 def left_threads() -> list[str]:
@@ -439,7 +546,7 @@ def test_the_human_role_sends_only_its_own_link_messages(on_thor):
 # A STOP at the socket
 
 
-def test_a_stop_at_the_socket_ends_a_human_drive_in_a_hold(on_thor):
+def test_a_stop_at_the_socket_ends_a_human_drive_in_a_hold(on_thor, stop_paces):
     h, thor = on_thor()
     station = thor.attach()
     hand = person_at_socket(h, station)
@@ -449,12 +556,9 @@ def test_a_stop_at_the_socket_ends_a_human_drive_in_a_hold(on_thor):
     # The grip is squeezed and the arm follows.
     assert reached.wait(WAIT_S), (ended, h.app._human_refusal)
     assert h.app.motion_state is MotionState.MOVING
-    before = h.app.snapshot()
-    station.ws.stop(reason="right B", sender="controller")
-    until(
-        lambda: h.app.snapshot().stop_number == before.stop_number + 1,
-        "the STOP at the robot app",
-    )
+    # The STOP has run before the held drive goes on: the drive is told why.
+    told = stop_at_socket(h, station)
+    assert told.startswith("STOP from controller: right B; ")
     release.set()
     h.idle()
     assert [end.status for end in ended] == ["stopped"]
@@ -464,7 +568,6 @@ def test_a_stop_at_the_socket_ends_a_human_drive_in_a_hold(on_thor):
     assert now.owner is Owner.NOBODY and h.app.takeover_open
     assert h.app.motion_state is MotionState.HOLD
     assert h.arm.torque_on() and h.arm.released_at == []
-    assert h.heard("stop")[-1][1].startswith("STOP from controller: right B; ")
     # The human program is shown the new numbers; the grip still squeezed
     # moves nothing.
     station.ws.wait_state(lambda s: s.stop_number == now.stop_number, WAIT_S)
@@ -473,7 +576,9 @@ def test_a_stop_at_the_socket_ends_a_human_drive_in_a_hold(on_thor):
     assert len(h.arm.sent) == sent and len(ended) == 1
 
 
-def test_a_stop_at_the_socket_arrives_with_the_robot_connection_down(on_thor):
+def test_a_stop_at_the_socket_arrives_with_the_robot_connection_down(
+    on_thor, stop_paces
+):
     h, thor = on_thor()
     station = thor.attach()
     hand = person_at_socket(h, station)
@@ -511,14 +616,11 @@ def test_a_stop_at_the_socket_arrives_with_the_robot_connection_down(on_thor):
     assert ended[1].reason.startswith("the live view is not fresh")
 
     # Right B: the STOP needs no robot connection.
-    station.ws.stop(reason="right B", sender="controller")
-    until(
-        lambda: h.app.snapshot().stop_number == owned.stop_number + 1,
-        "the STOP at the robot app",
-    )
+    told = stop_at_socket(h, station)
+    assert told.startswith("STOP from controller: right B; ")
     now = h.app.snapshot()
+    assert now.stop_number == owned.stop_number + 1
     assert now.owner is Owner.NOBODY and h.app.takeover_open
-    assert h.heard("stop")[-1][1].startswith("STOP from controller: right B; ")
     assert not h.app.link_alive
     assert h.arm.torque_on() and h.arm.released_at == []
     assert len(h.arm.sent) == sent
@@ -526,14 +628,16 @@ def test_a_stop_at_the_socket_arrives_with_the_robot_connection_down(on_thor):
     assert (shown.owner, shown.motion, shown.torque_on) == ("nobody", "hold", True)
 
 
-def test_a_stop_at_the_socket_of_an_app_that_never_had_a_robot_connection(on_thor):
+def test_a_stop_at_the_socket_of_an_app_that_never_had_a_robot_connection(
+    on_thor, stop_paces
+):
     h, thor = on_thor(connected=False)
     assert h.app.running and not h.app.link_alive
     station = thor.attach()
     assert station.ws.welcome.session_id == h.app.session_id
-    station.ws.stop(reason="right B", sender="controller")
-    until(lambda: h.app.snapshot().stop_number == 1, "the STOP at the robot app")
-    assert h.heard("stop")[-1][1].startswith("STOP from controller: right B; ")
+    told = stop_at_socket(h, station)
+    assert told.startswith("STOP from controller: right B; ")
+    assert h.app.snapshot().stop_number == 1
     station.ws.wait_state(lambda s: s.stop_number == 1, WAIT_S)
     # A STOP with a payload that cannot be read is still a STOP.
     station.end.send_reliable(Stop.TYPE, b"not json")
@@ -541,11 +645,84 @@ def test_a_stop_at_the_socket_of_an_app_that_never_had_a_robot_connection(on_tho
     assert h.arm.torque_on() and h.arm.released_at == []
 
 
+@pytest.mark.parametrize("connected", [True, False])
+def test_a_stop_at_the_socket_passes_what_arrived_ahead_of_it(on_thor, connected):
+    h, thor = on_thor(connected=connected, gated=True)
+    station = thor.attach()
+    heard = len(h.local_events)
+    # Two requests, right B's STOP and a third request arrive at the robot
+    # app's end of the socket before the robot app takes any of them.
+    thor.gate.shut()
+    ids = [station.ws.request_owner("handback", reason=RIGHT_A) for _ in range(2)]
+    station.ws.stop(reason="right B", sender="controller")
+    ids.append(station.ws.request_owner("handback", reason=RIGHT_A))
+    arrived = [OwnerRequest.TYPE, OwnerRequest.TYPE, Stop.TYPE, OwnerRequest.TYPE]
+    until(lambda: len(thor.gate.held()) >= len(arrived), "the four at the robot app")
+    assert thor.gate.held() == arrived
+    assert h.app.snapshot().stop_number == 0 and h.local_events[heard:] == []
+    thor.gate.open()
+    results = [station.ws.wait_result(one, timeout_s=WAIT_S) for one in ids]
+    # The STOP was served first: the Thor terminal heard it ahead of the
+    # refusals of the two requests that had arrived before it.
+    assert [kind for kind, _, _ in h.local_events[heard:]] == [
+        "stop",
+        "refused",
+        "refused",
+        "refused",
+    ]
+    assert [result.reason for result in results] == [NO_TAKEOVER] * 3
+    assert h.app.snapshot().stop_number == 1 and h.arm.torque_on()
+
+
+def test_a_stop_behind_a_refused_hello_reaches_the_robot_app(on_thor):
+    h, thor = on_thor(connected=False)
+    thor.attach()
+    # The console's STOP without a carrier: LOCAL_HELLO in the role console
+    # and a STOP behind it. This socket refuses the role and takes the STOP.
+    raw = send_raw_stop(thor.path, reason="typed stop", sender="console")
+    assert raw == (True, ONLY_HUMAN)
+    told = h.wait_local_events("stop", 1)[-1][1]
+    assert told.startswith("STOP from console: typed stop; ")
+    # A second human program is refused; right B behind its LOCAL_HELLO is taken.
+    hello = LocalHello(role=ROLE_HUMAN, name="second")
+    stop = Stop(reason="right B", sender="controller")
+    second = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        second.connect(thor.path)
+        second.sendall(
+            pack_record(hello.TYPE, hello.to_payload())
+            + pack_record(stop.TYPE, stop.to_payload())
+        )
+        told = h.wait_local_events("stop", 2)[-1][1]
+    finally:
+        second.close()
+    assert told.startswith("STOP from controller: right B; ")
+    assert h.app.snapshot().stop_number == 2
+    assert thor.socket.attached() and h.arm.torque_on()
+
+
 # The socket holds nothing up
 
 
 def test_a_client_that_does_not_read_is_cut_off_and_holds_nothing_up(on_thor):
-    h, thor = on_thor(send_timeout_s=0.2)
+    send_timeout_s = 0.5  # how long the socket's service waits for a client
+    h, thor = on_thor(send_timeout_s=send_timeout_s)
+    # How long each send of the robot app's end of the socket takes.
+    took: list[float] = []
+
+    def timed(send: Callable[..., None]) -> Callable[..., None]:
+        def send_timed(*args: Any) -> None:
+            began = time.monotonic()
+            try:
+                send(*args)
+            finally:
+                took.append(time.monotonic() - began)
+
+        return send_timed
+
+    app_end = thor.socket.carrier
+    app_end.send_latest = timed(app_end.send_latest)
+    app_end.send_reliable = timed(app_end.send_reliable)
     deaf = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         deaf.connect(thor.path)
@@ -553,15 +730,14 @@ def test_a_client_that_does_not_read_is_cut_off_and_holds_nothing_up(on_thor):
         deaf.sendall(pack_record(hello.TYPE, hello.to_payload()))
         until(thor.socket.attached, "the client attached")
         # It never reads: ROBOT_STATE after ROBOT_STATE fills its socket.
-        longest = 0.0
         end = time.monotonic() + 2 * WAIT_S
         while thor.socket.attached():
             assert time.monotonic() < end, "the client was not cut off"
-            began = time.monotonic()
             h.advance(0.05, 0.05)  # one ROBOT_STATE
-            longest = max(longest, time.monotonic() - began)
-        # No pass of the dispatcher waited for the socket.
-        assert longest < 1.0
+        # No send of the robot app waited for the socket: each one took far
+        # less than the wait that cut the client off.
+        assert took, "the robot app sent nothing to the socket"
+        assert max(took) < send_timeout_s / 2, f"a send took {max(took):.3f} s"
         # The robot app served its robot connection all along: a STOP is taken.
         h.client.stop()
         h.client.wait_state(lambda s: s.stop_number == 1, WAIT_S)
@@ -604,6 +780,68 @@ def test_one_human_program_at_a_time_is_followed(on_thor):
     assert h.arm.sent == []
 
 
+def test_a_second_human_program_that_keeps_sending_is_told_of_once(on_thor):
+    h, thor = on_thor()
+    station = thor.attach()
+    keep_s = h.config.human.stage_keep_s
+    turn_s = 0.05  # both programs send 20 HUMAN_SETPOINTs per second
+
+    def over_link(followed: bool) -> None:
+        """One HUMAN_SETPOINT of the program at the robot link service."""
+        message = setpoint(h)
+        feed(h, message, view=False)
+        assert (newest_seq(h) == message.seq) == followed
+
+    def at_the_socket(followed: bool) -> None:
+        """One HUMAN_SETPOINT of the program at the robot app's socket."""
+        message = setpoint(h)
+        station.ws.send(message)
+        # Behind it, a request: once it was answered the first was handled.
+        assert ask_at_socket(station, "handback").reason == NO_TAKEOVER
+        assert (newest_seq(h) == message.seq) == followed
+
+    # The program at the robot link service sends first and is followed; the
+    # one at the socket is the second. Both go on sending, in turn.
+    over_link(followed=True)
+    for _ in range(10):
+        h.advance(turn_s, turn_s)
+        at_the_socket(followed=False)
+        over_link(followed=True)
+    told = SECOND_HUMAN_PROGRAM.format(here=AT_SOCKET, there=OVER_LINK)
+    assert second_told(h) == [told]
+
+    # The second one is silent for longer than human.stage_keep_s while the
+    # first goes on; when it sends again that is told once more.
+    silent_s = 0.0
+    while silent_s <= keep_s:
+        h.advance(keep_s / 4, keep_s / 4)
+        silent_s += keep_s / 4
+        over_link(followed=True)
+    for _ in range(3):
+        h.advance(turn_s, turn_s)
+        at_the_socket(followed=False)
+        over_link(followed=True)
+    assert second_told(h) == [told, told]
+
+    # The followed one falls silent: the program at the socket is followed, and
+    # the other, when it comes back and keeps sending, is told of once.
+    h.advance(keep_s + 0.1, 1.0)
+    at_the_socket(followed=True)
+    for _ in range(10):
+        h.advance(turn_s, turn_s)
+        over_link(followed=False)
+        at_the_socket(followed=True)
+    told_back = SECOND_HUMAN_PROGRAM.format(here=OVER_LINK, there=AT_SOCKET)
+    assert second_told(h) == [told, told, told_back]
+    # The operator console gets the same EVENTs over the robot connection.
+    heard = [text for _, text, _ in h.heard("refused")]
+    until(
+        lambda: [e.text for e in h.client.events if e.kind == "refused"] == heard,
+        "the EVENTs at the workstation",
+    )
+    assert h.arm.sent == [] and h.arm.torque_on()
+
+
 # The socket's file, and the program's argument
 
 
@@ -626,6 +864,29 @@ def test_the_socket_is_private_and_its_file_goes_with_it(folder):
     with pytest.raises(ValueError, match="needs a path"):
         HumanSocket("")
     assert left_threads() == []
+
+
+def test_a_tilde_path_is_served_where_the_human_program_looks(folder, monkeypatch):
+    home, cwd = folder, folder / "c"  # the test's own, not the user's
+    cwd.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(cwd)
+    served = HumanSocket(RIG_SOCKET)
+    served.start()
+    try:
+        # The rig's file for the human program holds the same text.
+        rig = load_human_settings(CONFIGS / "human_rebot.yaml").socket_path
+        assert rig == str(home / ".agentic_remote" / "human.sock")
+        assert served.path == rig
+        assert not (cwd / "~").exists()
+        end = connect_local(rig, ROLE_HUMAN, "human", WAIT_S)
+        try:
+            assert end.status.roles == {"human": 1} and served.attached()
+        finally:
+            end.close()
+    finally:
+        served.close()
+    assert not os.path.exists(rig)
 
 
 @pytest.mark.parametrize(
@@ -676,14 +937,33 @@ class NoLinks:
 class ProgramRun:
     """run_connected() on the simulated arm with --human-socket, on a thread."""
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, path: str) -> None:
+    def __init__(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        path: str,
+        *,
+        config: RobotAppConfig | None = None,
+        hold_connect: bool = False,
+    ) -> None:
+        """hold_connect keeps the arm's connect() waiting until connect_now()."""
         self.links = NoLinks()
         monkeypatch.setattr(robot_main, "LinkCarrier", self.links)
-        self.config = RobotAppConfig.default()
+        self.config = RobotAppConfig.default() if config is None else config
         self.clock = SystemClock()
         self.arm = SimArm(
             n_joints=6, clock=self.clock, q0=list(self.config.rest.rest_q)
         )
+        self.connecting = threading.Event()  # the arm's connect() was called
+        self._connect = threading.Event()
+        if hold_connect:
+            real = self.arm.connect
+
+            def connect() -> None:
+                self.connecting.set()
+                assert self._connect.wait(2 * WAIT_S), "connect() was not let go"
+                real()
+
+            self.arm.connect = connect
         self.typed = TypedLines()
         self.lines: list[str] = []
         self._said = threading.Condition()
@@ -721,6 +1001,10 @@ class ProgramRun:
             )
             return found()[0]
 
+    def connect_now(self) -> None:
+        """Let a held connect() of the arm go on."""
+        self._connect.set()
+
     def result(self) -> int:
         self._thread.join(2 * WAIT_S)
         assert self.code, "run_connected() did not return"
@@ -756,6 +1040,50 @@ def test_the_program_serves_the_socket_without_a_robot_connection(monkeypatch, f
         end.close()
     run.wait_line("quit: completed; the robot app closes")
     assert not os.path.exists(path)
+    assert len(run.arm.released_at) == 1  # the one release, at rest
+    assert left_threads() == []
+
+
+def test_a_stop_while_the_arm_is_being_connected_holds_no_setpoint_back(
+    monkeypatch, folder, config
+):
+    """Right B before the robot app's first ROBOT_STATE.
+
+    The program serves the socket before it connects the arm. The socket's
+    service holds HUMAN_SETPOINTs back from a STOP until a ROBOT_STATE shows
+    that the STOP took effect; the robot app's first one does.
+    """
+    path = str(folder / "h.sock")
+    run = ProgramRun(monkeypatch, path, config=config, hold_connect=True)
+    assert run.connecting.wait(WAIT_S), "the arm's connect() was not called"
+    end = connect_local(path, ROLE_HUMAN, "human", WAIT_S)
+    ws = WorkstationClient(end, run.clock, name="human")
+    try:
+        ws.wait_welcome(WAIT_S)  # sent before the arm is connected
+        assert ws.state is None
+        ws.stop(reason="right B", sender="controller")
+        # The socket's service has sent the STOP on and waits for its effect.
+        end.wait_status(lambda s: s.stop_unconfirmed, WAIT_S)
+        run.connect_now()
+        assert run.wait_line(STOP_LINE) == f"{STOP_LINE}1"
+        state = ws.wait_state(lambda s: s.stop_number == 1, WAIT_S)
+        assert (state.motion, state.torque_on) == ("rest_hold", True)
+        assert state.health["human"]["seq"] is None
+        # No second STOP is needed: the HUMAN_SETPOINTs pass again.
+        end.wait_status(lambda s: not s.stop_unconfirmed, WAIT_S)
+        quoted = types.SimpleNamespace(snapshot=lambda: state)
+        message = setpoint(types.SimpleNamespace(app=quoted, clock=run.clock))
+        ws.send(message)
+        shown = ws.wait_state(lambda s: s.health["human"]["seq"] == message.seq, WAIT_S)
+        assert shown.health["human"]["source"] == message.source
+        assert NO_DATA not in shown.health["human"]["takeover"]
+    finally:
+        run.connect_now()
+        run.typed.type("quit")
+        ws.close()
+        end.close()
+        code = run.result()
+    assert code == 0
     assert len(run.arm.released_at) == 1  # the one release, at rest
     assert left_threads() == []
 
@@ -1033,8 +1361,9 @@ def test_right_b_reaches_the_robot_app_process_with_the_robot_connection_down(
         assert app.wait_exit() == 0
         assert not os.path.exists(thor_socket)
         assert person.wait_exit() == 1
+        # The line names who served the socket; its words are the human program's.
         assert any(
-            line.startswith("human program: the robot link service is gone")
+            line.startswith("human program: the robot ") and " is gone (" in line
             for line in person.lines
         )
         assert "Traceback" not in "\n".join(person.lines + app.lines)

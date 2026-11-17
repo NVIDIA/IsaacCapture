@@ -371,7 +371,8 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
     page = tab.close()
 
     # The tasks: the first succeeded; the pick and place moved the arm and
-    # ended with a help request (the mock scene cannot confirm the place).
+    # ended without success (the mock scene cannot confirm the place). The
+    # agent gave the arm back and made no help request.
     opened, picked = scene.reports()
     assert opened["success"] is True and picked["success"] is False
     (result,) = scene.results("pick_and_place")
@@ -387,7 +388,8 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
     # status lines showed the agent as owner with a move under a permit.
     granted = desk.holding("[owner] new task: the agent owns the arm, owner number ")
     assert len(granted) == 2
-    desk.wait("HELP NEEDED: task ended without success: ")
+    desk.wait("[owner] the agent gave the arm back: task ended without success: ")
+    assert desk.count("HELP NEEDED") == 0
     desk.wait(" | owner nobody #4 | ")  # the status line after the last change
     assert "agent" in owner_lines(desk) and owner_lines(desk)[-1] == "nobody"
     moving = [
@@ -464,16 +466,25 @@ def test_a_console_stop_during_the_agents_move_ends_the_task_and_the_next_task_r
     assert 40 <= sent <= 60 < trace.moves[first]
     trace.check_every_target_was_permitted()
     # The console showed the STOP as the robot app's EVENT, and the stop
-    # number stays in its status lines.
+    # number stays in its status lines. A status line is printed at most once
+    # a second and the stop level is none again from the moment the second
+    # task takes the arm, so the line awaited is the one after that task gave
+    # the arm back: owner number 4.
     desk.wait("[stop] STOP from console: ")
-    assert " | owner nobody #4 | " in desk.wait(" | stop none #1 | ")
+    assert " | stop none #1 | " in desk.wait(" | owner nobody #4 | ")
+    # No status line showed another STOP, before or after.
+    shown = {
+        line.split(" | stop ")[1].split(" | ")[0] for line in desk.holding(" | owner ")
+    }
+    assert shown <= {"none #0", "stop #1", "none #1"}, shown
     # Nobody owned the arm after it; the next task took it without a restart.
     stopped, opened = scene.reports()
     assert stopped["success"] is False and opened["success"] is True
     assert not scene.said(task_gate.RESTART)
+    # The stopped task's end quotes numbers the STOP has ended: it is refused.
     assert scene.order == [
         "agent:completed",
-        "help_needed:refused",
+        "nobody:refused",
         "agent:completed",
         "nobody:completed",
         "close:nobody",
@@ -577,20 +588,25 @@ def test_an_obstacle_costs_no_restart(demo: tuple[Scene, Desks]) -> None:
 
     # The first task: the check ahead refused a setpoint and the arm held.
     first, second = scene.results("pick_and_place")
-    assert first["ok"] is False and first["motion_blocked"] is True
+    # As in the functional program the refused skill only fails: the model
+    # gets its next turn and ends the task with a report.
+    assert first["ok"] is False and "motion_blocked" not in first
     first_move = next(iter(trace.moves))
     assert trace.results[first_move].status == "refused"
-    # Seen from the console: a help request with its reason, no STOP, and the
-    # agent as owner again for the second task of the same program.
-    desk.wait("HELP NEEDED: blocked: arm stop latched")
+    # Seen from the console: the agent gave the arm back and no help request
+    # was made, no STOP, and the agent as owner again for the second task of
+    # the same program.
+    gave_back = "[owner] the agent gave the arm back: task ended without success: "
+    desk.wait(gave_back)
+    assert desk.count("HELP NEEDED") == 0
     assert len(desk.holding("[owner] new task: the agent owns the arm")) == 2
-    help_at = desk.when("HELP NEEDED: blocked: arm stop latched")
+    back_at = desk.when(gave_back)
     again_at = [
         at
         for at, line in zip(desk.at, desk.said)
         if "[owner] new task: the agent owns the arm" in line
     ][1]
-    assert again_at > help_at
+    assert again_at > back_at
     assert desk.holding("[stop] ") == [] and desk.holding("[fault] ") == []
     assert all(" | stop none #0 | " in line for line in desk.holding(" | owner "))
     # No restart: one run of the program, and the second task moved the arm.
@@ -791,13 +807,15 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
         try:
             page = browser.status()
             for _ in range(20):
-                if page["state"] and page["state"]["stop_number"] == 1:
+                state = page["state"]
+                if state and state["stop_number"] == 1 and not state["torque_on"]:
                     break
                 time.sleep(0.25)
                 page = browser.status()
         finally:
             browser.close()
-        assert page["state"]["stop_number"] == 1 and page["state"]["torque_on"]
+        # The typed rest ended with the motors off.
+        assert page["state"]["stop_number"] == 1 and not page["state"]["torque_on"]
         assert page["robot"]["driver"] == driver and page["robot"]["connected"]
         assert page["picture"]["overlay"] == NO_PICTURE
 

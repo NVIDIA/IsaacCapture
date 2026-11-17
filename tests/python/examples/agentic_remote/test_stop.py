@@ -552,7 +552,8 @@ def test_stop_during_a_move_sends_no_further_setpoint(
     assert arm.last_target()[0] == setpoints[4]
     assert arm.holds == []
     assert checkers.agent.in_motion is False
-    assert len(arm.light_holds) == 1
+    # No jaw command ran: the jaws are sent nothing and keep their grip.
+    assert arm.light_holds == [] and arm.jaw_commands == []
 
 
 def test_a_move_does_not_start_after_a_stop(
@@ -579,7 +580,7 @@ def test_a_move_does_not_start_after_a_stop(
 
 
 def test_a_stop_step_that_fails_does_not_keep_the_others_from_running(
-    arm, authority, checkers, worker, wait, app
+    arm, authority, checkers, worker, wait, app, agent_owns
 ):
     def request_motion_stop(reason: str) -> None:
         app.request_motion_stop(reason)
@@ -590,6 +591,7 @@ def test_a_stop_step_that_fails_does_not_keep_the_others_from_running(
         authority, checkers, worker, wait, app.emit_event, request_motion_stop
     )
     wait.start("the agent is stuck")
+    _, closing = start_close(arm, worker)  # a jaw command for the jaw stop to end
 
     assert controller.stop("operator pressed stop", "console") == 1
 
@@ -597,7 +599,9 @@ def test_a_stop_step_that_fails_does_not_keep_the_others_from_running(
     assert [checker.halt_count() for checker in checkers.all()] == [0, 1, 1]
     assert len(app.motion_stops) == 1
     assert wait.active() is False
-    assert len(arm.light_holds) == 1
+    # The jaw stop ran too: the close ended in the light hold.
+    assert closing.wait().status == "cancelled"
+    assert len(arm.light_holds) == 2 and arm.jaw_stiffness == "light"
     _, text, data = app.events[0]
     assert data["problems"] == [
         "the agent checker's halt failed: RuntimeError('it broke')",
@@ -635,7 +639,7 @@ def test_an_event_that_cannot_be_emitted_does_not_undo_the_stop(
     assert controller.fault("motor 2 reports a fault") == 2
     assert authority.stop_level is StopLevel.FAULT
     assert all(checker.latched() for checker in checkers.all())
-    assert len(arm.light_holds) == 2
+    assert arm.light_holds == []  # no jaw command ran: the jaws are sent nothing
     assert controller.reset(2, arm) is None
     assert authority.stop_level is StopLevel.NONE
 
@@ -845,16 +849,19 @@ def test_a_stop_while_a_fault_is_latched_keeps_the_fault_level(
 
 
 def test_a_fault_step_that_fails_does_not_keep_the_others_from_running(
-    controller, arm, authority, checkers, wait, app
+    controller, arm, authority, checkers, worker, wait, app, agent_owns
 ):
     checkers.human.latch = broken
     wait.start("the agent is stuck")
+    _, closing = start_close(arm, worker)  # a jaw command for the jaw stop to end
     assert controller.fault("motor 2 reports a fault") == 1
     assert authority.stop_level is StopLevel.FAULT
     assert [checker.latched() for checker in checkers.all()] == [True, False, True]
     assert len(app.motion_stops) == 1
     assert wait.active() is False
-    assert len(arm.light_holds) == 1
+    # The jaw stop ran too: the close ended in the light hold.
+    assert closing.wait().status == "cancelled"
+    assert len(arm.light_holds) == 2 and arm.jaw_stiffness == "light"
     assert app.events[0][2]["problems"] == [
         "the human checker's latch failed: RuntimeError('it broke')"
     ]
@@ -880,15 +887,18 @@ def test_a_jaw_fault_the_gripper_worker_reports_becomes_a_fault_stop(
 
 
 def test_a_light_hold_that_fails_during_a_stop_becomes_a_fault_stop(
-    controller, arm, authority, checkers, worker, app
+    controller, arm, authority, checkers, worker, app, agent_owns
 ):
     def no_hold() -> None:
         raise ArmFault("no answer from the jaw motor")
 
     worker.on_fault = controller.fault
     arm.gripper_light_hold = no_hold
+    # A STOP sends the light hold only to jaws a command is moving.
+    _, closing = start_close(arm, worker)
 
     assert controller.stop("operator pressed stop", "console") == 1
+    assert closing.wait().status == "cancelled"
 
     reason = "gripper fault: the light hold failed: no answer from the jaw motor"
     assert authority.stop_level is StopLevel.FAULT

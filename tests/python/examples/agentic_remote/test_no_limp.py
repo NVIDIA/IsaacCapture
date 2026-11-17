@@ -12,18 +12,25 @@ hand-back ends it at rest; from the one to the other a takeover is open. A human
 target is a joint target from the person's hand; the human program, on the
 workstation, sends each in a HUMAN_SETPOINT link message. A human drive is one
 stretch of human motion toward the newest human target, while the grip of the
-person's controller is squeezed.
+person's controller is squeezed. The controller's trigger moves the jaws: each
+HUMAN_SETPOINT carries the jaw opening it asks for.
+
+A torque release whose driver call raises is in them as well: the motors may
+then be on or off, the motion state is "release_failed", and nothing moves the
+arm until a release has worked.
 """
 
 from __future__ import annotations
 
 import ast
+import contextlib
 import dataclasses
 import itertools
 import random
+import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -155,7 +162,9 @@ def human_setpoint(h, q: Sequence[float] | None = None, **fields: Any) -> HumanS
 
     With q the grip is squeezed toward q; without, it is released. The
     controller is ready and its data are 0.02 s old. It is sent now, by the
-    app's clock. fields replace any field.
+    app's clock. The trigger asks for the jaw opening h.trigger where a test
+    has set one (1.0: let go, 0.0: pulled), else for none. fields replace any
+    field.
     """
     now = h.app.snapshot()
     values: dict[str, Any] = {
@@ -169,7 +178,7 @@ def human_setpoint(h, q: Sequence[float] | None = None, **fields: Any) -> HumanS
         "engaged": q is not None,
         "grip_released": q is None,
         "q": None if q is None else [float(value) for value in q],
-        "jaw_opening": None,
+        "jaw_opening": getattr(h, "trigger", None),
         "state_clock_mono_s": None,
         "note": "",
         "sent_mono_s": h.clock.monotonic(),
@@ -182,20 +191,33 @@ def feed(h, message: HumanSetpoint | None = None, view: bool = True) -> None:
     """Send a HUMAN_SETPOINT; the app has taken it on return, where it still can.
 
     Without a message: a ready controller with the grip released. With view a
-    live VIEW_STATUS of age 0 goes with it.
+    live VIEW_STATUS of age 0 goes ahead of it: jaws that its trigger moves
+    may move the clock on as soon as the app has taken it. They have come to
+    rest on return.
     """
     if message is None:
         message = human_setpoint(h)
-    h.client.send(message)
     if view:
         now = h.clock.monotonic()  # it is sent now, by the app's clock
         h.client.send(ViewStatus(live=True, age_s=0.0, sent_mono_s=now))
+    h.client.send(message)
     answered(h, h.client.checker_state("probe"))  # answered after both were taken
+    jaws_at_rest(h)
 
 
 def driving(h) -> bool:
     """Whether a human drive runs."""
     return h.app._human_drive.progress() is not None
+
+
+def jaws_at_rest(h) -> None:
+    """Wait until no jaw command runs or waits."""
+    assert h.app._worker.wait_idle(WAIT_S), "the jaws did not come to rest"
+
+
+def reached_the_arm(h) -> tuple[int, int, int]:
+    """How many joint targets, jaw commands and holds the arm was sent so far."""
+    return len(h.arm.sent), len(h.arm.jaw_commands), len(h.arm.holds)
 
 
 class Fed:
@@ -498,8 +520,35 @@ def at_a_contact_under_a_person(h) -> Callable[[], None]:
     return nothing_held
 
 
+def release_failed(h) -> Callable[[], None]:
+    """A torque release at rest raised in the driver; the arm has sagged since.
+
+    The motion state is "release_failed": the motors may be on or off, and
+    nothing moves the arm. The fault-stop of the failed release was reset, and
+    the driver's release works again.
+    """
+    cut = h.arm.release_torque
+
+    def raising() -> None:
+        h.arm.release_torque = cut
+        raise ArmFault("bus off")
+
+    h.arm.release_torque = raising
+    (failed,) = answered(h, h.client.release())
+    assert failed.status == "failed", failed
+    h.client.wait_state(lambda s: s.stop_level == "fault")
+    (reset,) = answered(h, h.client.reset())
+    assert reset.status == "completed", reset.reason
+    sync(h)
+    assert h.app.motion_state is MotionState.RELEASE_FAILED
+    assert h.app.snapshot().stop_level is StopLevel.NONE
+    h.arm.set_pose(RAISED)
+    return nothing_held
+
+
 # The one state the robot app is started in, with the arm at RAISED.
 STARTED_RAISED = "started raised, the jaws not referenced"
+AFTER_A_FAILED_RELEASE = "a torque release failed"
 STATES = {
     STARTED_RAISED: started_raised,
     "pushed off rest": pushed_off_rest,
@@ -517,6 +566,7 @@ STATES = {
     "a human drive runs": driven_by_a_person,
     "a takeover is open and nobody owns the arm": stopped_under_a_person,
     "contact hold under a person": at_a_contact_under_a_person,
+    AFTER_A_FAILED_RELEASE: release_failed,
 }
 # The states with a person in them: they need human driving switched on.
 PERSON_STATES = {
@@ -962,7 +1012,28 @@ def person_takes_over_and_squeezes(h, finish: Callable[[], None]) -> None:
     h.idle()
 
 
+def trigger_pulled_and_let_go(h, finish: Callable[[], None]) -> None:
+    """The trigger is pulled to its end and let go again, the grip released.
+
+    Each HUMAN_SETPOINT carries the jaw opening the trigger asks for: 1.0 let
+    go, 0.0 pulled. Where a person owns the arm the jaws follow it once it has
+    met the grip level, the jaw opening in force at the takeover. It moves in
+    steps of human.jaw_match_tol, so it meets every grip level, and the jaws
+    have come to rest after each. Then the grip is squeezed with the trigger
+    half pulled: a human drive and a jaw motion at once, where both are taken.
+    """
+    step = h.config.human.jaw_match_tol
+    count = round(1.0 / step)
+    pulled = [round(max(0.0, 1.0 - step * index), 6) for index in range(count + 1)]
+    for opening in (*pulled, *reversed(pulled[:-1])):
+        feed(h, human_setpoint(h, jaw_opening=opening))
+    feed(h, human_setpoint(h, nearby(h, 0.03), jaw_opening=0.5))
+    if finish is nothing_held:
+        h.idle()
+
+
 REFERENCE = "reference typed at the Thor terminal"
+TRIGGER = "the trigger is pulled and let go"
 ACTIONS = {
     "refused and malformed link messages": refused_and_malformed,
     "MOVE": commands(a_move),
@@ -1006,6 +1077,7 @@ ACTIONS = {
     ),
     "HUMAN_SETPOINT": human_setpoints,
     "a person takes over and squeezes": person_takes_over_and_squeezes,
+    TRIGGER: trigger_pulled_and_let_go,
 }
 # The actions with a person in them: they need human driving switched on.
 PERSON_ACTIONS = {
@@ -1013,6 +1085,7 @@ PERSON_ACTIONS = {
     "OWNER_REQUEST handback",
     "HUMAN_SETPOINT",
     "a person takes over and squeezes",
+    TRIGGER,
 }
 SHUTDOWNS = {
     "SHUTDOWN",
@@ -1072,10 +1145,16 @@ def test_no_command_in_any_state_cuts_torque_away_from_rest(
     finish = STATES[state](h)
     assert off_rest(h) > 2 * h.config.rest.rest_tol_rad
     assert_torque_kept(h)
+    before = reached_the_arm(h)
     ACTIONS[action](h, finish)
     finish()
     quiet(h)
     assert_no_cut_away_from_rest(h, state, action)
+    if state == AFTER_A_FAILED_RELEASE:
+        # Its motors may be off: the arm was sent no joint target, no jaw
+        # command and no hold, and only a release that works ends the state.
+        assert reached_the_arm(h) == before
+        assert h.app.motion_state is MotionState.RELEASE_FAILED
 
 
 @pytest.mark.parametrize(
@@ -1108,6 +1187,25 @@ def test_a_shutdown_after_the_release_on_a_new_connection_releases_only_at_rest(
     taken = state in MAY_RETURN
     assert h.app.running == (not taken)
     assert len(h.arm.released_at) == (1 if taken else 0)
+
+
+@pytest.mark.parametrize("config", [PERSON], ids=["human driving on"])
+def test_the_sweeps_trigger_closes_and_opens_the_jaws_of_a_person(make_robot_app):
+    """What the sweep's trigger reaches where a person owns the arm."""
+    h = make_robot_app()
+    finish = held_by_a_person(h)
+    at: list[float] = []  # the jaw opening after each jaw step
+    h.arm.on_jaw_step = at.append
+    before = len(h.arm.jaw_commands)
+    trigger_pulled_and_let_go(h, finish)
+    quiet(h)
+    # The jaws closed all the way with the trigger and opened again with it.
+    assert at, "the trigger moved no jaws"
+    closed = at.index(min(at))
+    assert at[0] > 0.9 and at[closed] < 0.05 and max(at[closed:]) > 0.95
+    asked = {command.mode for command in h.arm.jaw_commands[before:]}
+    assert asked == {"plain", "close_until_contact"}
+    assert_torque_kept(h)
 
 
 @pytest.mark.parametrize("thread", APP_THREADS)
@@ -1234,13 +1332,93 @@ def test_a_shutdown_whose_return_ends_short_of_proven_rest_releases_nothing(
 # Seeded random sequences
 
 
+# The dispatcher's period in a seeded sequence, in real seconds.
+PACE_S = 0.00002
+
+
+class PacedClock(FakeClock):
+    """A fake clock that moves on only as fast as the app's dispatcher follows.
+
+    On a plain fake clock a worker thread that sleeps moves the time on at
+    once. How many passes the dispatcher makes meanwhile is a matter of thread
+    scheduling, and with it the idle reads: the dispatcher's reads of one joint
+    at a time while no move runs. Here a sleep() or an advance() on any other
+    thread returns once the dispatcher has made a pass during which the time
+    stood still, so a seeded sequence runs the same way every time.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.out_of_step = False  # a wait for the dispatcher ran out
+        self._app: Any = None  # the robot app whose dispatcher keeps step
+        self._thread = threading.local()
+
+    def pace(self, app: Any, arm: SimArm) -> None:
+        """Keep step with this app's dispatcher from here on; before it starts."""
+        self._app = app
+        command = arm.gripper_command
+
+        def gripper_command(opening, max_effort, mode, cancel):
+            self._thread.cancel = cancel  # settle() gives way once it is set
+            try:
+                return command(opening, max_effort, mode, cancel)
+            finally:
+                self._thread.cancel = None
+
+        arm.gripper_command = gripper_command
+        paused = app._idle.paused
+
+        @contextlib.contextmanager
+        def paused_then_settled() -> Iterator[None]:
+            try:
+                with paused():
+                    yield
+            finally:
+                # An idle read falls due the moment a move's pause of them ends.
+                self.settle()
+
+        app._idle.paused = paused_then_settled
+
+    def advance(self, s: float) -> None:
+        """Move the time on, as a sleep() does too, and let the dispatcher follow."""
+        super().advance(s)
+        self.settle()
+
+    def settle(self) -> None:
+        """Wait for a dispatcher pass during which the time stood still.
+
+        Not on the dispatcher's own thread, not for an app that does not run,
+        and not on a thread whose jaw command was cancelled: the dispatcher
+        may wait for that command to return.
+        """
+        app = self._app
+        if app is None or threading.current_thread().name == APP_THREADS[0]:
+            return
+        cancel = getattr(self._thread, "cancel", None)
+        # A cancelled jaw command is noticed well inside the real time the
+        # dispatcher gives it to return.
+        wait_s = 0.05 if cancel is None else 0.002
+        give_up = time.monotonic() + WAIT_S
+        while app.running:
+            if cancel is not None and cancel.is_set():
+                return
+            before = self.monotonic()
+            if app.wait_step(wait_s) and self.monotonic() == before:
+                return
+            if time.monotonic() >= give_up:
+                # Noted for the test: an error raised here, on a thread of
+                # the app, would only be a fault-stop of that app.
+                self.out_of_step = True
+                return
+
+
 class Rig:
     """A robot app on a simulated arm of its own, built inside a test."""
 
     def __init__(self, config, raised: bool = False) -> None:
         """raised: the arm is found away from rest once the app has started."""
         self.config = config
-        self.clock = FakeClock()
+        self.clock = PacedClock()
         rest = list(config.rest.rest_q)
         self.arm = SimArm(n_joints=config.n_joints, clock=self.clock, q0=rest)
         limits = config.limits
@@ -1253,6 +1431,7 @@ class Rig:
         self.at_setpoint: list = []
         self.blocked = False
         self.idle_steps = 0  # steps with the motors off or the connection lost
+        self.unknown_steps = 0  # steps with the torque not known
         real = self.arm.send_target
 
         def send_target(q: Sequence[float]) -> None:
@@ -1265,7 +1444,26 @@ class Rig:
                     act()
 
         self.arm.send_target = send_target
-        self.h = AppHarness(config, self.arm, checkers, self.clock).start()
+        # Torque releases that raised in the driver, and what had reached the
+        # arm when the last one did; None once a release has worked.
+        self.raised = 0
+        self.unknown: tuple[int, int, int] | None = None
+        self.followed = 0  # jaw commands the arm got while a person owned it
+        command = self.arm.gripper_command
+
+        def gripper_command(opening, max_effort, mode, cancel):
+            if self.h.app.snapshot().owner is Owner.HUMAN:
+                self.followed += 1
+            return command(opening, max_effort, mode, cancel)
+
+        self.arm.gripper_command = gripper_command
+        # Every sleep of a worker waits for a dispatcher pass: a short period.
+        self.h = AppHarness(
+            config, self.arm, checkers, self.clock, step_period_s=PACE_S
+        )
+        self.clock.pace(self.h.app, self.arm)
+        self.h.start()
+        self.clock.settle()  # the first idle read has been made
         # Where human driving is switched on: a person's hand, fed to the app
         # in step with each human drive, the takeovers granted and the drives' ends.
         self.hand: Hand | None = None
@@ -1275,14 +1473,18 @@ class Rig:
             self.hand = Hand(self.h)
             keep_human_fed(Fed(self.h), self.hand, view=False)
             self.drives = drive_ends(self.h)
+            self.h.trigger = 1.0  # let go; every HUMAN_SETPOINT carries it
         if raised:
             self.arm.set_pose(RAISED)
 
     def spent(self) -> bool:
         """Whether this app has little left to show: closed, or long unable to move."""
-        if not (self.arm.torque_on() and self.h.robot_end.alive):
+        if self.h.app.motion_state is MotionState.RELEASE_FAILED:
+            self.unknown_steps += 1
+        elif not (self.arm.torque_on() and self.h.robot_end.alive):
             self.idle_steps += 1
-        return not self.h.app.running or self.idle_steps >= 6
+        long_idle = self.idle_steps >= 6 or self.unknown_steps >= 12
+        return not self.h.app.running or long_idle
 
     def command(self, send: Callable) -> Result | None:
         results = answered(self.h, send(self.h.client))
@@ -1296,6 +1498,9 @@ class Rig:
     def settle(self) -> None:
         self.at_setpoint.clear()
         quiet(self.h)
+        jaws_at_rest(self.h)
+        self.clock.settle()  # an idle read that was due has been made
+        assert not self.clock.out_of_step, "the dispatcher did not keep step"
         sync(self.h)
 
 
@@ -1388,6 +1593,33 @@ def play_shutdown(rig: Rig, dice: list[float]) -> None:
         result = rig.command(lambda c: c.shutdown(confirmed=confirmed))
     if result is not None and result.status == "completed":
         assert rig.h.app.wait_closed(WAIT_S)
+
+
+def play_failed_release(rig: Rig, dice: list[float]) -> None:
+    """A release or a shutdown whose torque release raises in the driver, once.
+
+    The driver may have switched some motors off before it failed: the motion
+    state becomes "release_failed" and nothing moves the arm from then on. A
+    fault-stop is latched with it; mostly a reset follows, as a person would
+    type it.
+    """
+    arm = rig.arm
+    cut = arm.release_torque
+
+    def raising() -> None:
+        arm.release_torque = cut
+        rig.raised += 1
+        rig.unknown = reached_the_arm(rig.h)
+        raise ArmFault("bus off")
+
+    arm.release_torque = raising
+    try:
+        (play_release if dice[2] < 0.7 else play_shutdown)(rig, dice)
+    finally:
+        arm.release_torque = cut
+    if rig.unknown is not None and dice[3] < 0.7:
+        rig.settle()
+        play_reset(rig, dice)
 
 
 def play_open(rig: Rig, dice: list[float]) -> None:
@@ -1552,6 +1784,33 @@ def play_human_drive(rig: Rig, dice: list[float]) -> None:
     hand.reset()
 
 
+def play_trigger(rig: Rig, dice: list[float]) -> None:
+    """The trigger moves, the grip released, a HUMAN_SETPOINT at each place.
+
+    It goes to one of its ends, let go or pulled, and from there to let go,
+    pulled or a place between: mostly in steps of 0.1 of the jaw travel, now
+    and then at once. On the way it meets the grip level, the jaw opening in
+    force at the takeover, from where the jaws follow it. Something may come
+    to lie between the jaws first. One HUMAN_SETPOINT may carry no jaw
+    opening, or one outside 0 to 1. The jaws have come to rest after each.
+    """
+    h = rig.h
+    if dice[0] < 0.2:
+        rig.arm.jaw_object(pick([None, 0.3, 0.5], dice[1]))
+    ends = [pick([1.0, 1.0, 0.0], dice[2]), pick([0.0, 0.3, 0.6, 1.0, 1.0], dice[3])]
+    stride = pick([0.1, 0.1, 0.1, 1.0], dice[4])
+    bad = pick([None, 1.5, -0.2], dice[5])
+    odd = int(dice[6] * 30)  # the place whose HUMAN_SETPOINT carries `bad`
+    places = 0
+    for goal in ends:
+        while places == 0 or h.trigger != goal:
+            at = h.trigger
+            h.trigger = round(min(max(goal, at - stride), at + stride), 3)
+            fields = {"jaw_opening": bad} if places == odd else {}
+            feed(h, human_setpoint(h, **fields), view=dice[7] < 0.8)
+            places += 1
+
+
 # What a random step does, with its weight.
 PLAYS = (
     (play_task, 4.0),
@@ -1582,8 +1841,11 @@ PERSON_PLAYS = (
     (play_human_setpoint, 1.0),
     (play_handback, 1.5),
 )
+# And in the sequences that let a torque release raise, and pull the trigger.
+FAILED_RELEASES = ((play_failed_release, 1.5),)
+TRIGGER_PLAYS = ((play_trigger, 6.0),)
 # The only steps that may end with the motors off.
-RELEASERS = (play_release, play_shutdown)
+RELEASERS = (play_release, play_shutdown, play_failed_release)
 STEPS = 200
 
 
@@ -1594,19 +1856,29 @@ class Tally(NamedTuple):
     releases: int  # torque releases
     takeovers: int  # takeovers granted
     driven: int  # setpoints that human drives sent
+    raised: int  # torque releases that raised in the driver
+    unknown: int  # steps that ended with the torque not known
+    followed: int  # jaw commands the arm got while a person owned it
 
 
-def random_run(config, seed: int, plays: Sequence[tuple] = PLAYS) -> Tally:
+def random_run(
+    config,
+    seed: int,
+    plays: Sequence[tuple] = PLAYS,
+    record: list[tuple] | None = None,
+) -> Tally:
     """Play one seeded sequence of these plays; what it held.
 
     After every step: each release was at measured rest, came from a release or
-    a shutdown, and the motors are on wherever the arm is away from rest.
+    a shutdown, and the motors are on wherever the arm is away from rest. From
+    a torque release that raised until one that works, the arm is sent nothing.
+    record gets the app clock's time and the measured pose after every step.
     """
     rng = random.Random(seed)
     plays, weights = zip(*plays)
     tol = config.rest.rest_tol_rad
     history: list[str] = []
-    away = releases = 0
+    away = releases = unknown = 0
     rigs = [Rig(config)]
     try:
         for step in range(STEPS):
@@ -1626,6 +1898,21 @@ def random_run(config, seed: int, plays: Sequence[tuple] = PLAYS) -> Tally:
             if len(rig.arm.released_at) > released:
                 assert play in RELEASERS and len(rig.arm.released_at) == 1, where
                 releases += 1
+            motion = rig.h.app.motion_state
+            if rig.unknown is not None:
+                # A torque release raised: the motors may be off. No joint
+                # target, jaw command or hold has reached the arm since, and
+                # only a release that worked ends that state.
+                assert reached_the_arm(rig.h) == rig.unknown, where
+                if motion is not MotionState.RELEASE_FAILED:
+                    assert motion is MotionState.REST_UNPOWERED, where
+                    assert len(rig.arm.released_at) == 1, where
+                    rig.unknown = None
+            else:
+                assert motion is not MotionState.RELEASE_FAILED, where
+            unknown += rig.unknown is not None
+            if record is not None:
+                record.append((rig.clock.monotonic(), rig.arm.pose()))
             if rig.spent():
                 rig.h.close()
                 rigs.append(Rig(config, raised=len(rigs) % 2 == 1))
@@ -1633,7 +1920,9 @@ def random_run(config, seed: int, plays: Sequence[tuple] = PLAYS) -> Tally:
         rigs[-1].h.close()
     takeovers = sum(rig.takeovers for rig in rigs)
     driven = sum(end.sent for rig in rigs for end in rig.drives)
-    return Tally(away, releases, takeovers, driven)
+    raised = sum(rig.raised for rig in rigs)
+    followed = sum(rig.followed for rig in rigs)
+    return Tally(away, releases, takeovers, driven, raised, unknown, followed)
 
 
 @pytest.mark.parametrize(
@@ -1643,6 +1932,23 @@ def random_run(config, seed: int, plays: Sequence[tuple] = PLAYS) -> Tally:
         *(
             pytest.param(PERSON, PLAYS + PERSON_PLAYS, seed, id=f"a person-{seed}")
             for seed in (1, 3, 5, 7, 9)
+        ),
+        # With a torque release that raises, and with the trigger: seeds whose
+        # sequences hold every count asked below with room.
+        *(
+            pytest.param(
+                SHIPPED, PLAYS + FAILED_RELEASES, seed, id=f"a failed release-{seed}"
+            )
+            for seed in (5, 9)
+        ),
+        *(
+            pytest.param(
+                PERSON,
+                PLAYS + PERSON_PLAYS + FAILED_RELEASES + TRIGGER_PLAYS,
+                seed,
+                id=f"a person, a trigger, a failed release-{seed}",
+            )
+            for seed in (8, 28)
         ),
     ],
 )
@@ -1658,6 +1964,49 @@ def test_random_commands_cut_torque_only_on_request_at_measured_rest(
     if config.human.enabled:
         # A person did take the arm over, more than once, and did drive it.
         assert tally.takeovers >= 3 and tally.driven >= 50, tally
+    played = [play for play, _ in plays]
+    if play_failed_release in played:
+        # A torque release did raise, and steps followed with the torque not known.
+        assert tally.raised >= 1 and tally.unknown >= 3, tally
+    if play_trigger in played:
+        # The jaws did follow a person's trigger.
+        assert tally.followed >= 10, tally
+
+
+@pytest.mark.parametrize(
+    ("config", "plays", "seed"),
+    [
+        pytest.param(PERSON, PLAYS + PERSON_PLAYS, 5, id="a person-5"),
+        pytest.param(
+            PERSON,
+            PLAYS + PERSON_PLAYS + FAILED_RELEASES + TRIGGER_PLAYS,
+            28,
+            id="a person, a trigger, a failed release-28",
+        ),
+    ],
+)
+def test_a_seeded_sequence_runs_the_same_way_every_time(config, plays, seed):
+    """Twice, the second time with the threads switched 500 times as often.
+
+    The app's dispatcher and its two workers are threads; the clock's time and
+    the measured pose after each step show how many idle reads the dispatcher
+    made and what each worker sent.
+    """
+    config = dataclasses.replace(
+        config, permits=dataclasses.replace(config.permits, first_wait_s=0.02)
+    )
+    first: list[tuple] = []
+    again: list[tuple] = []
+    tally = random_run(config, seed, plays, first)
+    usual = sys.getswitchinterval()
+    sys.setswitchinterval(usual / 500)
+    try:
+        assert random_run(config, seed, plays, again) == tally
+    finally:
+        sys.setswitchinterval(usual)
+    assert len(first) == STEPS
+    differ = [step for step in range(STEPS) if again[step] != first[step]]
+    assert differ == [], f"steps {differ[:5]}: {first[differ[0]]}, {again[differ[0]]}"
 
 
 # Source scan: what may cut torque, and where
@@ -1810,9 +2159,20 @@ def test_the_guarded_release_is_asked_for_by_the_release_and_shutdown_work_only(
     # ReturnToRest.release() is reached from the app's RELEASE and SHUTDOWN
     # work and from nothing else: no wait, no stop and no close asks for it.
     def asks(name: str, target: str) -> bool:
-        return name == "release" and "rest" in words(target)
+        return name in ("release", "power_down") and "rest" in words(target)
 
+    # The app reaches it through power_down(), the end of the functional rest
+    # (measured rest, the jaws closed, then the release), at one place.
     assert [(site.file, site.where) for site in package_sites(asks)] == [
+        ("robot_app/app.py", "RobotApp._power_down"),
+    ]
+
+    def powers_down(name: str, target: str) -> bool:
+        return name == "_power_down"
+
+    # That place is asked by the typed rest, the release and the shutdown.
+    assert [(site.file, site.where) for site in package_sites(powers_down)] == [
+        ("robot_app/app.py", "RobotApp._run_rest"),
         ("robot_app/app.py", "RobotApp._run_release"),
         ("robot_app/app.py", "RobotApp._run_shutdown"),
     ]
@@ -2136,8 +2496,10 @@ def test_the_human_path_names_no_release_and_no_shutdown():
 
 
 def test_the_arm_adapters_driver_methods_cut_no_torque():
-    # APAI calls disconnect() and stop() on its arm at teardown and on a
-    # skill stop. On the robot link the first sends nothing and the second at
+    # APAI calls disconnect() and stop() on its arm at teardown, at the end of
+    # its rest tool and on a skill stop. On the robot link the first sends
+    # nothing outside a task; inside one it asks the robot app for the motors
+    # off, which the robot app does only at measured rest. The second sends at
     # most a STOP, which is a hold.
     from isaaccapture_examples.agentic_remote.agent.arm_adapter import RobotLinkArm
 
@@ -2161,12 +2523,26 @@ def test_the_arm_adapters_driver_methods_cut_no_torque():
         }
 
     disconnect = methods["disconnect"]
-    assert not [node for node in ast.walk(disconnect) if isinstance(node, ast.Call)]
+    # Its first statement leaves with nothing sent outside a task, and in
+    # standby; what follows is one OWNER_REQUEST for the motors off.
+    guard = disconnect.body[1]
+    assert isinstance(guard, ast.If) and isinstance(guard.body[0], ast.Return)
+    assert ast.unparse(guard.test) == "not (self._task and self.connected)"
+    assert link_calls("disconnect") == {"request_owner"}
+    (request,) = (
+        node
+        for node in ast.walk(disconnect)
+        if isinstance(node, ast.Call) and ast.unparse(node.func).endswith("owner")
+    )
+    assert ast.unparse(request.args[0]) == "REQUEST_MOTORS_OFF"
     assert link_calls("stop") == {"stop"}
     assert link_calls("close_task") == {"unpin"}
-    # What APAI reads before its teardown: no park, no torque cut at either end.
+    # What APAI reads before its teardown: no park, and its disconnect cuts no
+    # torque by itself. Its rest tool releases only an arm that does not keep
+    # its drives on through a disconnect.
     assert RobotLinkArm.shutdown_park_required is False
-    assert RobotLinkArm.disconnect_preserves_drive_state is True
+    assert RobotLinkArm.disconnect_cuts_torque is False
+    assert RobotLinkArm.disconnect_preserves_drive_state is False
     assert RobotLinkArm.connect_cuts_torque is False
 
 

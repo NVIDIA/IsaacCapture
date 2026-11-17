@@ -864,3 +864,31 @@ def test_updates_and_checks_from_two_threads(gate, authority, checker, clock):
     assert covers(gate, clock, last) is None
     assert covers(gate, clock, last + 1) is not None
     assert len(checker.fed) == last + 1
+
+
+# A setpoint without cover waits in a hold only while a later permit can still
+# bring it cover (PermitGate.may_renew).
+
+
+def test_a_late_permit_can_still_come_and_a_cancelled_or_stale_one_cannot(
+    gate, authority, clock
+):
+    assert gate.may_renew(MOVE) is False  # no permit for the move yet
+    assert update(gate, clock, make_permit(authority, clock, through_index=10)) is None
+    assert covers(gate, clock, 11) == "permit reaches setpoint 10, not 11"
+    assert gate.may_renew(MOVE) is True  # the next permit is only late
+    assert gate.may_renew("another move") is False
+    # An expired permit can be followed by a fresh one.
+    clock.advance(2.0)
+    assert covers(gate, clock, 5) == EXPIRED
+    assert gate.may_renew(MOVE) is True
+    # A cancel takes the cover back for good.
+    held = make_permit(authority, clock, through_index=10)
+    assert update(gate, clock, held) is None
+    assert update(gate, clock, make_permit(authority, clock, through_index=-1)) is None
+    assert gate.may_renew(MOVE) is False
+    # So does a STOP: the held permit quotes the old stop number.
+    assert update(gate, clock, make_permit(authority, clock, through_index=10)) is None
+    assert gate.may_renew(MOVE) is True
+    authority.raise_stop("stop", "test")
+    assert gate.may_renew(MOVE) is False

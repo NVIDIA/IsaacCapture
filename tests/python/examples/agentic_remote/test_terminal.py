@@ -32,6 +32,7 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionStat
 from isaaccapture_examples.agentic_remote.robot_app.terminal import (
     BANNER,
     BELL_CHAR,
+    CONFIRM_POWER_ON,
     CONFIRM_REFERENCE,
     CONFIRM_REST,
     CTRL_C_NOTE,
@@ -42,6 +43,7 @@ from isaaccapture_examples.agentic_remote.robot_app.terminal import (
     TypedLines,
 )
 
+CONFIRM_POWER_ON_REFUSAL = "confirm that the motors may be switched on"
 WAIT_S = 5.0  # real seconds a test gives another thread before it fails
 REST = [0.0] * 6
 # 25 setpoints at 0.2 rad/s on every joint, inside the agent's limits.
@@ -87,6 +89,7 @@ class FakeApp:
         self.running = True
         self.moves_arm = False  # whether a shutdown would have to move the arm
         self.allow_reference = False  # the setting jaws.allow_reference
+        self.motors_off_at_rest = False  # a release at rest switched them off
         self.listeners: list[Callable[[str, str, dict], None]] = []
         self.calls: list[tuple] = []
         self.threads: list[str] = []  # the thread each call was made on
@@ -125,6 +128,19 @@ class FakeApp:
         else:
             on_done(Result("thor-terminal-reference-1", "refused", reason))
         return reason
+
+    def request_power_on(self, confirmed, on_done=None) -> str | None:
+        self._record(("on", confirmed))
+        reason = None if self.motors_off_at_rest else "the motors are on"
+        reason = reason or (None if confirmed else CONFIRM_POWER_ON_REFUSAL)
+        status = "completed" if reason is None else "refused"
+        on_done(Result("thor-terminal-on-1", status, reason or ""))
+        return reason
+
+    def request_reset(self, on_done=None) -> str | None:
+        self._record(("reset",))
+        on_done(Result("thor-terminal-reset-1", "completed"))
+        return None
 
     def shutdown_moves_arm(self) -> bool:
         return self.moves_arm
@@ -265,17 +281,45 @@ def test_stop_is_a_stop_from_the_thor_terminal(fake, line):
 def test_help_lists_every_command(fake):
     lines = typed(fake, "help\n")
     assert lines[: len(HELP)] == list(HELP)
-    words = [line.split()[0] for line in HELP]
-    assert words == ["stop", "rest", "release", "quit", "reference", "help"]
+    by_word = {line.split()[0]: line for line in HELP}
+    words = ["stop", "rest", "release", "on", "reset", "quit", "reference"]
+    assert list(by_word) == [*words, "open", "close", "help"]
     # The banner leaves out the command that a setting switches on.
-    assert all(word in BANNER for word in words if word != "reference")
-    assert '"path is clear"' in HELP[1]
-    assert '"jaws are empty"' in HELP[4] and "jaws.allow_reference" in HELP[4]
+    assert all(word in BANNER for word in by_word if word != "reference")
+    # A rest and a release end as the functional rest: the motors go off.
+    assert '"path is clear"' in by_word["rest"]
+    for word in ("rest", "release"):
+        assert "the jaws close and the motors go off" in by_word[word]
+    assert "switch the motors on again" in by_word["on"] and '"yes"' in by_word["on"]
+    assert "clear a fault-stop" in by_word["reset"]
+    reference = by_word["reference"]
+    assert '"jaws are empty"' in reference and "jaws.allow_reference" in reference
     assert lines[len(HELP) :] == ["an empty line does nothing", ENDED_RUNNING]
     assert fake.calls == []
 
 
-@pytest.mark.parametrize("line", ["restt", "releases", "open", "yes", "stop now"])
+def test_on_asks_yes_first_and_only_where_the_motors_were_switched_off(fake):
+    # With the motors on nothing is asked: the robot app refuses.
+    lines = typed(fake, "on\n")
+    assert lines[0] == "on: refused: the motors are on"
+    assert CONFIRM_POWER_ON not in lines and fake.calls == [("on", False)]
+    # After a rest or a release the question comes first; only yes confirms.
+    fake.calls.clear()
+    fake.motors_off_at_rest = True
+    lines = typed(fake, "on\n", "no\n", "on\n", "yes\n")
+    assert lines.count(CONFIRM_POWER_ON) == 2
+    assert "Stay beside the e-stop" in CONFIRM_POWER_ON
+    assert fake.calls == [("on", False), ("on", True)]
+    assert "on: completed" in lines
+
+
+def test_reset_asks_the_robot_app_to_clear_a_fault_stop(fake):
+    lines = typed(fake, "reset\n")
+    assert lines[0] == "reset: completed"
+    assert fake.calls == [("reset",)]
+
+
+@pytest.mark.parametrize("line", ["restt", "releases", "opens", "yes", "stop now"])
 def test_an_unknown_line_is_named_and_does_nothing(fake, line):
     assert typed(fake, line + "\n")[0] == f"unknown command {line!r}; type help"
     assert fake.calls == []

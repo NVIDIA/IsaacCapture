@@ -45,8 +45,11 @@ STREAM_KEYWORDS = {
     "before_stream": None,
     "contact_monitor": None,
 }
-# Names APAI looks for on an arm to switch to another mode; the arm adapter
-# must have none of them.
+# Names APAI looks for on an arm to switch to another mode. The arm adapter
+# has those the functional arm has, and no other. The functional arm is what
+# APAI holds on the Thor: its LazyArm, an arm whose motors may be off between
+# uses, around its reBot driver.
+FUNCTIONAL_PROBES = ("stream_profile", "close_gripper_torque")
 MODE_PROBES = (
     "motion_status",
     "ensure_motion_ready",
@@ -239,7 +242,7 @@ def test_apai_still_looks_for_the_mode_names_on_the_driver() -> None:
     assert 'getattr(raw, "_stopped", False)' in runtime_source
 
 
-def test_the_arm_adapter_has_none_of_the_mode_names() -> None:
+def test_the_arm_adapter_has_the_mode_names_of_the_functional_arm_only() -> None:
     try:
         adapter = importlib.import_module(
             "isaaccapture_examples.agentic_remote.agent.arm_adapter"
@@ -247,7 +250,19 @@ def test_the_arm_adapter_has_none_of_the_mode_names() -> None:
     except ModuleNotFoundError as missing:
         pytest.skip(f"the arm adapter cannot be imported: {missing}")
     for name in MODE_PROBES:
-        assert not hasattr(adapter.RobotLinkArm, name), name
+        has = hasattr(adapter.RobotLinkArm, name)
+        assert has == (name in FUNCTIONAL_PROBES), name
+
+
+@apai
+def test_the_functional_arm_has_these_mode_names_and_no_other() -> None:
+    lazy = importlib.import_module("apai.control.lazy_arm").LazyArm
+    driver = importlib.import_module("apai.control.rebot_rs_arm").RebotRSArm
+    # A LazyArm passes a name it does not have on to the driver it wraps.
+    found = [
+        name for name in MODE_PROBES if hasattr(lazy, name) or hasattr(driver, name)
+    ]
+    assert found == list(FUNCTIONAL_PROBES)
 
 
 @apai

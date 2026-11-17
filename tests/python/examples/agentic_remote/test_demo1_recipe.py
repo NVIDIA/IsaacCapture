@@ -38,7 +38,7 @@ import pytest
 import test_launcher
 import yaml
 from isaaccapture_examples.agentic_remote.agent import config as agent_config
-from isaaccapture_examples.agentic_remote.agent import launcher
+from isaaccapture_examples.agentic_remote.agent import launcher, task_gate
 from isaaccapture_examples.agentic_remote.agent.link_client import AgentLink
 from isaaccapture_examples.agentic_remote.link_service.local import connect_local
 from isaaccapture_examples.agentic_remote.protocol.confirm import (
@@ -102,11 +102,20 @@ UNCONFIRMED = (
     "itself reported, but only in the belief channel it also wrote -- no "
     "independent confirmation"
 )
-# The part of a help request's reason that comes before the run folder's name;
-# the reason is cut at 256 characters.
+# How the agent program's line begins for a task the model ended without
+# success, up to the run folder's name; the reason is cut at 256 characters.
 NOT_CONFIRMED = (
     "task ended without success: mock LLM wiring check: observed the scene and "
     "stopped [verification] could not confirm: "
+)
+# How the help request begins when APAI's pick found nothing between the jaws
+# at each of its tries, and how long those tries may take, in real seconds.
+STUCK = "stuck: I could not hold 'red object' after 8 grasp attempt(s)"
+STUCK_WAIT_S = 300.0
+# How that line ends: the arm was given back.
+GIVEN_BACK = (
+    ": the arm holds where it is and nobody owns it; type rest at the Thor "
+    "terminal or run the console command rest"
 )
 # How the console's last line begins after a typed quit.
 CONSOLE_ENDS = "the operator console ends; nothing was sent for that"
@@ -151,15 +160,15 @@ def fitted(
 
 
 def check_nothing_confirmed(report: dict[str, Any]) -> None:
-    """This task report's pick-and-place ran to its end and nothing confirmed it.
+    """This task report's pick-and-place ran to its end and its place is unconfirmed.
 
-    The mock scene confirms neither the grasp nor the place, so the task ends
-    without success.
+    The jaw reading after the close confirms the grip. The mock scene does
+    not confirm the place, so the task ends without success.
     """
     (carried,) = (
         row["result"] for row in report["tool_log"] if row["tool"] == "pick_and_place"
     )
-    assert carried["ok"] is True and carried["grip_verified"] is False
+    assert carried["ok"] is True and carried["grip_verified"] is True
     assert report["success"] is False
     (why,) = report["unverified"]
     assert why.endswith(UNCONFIRMED)
@@ -337,8 +346,10 @@ def test_a_mock_task_runs_in_process_on_the_shipped_files(
     assert grid.required is True and grid.refreshes >= 1
     assert stage.said("obstacle grid: live")
     assert occupancy.OccupancyClient is theirs
-    # Already at each task's question, with the runtime built, it was APAI's own.
-    assert seen == [theirs, theirs]
+    # Already at each task's question, with the runtime built, it was APAI's
+    # own; and at the question of the session's end.
+    assert seen == [theirs, theirs, theirs]
+    assert stage.asked[2] == task_gate.END_QUESTION
 
     # The first task opened the jaws and succeeded.
     opened, picked = stage.reports()
@@ -352,18 +363,19 @@ def test_a_mock_task_runs_in_process_on_the_shipped_files(
     trace.check_every_target_was_permitted()
     trace.check_permits_follow_the_check_ahead()
     assert trace.agent_permits and trace.thor_permits
-    # The mock scene confirms neither the grasp nor the place: a help request,
-    # exit code 1.
+    # The mock scene does not confirm the place: the model ends the task
+    # without success, the arm is given back, exit code 1. No help request.
     check_nothing_confirmed(picked)
     assert stage.order == [
         "agent:completed",
         "nobody:completed",
         "agent:completed",
-        "help_needed:completed",
+        "nobody:completed",
         "close:nobody",
     ]
-    (asked,) = stage.said("HELP NEEDED: ")
-    assert asked.startswith(f"HELP NEEDED: {NOT_CONFIRMED}")
+    (ended,) = stage.said(NOT_CONFIRMED)
+    assert ended.startswith(NOT_CONFIRMED) and ended.endswith(GIVEN_BACK)
+    assert not stage.said("HELP NEEDED: ")
     assert code == launcher.EXIT_FAILED
     # The arm holds with its motors on; nothing was written beside the state.
     assert stage.h.spy.released_at == [] and stage.h.arm.torque_on()
@@ -603,8 +615,10 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         desk.wait("[owner] new task: the agent owns the arm, owner number 1")
         desk.wait("[owner] the agent gave the arm back: task completed")
         shown(desk, " | owner nobody #2 | ")
-        # 7. The second task moves the arm under permits and ends in a help
-        # request: the mock scene confirms neither the grasp nor the place.
+        # 7. The second task moves the arm under permits. The mock arm of the
+        # robot app has nothing between its jaws: each close ends on nothing,
+        # APAI opens the jaws and tries again, and after its last try the
+        # task is stuck: a help request.
         agent.wait("task> ")
         agent.type(PICK)
         agent.answer("Type yes to proceed", YES, START_WAIT_S)
@@ -616,12 +630,12 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
             RUN_BUDGET_S,
         )
         assert (during.owner_number, during.torque_on) == (3, True)
-        agent.wait(f"HELP NEEDED: {NOT_CONFIRMED}", RUN_BUDGET_S)
-        agent.wait("success: False")  # APAI's task report, which says why in full
-        agent.wait(UNCONFIRMED)
+        agent.wait(f"HELP NEEDED: {STUCK}", STUCK_WAIT_S)
+        agent.wait("The arm holds and nobody owns it; assistance wait ")
+        agent.wait("success: False")  # APAI's task report
         agent.wait("task> ")
         desk.wait("[owner] new task: the agent owns the arm, owner number 3")
-        desk.wait(f"HELP NEEDED: {NOT_CONFIRMED}")
+        desk.wait(f"HELP NEEDED: {STUCK}")
         moving = [
             line
             for line in list(desk.said)
@@ -634,26 +648,31 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         waiting = watcher.ws.wait_state(lambda s: s.assistance_wait_s is not None)
         assert (waiting.owner, waiting.torque_on) == ("nobody", True)
         shown(desk, " | owner nobody #4 | ", " | wait ")
-        # 8. A typed stop ends the wait; a typed rest returns the arm.
+        # 8. A typed stop ends the wait; a typed rest returns the arm, and
+        # there the jaws close and the motors go off.
         desk.type("stop")
         desk.wait("stop: taken.")
         watcher.ws.wait_state(lambda s: s.assistance_wait_s is None)
         desk.type("rest")
         desk.answer(ASK_REST, PATH_IS_CLEAR)
         desk.wait("rest: RESULT completed", REST_WAIT_S)
-        rested = watcher.ws.wait_state(lambda s: s.motion == "rest_hold")
-        assert rested.torque_on is True
+        rested = watcher.ws.wait_state(lambda s: s.motion == "rest_unpowered")
+        assert rested.torque_on is False
         assert watcher.pose() == pytest.approx(rest, abs=0.05)
 
-        # 9. The end of every program, each by its own way out.
+        # 9. The end of every program, each by its own way out. The arm lies
+        # at rest with the motors off, so the agent program asks nothing.
         agent.end_input()
         assert agent.wait_exit() == launcher.EXIT_FAILED
+        assert "the arm lies at rest with the motors off" in agent.text
+        assert task_gate.END_QUESTION not in agent.text
         assert "1 task(s) of this session ended without success" in agent.text
         # The run folder's task reports say why the second one did.
         (reports,) = (folder / "state" / "runs").glob("*/task-reports.jsonl")
         opened, picked = map(json.loads, reports.read_text().splitlines())
         assert opened["success"] is True
-        check_nothing_confirmed(picked)
+        assert picked["success"] is False
+        assert STUCK.removeprefix("stuck: ") in picked["summary"]
         desk.type("shutdown")
         desk.answer(f"{ASK_YES}shut down", YES)
         assert app.wait_exit() == 0
@@ -673,3 +692,52 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
     finally:
         for program in programs:
             program.close()
+
+
+# What the live view prints when the robot link service ends before it.
+VIEW_ENDS_ALONE = (
+    "live view: the robot link service is gone; closing. The robot is not touched."
+)
+
+
+@link
+def test_the_view_ends_by_itself_when_the_service_is_ended_first(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """Why step 9 of the recipe ends the view before the robot link service."""
+    folder = tmp_path_factory.mktemp("d1")  # a socket path holds 107 bytes
+    path = str(folder / "s.sock")
+    service_file = fitted(
+        CONFIGS / "link_service.yaml",
+        folder,
+        {"port: 47610": "port: 0", '\nsocket_path: ""': f"\nsocket_path: {path}"},
+    )
+    view_file = fitted(
+        CONFIGS / "view.yaml",
+        folder,
+        {
+            "port: 47620": "port: 0",
+            '\nsocket_path: ""': f"\nsocket_path: {path}",
+            "\nstate_dir: ../.state\n": f"\nstate_dir: {folder}/state\n",
+        },
+    )
+    programs: list[Program] = []
+    try:
+        service = Program(SERVICE_MODULE, "--config", str(service_file))
+        programs.append(service)
+        service.wait_line(READY)
+        view = Program(VIEW_MODULE, "--config", str(view_file), "--source", "none")
+        programs.append(view)
+        view.wait_line("live view: open http://127.0.0.1:")
+        service.signal(signal.SIGINT)  # Ctrl+C in terminal 1, before terminal 4
+        assert service.wait_exit() == 0
+        assert view.wait_exit() == 1
+        assert VIEW_ENDS_ALONE in view.lines
+    finally:
+        for program in programs:
+            program.close()
+    # The recipe's last step names that order, and what the other one gives.
+    readme = (EXAMPLE / "README.md").read_text(encoding="utf-8")
+    [last] = [line for line in readme.splitlines() if line.startswith("| 9 | all |")]
+    assert "Ctrl+C in terminals 4 and 1, in that order" in last
+    assert f"exit code 1 and `{VIEW_ENDS_ALONE}`" in last

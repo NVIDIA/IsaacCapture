@@ -535,10 +535,32 @@ def link_calls(source: str) -> set[str]:
     return found
 
 
+def owner_requests(source: str) -> list[str]:
+    """The request word of every request_owner(...) call in the source."""
+    return [
+        ast.unparse(node.args[0]) if node.args else ""
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "request_owner"
+    ]
+
+
 def test_the_adapter_sends_only_these_link_messages() -> None:
-    """Nothing it can send releases the motors: no RELEASE, SHUTDOWN, RESET, OPEN."""
+    """No RELEASE, SHUTDOWN, RESET or OPEN, and one owner request: motors_off.
+
+    The robot app switches the motors off for that request only with the arm
+    measured at rest.
+    """
     source = Path(arm_adapter.__file__).read_text(encoding="utf-8")
-    sending = {"send_move", "send_permit", "gripper", "checker_state", "stop"}
+    sending = {
+        "send_move",
+        "send_permit",
+        "gripper",
+        "checker_state",
+        "stop",
+        "request_owner",
+    }
     reading = {
         "wait_ready",
         "state",
@@ -557,9 +579,12 @@ def test_the_adapter_sends_only_these_link_messages() -> None:
     }
     assert link_calls(source) <= sending | reading
     assert sending <= link_calls(source)
-    for name in ("Release", "Shutdown", "Reset", "Open", "OwnerRequest"):
+    for name in ("Release", "Shutdown", "Reset", "Open", "OwnerRequest", "Gripper("):
         assert name not in source, name
-    assert "request_owner" not in source and "._client" not in source
+    assert owner_requests(source) == ["REQUEST_MOTORS_OFF"]
+    assert arm_adapter.REQUEST_MOTORS_OFF == messages.REQUEST_MOTORS_OFF == "motors_off"
+    # Every link message goes out through a method of the link.
+    assert "._client" not in source and "._send" not in source
     assert "isaaccapture." not in source.replace("isaaccapture.examples", "")
 
 
@@ -599,14 +624,19 @@ def test_the_arm_is_an_apai_driver_with_the_teardown_flags(
     assert type(adapter).__name__ == "RobotLinkArm"
     assert not type(adapter).__abstractmethods__
     assert adapter.n_joints == 6 and type(adapter.motion_rate_hz) is float
-    # APAI neither parks this arm nor cuts its torque.
+    # At its end APAI neither parks this arm nor cuts its torque. Its rest
+    # tool switches the motors of an arm off only when the arm is a LazyArm
+    # whose disconnect does not keep the drives as they are.
+    lazy_arm = importlib.import_module("apai.control.lazy_arm")
+    assert isinstance(adapter, lazy_arm.LazyArm)
     assert adapter.shutdown_park_required is False
-    assert adapter.disconnect_preserves_drive_state is True
+    assert adapter.disconnect_preserves_drive_state is False
     assert adapter.disconnect_cuts_torque is False
     assert adapter.hold_key is None
     assert adapter.connect_cuts_torque is False
     assert adapter.connected_on_confirmation is False
-    assert adapter.close_stages_skipped == 0 and adapter._stopped is False
+    assert adapter.holding_on_confirmation is False
+    assert adapter.close_stages_skipped is None and adapter._latched is False
     for name in (
         "motion_status",
         "ensure_motion_ready",
@@ -615,8 +645,6 @@ def test_the_arm_is_an_apai_driver_with_the_teardown_flags(
         "validate_simulation_clock",
         "reset_props",
         "attachment_feedback_version",
-        "stream_profile",
-        "close_gripper_torque",
     ):
         assert not hasattr(adapter, name), name
     stream = inspect.signature(arm_base.ArmBase.stream_to).parameters
@@ -627,6 +655,57 @@ def test_the_arm_is_an_apai_driver_with_the_teardown_flags(
         list(inspect.signature(RobotLinkArm.stream_path).parameters)[2:]
         == list(stream)[2:]
     )
+
+
+# Public names of APAI's reBot driver that the robot link arm leaves out, and
+# why two machines need each left out.
+NOT_OVER_THE_LINK = {
+    "hard_estop": "it cuts the motors' torque wherever the arm is",
+    "MAX_READ_FAILURES": "the driver's count of missed motor answers, on the Thor",
+    "STREAM_ACTIVE_S": "read by the experiment's joint sampler, which runs on the Thor",
+}
+
+
+@apai
+def test_the_arm_answers_every_public_name_of_apais_rebot_driver_and_lazy_arm(
+    scripted: ScriptedRig,
+) -> None:
+    """What APAI's skills call on the experiment's arm can be called here.
+
+    The experiment's arm is APAI's LazyArm around its reBot driver: a skill
+    reaches the driver's own methods through the LazyArm.
+    """
+    driver = importlib.import_module("apai.control.rebot_rs_arm").RebotRSArm
+    lazy = importlib.import_module("apai.control.lazy_arm").LazyArm
+    adapter = scripted.adapter
+    names = {n for kind in (driver, lazy) for n in dir(kind) if not n.startswith("_")}
+    assert {"close_gripper_torque", "stream_profile", "wait_settled"} <= names
+    missing = {name for name in names if not hasattr(type(adapter), name)}
+    assert missing == set(NOT_OVER_THE_LINK)
+    for name in sorted(names - missing):
+        theirs = inspect.getattr_static(driver, name, None)
+        if theirs is None:
+            theirs = inspect.getattr_static(lazy, name)
+        ours = inspect.getattr_static(type(adapter), name)
+        if not inspect.isfunction(theirs):
+            # A value or a property there is read here too, not called.
+            assert not inspect.isfunction(ours), name
+            continue
+        assert inspect.isfunction(ours), name
+        wanted = inspect.signature(theirs).parameters
+        taken = inspect.signature(ours).parameters
+        if any(p.kind is p.VAR_POSITIONAL for p in taken.values()):
+            continue
+        # A call with the driver's arguments, by place or by name, fits.
+        assert list(taken) == list(wanted), name
+        assert [p.default for p in taken.values()] == [
+            p.default for p in wanted.values()
+        ], name
+    # Not passed on to a backend of the LazyArm: there is none.
+    assert adapter.wait_settled(np.zeros(N_JOINTS), 0.05, 0.5) is True
+    with pytest.raises(AttributeError, match="streams no planner profile"):
+        adapter.stream_profile(None)
+    assert not scripted.thor.moves
 
 
 @apai
@@ -655,13 +734,63 @@ def test_connect_sends_nothing_and_disconnect_sends_nothing(
     assert rig.adapter.connected is False
     rig.ready()
     assert rig.adapter.connected is True
+    # Outside a task, as when the program ends: the robot app keeps holding
+    # the arm, so the motors still count as on.
     rig.adapter.disconnect()
-    assert rig.adapter.connected is False
+    assert rig.adapter.connected is True
     time.sleep(0.05)
     thor = rig.thor
     assert not (thor.moves or thor.permits or thor.grippers or thor.stops)
     assert not (thor.checker_states or thor.others)
     assert rig.link.pinned is None  # connect() takes no ownership
+
+
+@apai
+def test_disconnect_inside_a_task_asks_the_robot_app_for_the_motors_off(
+    scripted: ScriptedRig,
+) -> None:
+    """Where APAI's rest tool ends; standby is an arm whose motors are off."""
+    thor, adapter = scripted.thor, scripted.adapter
+    answers = ["refused", "completed"]
+
+    def answer() -> None:
+        # The scripted robot side answers each OWNER_REQUEST in turn.
+        seen = 0
+        while answers:
+            requests = list(thor.others)
+            if len(requests) > seen:
+                seen = len(requests)
+                status = answers.pop(0)
+                why = "the arm is not at rest" if status == "refused" else ""
+                thor.thor.send(Result(requests[-1].command_id, status, why))
+            time.sleep(0.01)
+
+    thread = in_thread(answer)
+    with pytest.raises(RobotLinkError, match="kept the motors on: the arm is not at"):
+        adapter.disconnect()
+    assert adapter.connected is True
+    adapter.disconnect()
+    thread.join(5.0)
+    assert adapter.connected is False  # standby
+    first, second = thor.others
+    assert isinstance(first, messages.OwnerRequest)
+    assert (second.request, second.owner_number) == ("motors_off", 1)
+    assert not (thor.stops or thor.grippers or thor.moves)
+    # In standby nothing more is asked, and the next motion needs the motors.
+    adapter.disconnect()
+    assert len(thor.others) == 2
+    # Motors on again: as APAI's own arm when it wakes, the adapter waits for
+    # the obstacle grid's next refresh with the arm's pose, by the grid's own
+    # bound, before a motion is checked on it.
+    grid = scripted.checker.occupancy
+    waits: list[tuple[Any, bool]] = []
+    grid.ready_timeout_s, grid.last_error = 0.2, None
+    grid.wait_until_usable = lambda timeout_s=None: (
+        waits.append((timeout_s, adapter.connected)) or True
+    )
+    adapter.motors_on()
+    # Asked with the grid's own bound, once the arm counts as connected.
+    assert waits == [(None, True)] and adapter.connected is True
 
 
 @apai
@@ -707,14 +836,21 @@ def test_connect_takes_a_named_calibration_that_is_the_same(
 
 
 @apai
-def test_connect_refuses_motors_that_are_off_and_a_robot_app_that_is_not_there(
+def test_connect_takes_motors_that_are_off_as_standby_and_refuses_no_robot_app(
     make_scripted: Callable[..., ScriptedRig],
 ) -> None:
     rig = make_scripted()
     rig.thor.fields["torque_on"] = False
     until(lambda: getattr(rig.shown(), "torque_on", None) is False, "motors off")
-    with pytest.raises(RobotLinkError, match="motors off"):
-        rig.adapter.connect()
+    # Motors the robot app switched off at rest: the arm is in standby, as
+    # APAI's own arm before its first motion. Nothing is sent.
+    rig.adapter.connect()
+    assert rig.adapter.connected is False
+    rig.adapter.bind_checker(rig.check)
+    rig.adapter.open_task(rig.PIN)
+    with pytest.raises(types().SafetyViolation, match="the arm is not connected"):
+        rig.move(SHORT, 0.5)
+    assert not (rig.thor.moves or rig.thor.others)
     silent = make_scripted(connect_timeout_s=0.2)
     silent.thor.invalid_joint = 0
     time.sleep(0.1)
@@ -874,8 +1010,9 @@ def test_calls_the_robot_link_does_not_take_are_refused_and_send_nothing(
     scripted: ScriptedRig,
 ) -> None:
     adapter = scripted.adapter
-    with pytest.raises(types().SafetyViolation, match="joint paths are not supported"):
-        adapter.stream_path([SHORT], 1.0, approve=scripted.checker.approve)
+    # A planner's profile: APAI's reBot driver has no such motion either.
+    with pytest.raises(AttributeError, match="no planner profile"):
+        adapter.stream_profile(object())
     with pytest.raises(RuntimeError, match="whole moves"):
         adapter.send_joint_target(np.zeros(6))
     with pytest.raises(RuntimeError, match="start a new task"):
@@ -930,7 +1067,7 @@ def test_motion_and_jaws_need_an_open_task_a_bound_checker_and_ownership(
     until(lambda: rig.link.lost_reason() is not None, "the lost ownership")
     with pytest.raises(violation, match="control owner is nobody, not the agent"):
         rig.move(SHORT, 0.5)
-    assert rig.adapter._stopped is True  # the mirror of the Thor's state
+    assert rig.adapter._latched is True  # the mirror of the Thor's state
     with pytest.raises(violation, match="arm stop latched"):
         rig.adapter.set_gripper(3.0)
     rig.adapter.close_task()
@@ -959,7 +1096,7 @@ def test_setpoints_and_period_are_what_the_thor_accepts(sim: SimRig) -> None:
     assert sim.checker.approved_commands == before + 25
     state = sim.adapter.get_state()  # the end of the move is already shown
     assert state.q == pytest.approx(SHORT, abs=0.03)
-    assert sim.link.state().owner == "agent" and sim.adapter._stopped is False
+    assert sim.link.state().owner == "agent" and sim.adapter._latched is False
     assert sim.link.final_result(move_id) is None  # forgotten
     stats = sim.adapter.last_move
     assert stats["setpoints"] == stats["approved"] == 25
@@ -1080,7 +1217,7 @@ def test_a_refusal_of_the_whole_move_sends_nothing_and_clears_nothing(
     assert isinstance(raised.value, types().SafetyViolation)
     assert not sim.of("move") and not sim.of("permit") and not sim.of("approve")
     assert sim.checker.approved_commands == 0 and sim.h.sent() == []
-    assert sim.adapter._stopped is False
+    assert sim.adapter._latched is False
     # The path is clear again: the next move runs.
     sim.checker.blocked = lambda q: None
     assert sim.move(SHORT, 0.5) is True
@@ -1112,7 +1249,7 @@ def test_a_refusal_by_the_thor_before_it_armed_reaches_no_callback(
         late.move(SHORT, 0.5)
     assert late.checker.approved_commands == 0
     assert not late.of("approve") and not late.of("permit")
-    assert late.h.sent() == [] and late.adapter._stopped is False
+    assert late.h.sent() == [] and late.adapter._latched is False
     assert late.link.state().owner == "agent"
 
 
@@ -1126,8 +1263,15 @@ def test_a_start_pose_the_thor_does_not_measure_is_refused_before_it_arms(
         real(move_id, np.asarray(start) + 0.006, *rest)  # over the 0.004 rad sent
 
     sim.link.send_move = shifted
-    with pytest.raises(types().SafetyViolation, match="start pose: joint index 0"):
+    violation = types().SafetyViolation
+    # New grids go on arriving while the move is sampled again and again.
+    with sim.camera(), pytest.raises(violation, match="start pose: joint index 0"):
         sim.move(SHORT, 0.5)
+    # Each refusal is answered with a new reading, as often as APAI's own
+    # prepare_stream checks a route again.
+    arm_base = importlib.import_module("apai.control.arm_base")
+    retries = sim.adapter.last_move["start_retries"]
+    assert retries == arm_base.PREFLIGHT_MAX_CHECKS - 1
     assert sim.checker.approved_commands == 0
     assert not sim.of("approve") and not sim.of("permit") and sim.h.sent() == []
 
@@ -1175,7 +1319,7 @@ def test_an_obstacle_switched_into_the_path_ends_the_permits_at_once(
     assert 0 < len(sim.h.sent()) < 30  # the arm stopped short of the refusal
     state = sim.link.state()
     assert state.owner == "agent" and state.stop_level == "none"
-    assert sim.adapter._stopped is False
+    assert sim.adapter._latched is False
     assert sim.adapter.last_move["cancel_to_result_s"] < 0.5
     # A new move from the measured pose runs.
     sim.checker.blocked = lambda q: None
@@ -1286,7 +1430,7 @@ def test_stop_from_another_thread_ends_the_move_and_is_a_persons_stop(
     )
     (stop_event,) = sim.of("stop")
     assert stop_event[2] == AGENT_TERMINAL
-    assert len(sim.h.sent()) < 60 and sim.adapter._stopped is True
+    assert len(sim.h.sent()) < 60 and sim.adapter._latched is True
     until(lambda: sim.link.state().owner == "nobody", "the owner nobody")
     assert sim.link.state().stop_level in ("stop", "none")
     # Everything after it is refused before sending.
@@ -1308,7 +1452,7 @@ def test_a_skill_stop_sends_no_stop_and_the_agent_keeps_the_arm(sim: SimRig) -> 
     assert not sim.of("stop")
     state = sim.link.state()
     assert state.owner == "agent" and state.stop_number == numbers
-    assert sim.adapter._stopped is True
+    assert sim.adapter._latched is True
     with pytest.raises(types().SafetyViolation, match="arm stop latched; no motion"):
         sim.move(SHORT, 0.5)
     assert not sim.of("move")
@@ -1326,11 +1470,11 @@ def test_stop_never_raises(make_scripted: Callable[..., ScriptedRig]) -> None:
     rig = make_scripted()
     rig.link.close()
     rig.adapter.stop()
-    assert rig.adapter._stopped is True
+    assert rig.adapter._latched is True
     broken = make_scripted()
     broken.link.stop = mock.Mock(side_effect=RuntimeError("no socket"))
     broken.adapter.stop()
-    assert broken.adapter._stopped is True
+    assert broken.adapter._latched is True
 
 
 @apai
@@ -1350,7 +1494,7 @@ def test_a_stop_at_the_thor_ends_the_move_and_latches_the_adapter(sim: SimRig) -
     assert "the robot app stopped the move" in str(
         raised.value
     ) or "no longer owns the arm" in str(raised.value)
-    assert sim.adapter._stopped is True and not sim.of("stop")
+    assert sim.adapter._latched is True and not sim.of("stop")
     assert len(sim.h.sent()) < 60
 
 
@@ -1374,7 +1518,7 @@ def test_old_numbers_are_never_requoted(sim: SimRig) -> None:
             sim.adapter.close_gripper_two_stage()
         sim.checker.clear_contact_zones()
         # Even with the adapter's own latch cleared by hand.
-        sim.adapter._stopped = False
+        sim.adapter._latched = False
     assert sim.link.pinned == old
     assert not sim.of("move") and not sim.of("gripper") and not sim.of("permit")
     assert sim.h.sent() == []
@@ -1405,7 +1549,7 @@ def test_a_lost_link_ends_the_move_and_the_arm_holds(sim: SimRig) -> None:
         sim.move(LONG, 1.2)
     thread.join(5.0)
     assert not isinstance(raised.value, types().SafetyViolation)
-    assert sim.adapter._stopped is True
+    assert sim.adapter._latched is True
     sim.h.idle()
     assert len(sim.h.sent()) < 60  # the robot app ended the move by itself
     with pytest.raises(types().SafetyViolation, match="arm stop latched"):
@@ -1498,7 +1642,7 @@ def test_a_robot_state_that_grows_old_gets_no_new_permit_on_the_real_app(
         sim.move(LONG, 1.2)
     thread.join(5.0)
     sim.h.idle()
-    assert sim.adapter._stopped is True
+    assert sim.adapter._latched is True
     renewals, cancels = permits_after_the_last_state(sim)
     sent = len(sim.h.sent())
     print(
@@ -1577,7 +1721,7 @@ def test_a_contact_on_the_thor_reaches_apai_as_contact(sim: SimRig) -> None:
     assert monitor.hold == "measured pose (reported by the robot app)"
     summary = monitor.summary()  # what record_contact_motion formats
     assert summary["tripped"] == "joint unknown tracking error 0.000 rad (stream)"
-    assert sim.link.state().owner == "agent" and sim.adapter._stopped is False
+    assert sim.link.state().owner == "agent" and sim.adapter._latched is False
 
 
 # The final RESULT of a MOVE, on a scripted robot side
@@ -1597,7 +1741,7 @@ def test_a_completed_move_returns_true_and_one_not_settled_false(
         None,
     )
     assert scripted.move(SHORT, 0.5) is False
-    assert len(thor.moves) == 2 and scripted.adapter._stopped is False
+    assert len(thor.moves) == 2 and scripted.adapter._latched is False
     move = thor.moves[0]
     assert (move.session_id, move.owner_number, move.stop_number) == ("s1", 1, 0)
     assert move.period_s == PERIOD_S and move.start_tol_rad == pytest.approx(0.004)
@@ -1671,7 +1815,7 @@ def test_the_final_result_of_a_move_becomes_what_apai_expects(
     with caplog.at_level(logging.WARNING), pytest.raises(kind, match=text) as raised:
         scripted.move(SHORT, 0.5)
     assert type(raised.value) is kind
-    assert scripted.adapter._stopped is bool(latched)
+    assert scripted.adapter._latched is bool(latched)
     assert [p.through_index for p in scripted.thor.permits if p.through_index < 0] == []
     warned = "refused after the first permit with nothing sent" in caplog.text
     assert warned is ("waited 0.5 s" in text or "no permit for this move" in text)
@@ -1691,7 +1835,7 @@ def test_a_cancelled_move_latches_the_adapter_when_the_ownership_is_gone(
     thor.end_move = lambda *ending: (stopped(), thor._publish(), real(*ending))
     with pytest.raises(types().MotionHalted, match="stopped the move: stop: operator"):
         scripted.move(SHORT, 0.5)
-    assert scripted.adapter._stopped is True
+    assert scripted.adapter._latched is True
 
 
 @apai
@@ -1786,7 +1930,7 @@ def test_a_move_that_ends_at_admission_reaches_no_callback(
     with pytest.raises(kind, match=text):
         scripted.move(SHORT, 0.5)
     assert not scripted.of("approve") and not scripted.thor.permits
-    assert scripted.adapter._stopped is latched
+    assert scripted.adapter._latched is latched
 
 
 @apai
@@ -1841,7 +1985,7 @@ def test_a_stale_state_ends_the_permits_at_once(scripted: ScriptedRig) -> None:
         scripted.move(SHORT, 0.5)
     thread.join(5.0)
     assert "the permits were stopped" in str(raised.value)
-    assert scripted.adapter._stopped is True
+    assert scripted.adapter._latched is True
     # No PERMIT on a state older than state_renew_age_s (0.1 s; a pass comes
     # every 0.05 s), and the cancel once it is older than state_max_age_s.
     renewals, cancels = permits_after_the_last_state(scripted)
@@ -1875,7 +2019,7 @@ def test_permits_go_on_when_a_newer_state_arrives_before_the_cancel(
     thread.join(5.0)
     assert counts["late"] == counts["early"]  # none while the state was old
     assert all(permit.through_index >= 0 for permit in thor.permits)  # no cancel
-    assert scripted.adapter._stopped is False
+    assert scripted.adapter._latched is False
 
 
 @apai
@@ -1897,7 +2041,7 @@ def test_lost_ownership_ends_the_permits_at_once_with_a_cancel(
     assert cancel.through_index == -1 and last.through_index >= 0
     assert cancel.evidence_wall_s == last.evidence_wall_s
     assert (cancel.owner_number, cancel.stop_number) == (1, 0)  # the pinned ones
-    assert scripted.adapter._stopped is True and thor.stops == []
+    assert scripted.adapter._latched is True and thor.stops == []
 
 
 @apai
@@ -1936,7 +2080,7 @@ def test_a_lost_connection_in_a_result_is_treated_as_a_lost_link(
     with pytest.raises(RobotLinkError, match=LOST):
         scripted.move(SHORT, 0.5)
     thread.join(5.0)
-    assert scripted.adapter._stopped is True
+    assert scripted.adapter._latched is True
     assert scripted.link.lost_reason() is not None
     with pytest.raises(types().SafetyViolation, match="arm stop latched"):
         scripted.move(SHORT, 0.5)
@@ -1978,7 +2122,7 @@ def test_a_move_without_a_result_ends_at_its_deadline(
     with pytest.raises(RobotLinkError, match="no RESULT for the move"):
         rig.move([0.004, 0, 0, 0, 0, 0], 0.04)  # 2 setpoints: 3.044 s to the deadline
     assert 3.0 < time.monotonic() - began < 4.5
-    assert rig.adapter._stopped is True
+    assert rig.adapter._latched is True
     assert rig.thor.permits[-1].through_index == -1
 
 
@@ -2110,9 +2254,9 @@ def test_the_hooks_reach_the_real_robot_app(sim: SimRig) -> None:
 def test_jaw_commands_reach_the_thor_in_its_units(sim: SimRig) -> None:
     adapter = sim.adapter
     assert adapter.set_gripper(3.1, effort=0.4) is None  # half of 6.2 rad
-    _, opening, effort, mode, timeout_s, _ = sim.of("gripper")[0]
+    _, opening, effort, mode, timeout_s, scout, _ = sim.of("gripper")[0]
     assert opening == pytest.approx(0.5) and (effort, mode) == (0.4, "plain")
-    assert timeout_s == 12.0
+    assert timeout_s == 12.0 and scout is None  # one stage
     # The next state read already shows the reading the command ended with.
     state = adapter.get_state()
     assert state.gripper_valid is True
@@ -2132,20 +2276,55 @@ def test_the_grasp_close_stalls_on_the_object_and_never_opens(sim: SimRig) -> No
     measured = adapter.close_gripper_two_stage(
         width_frac_stage1=0.5, width_frac_stage2=0.85, effort=0.6
     )
-    _, opening, effort, mode, _, _ = sim.of("gripper")[-1]
-    assert opening == pytest.approx(0.15) and effort == 0.6
-    assert mode == "close_until_contact"
+    # One GRIPPER carries both stages: the seat stage's opening and the scout
+    # stage's. The simulated driver has no two-stage close: it gets the seat.
+    sent = adapter.last_jaw
+    assert (sent["mode"], sent["effort"]) == ("close_until_contact", 0.6)
+    assert sent["opening"] == pytest.approx(0.15)
+    assert sent["scout_opening"] == pytest.approx(0.5)
+    last = sim.h.arm.jaw_commands[-1]
+    assert (last.opening, last.max_effort, last.mode) == (
+        pytest.approx(0.15),
+        0.6,
+        "close_until_contact",
+    )
     assert measured == pytest.approx(3.1, abs=0.3)  # stalled on the object
-    assert adapter.close_stages_skipped == 0
-    assert sim.h.arm.jaw_stiffness == sim_arm.LIGHT  # not at the closing stiffness
-    # A second close that is not more closed sends nothing.
-    sent = len(sim.of("gripper"))
-    assert adapter.close_gripper_two_stage(width_frac_stage2=0.85) is None
-    assert adapter.close_gripper_two_stage(width_frac_stage2=0.5) is None
-    assert adapter.close_stages_skipped == 2 and len(sim.of("gripper")) == sent
+    # The count of skipped stages is the driver's; this one gives none.
+    assert adapter.close_stages_skipped is None
+    # A second close is the driver's to skip or to send: the adapter sends it.
+    commands = len(sim.h.arm.jaw_commands)
+    assert adapter.close_gripper_two_stage(width_frac_stage2=0.85) is not None
+    assert len(sim.h.arm.jaw_commands) == commands + 1
+    # The driver runs its close with its own stall speed and deadline.
+    for changed in ({"stall_vel": 0.1}, {"timeout_s": 5.0}):
+        with pytest.raises(ValueError, match="is not sent over the robot link"):
+            adapter.close_gripper_two_stage(**changed)
+    assert len(sim.h.arm.jaw_commands) == commands + 1
     # A plain close on the object ends short: None, as APAI's driver returns.
     adapter.set_gripper(6.2)
     assert adapter.set_gripper(0.0) is None
+
+
+@apai
+def test_the_drivers_other_jaw_routines_cross_the_link_as_modes(sim: SimRig) -> None:
+    adapter = sim.adapter
+    adapter.set_gripper(3.1)
+    # open_gripper(): the driver's own opening; here a plain command to open.
+    assert adapter.open_gripper() is None
+    assert adapter.last_jaw["mode"] == "open"
+    assert sim.h.arm.gripper_read() == 1.0
+    # close_gripper_torque(): what the driver returned, True when it closed.
+    sim.h.arm.jaw_object(0.5)
+    assert adapter.close_gripper_torque(effort=0.4) is True
+    assert (adapter.last_jaw["mode"], adapter.last_jaw["effort"]) == (
+        "close_torque",
+        0.4,
+    )
+    assert sim.h.arm.gripper_read() == pytest.approx(0.5, abs=0.05)
+    with pytest.raises(ValueError, match=r"hold_kp=0\.5 is not sent over the robot"):
+        adapter.close_gripper_torque(hold_kp=0.5)
+    # The simulated arm leaves a close that stalled at its light stiffness.
+    assert sim.h.arm.jaw_stiffness == sim_arm.LIGHT
 
 
 def jaw_result(status: str, reason: str = "", **detail: Any) -> Callable:
@@ -2220,28 +2399,62 @@ def test_the_result_of_a_jaw_command_becomes_what_apai_expects(
     with pytest.raises(kind, match=text) as raised:
         scripted.adapter.set_gripper(6.2)  # an opening command
     assert type(raised.value) is kind
-    assert scripted.adapter._stopped is latched
+    assert scripted.adapter._latched is latched  # the adapter's stop latch
     if error == "GripperFault":
         assert "GripperFault" in repr(raised.value)  # what APAI's result code reads
 
 
+# What APAI's gripper guard raises when the jaws are blocked while they open.
+BLOCKED = (
+    "gripper blocked while opening at 1.00 rad (target 6.20): holding there "
+    "instead of pushing. Check what is against the jaws."
+)
+
+
 @apai
-def test_a_close_that_ends_short_is_none_and_a_grasp_close_that_times_out_a_fault(
+@pytest.mark.parametrize("call", ["set_gripper", "open_gripper"])
+def test_a_fault_of_the_drivers_jaws_is_raised_with_the_drivers_own_text(
+    scripted: ScriptedRig, call: str
+) -> None:
+    scripted.thor.jaw_reply = jaw_result(
+        "failed", BLOCKED, outcome="gripper_fault", opening=0.16
+    )
+    adapter = scripted.adapter
+    with pytest.raises(types().GripperFault) as raised:
+        adapter.set_gripper(6.2) if call == "set_gripper" else adapter.open_gripper()
+    # The text APAI's own driver raises, not a text of the robot link's.
+    assert str(raised.value) == BLOCKED
+    # As at the arm, the arm stays usable: the adapter's stop is not latched.
+    assert adapter._latched is False
+
+
+@apai
+def test_a_close_that_ends_short_is_none_as_the_drivers_close_returns(
     scripted: ScriptedRig,
 ) -> None:
     thor = scripted.thor
     thor.jaw_reply = jaw_result("failed", "the jaws stalled short", outcome="stalled")
     assert scripted.adapter.set_gripper(0.0) is None  # a closing command
+    # The end of a stage's time is no fault of the driver's close: it returns.
     thor.jaw_reply = jaw_result(
         "failed", "the jaw command timed out", outcome="timeout"
     )
-    with pytest.raises(types().GripperFault, match="the jaw command timed out"):
-        scripted.adapter.close_gripper_two_stage()
+    assert scripted.adapter.close_gripper_two_stage() is None
     thor.jaw_reply = jaw_result("completed", "", outcome="stalled", opening=None)
     assert scripted.adapter.close_gripper_two_stage() is None
-    assert scripted.adapter.close_stages_skipped == 0
-    assert [g.mode for g in thor.grippers] == ["plain"] + ["close_until_contact"] * 2
-    assert all(g.opening == pytest.approx(0.15) for g in thor.grippers[1:])
+    assert scripted.adapter.close_stages_skipped is None  # the driver gave no count
+    thor.jaw_reply = jaw_result(
+        "completed", "", outcome="stalled", opening=0.13, close_stages_skipped=1
+    )
+    # The driver's end reading in the profile's units, and the driver's count.
+    assert scripted.adapter.close_gripper_two_stage() == pytest.approx(0.13 * 6.2)
+    assert scripted.adapter.close_stages_skipped == 1
+    assert [g.mode for g in thor.grippers] == ["plain"] + ["close_until_contact"] * 3
+    closes = thor.grippers[1:]
+    assert all(g.opening == pytest.approx(0.15) for g in closes)
+    # The scout stage travels with the seat stage: the driver's default 0.5.
+    assert all(g.scout_opening == pytest.approx(0.5) for g in closes)
+    assert thor.grippers[0].scout_opening is None
 
 
 @apai
@@ -2253,7 +2466,40 @@ def test_no_answer_to_a_jaw_command_latches_the_adapter(
     rig.thor._take = lambda message: rig.thor.others.append(message)
     with pytest.raises(RobotLinkError, match="no RESULT for the jaw command within"):
         rig.adapter.set_gripper(3.0)
-    assert rig.adapter._stopped is True
+    assert rig.adapter._latched is True  # the adapter's stop latch
+    # The agent still owned the arm: the adapter's own STOP went out.
+    until(lambda: any(isinstance(m, Stop) for m in rig.thor.others), "the STOP")
+
+
+@apai
+def test_giving_up_on_a_jaw_command_sends_no_stop_once_the_arm_is_another_owners(
+    make_scripted: Callable[..., ScriptedRig],
+) -> None:
+    """A STOP quotes no numbers: it would end a person's return to rest or drive."""
+    rig = make_scripted(result_timeout_s=0.3)
+    rig.own()
+    thor = rig.thor
+    thor._take = lambda message: thor.others.append(message)  # no answer comes
+
+    def taken_away() -> None:
+        until(lambda: any(isinstance(m, Gripper) for m in thor.others), "the GRIPPER")
+        # A person stopped the arm and typed rest: the return to rest runs.
+        thor.fields.update(owner="recovery", owner_number=3, stop_number=1)
+
+    thread = in_thread(taken_away)
+    with pytest.raises(RobotLinkError) as raised:
+        rig.adapter.set_gripper(3.0)
+    thread.join(5.0)
+    assert str(raised.value) == (
+        "no RESULT for the jaw command within 0.3 s; the agent no longer owns "
+        "the arm, so no STOP was sent"
+    )
+    time.sleep(0.1)
+    assert not [m for m in thor.others if isinstance(m, Stop)]
+    # The task is over for the adapter all the same.
+    assert rig.adapter._latched is True
+    with pytest.raises(types().SafetyViolation, match="arm stop latched"):
+        rig.adapter.set_gripper(3.0)
 
 
 # Under APAI's own SafeArm and SafetyHarness
@@ -2415,10 +2661,6 @@ def test_a_refusal_before_the_first_permit_leaves_apais_counters_unchanged(
     rig.own()
     skills = importlib.import_module("apai.skills.runtime")
     before = rig.harness.approved_commands
-    # The whole-move check: a goal outside the workstation checker's limits.
-    with pytest.raises(types().SafetyViolation) as whole:
-        rig.safe.move_joints(nearby(rig, by=3.0), duration_s=1.0)
-    assert rig.moves == []
     # The Thor, before it armed the move: the start pose it measures differs.
     real = rig.link.send_move
 
@@ -2431,9 +2673,8 @@ def test_a_refusal_before_the_first_permit_leaves_apais_counters_unchanged(
     assert rig.harness.approved_commands == before
     # What APAI's skills ask before they stop and latch.
     reader = mock.Mock(arm=rig.safe)
-    for raised in (whole.value, unarmed.value):
-        assert skills.SkillRuntime._refused_before_motion(reader, raised, before)
-    assert rig.harness.estopped is False and rig.adapter._stopped is False
+    assert skills.SkillRuntime._refused_before_motion(reader, unarmed.value, before)
+    assert rig.harness.estopped is False and rig.adapter._latched is False
     rig.link.send_move = real
     assert rig.safe.move_joints(nearby(rig), duration_s=0.5) is True
 
@@ -2472,7 +2713,7 @@ def test_a_halt_during_a_move_ends_it_and_the_agent_keeps_the_arm(
     rig.h.idle()
     state = rig.link.state()
     assert state.owner == "agent" and state.stop_level == "none"
-    assert rig.stops == [] and rig.adapter._stopped is False
+    assert rig.stops == [] and rig.adapter._latched is False
     assert abs(rig.safe.get_state().q[0] - goal[0]) > 0.05  # it stopped short
     # A halt is of that motion only: the next move runs.
     assert rig.safe.move_joints(nearby(rig, by=0.02), duration_s=0.5) is True
@@ -2486,7 +2727,7 @@ def test_a_skill_stop_through_safearm_latches_apai_and_sends_no_stop(
     rig.own()
     with rig.adapter.skill_scope():
         rig.safe.stop()
-    assert rig.harness.estopped is True and rig.adapter._stopped is True
+    assert rig.harness.estopped is True and rig.adapter._latched is True
     time.sleep(0.15)
     assert rig.stops == [] and rig.link.state().owner == "agent"
     with pytest.raises(types().SafetyViolation, match="e-stop latched"):
@@ -2509,7 +2750,7 @@ def test_a_contact_reaches_apais_checker_through_the_monitor(
     assert event is not None and event["joint"] == 1 and event["phase"] == "stream"
     assert event["hold_q"][0] == pytest.approx(start, abs=0.02)
     assert len(rig.harness.contact_zones) == 1  # the spot is fenced on this side
-    assert rig.link.state().owner == "agent" and rig.adapter._stopped is False
+    assert rig.link.state().owner == "agent" and rig.adapter._latched is False
     # reset_scene clears the spots on both sides.
     rig.harness.clear_contact_zones("reset_scene")
     (command_id,) = [c for _, c in rig.adapter._checker_ids]
@@ -2531,10 +2772,14 @@ def test_apais_jaw_calls_reach_the_thors_jaws(apai_rig: ApaiRig) -> None:
         width_frac_stage1=0.5, width_frac_stage2=0.85, effort=0.6
     )
     assert measured == pytest.approx(0.5, abs=0.05)
-    assert rig.adapter.close_stages_skipped == 0
-    # After an arm move the jaw reading is older than the last setpoint: unknown.
+    # The mock driver has no two-stage close and gives no count of stages.
+    assert rig.adapter.close_stages_skipped is None
+    # After an arm move the jaws are read anew: APAI decides from this reading
+    # whether the grasp holds something, as it does with the driver's live one.
     assert rig.safe.move_joints(nearby(rig, by=0.02), duration_s=0.5) is True
-    assert rig.safe.get_state().gripper_valid is False
+    state = rig.safe.get_state()
+    assert state.gripper_valid is True
+    assert state.gripper_pos == pytest.approx(0.5, abs=0.05)
 
 
 @apai
@@ -2545,7 +2790,9 @@ def test_apais_shutdown_sends_no_motion_and_no_torque_cut(apai_rig: ApaiRig) -> 
     sent = len(rig.h.spy.targets)
     rig.adapter.close_task()
     rig.safe.disconnect()
-    assert rig.adapter.connected is False
+    # No task is open: nothing is asked of the robot app, which goes on
+    # holding the arm with the motors on.
+    assert rig.adapter.connected is True
     time.sleep(0.2)
     assert len(rig.h.spy.targets) == sent and len(rig.moves) == 1
     assert rig.link.state().torque_on is True

@@ -23,6 +23,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -130,26 +131,44 @@ def test_the_shipped_file_loads_with_the_first_values() -> None:
     assert (settings.permits.life_s, settings.permits.renew_s) == (1.0, 0.05)
     assert settings.move.start_tol_rad == 0.02
     assert settings.state_dir == EXAMPLE / ".state"
-    assert settings.rig.park_q == (0.0,) * 6 and len(settings.rig.home_q) == 6
-    assert settings.rig.body_mask_dilate_px == 6
-    assert settings.rig.motion_bounds["max_tcp_distance_m"] == 0.25
+    # No copy of the experiment's arm profile.
+    assert settings.rig == agent_config.RigSettings()
     arm = agent_config.arm_settings(settings, "cal-1")
     assert arm.calibration_id == "cal-1" and arm.agent_max_joint_speed == 0.1
     assert arm.reach_setpoints == 25 and arm.life_s == 1.0
 
 
+@apai
 @experiment
 def test_the_rig_values_are_those_of_the_experiments_arm_profile(
-    experiment_dir: Path,
+    apai_scratch: Path, experiment_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv(EXPERIMENT_DIR_ENV, str(experiment_dir))
     theirs = yaml.safe_load(
         (experiment_dir / "configs/thor_operation.yaml").read_text()
     )
-    rig = agent_config.load_settings(SHIPPED).rig
-    assert list(rig.home_q) == theirs["home_q"]
-    assert list(rig.park_q) == theirs["park_q"]
-    assert rig.body_mask_dilate_px == theirs["body_mask"]["dilate_px"]
-    assert dict(rig.motion_bounds) == theirs["motion_bounds"]
+    run = apai_scratch / "run"
+    settings = agent_config.load_settings(SHIPPED)
+    arm = agent_config.build_apai_config(settings, run, camera="mock").as_dict()["arm"]
+    assert arm["home_q"] == theirs["home_q"] and arm["park_q"] == theirs["park_q"]
+    assert arm["body_mask"]["dilate_px"] == theirs["body_mask"]["dilate_px"]
+    assert arm["motion_bounds"] == theirs["motion_bounds"]
+    # A value of the file's rig block is used in the experiment's place.
+    home = [value + 0.01 for value in theirs["home_q"]]
+    path = settings_file(
+        apai_scratch,
+        experiment={"stack": "full"},
+        rig={"home_q": home, "body_mask_dilate_px": 9},
+    )
+    own = agent_config.load_settings(path)
+    arm = agent_config.build_apai_config(own, run, camera="mock").as_dict()["arm"]
+    assert arm["home_q"] == home and arm["park_q"] == theirs["park_q"]
+    assert arm["body_mask"]["dilate_px"] == 9
+    assert arm["body_mask"]["attachments"]  # the experiment's, kept beside it
+    # The lists of the arm profile are held against the arm's joints.
+    agent_config.check_joint_count(settings, len(home), SimpleNamespace(arm=arm))
+    with pytest.raises(ConfigError, match="the arm profile's home_q has 6 values"):
+        agent_config.check_joint_count(settings, 7, SimpleNamespace(arm=arm))
 
 
 @experiment
@@ -342,7 +361,7 @@ def test_the_apai_variables_the_program_takes_are_listed() -> None:
     stores = {name for name, _ in agent_config.APAI_STORES}
     assert stores < set(agent_config.ALLOWED_ENV)
     assert set(agent_config.ALLOWED_ENV) - stores == {
-        "APAI_REQUIRE_CUDA",  # run_agent.sh sets it
+        "APAI_REQUIRE_CUDA",  # the operator's own; run_agent.sh never sets it
         "APAI_ASPIRE_LIBRARY",  # the learned-notes library, which is only read
         "APAI_GRASPGENX_PORT",  # the port of a grasp server on this machine
     }
@@ -352,7 +371,7 @@ def test_the_apai_variables_the_program_takes_are_listed() -> None:
     # Every variable that is refused is named.
     with pytest.raises(ConfigError, match="APAI_BASE, APAI_ROBOT are set"):
         agent_config.refused_environment({"APAI_ROBOT": "x", "APAI_BASE": "y"})
-    assert "APAI_REQUIRE_CUDA" in (EXAMPLE / "run_agent.sh").read_text()
+    assert "export APAI_" not in (EXAMPLE / "run_agent.sh").read_text()
 
 
 def test_the_camera_argument_has_three_forms() -> None:
@@ -531,7 +550,7 @@ def test_the_scripts_set_the_environment_and_name_what_is_missing(
     fake = tmp_path / "python"
     fake.write_text(
         "#!/usr/bin/env bash\n"
-        'echo "$CUDA_DEVICE_ORDER $CUDA_VISIBLE_DEVICES $APAI_REQUIRE_CUDA '
+        'echo "$CUDA_DEVICE_ORDER $CUDA_VISIBLE_DEVICES ${APAI_REQUIRE_CUDA:-unset} '
         '$PYTHONDONTWRITEBYTECODE ${LD_LIBRARY_PATH:-unset} $PYTHONPATH $*"\n'
     )
     fake.chmod(0o755)
@@ -552,7 +571,7 @@ def test_the_scripts_set_the_environment_and_name_what_is_missing(
     assert done.stdout.split() == [
         "PCI_BUS_ID",
         "0",
-        "1",
+        "unset",  # APAI's strict CUDA mode is never set by the script
         "1",
         "unset",
         f"{EXAMPLE}/python:{tmp_path}",
@@ -560,6 +579,182 @@ def test_the_scripts_set_the_environment_and_name_what_is_missing(
         "isaaccapture_examples.agentic_remote.agent",
         "--check",
     ]
+
+
+# run_workstation.sh: the console and the view wait for the service's socket.
+# The console and the live view attach once to the robot link service's local
+# socket and end when nothing listens there.
+
+WORKSTATION_SCRIPT = EXAMPLE / "run_workstation.sh"
+
+
+class TmuxStand:
+    """run_workstation.sh with a stand-in for tmux on the PATH.
+
+    The stand-in starts nothing: it notes each call and prints a pane id
+    where tmux would.
+    """
+
+    def __init__(self, folder: Path, runtime: Path) -> None:
+        self.log = folder / "tmux.log"
+        # Where the script and the service look for the local socket.
+        self.socket = runtime / "agentic_remote" / "robot_link.sock"
+        programs = folder / "bin"
+        programs.mkdir()
+        fake = programs / "tmux"
+        fake.write_text(
+            "#!/usr/bin/env bash\n"
+            'printf \'%s\\x1f\' "$@" >> "${FAKE_TMUX_LOG}"\n'
+            "printf '\\n' >> \"${FAKE_TMUX_LOG}\"\n"
+            'case "$1" in\n'
+            "  has-session) exit 1 ;;\n"
+            '  new-session) echo "%0" ;;\n'
+            '  split-window) echo "%$(grep -c "^split-window" "${FAKE_TMUX_LOG}")" ;;\n'
+            "esac\n"
+        )
+        fake.chmod(0o755)
+        script = WORKSTATION_SCRIPT.read_text(encoding="utf-8")
+        names = script.split("names=(\n")[1].split("\n)")[0].split()
+        self.env = {name: str(folder) for name in names}
+        self.env.update(
+            AGENTIC_REMOTE_AGENT_PYTHON=sys.executable,
+            PATH=f"{programs}:{os.environ['PATH']}",
+            FAKE_TMUX_LOG=str(self.log),
+            XDG_RUNTIME_DIR=str(runtime),
+        )
+
+    def start(self, *arguments: str) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            ["bash", str(WORKSTATION_SCRIPT), *arguments],
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    def keys(self) -> list[tuple[str, str, bool]]:
+        """(pane name, command, whether Enter followed) per send-keys, in order."""
+        calls = [
+            line.split("\x1f")[:-1]
+            for line in (self.log.read_text() if self.log.exists() else "").splitlines()
+        ]
+        panes = {
+            call[2]: call[4]
+            for call in calls
+            if call[0] == "select-pane" and len(call) == 5
+        }
+        return [
+            (panes[call[2]], call[3], call[4:] == ["Enter"])
+            for call in calls
+            if call[0] == "send-keys"
+        ]
+
+    def sent(self, pane: str) -> tuple[str, bool] | None:
+        """(command, whether Enter followed) of that pane; None while not sent."""
+        found = [key[1:] for key in self.keys() if key[0] == pane]
+        return found[0] if found else None
+
+
+@pytest.fixture
+def tmux_stand(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[TmuxStand]:
+    stand = TmuxStand(tmp_path, tmp_path_factory.mktemp("x"))  # a short socket path
+    started: list[subprocess.Popen[str]] = []
+    start = stand.start
+
+    def noted(*arguments: str) -> subprocess.Popen[str]:
+        started.append(start(*arguments))
+        return started[-1]
+
+    stand.start = noted  # type: ignore[method-assign]
+    yield stand
+    for process in started:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(10)
+
+
+def test_the_workstation_script_starts_the_console_and_the_view_behind_the_service(
+    tmux_stand: TmuxStand,
+) -> None:
+    import socket
+
+    stand = tmux_stand
+    process = stand.start("--thor", "192.0.2.7", "--socket-wait", "30")
+    until(lambda: stand.sent("agent") is not None, "the commands sent at once")
+    assert stand.sent("service")[1] and stand.sent("viewer")[1]
+    assert stand.sent("camera")[1] and not stand.sent("agent")[1]
+    # Nothing listens on the service's socket yet: neither command is sent.
+    time.sleep(0.7)
+    assert stand.sent("console") is None and stand.sent("view") is None
+    # A socket file a dead service left takes no connection: still neither.
+    stand.socket.parent.mkdir()
+    dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    dead.bind(str(stand.socket))
+    dead.close()
+    time.sleep(0.7)
+    assert process.poll() is None
+    assert stand.sent("console") is None and stand.sent("view") is None
+    # The service listens: both are sent, with Enter.
+    stand.socket.unlink()
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        listener.bind(str(stand.socket))
+        listener.listen(4)
+        output, errors = process.communicate(timeout=20)
+    finally:
+        listener.close()
+    assert (process.returncode, errors) == (0, "")
+    console, view = stand.sent("console"), stand.sent("view")
+    assert console[1] and console[0].endswith(" ./run_console.sh")
+    assert view[1] and view[0].endswith(" ./run_view.sh --config configs/view.yaml")
+    assert "took no connection" not in output
+    order = [pane for pane, _, _ in stand.keys()]
+    assert order.index("service") < min(order.index("console"), order.index("view"))
+
+
+def test_the_workstation_script_leaves_both_commands_typed_when_no_service_listens(
+    tmux_stand: TmuxStand,
+) -> None:
+    stand = tmux_stand
+    began = time.monotonic()
+    process = stand.start("--socket-wait", "1")
+    output, errors = process.communicate(timeout=30)
+    assert (process.returncode, errors) == (0, "")
+    assert 1.0 <= time.monotonic() - began < 15.0  # the wait is bounded
+    # Typed into their panes, as the agent's command: not started.
+    for pane in ("console", "view", "agent"):
+        command, entered = stand.sent(pane)
+        assert command and not entered, pane
+    assert stand.sent("service")[1]
+    told = " ".join(output.split())
+    assert f"took no connection on {stand.socket} within 1 s" in told
+    assert "wait for Enter in their panes" in told
+
+
+def test_the_workstation_script_waits_on_the_socket_the_service_makes(
+    tmux_stand: TmuxStand, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from isaaccapture_examples.agentic_remote.link_service import local
+
+    stand = tmux_stand
+    # The rig's service file names no socket: the service makes the default.
+    rig = yaml.safe_load((EXAMPLE / "configs" / "link_service_rebot.yaml").read_text())
+    assert not rig["socket_path"]
+    for runtime in (stand.env["XDG_RUNTIME_DIR"], None):
+        if runtime is None:
+            stand.env.pop("XDG_RUNTIME_DIR")
+            monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        else:
+            monkeypatch.setenv("XDG_RUNTIME_DIR", runtime)
+        process = stand.start("--print")
+        output, errors = process.communicate(timeout=30)
+        assert (process.returncode, errors) == (0, "")
+        once = f"(once the service takes a connection on {local.default_socket_path()})"
+        assert f"# console {once}\n" in output and f"# view {once}\n" in output
+    assert stand.keys() == []  # --print starts nothing
 
 
 # Source rules of the agent program's own files
@@ -604,8 +799,21 @@ def test_the_agent_program_sends_owner_requests_and_stop_and_nothing_else() -> N
             if node.func.attr == "request_owner":
                 requests.add(ast.unparse(node.args[0]))
     assert used == {"task_gate.py": {"request_owner"}, "launcher.py": {"stop"}}
-    # The owner requests of the gate: agent, nobody and help_needed.
-    assert requests == {"'agent'", "'nobody'", "request"}
+    # The owner requests of the gate: agent, nobody and help_needed for a
+    # task; motors_on after the rest tool, on the operator's typed yes; park,
+    # the robot app's own return to rest, at the end of a session on the
+    # operator's typed phrase.
+    assert requests == {
+        "'agent'",
+        "'nobody'",
+        "request",
+        "REQUEST_MOTORS_ON",
+        "REQUEST_PARK",
+    }
+    assert (task_gate.REQUEST_MOTORS_ON, task_gate.REQUEST_PARK) == (
+        "motors_on",
+        "park",
+    )
     gate = ast.parse((AGENT / "task_gate.py").read_text())
     (ending,) = (
         node
@@ -629,12 +837,43 @@ def test_the_agent_program_sends_owner_requests_and_stop_and_nothing_else() -> N
             and node.module.endswith("messages")
             for alias in node.names
         }
-        assert imported <= {"RobotState", "SIMULATED_DRIVERS"}, (name, imported)
+        assert imported <= {
+            "RobotState",
+            "SIMULATED_DRIVERS",
+            "REQUEST_MOTORS_ON",
+            "REQUEST_PARK",
+        }, (name, imported)
+    # Each of the two is asked for at one place, behind a typed answer.
+    source = (AGENT / "task_gate.py").read_text()
+    for word, question in (
+        ("REQUEST_MOTORS_ON", "CONNECT_QUESTION"),
+        ("REQUEST_PARK", "END_QUESTION"),
+    ):
+        (call,) = (
+            node
+            for node in ast.walk(gate)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "request_owner"
+            and ast.unparse(node.args[0]) == word
+        )
+        (function,) = (
+            node
+            for node in ast.walk(gate)
+            if isinstance(node, ast.FunctionDef)
+            and node.lineno <= call.lineno <= node.end_lineno
+        )
+        asked = [
+            node.lineno
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call) and ast.unparse(node.func) == "self._ask"
+        ]
+        assert asked and max(asked) < call.lineno, word
+        assert question in ast.get_source_segment(source, function), word
 
 
-def test_nothing_in_the_agent_program_can_cut_torque_or_start_a_return_to_rest() -> (
-    None
-):
+def test_the_agent_program_cuts_no_torque_and_calls_no_rest_tool_itself() -> None:
+    """The motors go off only on the Thor: the robot app does it, at measured rest."""
     import test_no_limp
 
     files = {f"agent/{name}" for name in (*PROGRAM_FILES, "console_cmd.py")}
@@ -844,20 +1083,24 @@ def test_a_mock_pick_and_place_runs_through_the_launcher(stage: Stage) -> None:
     assert result["return_home"]["ok"] is True
     assert len(stage.h.spy.targets) > 500  # the motors got the moves' setpoints
     assert len(stage.jaw_commands()) >= 2  # and the jaws their commands
-    # One typed yes, where the task was typed, before the first motion skill.
-    (prompt,) = stage.asked
+    # One typed yes, where the task was typed, before the first motion skill;
+    # then, the arm having been used, the question at the end of the session.
+    prompt, at_the_end = stage.asked
     assert json.dumps(PICK) in prompt and "First tool pick_and_place" in prompt
     assert f"at most {SPEED:g} rad/s" in prompt and "Type yes to proceed" in prompt
-    # The mock scene cannot confirm the place, so the task ends without
-    # success while the agent owns the arm: a help request (D6), answered
-    # before the link is closed.
-    assert stage.order == ["agent:completed", "help_needed:completed", "close:nobody"]
+    assert at_the_end == task_gate.END_QUESTION
+    # Not answered with its phrase: the arm holds, and nothing is asked of
+    # the robot app.
+    assert stage.said(task_gate.END_HOLDS)
+    # The mock scene cannot confirm the place, so the model ends the task
+    # without success while the agent owns the arm: the arm is given back, as
+    # the experiment's launcher goes on to its next task, before the link is
+    # closed. No help request.
+    assert stage.order == ["agent:completed", "nobody:completed", "close:nobody"]
     assert code == launcher.EXIT_FAILED
-    (help_needed,) = stage.h.heard("help_needed")
-    assert help_needed[2]["reason"].startswith("task ended without success: ")
-    assert "\n" not in help_needed[2]["reason"]
-    assert help_needed[2]["timed_return"] is False
-    assert stage.said("HELP NEEDED: task ended without success")
+    assert stage.h.heard("help_needed") == []
+    (given_back,) = stage.said("task ended without success")
+    assert "\n" not in given_back and "nobody owns it" in given_back
     assert stage.said("obstacle grid: live") and stage.said("robot connection up")
     # No torque was cut and the workstation checker is not latched.
     assert stage.h.spy.released_at == [] and stage.h.app.snapshot().owner == "nobody"
@@ -891,10 +1134,16 @@ def test_without_the_typed_yes_nothing_is_asked_of_the_robot(
     assert stage.motion == [] and stage.h.spy.targets == []
     assert stage.jaw_commands() == []
     (result,) = stage.results("open_gripper")
-    assert result["refused"] == "consent" and result["motion_blocked"] is True
-    assert result["error"] == "the operator did not type yes; no command sent"
+    # The experiment launcher's answer for a tool that is not admitted, then
+    # why. It does not end the task: the model goes on to its report.
+    assert result["refused"] == "consent" and "motion_blocked" not in result
+    assert result["error"] == (
+        "open_gripper not admitted in this session; no command sent: "
+        "the operator did not type yes"
+    )
     assert stage.h.heard("help_needed") == []  # the agent never owned the arm
-    assert code == launcher.EXIT_FAILED
+    assert stage.said("motion refused: the operator did not type yes; no command sent")
+    assert len(stage.reports()) == 1 and code == launcher.EXIT_OK
 
 
 @apai
@@ -962,13 +1211,15 @@ def test_a_skill_stop_with_clear_skill_stop_false_ends_in_restart_and_no_new_tas
     code = stage.run("--interactive", task={"clear_skill_stop": False})
     harness_of_run = stage.reports()[0]
     assert harness_of_run["success"] is False
-    # The skill stop sent no STOP; the help request found the Thor's own
-    # fault-stop, which had made nobody the owner already.
-    assert stage.order == ["agent:completed", "help_needed:refused", "close:nobody"]
+    # The skill stop sent no STOP; the give-back at the task's end found the
+    # Thor's own fault-stop, which had made nobody the owner already.
+    assert stage.order == ["agent:completed", "nobody:refused", "close:nobody"]
     assert stage.said("refused by the robot") and stage.said("nothing else is sent")
     # The second task was never read: the program said to restart and ended.
     assert stage.typed == [QUICK] and len(stage.reports()) == 1
-    assert stage.said(task_gate.RESTART) and len(stage.asked) == 1
+    assert stage.said(task_gate.RESTART)
+    # Under the fault-stop the end of the session asks nothing: the arm holds.
+    assert len(stage.asked) == 1 and stage.said(task_gate.END_HOLDS)
     assert code == launcher.EXIT_FAILED
     assert stage.h.spy.released_at == []
     # Nothing was sent after the failed move: no MOVE, no GRIPPER, no STOP.
@@ -1008,7 +1259,8 @@ def test_a_skill_stop_on_a_fault_stop_waits_for_the_reset_not_for_a_restart(
     assert starts[:2] == ["none", "fault"]
     assert stage.said("fault-stop") and refused["success"] is False
     # Nothing was sent for it: the jaws opened in the first and the third task.
-    assert len(stage.asked) == 2
+    # Two tasks were asked for; the third question is the session's end.
+    assert len(stage.asked) == 3 and stage.asked[2] == task_gate.END_QUESTION
     assert stage.motion == ["gripper", "send_move", "gripper"]
     # After the console's reset the third task's typed yes cleared the latch.
     assert task_gate.SKILL_STOP_NOTE in stage.asked[1]
@@ -1016,7 +1268,7 @@ def test_a_skill_stop_on_a_fault_stop_waits_for_the_reset_not_for_a_restart(
     assert opened["success"] is True
     assert stage.order == [
         "agent:completed",
-        "help_needed:refused",
+        "nobody:refused",
         "agent:completed",
         "nobody:completed",
         "close:nobody",
@@ -1129,6 +1381,8 @@ def test_a_welcome_that_declares_real_before_a_later_task_ends_the_program(
     # The first task ran; the second got no question and no owner request.
     assert stage.order == ["agent:completed", "nobody:completed", "close:nobody"]
     assert len(stage.asked) == 1 and stage.motion == ["gripper"]
+    # Nor is that robot app asked for a return to rest when the program ends.
+    assert stage.said(task_gate.END_HOLDS)
     assert len(stage.jaw_commands()) == ends["jaws"] > 0
     refused = stage.said("motion refused: ")
     assert len(refused) == 1
@@ -2039,9 +2293,13 @@ def test_the_full_stack_merges_the_experiments_files_over_apais(
     settings = agent_config.load_settings(SHIPPED)
     cfg = agent_config.build_apai_config(settings, apai_scratch / "run", camera="mock")
     data = cfg.as_dict()
+    # The experiment launcher's speed, and at most the Thor's agent limit.
+    speed = min(
+        agent_config.functional_joint_speed(), settings.thor.agent_max_joint_speed
+    )
     for view in (data, data["arms"][0]["resolved"]):
         assert view["arm"]["type"] == "robot_link"
-        assert view["safety"]["max_joint_vel"] == 0.1  # task.max_joint_speed
+        assert view["safety"]["max_joint_vel"] == speed
         assert view["occupancy"]["required"] is True
         assert view["occupancy"]["max_age_s"] == 3.0  # the experiment's
         assert view["perception_loop"]["rate_hz"] == 7
@@ -2049,10 +2307,13 @@ def test_the_full_stack_merges_the_experiments_files_over_apais(
         assert view["detector"]["type"] == "thor_astra"
         assert view["memory"]["persist_beliefs"] is False
     arm = data["arm"]
-    assert arm["home_q"] == list(settings.rig.home_q)
-    assert arm["motion_bounds"]["max_tcp_distance_m"] == 0.25
-    assert arm["body_mask"]["dilate_px"] == 6
-    assert arm["body_mask"]["attachments"]  # of the experiment's arm profile
+    theirs = yaml.safe_load(
+        (experiment_dir / "configs/thor_operation.yaml").read_text()
+    )
+    assert arm["home_q"] == theirs["home_q"]
+    assert arm["motion_bounds"] == theirs["motion_bounds"]
+    assert arm["body_mask"]["dilate_px"] == theirs["body_mask"]["dilate_px"]
+    assert arm["body_mask"]["attachments"]  # of the profile that one extends
     profile = yaml.safe_load((apai_scratch / "run" / "arm_profile.yaml").read_text())
     assert profile["extends"] == str(experiment_dir / "configs" / "rebot_workstation")
     # Without the experiment folder the full stack is refused, with the name
@@ -2247,11 +2508,13 @@ def test_an_interactive_session_ends_with_1_when_a_task_did_not_succeed(
     stage.typed = [QUICK]
     assert stage.run("--interactive") == launcher.EXIT_OK
     assert stage.reports()[-1]["success"] is True
-    # The second session: one task succeeds, the other is not authorized.
-    stage.typed = [QUICK, QUICK]
-    stage.answers = ["yes", "no"]
+    # The second session: one task succeeds; the other the model ends without
+    # success (the mock scene cannot confirm the place).
+    stage.typed = [QUICK, PICK]
+    stage.answers = ["yes", "yes"]
     assert stage.run("--interactive") == launcher.EXIT_FAILED
     assert [row["success"] for row in stage.reports()[-2:]] == [True, False]
+    assert stage.said("1 task(s) of this session ended without success")
     assert stage.order[-1] == "close:nobody"
 
 

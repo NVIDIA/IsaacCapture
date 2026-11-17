@@ -34,6 +34,7 @@ from unittest import mock
 
 import numpy as np
 import pytest
+import yaml
 from isaaccapture_examples.agentic_remote.agent import checkahead, launcher, task_gate
 from isaaccapture_examples.agentic_remote.agent import config as agent_config
 from isaaccapture_examples.agentic_remote.agent.arm_adapter import (
@@ -57,6 +58,7 @@ from test_launcher import (
     LOOK,
     PICK,
     QUICK,
+    SPEED,
     Stage,
     scene_robot_config,
     settings_file,
@@ -463,24 +465,28 @@ def test_two_tasks_run_end_to_end_and_every_setpoint_was_permitted(
     assert took < RUN_BUDGET_S
 
     # The life cycle: nobody, the agent for the first task, nobody when it
-    # succeeded; the agent again, and a help request when the second ended
-    # without success (the mock scene cannot confirm the place).
+    # succeeded; the agent again, and nobody when the model ended the second
+    # without success (the mock scene cannot confirm the place): the arm is
+    # given back and nobody is called, as the experiment's launcher goes on to
+    # its next task.
     assert trace.owners == ["nobody", "agent", "nobody", "agent", "nobody"]
     assert scene.order == [
         "agent:completed",
         "nobody:completed",
         "agent:completed",
-        "help_needed:completed",
+        "nobody:completed",
         "close:nobody",  # only after the end request's RESULT
     ]
-    first, second = scene.asked  # one typed yes per task
+    # One typed yes per task, then the question at the session's end.
+    first, second, at_the_end = scene.asked
     assert json.dumps(QUICK) in first and "First tool open_gripper" in first
     assert json.dumps(PICK) in second and "First tool pick_and_place" in second
+    assert at_the_end == task_gate.END_QUESTION and scene.said(task_gate.END_HOLDS)
     owners = [event[2].get("owner") for event in scene.h.heard("owner")]
-    assert owners == ["agent", None, "agent"]  # granted, given back, granted
-    (help_needed,) = scene.h.heard("help_needed")
-    assert help_needed[2]["reason"].startswith("task ended without success: ")
-    assert help_needed[2]["owner"] == "nobody"
+    # Granted, given back, granted, given back.
+    assert owners == ["agent", None, "agent", None]
+    assert "task ended without success: " in scene.h.heard("owner")[-1][1]
+    assert scene.h.heard("help_needed") == []
     # One task of the session ended without success.
     assert code == launcher.EXIT_FAILED
 
@@ -515,7 +521,7 @@ def test_two_tasks_run_end_to_end_and_every_setpoint_was_permitted(
     if scene.stack is not None:
         # The service saw the agent leave as nobody's owner: it asked for no help.
         until(lambda: scene.stack.service.robot_state.owner == "nobody", "nobody")
-        assert len(scene.h.heard("help_needed")) == 1
+        assert scene.h.heard("help_needed") == []
     # Nothing was written into APAI's checkout or the experiment folder.
     assert [tree_state(tree) for tree in read_only_trees()] == before
 
@@ -529,7 +535,53 @@ def test_two_tasks_run_end_to_end_and_every_setpoint_was_permitted(
 
 
 @apai
-def test_an_obstacle_on_the_path_ends_the_move_in_a_hold_and_help_is_asked(
+def test_the_agent_plans_within_the_speed_limit_the_robot_app_names_in_its_welcome(
+    make_realtime_apai: Callable[..., Any], tmp_path: Path
+) -> None:
+    """The Thor's own agent speed limit travels in its WELCOME.
+
+    The agent's file names the speed of the mock scene for the task and for
+    its copy of the Thor's limit; this robot app's file holds half of it.
+    """
+    slower = SPEED / 2
+    config = scene_robot_config()
+    agent = dataclasses.replace(config.limits.agent, max_joint_speed=slower)
+    limits = dataclasses.replace(config.limits, agent=agent)
+    harness = make_realtime_apai(
+        config=dataclasses.replace(config, limits=limits), connected=False
+    )
+    raise_arm(harness)
+    with apai_runtime_env(tmp_path) as folder:
+        scene = Scene(harness, folder)
+        code = scene.run("--task", QUICK)
+        assert code == launcher.EXIT_OK
+        assert scene.link.welcome.agent_max_joint_speed == slower
+        # Said once, at the start, with where each speed came from.
+        (line,) = scene.said("joint speed: ")
+        assert line == (
+            f"joint speed: the agent plans at {slower:g} rad/s, the lowest of "
+            f"{SPEED:g} (task.max_joint_speed) and {SPEED:g} "
+            f"(thor.agent_max_joint_speed); the Thor's own agent speed limit is "
+            f"{slower:g} (limits.agent.max_joint_speed, from the robot app's WELCOME)"
+        )
+        assert scene.lines.index(line) < scene.lines.index(scene.said("ready. ")[0])
+        # The operator's question, APAI's checker and the arm adapter all hold
+        # the Thor's limit, not the file's.
+        assert f"Joint speed at most {slower:g} rad/s" in scene.asked[0]
+        built = scene.trace.built
+        assert built["harness"].limits.max_joint_vel == slower
+        assert built["adapter"]._settings.agent_max_joint_speed == slower
+        resolved = yaml.safe_load(
+            (scene.run_dir / agent_config.RESOLVED_CONFIG).read_text()
+        )
+        assert resolved["safety"]["max_joint_vel"] == slower
+        # What the file itself says is kept as it is.
+        kept = json.loads((scene.run_dir / "agent-settings.json").read_text())
+        assert kept["thor"]["agent_max_joint_speed"] == SPEED
+
+
+@apai
+def test_an_obstacle_on_the_path_ends_the_move_in_a_hold_and_the_arm_is_given_back(
     scene: Scene,
 ) -> None:
     ObstacleGrid.made.clear()
@@ -560,8 +612,10 @@ def test_an_obstacle_on_the_path_ends_the_move_in_a_hold_and_help_is_asked(
 
     # The workstation checker refused a setpoint ahead of the arm.
     (result,) = scene.results("pick_and_place")
-    assert result["ok"] is False and result["motion_blocked"] is True
+    # A failed step, as with APAI's own arm: it does not end the task.
+    assert result["ok"] is False and "motion_blocked" not in result
     assert "clearance" in result["error"] and "occupancy map" in result["error"]
+    assert "e-stop latched" in result["error"]  # APAI's skill stopped the arm
     ((move_id, count),) = trace.moves.items()
     # Refused by the new grid's check of a setpoint cleared before, or by the
     # checker callback at the next setpoint to clear.
@@ -590,15 +644,17 @@ def test_an_obstacle_on_the_path_ends_the_move_in_a_hold_and_help_is_asked(
     snapshot = scene.h.app.snapshot()
     assert snapshot.stop_number == 0 and snapshot.stop_level.value == "none"
     assert scene.h.heard("stop") == [] and scene.h.heard("fault") == []
-    # APAI got a failed step and its skill stopped the arm: the task ended
-    # with a help request. The skill stop stands for the next task's typed
-    # yes; the program asks for no restart (D4).
-    assert scene.order == ["agent:completed", "help_needed:completed", "close:nobody"]
+    # APAI got a failed step and its skill stopped the arm; the model went on
+    # to its report, without success, and the arm was given back: no help
+    # request. The skill stop stands for the next task's typed yes; the
+    # program asks for no restart (D4).
+    assert scene.order == ["agent:completed", "nobody:completed", "close:nobody"]
     assert trace.owners == ["nobody", "agent", "nobody"]
-    (help_needed,) = scene.h.heard("help_needed")
-    assert help_needed[2]["reason"] == "blocked: arm stop latched"
+    assert scene.h.heard("help_needed") == []
+    assert scene.said("task ended without success: ")
     assert scene.said(task_gate.SKILL_STOP_TOLD) and not scene.said(task_gate.RESTART)
     assert trace.built["harness"].estopped is True and code == launcher.EXIT_FAILED
+    assert trace.built["adapter"]._latched is True
     assert scene.motion.count("send_move") == 1  # nothing was sent after it
     print(
         f"measured: setpoint {index} of {count} refused, {sent} joint targets "
@@ -664,10 +720,11 @@ def test_after_an_obstacle_refusal_the_next_task_runs_without_a_restart(
     assert time.monotonic() - began < RUN_BUDGET_S
 
     # The first task: the check ahead refused a setpoint, APAI's skill stopped
-    # the arm, the task ended with a help request. No STOP, no fault-stop.
+    # the arm, the model ended the task without success and the arm was given
+    # back. No STOP, no fault-stop.
     blocked, picked = scene.reports()
     first, second = scene.results("pick_and_place")
-    assert first["ok"] is False and first["motion_blocked"] is True
+    assert first["ok"] is False and "motion_blocked" not in first
     assert "clearance" in first["error"] and blocked["success"] is False
     first_move = next(iter(trace.moves))
     assert trace.results[first_move].status == "refused"
@@ -676,7 +733,10 @@ def test_after_an_obstacle_refusal_the_next_task_runs_without_a_restart(
     # named the skill stop, and the latch stood until the typed yes.
     assert not scene.said(task_gate.RESTART)
     assert task_gate.SKILL_STOP_NOTE not in scene.asked[0]
-    assert task_gate.SKILL_STOP_NOTE in scene.asked[1] and latched == [False, True]
+    assert task_gate.SKILL_STOP_NOTE in scene.asked[1]
+    # At the two tasks' questions and at the question of the session's end.
+    assert latched == [False, True, False]
+    assert scene.asked[2] == task_gate.END_QUESTION
     # It was cleared once, with the agent as owner on the Thor and before any
     # command of the second task.
     sent_before = scene.motion.index("send_move") + 1
@@ -692,15 +752,16 @@ def test_after_an_obstacle_refusal_the_next_task_runs_without_a_restart(
     assert len(trace.targets) > 300
     trace.check_every_target_was_permitted()
     trace.check_permits_follow_the_check_ahead()
-    # Each task took the arm with its own grant and ended with a help request
-    # (the mock scene cannot confirm the place).
+    # Each task took the arm with its own grant and gave it back when the
+    # model ended it without success (the mock scene cannot confirm the place).
     assert scene.order == [
         "agent:completed",
-        "help_needed:completed",
+        "nobody:completed",
         "agent:completed",
-        "help_needed:completed",
+        "nobody:completed",
         "close:nobody",
     ]
+    assert scene.h.heard("help_needed") == []
     assert trace.owners == ["nobody", "agent", "nobody", "agent", "nobody"]
     assert picked["success"] is False and code == launcher.EXIT_FAILED
     snapshot = scene.h.app.snapshot()
@@ -771,11 +832,16 @@ def test_a_stop_from_the_console_ends_the_task_and_the_next_one_runs(
     # A PERMIT that crossed the STOP quotes the old stop number: refused.
     for row in trace.thor_permits:
         assert row[3] is None or "stop number 0 does not match" in row[3]
-    # APAI got a halted motion. Nobody owned the arm any more, so the task's
-    # help request, with the numbers from before the STOP, was refused and
+    # APAI got a halted motion: a failed step, after which the model ended
+    # the task without success. Nobody owned the arm any more, so the
+    # give-back, with the numbers from before the STOP, was refused and
     # nothing else was sent.
     stopped, opened = scene.reports()
-    assert stopped["success"] is False and "MotionHalted" in stopped["summary"]
+    assert stopped["success"] is False
+    (halted,) = scene.results("pick_and_place")
+    assert halted["error"] == (
+        "MotionHalted: the robot app stopped the move: STOP from console: typed stop"
+    )
     assert scene.h.heard("help_needed") == []
     assert scene.said("refused by the robot: stop number 0 does not match")
     # The STOP latched the adapter, not the workstation checker: the next task
@@ -783,7 +849,7 @@ def test_a_stop_from_the_console_ends_the_task_and_the_next_one_runs(
     assert not scene.said(task_gate.RESTART)
     assert scene.order == [
         "agent:completed",
-        "help_needed:refused",
+        "nobody:refused",
         "agent:completed",
         "nobody:completed",
         "close:nobody",
@@ -952,7 +1018,9 @@ def test_a_robot_app_restarted_on_the_same_file_gets_the_next_task(
     code = scene.run("--interactive")
     second = seen["second"]
     assert scene.order == ["agent:completed", "nobody:completed"] * 2 + ["close:nobody"]
-    assert len(scene.asked) == 2 and not scene.said("motion refused")
+    # A question per task, and the one at the session's end.
+    assert len(scene.asked) == 3 and scene.asked[2] == task_gate.END_QUESTION
+    assert not scene.said("motion refused")
     assert second.heard("owner")[0][2].get("owner") == "agent"
     assert len(second.spy.jaw_commands) > seen["jaws"]
     assert code == launcher.EXIT_OK
@@ -976,10 +1044,16 @@ def test_ownership_whose_result_never_came_is_given_back(scene: Scene) -> None:
 
     scene.on_attach = on_attach
     code = scene.run("--task", QUICK, task={"end_wait_s": 0.3})
-    assert code == launcher.EXIT_FAILED
     (result,) = scene.results("open_gripper")
-    assert result["refused"] == "ownership" and result["motion_blocked"] is True
-    assert "the robot did not answer: no final RESULT" in result["error"]
+    # Not admitted, as a tool of the experiment's launcher: the task goes on
+    # and its end is the model's, which the mock model calls a success.
+    assert result["refused"] == "ownership" and "motion_blocked" not in result
+    assert result["error"].startswith(
+        "open_gripper not admitted in this session; no command sent: "
+        "the robot did not answer: no final RESULT"
+    )
+    assert scene.reports()[0]["success"] is True and code == launcher.EXIT_OK
+    assert len(scene.asked) == 1  # the arm was not used: no question at the end
     # The gate found the agent as owner and gave the arm back before the end.
     assert scene.order == ["nobody:completed", "close:nobody"]
     assert scene.trace.owners == ["nobody", "agent", "nobody"]
@@ -1014,9 +1088,10 @@ def test_ownership_granted_after_the_gate_gave_up_is_given_back_before_the_end(
 
     app._new_task = slow
     code = scene.run("--task", QUICK, task={"end_wait_s": 0.3})
-    assert code == launcher.EXIT_FAILED
     (result,) = scene.results("open_gripper")
-    assert result["refused"] == "ownership"
+    assert result["refused"] == "ownership" and "motion_blocked" not in result
+    # The tool was not admitted; the task's end is the mock model's report.
+    assert scene.reports()[0]["success"] is True and code == launcher.EXIT_OK
     # The arm was given back by the program itself, and only then the link closed.
     assert scene.order == ["nobody:completed", "close:nobody"]
     assert scene.trace.owners == ["nobody", "agent", "nobody"]
@@ -1050,9 +1125,12 @@ def test_a_late_ownership_is_given_back_and_the_next_task_runs(scene: Scene) -> 
     scene.answers = ["yes", "yes"]
     code = scene.run("--interactive", task={"end_wait_s": 0.3})
     first, second = scene.reports()
-    assert first["success"] is False and second["success"] is True
     refused, opened = scene.results("open_gripper")
     assert refused["refused"] == "ownership" and opened["ok"] is True
+    # The first task's tool was not admitted and nothing moved; its end is the
+    # mock model's report, which calls it a success.
+    assert "motion_blocked" not in refused
+    assert first["success"] is True and second["success"] is True
     # The late ownership was given back, then the second task took the arm.
     assert scene.order == [
         "nobody:completed",
@@ -1063,7 +1141,7 @@ def test_a_late_ownership_is_given_back_and_the_next_task_runs(scene: Scene) -> 
     assert scene.trace.owners == ["nobody", "agent", "nobody", "agent", "nobody"]
     assert "the ownership arrived late" in scene.h.heard("owner")[1][1]
     assert scene.h.heard("help_needed") == []
-    assert code == launcher.EXIT_FAILED  # the first task did not succeed
+    assert code == launcher.EXIT_OK
     scene.holds()
 
 
@@ -1439,7 +1517,7 @@ def test_a_scripted_refusal_ends_the_permits_before_the_refused_setpoint(
     assert status == "refused" and reason == f"permit reaches setpoint -1, not {sent}"
     assert 15 <= sent <= 40  # the first PERMIT with no setpoint left to clear
     assert all(through >= index for _, index, through in fake.thor.played)
-    assert fake.thor.stops == [] and adapter._stopped is False
+    assert fake.thor.stops == [] and adapter._latched is False
     # The whole-move check refuses before anything is sent.
     check.whole, check.refuse_at = "obstacle at the goal", None
     with pytest.raises(checkahead.CheckRefused, match="obstacle at the goal"):
@@ -1462,7 +1540,7 @@ def test_a_link_lost_mid_move_ends_the_permits_and_the_arm_runs_out_its_last(
     thread.join(5.0)
     apai_types = importlib.import_module("apai.types")
     assert not isinstance(raised.value, apai_types.SafetyViolation)
-    assert adapter._stopped is True  # nothing more is sent in this task
+    assert adapter._latched is True  # nothing more is sent in this task
     # No cancel could leave. The robot side goes as far as its last PERMIT
     # reached and holds there: at most the reach beyond the cut.
     until(lambda: fake.thor.results, "the move's end on the robot side")
@@ -1492,7 +1570,7 @@ def test_a_stale_robot_state_mid_move_cancels_and_latches_the_adapter(
     thread.join(5.0)
     assert "the permits were stopped" in str(raised.value)
     assert time.monotonic() - began < 2.0  # before the move would have ended
-    assert adapter._stopped is True
+    assert adapter._latched is True
     # No PERMIT reached further once the states stopped; the robot side ended
     # the move within the last one.
     throughs = [permit.through_index for permit in fake.thor.permits]
@@ -1512,7 +1590,7 @@ def test_a_latched_checker_refuses_the_jaws_as_it_refuses_a_move(
     apai_types = importlib.import_module("apai.types")
     # The checker alone is latched: no stop of the adapter, the task is open.
     check.harness.estopped = True
-    assert adapter._stopped is False and fake.link.lost_reason() is None
+    assert adapter._latched is False and fake.link.lost_reason() is None
     for command in (
         adapter.close_gripper_two_stage,  # APAI calls it past its SafeArm
         lambda: adapter.set_gripper(PROFILE["gripper"]["open_pos"]),
@@ -1767,4 +1845,4 @@ def test_without_a_new_camera_frame_the_permits_end_and_the_arm_holds(
     # With camera frames again the next move runs.
     rig.source.paused = False
     until(lambda: not rig.grid.is_stale(), "a fresh grid")
-    assert rig.adapter._stopped is False and rig.move(0.05, 0.5) is True
+    assert rig.adapter._latched is False and rig.move(0.05, 0.5) is True

@@ -154,7 +154,6 @@ from test_demo1_recipe import (  # noqa: E402
     AGENT_MOCK,
     CLEAR_WARNING,
     INVENTED_WARNING,
-    NOT_CONFIRMED,
     ROBOT_MOCK,
     START_WAIT_S,
     AgentTerminal,
@@ -1430,7 +1429,7 @@ def test_demo_2_the_agent_fails_a_person_takes_over_and_the_next_task_runs(
     h, trace = stage.h, scene.trace
     desk = stage.console()
     stage.live_view()
-    # Right B once the agent has asked for help; a lift of 3 cm in 3 s; right A
+    # Right B once the agent's task has failed; a lift of 3 cm in 3 s; right A
     # once the arm holds at rest.
     script = Script(stage.cues).cue("help").take_over().squeeze().lift(0.03, 3.0)
     script.release().hand_back("given back")
@@ -1474,24 +1473,29 @@ def test_demo_2_the_agent_fails_a_person_takes_over_and_the_next_task_runs(
 
     def person_takes_over() -> None:
         """Steps 1 to 10 of the takeover, between the agent's two tasks."""
-        # The help request on the console: its block ends with the takeover line.
-        last = desk.wait_long("  takeover: ", WAIT_S)
-        assert last == f"  {TAKEOVER_POSSIBLE}"
-        block = help_lines(desk.holding(""), last)
-        assert block[1] == "  jaws: empty" and block[-1] == last
-        waiting = stage.shows(lambda s: s.assistance_wait_s is not None)
-        assert (waiting.owner, waiting.motion) == (NOBODY, "hold")
+        # The model ended its task after the refused move, as in the
+        # functional program: the agent gave the arm back and asked for no
+        # help. The console says so; nobody owns the arm and no wait runs.
+        gave_back = desk.wait_long(
+            "[owner] the agent gave the arm back: task ended without success: ",
+            WAIT_S,
+        )
+        assert gave_back.endswith("; the arm holds and nobody owns it")
+        assert desk.count("HELP NEEDED") == 0 and h.heard("help_needed") == []
+        waiting = stage.shows(lambda s: s.owner == NOBODY and s.motion == "hold")
+        assert waiting.assistance_wait_s is None
         measured["agent targets"] = stage.sent()
         held_at = h.spy.pose()
         held_tip = solver.fk(solver.inside(held_at))[:3, 3]
         # A person takes the obstacle away.
         ObstacleGrid.made[-1].grid = grids["clear"]
 
-        # Right B: a STOP, which cancels the wait; held, it takes the arm over.
+        # Right B: a STOP; held, it takes the arm over.
         stage.cues.give("help")
         desk.wait(f"[stop] STOP from {logic.STOP_SENDER}: {logic.STOP_REASON}; ")
         (stop,) = h.heard(STOP_EVENT)
-        assert stop[2]["sender"] == logic.STOP_SENDER and stop[2]["wait_cancelled"]
+        assert stop[2]["sender"] == logic.STOP_SENDER
+        assert not stop[2]["wait_cancelled"]  # there was no wait to cancel
         assert desk.count(f"[stop] {stop[1]}") == 1
         owned = stage.shows(lambda s: s.owner == HUMAN)
         assert owned.assistance_wait_s is None and human(owned)["takeover_open"]
@@ -1569,13 +1573,13 @@ def test_demo_2_the_agent_fails_a_person_takes_over_and_the_next_task_runs(
         raise failed[0]
     assert took < RUN_BUDGET_S
 
-    # The first task ended in the help request; the second one, after the
+    # The first task ended without success; the second one, after the
     # hand-back, ran and succeeded.
     blocked, opened = scene.reports()
     assert blocked["success"] is False, blocked["summary"]
     assert opened["success"] is True, (opened["summary"], scene.lines[-12:])
     (stopped,) = scene.results("pick_and_place")
-    assert stopped["ok"] is False and stopped["motion_blocked"] is True
+    assert stopped["ok"] is False and "motion_blocked" not in stopped
     assert scene.results("open_gripper")[0]["ok"] is True
     assert code == launcher.EXIT_FAILED  # one task ended without success
     assert trace.owners == [
@@ -1706,7 +1710,7 @@ DIFFERS: dict[Path, dict[str, Any]] = {
     },
     ROBOT_HUMAN_CHECK: {
         "human.enabled": True,
-        "limits.human.max_joint_speed": 0.1,
+        "limits.human.max_joint_speed": 0.8,
         **INSIDE_REGION,
     },
 }
@@ -1771,7 +1775,7 @@ def test_the_demo_2_robot_files_differ_from_the_shipped_one_only_where_listed(
     # The speed of the headset checks is the rig's.
     rig = load_config(CONFIGS / "robot_app_rebot.yaml")
     assert check.limits.human.max_joint_speed == rig.limits.human.max_joint_speed
-    assert rig.limits.human.max_joint_speed == 0.1
+    assert rig.limits.human.max_joint_speed == 0.8  # the owner's cap for a person
 
 
 # The waits of this file
@@ -1821,6 +1825,13 @@ LIFT_START = (
     'human program: synthetic controller "lift"; driver {driver}; '
     "arm model mock, 6 joints"
 )
+
+
+# The help request of the mock agent's pick and place against the robot app's
+# own mock arm: APAI gave the grasp up after its attempts closed on air. And
+# the real seconds those attempts may take (about 125 s were measured).
+STUCK = "stuck: I could not hold 'red object' after "
+STUCK_WAIT_S = 240.0
 
 
 def recipe_files(folder: Path) -> tuple[str, Path, Path, Path]:
@@ -2054,8 +2065,10 @@ def test_demo_2_with_the_agent_failing_first_runs_as_processes(
         programs.append(watcher)
         rest = watcher.pose()
 
-        # The sixth terminal: the agent program. Its pick and place moves the
-        # arm and ends in a help request, as the mock scene confirms nothing.
+        # The sixth terminal: the agent program. The mock arm of the robot app
+        # has nothing between its jaws, and the agent decides from the jaw
+        # reading the robot app measures: every grasp closes on air. APAI
+        # tries the grasp again, gives up as stuck, and the agent asks for help.
         agent = AgentTerminal(agent_file)
         programs.append(agent)
         agent.wait(INVENTED_WARNING, START_WAIT_S)
@@ -2064,10 +2077,10 @@ def test_demo_2_with_the_agent_failing_first_runs_as_processes(
         agent.wait("task> ")
         agent.type(PICK)
         agent.answer("Type yes to proceed", YES, START_WAIT_S)
-        agent.wait(f"HELP NEEDED: {NOT_CONFIRMED}", RUN_BUDGET_S)
+        agent.wait(f"HELP NEEDED: {STUCK}", STUCK_WAIT_S)
         agent.wait("task> ")
         # The console shows the help request, the wait and the takeover line.
-        desk.wait(f"HELP NEEDED: {NOT_CONFIRMED}")
+        desk.wait(f"HELP NEEDED: {STUCK}")
         desk.wait(f"  takeover: not possible: {NO_HUMAN_PROGRAM}")
         waiting = watcher.ws.wait_state(lambda s: s.assistance_wait_s is not None)
         assert (waiting.owner, waiting.torque_on) == (NOBODY, True)
@@ -2129,10 +2142,22 @@ def test_demo_2_with_the_agent_failing_first_runs_as_processes(
         desk.wait("[owner] the agent gave the arm back: task completed")
         assert len([line for line in list(desk.said) if "WELCOME: " in line]) == 1
 
-        # The end of every program.
+        # The end of every program. Before it ends the agent program asks
+        # whether the arm returns to rest. On the typed phrase the robot app
+        # runs its own return to rest, which ends as the functional one: rest
+        # is measured, the jaws close and the motors go off.
         agent.end_input()
+        agent.answer("End of the session: return the arm to rest", PATH_IS_CLEAR)
+        agent.wait(
+            "the arm lies at rest: the jaws are closed, the motors are off",
+            RECIPE_REST_WAIT_S,
+        )
         assert agent.wait_exit() == launcher.EXIT_FAILED
         assert "1 task(s) of this session ended without success" in agent.text
+        parked = watcher.ws.wait_state(lambda s: s.motion == "rest_unpowered", WAIT_S)
+        assert (parked.torque_on, parked.stop_level) == (False, "none")
+        assert watcher.pose() == pytest.approx(rest, abs=0.05)
+        desk.wait("[release] torque release")
         desk.type("shutdown")
         desk.answer(f"{ASK_YES}shut down", YES)
         assert app.wait_exit() == 0
@@ -2206,10 +2231,12 @@ def test_a_person_opens_the_jaws_the_agent_left_closed_and_gives_the_arm_back(
         )
 
     # The agent's task: it closes the jaws on an object half the jaw travel
-    # wide, which leaves them in the light hold, and asks for help.
+    # wide and asks for help. The grip keeps the stiffness of its close: the
+    # help request sends the jaws nothing.
     assert agent.ws.start_task().status == "completed"
+    grip = 0.5  # the effort of the agent's jaw commands
     for opening, mode in ((1.0, PLAIN), (0.0, CLOSE_UNTIL_CONTACT)):
-        moved = agent.ws.wait_result(agent.ws.gripper(opening, mode=mode), WAIT_S)
+        moved = agent.ws.wait_result(agent.ws.gripper(opening, grip, mode=mode), WAIT_S)
         assert moved.status == "completed", moved.reason
     asked = agent.ws.request_owner("help_needed", reason="the grasp is not confirmed")
     assert agent.ws.wait_result(asked, WAIT_S).status == "completed"
@@ -2217,18 +2244,25 @@ def test_a_person_opens_the_jaws_the_agent_left_closed_and_gives_the_arm_back(
     assert left.gripper.opening == pytest.approx(0.5) and left.gripper.may_be_holding
     assert "jaws" not in human(left)
     agents = len(h.spy.jaw_commands)
-    assert h.spy.jaw_commands[-1] == (apai.JAWS_CLOSED, pytest.approx(apai.LIGHT))
+    assert grip > apai.LIGHT
+    assert h.spy.jaw_commands[-1] == (apai.JAWS_CLOSED, pytest.approx(grip))
     assert set(owners) <= {AGENT, NOBODY}
+    # The help request prompts the person at the console: its block ends
+    # with the takeover line.
+    assert desk.wait_long("  takeover: ", WAIT_S) == f"  {TAKEOVER_POSSIBLE}"
 
     # The takeover, with the trigger released: every HUMAN_SETPOINT asks for
     # fully open jaws, and the jaws stay as the agent left them.
     stage.cues.give("go")
     owned = stage.shows(lambda s: s.owner == HUMAN)
     number = owned.owner_number
-    # Right B's STOP held the jaws lightly where they were, as any STOP does.
-    light_hold = (apai.JAWS_CLOSED, pytest.approx(apai.LIGHT))
-    assert h.spy.jaw_commands[agents:] == [light_hold]
-    agents += 1
+    # Right B's STOP cancelled the assistance wait before the takeover.
+    (stop,) = h.heard(STOP_EVENT)
+    assert stop[2]["sender"] == logic.STOP_SENDER and stop[2]["wait_cancelled"]
+    assert owned.assistance_wait_s is None
+    # Right B's STOP sent the jaws nothing: no jaw command was running, and
+    # what the agent grips stays gripped.
+    assert h.spy.jaw_commands[agents:] == []
     asks(number, 1.0)
     short = stage.shows(lambda s: jaw_facts(s).get("asked") == 1.0)
     assert jaw_facts(short) == {

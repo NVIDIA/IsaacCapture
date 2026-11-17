@@ -27,6 +27,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -75,8 +76,19 @@ WAIT_S = 10.0  # real seconds a test gives another thread before it fails
 SAMPLE_LIMIT_S = 0.25
 VIEW_LIMIT_S = 0.5
 NEAR_S = 0.002
+# A takeover reads the joints before it is granted, and both ages count at the
+# grant. On the simulated arm that read takes six joints of 0.008 s each.
+READ_S = 0.048
+READ_TOOK = r"; the joint read took 0\.048 s"
 NO_DATA = "no fresh controller data: "
 VIEW_NOT_FRESH = "the live view is not fresh: "
+# How far from its limit an age is when a takeover is asked, and what the
+# refusal ends with; None: the takeover is granted.
+_AT_THE_REQUEST = {
+    "just inside the limit": (-READ_S - NEAR_S, None),
+    "outside the limit after the joint read": (-READ_S + NEAR_S, READ_TOOK),
+    "just outside the limit": (NEAR_S, ""),
+}
 # A HUMAN_SETPOINT of a ready controller with the grip squeezed, its data
 # 0.03 s old, computed on a ROBOT_STATE whose clock_mono_s is 500.
 SQUEEZE = HumanSetpoint(
@@ -179,15 +191,11 @@ def test_the_two_age_limits_keep_their_names_and_values():
 @pytest.mark.parametrize(
     "stretch", ["at the human program", "on the way", "since the ROBOT_STATE"]
 )
-@pytest.mark.parametrize(
-    ("total_s", "fresh"),
-    [(SAMPLE_LIMIT_S - NEAR_S, True), (SAMPLE_LIMIT_S + NEAR_S, False)],
-    ids=["just inside the limit", "just outside the limit"],
-)
-def test_every_stretch_of_time_counts_toward_the_sample_age_limit(
-    way, stretch, total_s, fresh
-):
+@pytest.mark.parametrize("asked", list(_AT_THE_REQUEST))
+def test_every_stretch_of_time_counts_toward_the_sample_age_limit(way, stretch, asked):
     h = way.h
+    beside, told = _AT_THE_REQUEST[asked]
+    total_s = SAMPLE_LIMIT_S + beside  # the age when the takeover is asked
     now = h.clock.monotonic()
     if stretch == "at the human program":
         # All of the age is in what the human program measured when it sent.
@@ -202,12 +210,12 @@ def test_every_stretch_of_time_counts_toward_the_sample_age_limit(
         fields = {"sample_age_s": 0.02, "sent_mono_s": None, "state_clock_mono_s": made}
     way.feed(setpoint(h, **fields))
     result = way.ask_takeover()
-    if fresh:
+    if told is None:
         assert result.status == "completed", result.reason
         return
     assert result.status == "refused"
     old = rf"{NO_DATA}0\.25\d s old, the limit is 0\.25 s"
-    assert re.fullmatch(old, result.reason), result.reason
+    assert re.fullmatch(old + told, result.reason), result.reason
     assert h.app.snapshot().owner is Owner.NOBODY and not h.app.takeover_open
 
 
@@ -495,7 +503,7 @@ def test_the_human_program_sends_the_age_and_the_time_of_the_moment_it_sends(
     program, monkeypatch
 ):
     hp, bench, start = program
-    work_s = 0.06  # the pass's own work, as the graph and the IK take time
+    work_s = 0.06  # the logic's step after the feed's, as the IK takes time
     step = HumanLogic.step
 
     def slow(self: HumanLogic, *args: Any, **keywords: Any) -> Any:
@@ -532,19 +540,111 @@ def test_the_human_program_sends_the_age_and_the_time_of_the_moment_it_sends(
     assert running.end() == 0
 
 
+@pytest.mark.link
+@pytest.mark.apai
+def test_the_time_of_the_controller_feeds_own_step_counts_toward_the_sample_age(
+    program,
+):
+    hp, bench, start = program
+    from isaaccapture_examples.agentic_remote.human.feed import ScriptFeed
+
+    work_s = 0.06  # what the feed's step takes behind the data it measured
+
+    class Slow(ScriptFeed):
+        """A script feed whose step goes on after its data were measured.
+
+        As a remote session's does: it reads the tick age, the age of the
+        newest controller data, and runs the retargeting graph after that.
+        """
+
+        def step(self, external_inputs: Any, events: Any, now_mono: float) -> Any:
+            fed = super().step(external_inputs, events, now_mono)
+            time.sleep(work_s)
+            return fed
+
+    thor = hp.robot(bench, owner="agent")
+    running = start(
+        "--report-s",
+        "0",
+        feed=lambda graph, state: Slow(graph, [hp.BASE], state=state),
+    )
+    got: list[HumanSetpoint] = []
+    end = time.monotonic() + WAIT_S
+    while len(got) < 5:
+        assert time.monotonic() < end, f"{len(got)} HUMAN_SETPOINTs: {running.said}"
+        records = [decode(*record) for record in thor.drain()]
+        got += [message for message in records if isinstance(message, HumanSetpoint)]
+        time.sleep(0.002)
+    # The script's controller data are 0 s old when the feed measures them:
+    # the age sent is the time the pass took from asking the feed on.
+    for message in got:
+        assert work_s <= message.sample_age_s < work_s + 1.0
+    assert running.end() == 0
+
+
+@pytest.mark.link
+@pytest.mark.apai
+def test_the_graphs_time_in_a_remote_session_counts_toward_the_sample_age(program):
+    """The headset's path: the teleop feed, on a stand-in for its remote session.
+
+    A remote session is Isaac Capture's client of the Teleop Session Server,
+    the workstation program that reads the headset and the controllers. Its
+    step says the tick age, the age of the newest controller data, and then
+    runs the retargeting graph.
+    """
+    hp, bench, start = program
+    import test_human_feed as hf
+    from isaaccapture_examples.agentic_remote.human.feed import TeleopFeed
+    from isaaccapture_examples.agentic_remote.human.types import TeleopSettings
+
+    tick_age_s, work_s = 0.012, 0.06
+
+    class SlowGraph(hf.StandInSession):
+        """A session whose graph runs for work_s after the tick age was read."""
+
+        def step(self, *, external_inputs: Any, execution_events: Any) -> Any:
+            outputs = super().step(
+                external_inputs=external_inputs, execution_events=execution_events
+            )
+            time.sleep(work_s)
+            return outputs
+
+    def feed(graph: Any, state: Any) -> TeleopFeed:
+        clock = SimpleNamespace(monotonic=time.monotonic, advance=lambda seconds: None)
+        server = hf.StandInServer(graph, clock)
+        server.tick_age_s = tick_age_s
+        return TeleopFeed(
+            graph,
+            TeleopSettings(endpoint=hp.NO_SERVER),
+            session_factory=lambda config: SlowGraph(config, server),
+        )
+
+    thor = hp.robot(bench, owner="agent")
+    running = start("--report-s", "0", feed=feed)
+    ages: list[float] = []
+    end = time.monotonic() + WAIT_S
+    while len(ages) < 5:
+        assert time.monotonic() < end, f"{len(ages)} ages: {running.said}"
+        records = [decode(*record) for record in thor.drain()]
+        sent = [message for message in records if isinstance(message, HumanSetpoint)]
+        ages += [message.sample_age_s for message in sent if message.stage == "ready"]
+        time.sleep(0.002)
+    # The tick age and, on top, the time the pass took after it was read.
+    assert all(tick_age_s + work_s <= age < work_s + 1.0 for age in ages), ages
+    assert running.end() == 0
+
+
 # The live view
 
 
 @pytest.mark.parametrize("stretch", ["at the view", "on the way"])
-@pytest.mark.parametrize(
-    ("total_s", "fresh"),
-    [(VIEW_LIMIT_S - NEAR_S, True), (VIEW_LIMIT_S + NEAR_S, False)],
-    ids=["just inside the limit", "just outside the limit"],
-)
+@pytest.mark.parametrize("asked", list(_AT_THE_REQUEST))
 def test_every_stretch_of_time_counts_toward_the_view_age_limit(
-    human_app, stretch, total_s, fresh
+    human_app, stretch, asked
 ):
     h = human_app
+    beside, told = _AT_THE_REQUEST[asked]
+    total_s = VIEW_LIMIT_S + beside  # the age when the takeover is asked
     now = h.clock.monotonic()
     if stretch == "at the view":
         report = ViewStatus(live=True, age_s=total_s, sent_mono_s=now)
@@ -554,12 +654,13 @@ def test_every_stretch_of_time_counts_toward_the_view_age_limit(
     h.client.send(report)
     feed(h, view=False)
     result = ask_takeover(h)
-    if fresh:
+    if told is None:
         assert result.status == "completed", result.reason
         return
     assert result.status == "refused"
     old = rf"{VIEW_NOT_FRESH}0\.50\d s old, the limit is 0\.5 s"
-    assert re.fullmatch(old + re.escape(OPEN_THE_VIEW), result.reason), result.reason
+    old += re.escape(OPEN_THE_VIEW) + told
+    assert re.fullmatch(old, result.reason), result.reason
 
 
 def test_a_view_status_delayed_on_its_way_is_as_old_as_it_is(human_app):

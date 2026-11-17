@@ -21,13 +21,20 @@ from isaaccapture_examples.agentic_remote.robot_app.authority import Authority
 from isaaccapture_examples.agentic_remote.robot_app.config import GripperConfig
 from isaaccapture_examples.agentic_remote.robot_app.gripper import (
     ALREADY_REFERENCED,
+    BASIC_MODES,
+    CLOSE,
+    CLOSE_TORQUE,
     CLOSE_UNTIL_CONTACT,
+    FOLLOW,
     JAW_MODES,
     JAWS_BUSY,
     MAX_WAITING,
+    NOT_REFERENCED,
+    OPEN,
     OPEN_EFFORT,
     PLAIN,
     REFERENCE,
+    DriverOutcome,
     GripperWorker,
     JawState,
 )
@@ -198,18 +205,25 @@ def test_the_default_jaw_settings(config):
     assert (cfg.reach_tol, cfg.full_open_tol) == (0.03, 0.03)
 
 
-def test_the_three_jaw_tolerances_are_three_settings(clock):
+def test_the_jaw_tolerances_are_separate_settings(clock):
     cfg = GripperConfig(target_tol=0.016, reach_tol=0.03, full_open_tol=0.05)
     state = JawState(cfg, clock)
     # Proven empty: the readings against the last jaw target, target_tol.
     assert state.classify(ScriptedJaws([0.015] * 3, 0.0)) is JawLoad.EMPTY
     assert state.classify(ScriptedJaws([0.02] * 3, 0.0)) is JawLoad.LOADED
     assert state.load_reason == "the jaws are at 0.020, not at their target 0.000"
-    assert state.classify(ScriptedJaws([0.98] * 3, 1.0)) is JawLoad.LOADED
-    # A close ended short of its target: reach_tol.
-    state.note_command_result(0.0, PLAIN, outcome("reached", 0.03))
-    assert state.may_be_holding is False
+    # At a full-open target the reading may lie full_open_tol short of it:
+    # where the driver's guarded opening may end.
+    assert state.classify(ScriptedJaws([0.95] * 3, 1.0)) is JawLoad.EMPTY
+    assert state.classify(ScriptedJaws([0.94] * 3, 1.0)) is JawLoad.LOADED
+    assert state.load_reason == "the jaws are at 0.940, not at their target 1.000"
+    # A close the driver ended as reached is not judged a second time.
     state.note_command_result(0.0, PLAIN, outcome("reached", 0.035))
+    assert state.may_be_holding is False
+    # A close a stop cut short: more than target_tol from its target.
+    state.note_command_result(0.2, PLAIN, outcome("cancelled", 0.21))
+    assert state.may_be_holding is False
+    state.note_command_result(0.2, PLAIN, outcome("cancelled", 0.22))
     assert state.may_be_holding is True
     # A measured full open: full_open_tol.
     state.note_command_result(1.0, PLAIN, outcome("reached", 0.94))
@@ -218,8 +232,106 @@ def test_the_three_jaw_tolerances_are_three_settings(clock):
     assert state.may_be_holding is False
 
 
-def test_the_jaw_modes_are_the_simulated_arms():
-    assert JAW_MODES == sim_module.JAW_MODES == (PLAIN, CLOSE_UNTIL_CONTACT)
+def test_the_jaw_modes_of_a_gripper_and_those_every_arm_takes():
+    assert JAW_MODES == messages.GRIPPER_MODES
+    assert (PLAIN, CLOSE_UNTIL_CONTACT, OPEN, CLOSE_TORQUE) == JAW_MODES
+    # The simulated arm takes the two basic ones; the worker gives it the
+    # others as these.
+    assert BASIC_MODES == sim_module.JAW_MODES == (PLAIN, CLOSE_UNTIL_CONTACT)
+    # No GRIPPER can ask for the typed close, a reference or a trigger step.
+    assert not {CLOSE, REFERENCE, FOLLOW} & set(JAW_MODES)
+
+
+@pytest.mark.parametrize(
+    ("target", "ended"),
+    [
+        (0.0, outcome("sent", 0.9)),  # the driver's close returned at once
+        (0.0, outcome("sent", None)),
+        (0.3, outcome("gripper_fault", 0.1, "gripper blocked while opening")),
+        (0.0, outcome("gripper_fault", None, "no gripper command sent")),
+        (0.0, outcome("stalled", 0.03)),  # on the closed stop: closed_frac
+    ],
+)
+def test_a_command_only_sent_or_ended_by_the_drivers_jaw_fault_sets_no_flag(
+    jaw_state, target, ended
+):
+    jaw_state.note_command_result(target, PLAIN, ended)
+    assert jaw_state.may_be_holding is False
+    # Nor does it clear one: only a measured full open does.
+    jaw_state.note_command_result(0.0, CLOSE_UNTIL_CONTACT, outcome("stalled", 0.4))
+    jaw_state.note_command_result(target, PLAIN, ended)
+    assert jaw_state.may_be_holding is True
+
+
+def test_a_full_open_the_driver_only_sent_clears_the_flag_when_it_is_measured(
+    jaw_state,
+):
+    jaw_state.note_command_result(0.0, CLOSE_UNTIL_CONTACT, outcome("stalled", 0.4))
+    jaw_state.note_command_result(1.0, PLAIN, outcome("sent", 0.5))
+    assert jaw_state.may_be_holding is True
+    jaw_state.note_command_result(1.0, PLAIN, outcome("sent", 0.98))
+    assert jaw_state.may_be_holding is False
+
+
+# JawState: the operator's word, and the reading taken for ROBOT_STATE
+
+
+def test_the_operators_word_stands_in_for_the_proof_until_the_next_command(
+    jaw_state,
+):
+    jaw_state.note_command_result(0.0, CLOSE_UNTIL_CONTACT, outcome("stalled", 0.4))
+    held = ScriptedJaws([0.4] * 6, 0.0)
+    assert jaw_state.classify(held) is JawLoad.LOADED
+    assert jaw_state.not_proven(held) == "loaded: the jaws may be holding something"
+    assert not jaw_state.word_given
+
+    jaw_state.take_word()
+    assert jaw_state.word_given and jaw_state.may_be_holding is False
+    assert jaw_state.classify(held) is JawLoad.EMPTY
+    assert jaw_state.load_reason == ""
+    assert jaw_state.gripper_state(held).load == "empty"
+    assert jaw_state.not_proven(held) is None
+    # It covers jaws that cannot be read or are not referenced too.
+    assert jaw_state.classify(ScriptedJaws(referenced=False)) is JawLoad.EMPTY
+    assert jaw_state.classify(ScriptedJaws([None], 0.0)) is JawLoad.EMPTY
+
+    # A refused command moved nothing: the word stands. Any other ends it.
+    jaw_state.note_command_result(0.0, PLAIN, outcome("refused", 0.4, "busy"))
+    assert jaw_state.word_given
+    jaw_state.note_command_result(0.4, PLAIN, outcome("sent", 0.4))
+    assert not jaw_state.word_given
+    assert jaw_state.classify(ScriptedJaws([0.4] * 3, 0.4)) is JawLoad.LOADED
+    assert jaw_state.load_reason == "the jaws are part open at 0.400"
+
+
+def test_clear_word_ends_the_operators_word(jaw_state):
+    jaw_state.take_word()
+    jaw_state.clear_word()
+    assert not jaw_state.word_given
+    assert jaw_state.classify(ScriptedJaws([0.4] * 3, 0.0)) is JawLoad.LOADED
+
+
+def test_refresh_takes_one_reading_for_robot_state_and_moves_nothing(
+    arm, worker, jaw_state, clock
+):
+    run(worker, 0.5)
+    commands = len(arm.jaw_commands)
+    clock.advance(3.0)
+    arm._jaw = 0.45  # the jaws were pushed since
+    jaw_state.refresh(arm)
+    state = jaw_state.gripper_state(arm)
+    assert (state.opening, state.t, state.valid) == (0.45, clock.monotonic(), True)
+    assert len(arm.jaw_commands) == commands and arm.light_holds == []
+    # A read that fails is unknown, never the reading from before.
+    arm.fail_gripper_reads(1)
+    jaw_state.refresh(arm)
+    assert jaw_state.gripper_state(arm).valid is False
+
+
+def test_refresh_reads_nothing_from_jaws_without_their_reference(jaw_state):
+    jaws = ScriptedJaws(referenced=False)  # a read would raise: nothing to pop
+    jaw_state.refresh(jaws)
+    assert jaw_state.gripper_state(jaws).valid is False
 
 
 # JawState: the "may be holding" flag
@@ -1061,10 +1173,22 @@ def test_the_light_hold_is_sent_at_once_and_again_after_the_command_returned(
     ]
 
 
-def test_a_stop_with_nothing_running_still_holds_lightly(arm, worker):
+def test_a_stop_with_nothing_running_leaves_the_jaws_as_they_are(arm, worker):
+    # As the stop of the arm's own driver: what the jaws grip stays gripped.
     run(worker, 0.5)
     assert arm.jaw_stiffness == "closing"
     worker.stop_now()
+    assert arm.jaw_stiffness == "closing"
+    assert arm.light_holds == []
+    assert arm.gripper_read() == 0.5
+    assert [command.opening for command in arm.jaw_commands] == [0.5]
+
+
+def test_a_stop_for_jaws_under_a_trigger_holds_lightly_with_nothing_running(
+    arm, worker
+):
+    run(worker, 0.5)
+    worker.stop_now(hold_idle=True)
     assert arm.jaw_stiffness == "light"
     assert len(arm.light_holds) == 1
     assert arm.gripper_read() == 0.5
@@ -1212,8 +1336,10 @@ def test_stop_now_may_be_called_from_on_done(arm, worker):
 
     worker.submit(0.5, 0.5, PLAIN, Owner.AGENT, on_done)
     assert done.wait() == outcome("reached", 0.5)
-    assert len(arm.light_holds) == 1
-    assert arm.jaw_stiffness == "light"
+    assert worker.wait_idle(WAIT_S)
+    # The command had ended: the stop found nothing running.
+    assert arm.light_holds == []
+    assert arm.jaw_stiffness == "closing"
 
 
 def test_commands_are_accepted_again_after_a_stop(arm, worker):
@@ -1236,29 +1362,144 @@ def hold_an_object(arm, worker, at: float = 0.4) -> None:
     assert run(worker, 0.0, mode=CLOSE_UNTIL_CONTACT).status == "stalled"
 
 
-def test_open_guarded_opens_in_steps_of_open_step(arm, worker, jaw_state, config):
+def test_open_guarded_is_one_opening_to_full_open(arm, worker, jaw_state):
     hold_an_object(arm, worker)
     assert open_fully(worker) == outcome("reached", 1.0)
-    steps = arm.jaw_commands[1:]
-    targets = [command.opening for command in steps]
-    assert targets == pytest.approx([0.45 + 0.05 * index for index in range(12)])
-    assert targets[-1] == 1.0
-    assert {command.mode for command in steps} == {PLAIN}
-    assert {command.max_effort for command in steps} == {OPEN_EFFORT}
-    assert {command.status for command in steps} == {"reached"}
-    previous = [0.4] + targets[:-1]
-    step = config.gripper.open_step
-    assert all(0 < b - a <= step + 1e-9 for a, b in zip(previous, targets))
+    # One command, not steps. The simulated arm has no opening routine of its
+    # own: it gets a plain command to full open.
+    (opening,) = arm.jaw_commands[1:]
+    assert (opening.opening, opening.mode, opening.status) == (1.0, PLAIN, "reached")
+    assert opening.max_effort == OPEN_EFFORT
     assert arm.gripper_read() == 1.0
     assert jaw_state.may_be_holding is False
     assert jaw_state.classify(arm) is JawLoad.EMPTY
 
 
-def test_open_guarded_ends_with_a_short_last_step(arm, worker):
-    run(worker, 0.87)
-    open_fully(worker)
-    targets = [command.opening for command in arm.jaw_commands[1:]]
-    assert targets == pytest.approx([0.92, 0.97, 1.0])
+class RoutineArm:
+    """An arm port that runs every jaw mode with a routine of its driver.
+
+    It notes each call and answers `ending`; unreferenced, it references
+    itself as APAI's reBot driver does.
+    """
+
+    def __init__(self, referenced: bool = True) -> None:
+        self.jaw_modes = (*JAW_MODES, CLOSE)
+        self.calls: list[tuple] = []
+        self.ending: GripperOutcome = outcome("reached", 0.5)
+        self.referenced = referenced
+        self.light_holds = 0
+
+    def gripper_referenced(self) -> bool:
+        return self.referenced
+
+    def gripper_read(self) -> float | None:
+        raise AssertionError("the worker read the jaws ahead of the driver")
+
+    def gripper_last_target(self) -> float | None:
+        return None
+
+    def gripper_command(self, opening, max_effort, mode, cancel):
+        self.calls.append(("command", opening, max_effort, mode))
+        self.referenced = True
+        return self.ending
+
+    def gripper_close_two_stage(self, scout_opening, opening, max_effort, cancel):
+        self.calls.append(("two_stage", scout_opening, opening, max_effort))
+        return self.ending
+
+    def gripper_close_torque(self, cancel):
+        self.calls.append(("close_torque",))
+        return self.ending
+
+    def gripper_light_hold(self) -> None:
+        self.light_holds += 1
+
+
+def test_each_request_is_the_routine_of_a_driver_that_has_one(make_worker):
+    arm = RoutineArm()
+    worker = make_worker(arm)
+    done = Done()
+    worker.submit(0.15, 0.7, CLOSE_UNTIL_CONTACT, Owner.AGENT, done, None, 0.5)
+    assert done.wait() is arm.ending
+    run(worker, 0.15, 0.7, CLOSE_UNTIL_CONTACT)  # no scout opening: one close
+    run(worker, 1.0, 0.8, OPEN)
+    run(worker, 0.0, 0.6, CLOSE_TORQUE)
+    for request in (worker.open_guarded, worker.close_jaws, worker.close_at_rest):
+        done = Done()
+        assert request(done) is None
+        done.wait()
+    assert arm.calls == [
+        ("two_stage", 0.5, 0.15, 0.7),
+        ("command", 0.15, 0.7, CLOSE_UNTIL_CONTACT),
+        ("command", 1.0, 0.8, OPEN),
+        ("command", 0.0, 0.6, CLOSE_TORQUE),
+        ("command", 1.0, OPEN_EFFORT, OPEN),
+        ("command", 0.0, OPEN_EFFORT, CLOSE),
+        ("close_torque",),  # at the driver's own effort
+    ]
+    assert arm.light_holds == 0  # no command is followed by a light hold
+
+
+def test_a_driver_without_the_routines_gets_the_two_basic_modes(arm, worker):
+    arm.jaw_object(0.4)
+    done = Done()
+    worker.submit(0.15, 0.7, CLOSE_UNTIL_CONTACT, Owner.AGENT, done, None, 0.5)
+    assert done.wait().status == "stalled"
+    assert run(worker, 0.3, 0.6, CLOSE_TORQUE).status == "stalled"
+    assert run(worker, 1.0, 0.8, OPEN).status == "reached"
+    for request in (worker.close_jaws, worker.close_at_rest):
+        done = Done()
+        assert request(done) is None
+        assert done.wait().status == "stalled"
+    sent = [(c.opening, c.max_effort, c.mode) for c in arm.jaw_commands]
+    assert sent == [
+        (0.15, 0.7, CLOSE_UNTIL_CONTACT),  # the seat stage alone
+        (0.0, 0.6, CLOSE_UNTIL_CONTACT),
+        (1.0, 0.8, PLAIN),
+        (0.0, OPEN_EFFORT, CLOSE_UNTIL_CONTACT),
+        (0.0, OPEN_EFFORT, CLOSE_UNTIL_CONTACT),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("scout", "mode", "reason"),
+    [
+        (0.5, PLAIN, "scout_opening is only for mode 'close_until_contact'"),
+        (1.5, CLOSE_UNTIL_CONTACT, "scout_opening must be between 0 and 1, got 1.5"),
+        ("a", CLOSE_UNTIL_CONTACT, "scout_opening must be a number, got 'a'"),
+    ],
+)
+def test_a_scout_opening_that_cannot_be_used_is_refused(
+    arm, worker, scout, mode, reason
+):
+    done = Done()
+    assert worker.submit(0.1, 0.5, mode, Owner.AGENT, done, None, scout) == reason
+    assert done.outcomes == [outcome("refused", None, reason)]
+    assert arm.jaw_commands == []
+
+
+def test_what_the_drivers_routine_reports_reaches_on_done(make_worker):
+    arm = RoutineArm()
+    arm.ending = DriverOutcome("stalled", 0.13, stages_skipped=1)
+    worker = make_worker(arm)
+    done = Done()
+    worker.submit(0.05, 0.45, CLOSE_UNTIL_CONTACT, Owner.AGENT, done, None, 0.4)
+    assert done.wait() == DriverOutcome("stalled", 0.13, stages_skipped=1)
+
+
+def test_jaws_without_their_reference_are_left_to_a_driver_that_references(
+    make_worker, jaw_state
+):
+    # The driver closes them to their stop first: only while they hold nothing.
+    arm = RoutineArm(referenced=False)
+    worker = make_worker(arm)
+    assert run(worker, 1.0, 0.8).status == "reached"
+    assert arm.calls == [("command", 1.0, 0.8, PLAIN)]
+
+    arm.referenced = False
+    jaw_state.note_command_result(0.0, CLOSE_UNTIL_CONTACT, outcome("stalled", 0.4))
+    assert run(worker, 1.0, 0.8) == outcome("refused", None, NOT_REFERENCED)
+    assert len(arm.calls) == 1  # nothing more reached the driver
 
 
 def test_open_guarded_on_open_jaws_still_sends_the_full_open_target(
@@ -1274,14 +1515,14 @@ def test_open_guarded_takes_the_effort_it_is_given(arm, worker):
     done = Done()
     assert worker.open_guarded(done, max_effort=0.25) is None
     done.wait()
-    assert [command.max_effort for command in arm.jaw_commands[1:]] == [0.25, 0.25]
+    assert [command.max_effort for command in arm.jaw_commands[1:]] == [0.25]
     done = Done()
     reason = worker.open_guarded(done, max_effort=1.5)
     assert reason == "max_effort must be between 0 and 1, got 1.5"
     assert done.outcomes == [outcome("refused", None, reason)]
 
 
-def test_a_stop_ends_open_guarded_between_its_steps(arm, worker, jaw_state):
+def test_a_stop_ends_open_guarded_where_the_jaws_are(arm, worker, jaw_state):
     hold_an_object(arm, worker)
     cancels = spy_on_cancel(arm)
     pause = JawPause(arm, lambda opening: opening >= 0.615, until=lambda: cancels[-1])
@@ -1291,7 +1532,7 @@ def test_a_stop_ends_open_guarded_between_its_steps(arm, worker, jaw_state):
     worker.stop_now()
     assert done.wait() == outcome("cancelled", where)
     targets = [command.opening for command in arm.jaw_commands[1:]]
-    assert targets == pytest.approx([0.45, 0.5, 0.55, 0.6, 0.65])  # no later step
+    assert targets == [1.0]  # the one opening, and nothing after the stop
     assert arm.jaw_commands[-1].status == "cancelled"
     assert arm.gripper_read() == where == pytest.approx(0.62)
     assert arm.jaw_stiffness == "light"
@@ -1299,56 +1540,26 @@ def test_a_stop_ends_open_guarded_between_its_steps(arm, worker, jaw_state):
     assert jaw_state.may_be_holding is True  # not measured fully open
 
 
-def test_open_guarded_sends_no_step_after_a_stop_number_change(arm, worker, authority):
-    hold_an_object(arm, worker)
-    raised = False
-
-    def raise_stop_once(opening: float) -> None:
-        nonlocal raised
-        if not raised and opening >= 0.515:
-            raised = True
-            authority.raise_stop("operator", "console")  # stop_now() is not called
-
-    arm.on_jaw_step = raise_stop_once
-    ended = open_fully(worker)
+def test_open_guarded_is_not_begun_after_a_stop_number_change(arm, worker, authority):
+    pause, _first, _second = queue_behind_a_paused_command(arm, worker)
+    opening = Done()
+    assert worker.open_guarded(opening) is None
+    authority.raise_stop("operator", "console")  # stop_now() is not called
+    pause.release.set()
+    ended = opening.wait()
     assert ended.status == "cancelled"
     assert ended.detail == "a STOP was raised after the command was admitted"
-    assert ended.opening == pytest.approx(0.55)  # the step under way was finished
-    targets = [command.opening for command in arm.jaw_commands[1:]]
-    assert targets == pytest.approx([0.45, 0.5, 0.55])
+    assert all(command.opening != 1.0 for command in arm.jaw_commands)
 
 
-def test_open_guarded_stopped_before_its_first_step_reports_what_it_read(
-    arm, worker, authority
-):
+def test_open_guarded_that_ends_short_leaves_the_flag_set(arm, worker, jaw_state):
     hold_an_object(arm, worker)
-    inner = arm.gripper_read
-
-    def read_then_stop() -> float | None:
-        value = inner()
-        authority.raise_stop("operator", "console")
-        return value
-
-    arm.gripper_read = read_then_stop
-    ended = open_fully(worker)
-    assert ended.status == "cancelled"
-    assert ended.opening == pytest.approx(0.4)
-    assert len(arm.jaw_commands) == 1  # the close only
-
-
-def test_open_guarded_stops_at_a_step_that_does_not_reach(arm, worker, jaw_state):
-    hold_an_object(arm, worker)
-    inner = arm.gripper_command
 
     def jammed_at_half(opening, max_effort, mode, cancel):
-        if opening > 0.5 + 1e-9:
-            return outcome("timeout", 0.5)
-        return inner(opening, max_effort, mode, cancel)
+        return outcome("timeout", 0.5)
 
     arm.gripper_command = jammed_at_half
     assert open_fully(worker) == outcome("timeout", 0.5)
-    targets = [command.opening for command in arm.jaw_commands[1:]]
-    assert targets == pytest.approx([0.45, 0.5])
     assert jaw_state.may_be_holding is True
 
 
@@ -1382,9 +1593,7 @@ def test_open_guarded_sends_nothing_when_the_opening_cannot_be_read(
     arm.fail_gripper_reads(1)
     ended = open_fully(worker)
     assert ended.status == "refused"
-    assert ended.detail == (
-        "the jaw opening could not be read, so no opening step was sent"
-    )
+    assert ended.detail == "the jaw opening could not be read, so no opening was sent"
     assert len(arm.jaw_commands) == 1  # the close only
     assert jaw_state.may_be_holding is True
     assert open_fully(worker).status == "reached"  # the next try reads fine
@@ -1393,8 +1602,10 @@ def test_open_guarded_sends_nothing_when_the_opening_cannot_be_read(
 def test_open_guarded_needs_referenced_jaws(sim_arm, make_worker):
     sim_arm.connect()
     ended = open_fully(make_worker(sim_arm))
+    # The simulated driver references nothing by itself: it refuses.
     assert ended == outcome("refused", None, "the jaws are not referenced")
-    assert sim_arm.jaw_commands == []
+    assert [command.status for command in sim_arm.jaw_commands] == ["refused"]
+    assert sim_arm.gripper_last_target() is None
 
 
 def test_open_guarded_waits_its_turn_behind_a_command(arm, worker):
@@ -1407,7 +1618,7 @@ def test_open_guarded_waits_its_turn_behind_a_command(arm, worker):
     assert closing.wait() == outcome("reached", 0.9)
     assert opening.wait() == outcome("reached", 1.0)
     targets = [command.opening for command in arm.jaw_commands]
-    assert targets == pytest.approx([0.9, 0.95, 1.0])
+    assert targets == [0.9, 1.0]
 
 
 # GripperWorker: driver faults
@@ -1529,9 +1740,9 @@ def test_a_failed_light_hold_is_reported_once(arm, worker, error, reason):
 
     worker.on_fault = on_fault
     arm.gripper_light_hold = no_answer
-    worker.stop_now()  # does not raise
+    worker.stop_now(hold_idle=True)  # does not raise
     assert reported == [reason]
-    worker.stop_now()
+    worker.stop_now(hold_idle=True)
     assert reported == [reason, reason]  # a later stop reports its own failure
 
 
@@ -1876,3 +2087,28 @@ def test_a_stop_that_keeps_the_reference_still_cancels_any_other_command(bare):
     assert queued.outcomes == [DROPPED]
     assert closing.wait() == outcome("cancelled", where)
     assert arm.jaw_stiffness == "light" and len(arm.light_holds) == 2
+
+
+# A step of the jaws toward the trigger of a person who owns the arm
+
+
+@pytest.mark.parametrize("old", ["the owner number", "the stop number", "both", ""])
+def test_a_step_toward_a_trigger_needs_the_owner_and_stop_numbers_of_now(
+    arm, worker, authority, old: str
+):
+    authority.set_owner(Owner.HUMAN, "takeover")
+    now = authority.snapshot()
+    owner_number = now.owner_number - (old in ("the owner number", "both"))
+    stop_number = now.stop_number - (old in ("the stop number", "both"))
+    done = Done()
+    reason = worker.follow(0.5, owner_number, stop_number, done)
+    assert worker.wait_idle(WAIT_S)
+    if old:
+        assert reason is not None and reason.startswith("the request quotes owner")
+        assert done.outcomes == [outcome("refused", None, reason)]
+        assert arm.jaw_commands == [] and arm.gripper_read() == 1.0
+    else:
+        assert reason is None and done.wait() == outcome("reached", 0.5)
+        assert [(c.opening, c.mode) for c in arm.jaw_commands] == [
+            (0.5, CLOSE_UNTIL_CONTACT)
+        ]

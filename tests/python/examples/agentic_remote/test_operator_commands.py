@@ -13,7 +13,17 @@ import json
 import threading
 
 import pytest
+from isaaccapture_examples.agentic_remote.agent.console_cmd import (
+    ASK_CLOSE,
+    JAWS_NOT_CONFIRMED,
+)
+from isaaccapture_examples.agentic_remote.agent.console_cmd import (
+    ASK_JAWS_EMPTY as ASK_JAWS,
+)
 from isaaccapture_examples.agentic_remote.protocol.messages import (
+    CLOSE_JAWS,
+    OPEN_ACTIONS,
+    GripperState,
     Open,
     OwnerRequest,
     Release,
@@ -22,12 +32,21 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     Shutdown,
 )
 from isaaccapture_examples.agentic_remote.robot_app.app import (
+    CONFIRM_CLOSE,
     CONFIRM_JAWS_EMPTY,
+    CONFIRM_OPEN,
     CONFIRM_PATH,
+    EVENT_JAWS,
+    JAWS_EMPTY_WORD,
     PATH_CLEAR_PROMPT,
     REFERENCE_OFF,
 )
-from isaaccapture_examples.agentic_remote.robot_app.gripper import JAWS_BUSY
+from isaaccapture_examples.agentic_remote.robot_app.gripper import (
+    CLOSE_UNTIL_CONTACT,
+    JAWS_BUSY,
+    OPEN_EFFORT,
+    PLAIN,
+)
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     ArmFault,
     GripperOutcome,
@@ -36,8 +55,12 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     ReadFailed,
 )
 from isaaccapture_examples.agentic_remote.robot_app.terminal import (
+    ASK_JAWS_EMPTY,
     CONFIRM_REFERENCE,
     CONFIRM_REST,
+)
+from isaaccapture_examples.agentic_remote.robot_app.terminal import (
+    CONFIRM_OPEN as CONFIRM_OPEN_ASKED,
 )
 
 WAIT_S = 5.0  # real seconds a test gives another thread before it fails
@@ -1024,15 +1047,19 @@ def test_reference_is_refused_in_a_state_that_takes_no_jaw_command(
         expected = "fault-stop latched: motor 3 over temperature"
     elif state == "the motors off":
         assert final(h, h.client.release()).status == "completed"
-        expected = "the motors are off; restart the robot app"
+        expected = (
+            "the motors are off; switch them on again: type on at the Thor "
+            "terminal or run the console command on"
+        )
     else:
         h.app.close()
         expected = "the robot app is not running"
     h.arm._jaw_referenced = False  # the reference was lost
+    sent = list(h.arm.jaw_commands)  # a release closes the jaws before the cut
     done = Done()
     assert h.app.request_reference(True, done) == expected
     assert done.wait().status == "refused"
-    assert not h.arm.gripper_referenced() and h.arm.jaw_commands == []
+    assert not h.arm.gripper_referenced() and h.arm.jaw_commands == sent
 
 
 def test_a_typed_reference_references_the_jaws_and_rest_is_accepted_after_an_open(
@@ -1348,3 +1375,364 @@ def test_a_reference_that_the_driver_fails_is_a_fault_stop_with_the_motors_on(
     state = h.app.snapshot()
     assert (state.stop_level.value, state.fault_reason) == ("fault", reason)
     assert h.arm.torque_on() and h.arm.released_at == []
+
+
+# The typed open and the typed close of the jaws
+
+
+def jaws_sent(h) -> list[tuple[float, float, str]]:
+    """(opening, effort, mode) of every jaw command the simulated arm got."""
+    return [(c.opening, c.max_effort, c.mode) for c in h.arm.jaw_commands]
+
+
+def holding_an_object(h, at: float = 0.4) -> None:
+    """The agent closes the jaws on an object and gives the arm back."""
+    h.new_task()
+    h.arm.jaw_object(at)
+    grasp = final(h, h.client.gripper(0.0, mode="close_until_contact"))
+    assert grasp.status == "completed", grasp.reason
+    assert final(h, h.client.request_owner("nobody")).status == "completed"
+    h.client.wait_state(lambda s: s.owner == "nobody" and s.gripper.may_be_holding)
+
+
+def test_the_typed_open_is_one_opening_to_full_open(robot_app):
+    h = robot_app
+    holding_an_object(h)
+    sent = len(h.arm.jaw_commands)
+    assert final(h, h.client.open_jaws(confirmed=False)).reason == CONFIRM_OPEN
+    assert len(h.arm.jaw_commands) == sent
+    opened = final(h, h.client.open_jaws())
+    assert opened.status == "completed", opened.reason
+    assert opened.detail == {"outcome": "reached", "opening": 1.0}
+    # One command, not steps of gripper.open_step.
+    assert jaws_sent(h)[sent:] == [(1.0, OPEN_EFFORT, PLAIN)]
+    state = h.client.wait_state(lambda s: s.gripper.load == "empty")
+    assert state.gripper.may_be_holding is False
+
+
+def test_the_typed_close_closes_the_jaws_and_asks_only_while_they_may_hold(robot_app):
+    h = robot_app
+    sent = len(h.arm.jaw_commands)
+    # Jaws proven empty: no confirmation is needed.
+    closed = final(h, h.client.open_jaws(confirmed=False, action=CLOSE_JAWS))
+    assert closed.status == "completed", closed.reason
+    assert jaws_sent(h)[sent:] == [(0.0, OPEN_EFFORT, CLOSE_UNTIL_CONTACT)]
+    assert h.arm.gripper_read() == 0.0
+    # Jaws that may hold something: they close on it only on the typed word.
+    assert final(h, h.client.open_jaws()).status == "completed"
+    holding_an_object(h)
+    sent = len(h.arm.jaw_commands)
+    refused = final(h, h.client.open_jaws(confirmed=False, action=CLOSE_JAWS))
+    assert (refused.status, refused.reason) == ("refused", CONFIRM_CLOSE)
+    assert len(h.arm.jaw_commands) == sent
+    again = final(h, h.client.open_jaws(confirmed=True, action=CLOSE_JAWS))
+    assert again.status == "completed", again.reason
+    assert again.detail["outcome"] == "stalled"
+    assert h.arm.gripper_read() == pytest.approx(0.4)  # the object is still held
+
+
+def test_a_typed_open_or_close_needs_nobody_to_own_the_arm(robot_app):
+    h = robot_app
+    h.new_task()
+    for action in OPEN_ACTIONS:
+        refused = final(h, h.client.open_jaws(action=action))
+        assert refused.status == "refused"
+        assert refused.reason == "control owner is agent, not nobody"
+    assert h.arm.jaw_commands == []
+
+
+def test_an_open_with_an_action_the_robot_app_does_not_know_is_refused(robot_app):
+    h = robot_app
+    refused = final(h, h.client.open_jaws(action="squeeze"))
+    assert (refused.status, refused.reason) == ("refused", "unknown action 'squeeze'")
+    assert h.arm.jaw_commands == []
+
+
+def test_an_open_without_an_action_is_the_opening(robot_app):
+    # As a console that does not know the field sends it.
+    h = robot_app
+    command_id = send_raw(h, Open, "plain-open", **numbers(h), confirmed=True)
+    assert final(h, command_id).status == "completed"
+    assert jaws_sent(h) == [(1.0, OPEN_EFFORT, PLAIN)]
+
+
+def test_open_and_close_are_typed_at_the_thor_terminal_too(robot_app):
+    h = robot_app
+    thor = h.thor_terminal()
+    assert thor.ask("open", "no", answer="open: ") == f"open: refused: {CONFIRM_OPEN}"
+    assert h.arm.jaw_commands == []
+    assert thor.wait_line(CONFIRM_OPEN_ASKED)
+    assert thor.ask("open", "yes", answer="open: completed") == "open: completed"
+    # Empty jaws close without a question.
+    assert thor.ask("close", answer="close: ") == "close: completed"
+    assert jaws_sent(h) == [
+        (1.0, OPEN_EFFORT, PLAIN),
+        (0.0, OPEN_EFFORT, CLOSE_UNTIL_CONTACT),
+    ]
+    # Jaws that may hold something: the terminal asks first.
+    thor.ask("open", "yes", answer="open: completed")
+    holding_an_object(h)
+    asked = thor.ask("close", "no", answer="Close the jaws: they are not proven empty")
+    assert "(loaded: the jaws may be holding something)" in asked
+    assert thor.wait_line(f"close: refused: {CONFIRM_CLOSE}")
+    assert thor.ask("close", "yes", answer="close: completed") == "close: completed"
+    assert h.arm.gripper_read() == pytest.approx(0.4)
+
+
+# The jaw reading in ROBOT_STATE: the agent decides from it what the jaws hold
+
+
+def test_the_jaws_are_read_anew_for_robot_state_while_the_arm_holds(robot_app):
+    h = robot_app
+    reads = []
+    read = h.arm.gripper_read
+    h.arm.gripper_read = lambda: reads.append(1) or read()
+    h.arm._jaw = 0.7  # the jaws were pushed: no command told the robot app
+    h.advance(3 * h.config.state.publish_period_s, h.config.state.publish_period_s)
+    state = h.client.wait_state(lambda s: s.gripper.opening == 0.7)
+    assert state.gripper.valid is True
+    # One reading for each ROBOT_STATE period, not one for each dispatcher pass.
+    assert 1 <= len(reads) <= 4
+    # With the motors off nothing is read.
+    assert final(h, h.client.release(jaws_empty=True)).status == "completed"
+    reads.clear()
+    h.advance(3 * h.config.state.publish_period_s, h.config.state.publish_period_s)
+    assert reads == []
+
+
+def test_the_jaws_are_read_anew_after_a_move_and_not_during_it(robot_app):
+    h = robot_app
+    h.new_task()
+    reads = []
+    read = h.arm.gripper_read
+    h.arm.gripper_read = lambda: reads.append(len(h.arm.sent)) or read()
+    h.arm._jaw = 0.6
+    # The move takes 0.5 s of the app's clock: ten ROBOT_STATE periods.
+    moved = h.client.run_move(PATH, start_q=REST)
+    assert moved.status == "completed", moved.reason
+    # No reading while setpoints went out: each took the bus before the move
+    # began or after it had ended.
+    assert reads and set(reads) <= {0, len(PATH)}
+    # The state that shows the move's end has a reading newer than its last
+    # setpoint: the agent's "held or closed on nothing" is decided from it.
+    state = h.client.wait_state(
+        lambda s: (s.last_result or {}).get("command_id") == moved.command_id
+    )
+    assert reads[-1] == len(PATH)
+    assert state.gripper.opening == 0.6 and state.gripper.t >= state.target_t
+
+
+# The operator's word that the jaws are empty
+
+JAWS_REFUSAL = (
+    "the jaws are not proven empty (loaded): the jaws may be holding something"
+)
+
+
+def test_a_release_refused_for_the_jaws_is_taken_on_the_operators_word(robot_app):
+    h = robot_app
+    holding_an_object(h)
+    refused = final(h, h.client.release())
+    assert (refused.status, refused.reason) == ("refused", JAWS_REFUSAL)
+    assert h.arm.torque_on()
+    taken = final(h, h.client.release(jaws_empty=True))
+    assert taken.status == "completed", taken.reason
+    assert not h.arm.torque_on()
+    (told,) = h.heard(EVENT_JAWS)[:1]
+    assert told[1] == JAWS_EMPTY_WORD.format(what="a torque release")
+
+
+def test_the_operators_word_ends_with_the_next_jaw_command(robot_app):
+    h = robot_app
+    holding_an_object(h)
+    # Away from rest the release is refused for the pose: the word was taken.
+    h.arm.set_pose(RAISED)
+    refused = final(h, h.client.release(jaws_empty=True))
+    assert refused.status == "refused" and "jaws" not in refused.reason
+    assert h.app._jaw_state.word_given
+    state = h.client.wait_state(lambda s: s.gripper.load == "empty")
+    assert state.gripper.may_be_holding is False
+    # A new task of the agent ends it.
+    h.arm.set_pose(REST)
+    h.new_task()
+    assert not h.app._jaw_state.word_given
+    assert final(h, h.client.gripper(0.0, mode="close_until_contact")).status == (
+        "completed"
+    )
+    assert final(h, h.client.request_owner("nobody")).status == "completed"
+    again = final(h, h.client.release())
+    assert again.status == "refused" and again.reason.startswith(
+        "the jaws are not proven empty"
+    )
+
+
+@pytest.mark.parametrize("command", ["release", "rest", "quit"])
+def test_the_thor_terminal_asks_about_the_jaws_and_takes_the_typed_word(
+    robot_app, command
+):
+    h = robot_app
+    holding_an_object(h)
+    if command == "rest":
+        h.arm.set_pose(RAISED)
+    thor = h.thor_terminal()
+    # A quit with the arm at rest asks nothing about the path.
+    typed = [command, "path is clear"] if command == "rest" else [command]
+    line = thor.ask(*typed, answer=f"{command}: ")
+    assert "the jaws are not proven empty" in line
+    asked = thor.wait_line(f"{command} was refused because the jaws are not proven")
+    assert asked == ASK_JAWS_EMPTY.format(what=command)
+    assert h.arm.torque_on() and h.arm.sent == []
+    # The typed word: the command is asked again, and goes on.
+    typed[0] = "jaws are empty"
+    assert thor.ask(*typed, answer=f"{command}: completed")
+    assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
+
+
+def test_the_thor_terminals_question_about_the_jaws_stands_for_one_line(robot_app):
+    h = robot_app
+    holding_an_object(h)
+    thor = h.thor_terminal()
+    unknown = "unknown command 'jaws are empty'; type help"
+    # No question was put: the phrase is no command.
+    assert thor.ask("jaws are empty", answer="unknown command") == unknown
+    thor.ask("release", answer="release: refused")
+    thor.wait_line("release was refused because the jaws are not proven")
+    # Anything else typed next withdraws the question.
+    thor.ask("help", answer="stop ")
+    assert thor.ask("jaws are empty", answer="unknown command") == unknown
+    assert len(thor.written("release: ")) == 1
+    assert h.arm.torque_on()
+
+
+# The operator console: the typed close, and the question about the jaws
+
+
+@pytest.fixture
+def console_robot(tmp_path_factory):
+    """A robot link service whose robot side answers as scripted."""
+    from link_bench import Bench
+    from test_console_cmd import Console as ScriptedRobot
+
+    bench = Bench(tmp_path_factory.mktemp("oj"))
+    robot = ScriptedRobot(bench)
+    yield robot
+    robot.close()
+    bench.close()
+
+
+@pytest.fixture
+def console_desk(console_robot):
+    """An operator console attached to that service; the test types and reads."""
+    from test_console import Desk
+
+    desk = Desk(console_robot.bench.path)
+    desk.wait("attached to the robot link service: robot connection up")
+    desk.sees(lambda state: True)
+    yield desk
+    desk.close()
+
+
+def refuse_for_the_jaws(robot) -> None:
+    """The robot app's answers: refused for the jaws, unless on the typed word."""
+
+    def reply(message):
+        if getattr(message, "jaws_empty", False):
+            return [Result(message.command_id, "completed")]
+        return [Result(message.command_id, "refused", JAWS_REFUSAL)]
+
+    robot.reply = reply
+
+
+def test_the_consoles_close_asks_only_while_the_jaws_are_not_proven_empty(
+    console_robot, console_desk
+):
+    robot, desk = console_robot, console_desk
+    # The robot's state shows jaws that are not proven empty.
+    desk.type("close")
+    asked = desk.wait('Type "yes" to close the jaws')
+    assert asked == ASK_CLOSE.format(jaws="jaws unknown").rstrip()
+    desk.type("no")
+    desk.wait("close not confirmed; nothing sent")
+    assert robot.settled() == []
+    desk.type("close", "yes")
+    desk.wait("close: RESULT completed")
+    (sent,) = robot.settled()
+    assert (type(sent), sent.action, sent.confirmed) == (Open, CLOSE_JAWS, True)
+    # Jaws proven empty: sent without a question.
+    empty = GripperState(1.0, 1000.0, True, True, 1.0, False, "empty")
+    robot.show(gripper=empty)
+    desk.sees(lambda state: state.gripper.load == "empty")
+    desk.type("close")
+    desk.wait("close: RESULT completed", 2)
+    last = robot.settled()[-1]
+    assert (type(last), last.action, last.confirmed) == (Open, CLOSE_JAWS, False)
+    assert desk.count('Type "yes" to close the jaws') == 2
+
+
+@pytest.mark.parametrize(
+    ("command", "phrase", "kind"),
+    [
+        ("release", "yes", Release),
+        ("rest", "path is clear", OwnerRequest),
+        ("shutdown", "yes", Shutdown),
+    ],
+)
+def test_the_console_asks_about_the_jaws_and_sends_the_typed_word(
+    console_robot, console_desk, command, phrase, kind
+):
+    robot, desk = console_robot, console_desk
+    refuse_for_the_jaws(robot)
+    desk.type(command, phrase)
+    desk.wait(f"{command}: RESULT refused: {JAWS_REFUSAL}")
+    asked = desk.wait(f"{command} was refused because the jaws are not proven empty")
+    assert asked == ASK_JAWS.format(command=command).rstrip()
+    # The typed word: the command is asked again, with its own question.
+    desk.type("jaws are empty", phrase)
+    desk.wait(f"{command}: RESULT completed")
+    first, second = robot.settled()
+    assert type(first) is type(second) is kind
+    assert (first.jaws_empty, second.jaws_empty) == (False, True)
+
+
+def test_the_consoles_question_about_the_jaws_stands_for_one_line(
+    console_robot, console_desk
+):
+    robot, desk = console_robot, console_desk
+    desk.type("jaws are empty")
+    desk.wait("unknown command 'jaws are empty'; type help")
+    refuse_for_the_jaws(robot)
+    desk.type("release", "yes")
+    desk.wait("release was refused because the jaws are not proven empty")
+    desk.type("state", "jaws are empty")
+    desk.wait("unknown command 'jaws are empty'; type help", 2)
+    assert [message.jaws_empty for message in robot.settled()] == [False]
+
+
+def test_the_console_command_asks_about_the_jaws_and_sends_the_typed_word(
+    console_robot,
+):
+    robot = console_robot
+    refuse_for_the_jaws(robot)
+
+    def ask(prompt: str) -> str:
+        return "jaws are empty" if '"jaws are empty"' in prompt else robot.ask(prompt)
+
+    assert robot.run("release", ask=ask) == 0
+    assert [line for line in robot.said if line.startswith("release: ")] == [
+        f"release: RESULT refused: {JAWS_REFUSAL}",
+        "release: RESULT completed",
+    ]
+    assert [message.jaws_empty for message in robot.settled()] == [False, True]
+    # Without the typed word nothing more is sent.
+    robot.forwarded.clear()
+    assert robot.run("release") == 1
+    assert robot.said[-1] == f"release: {JAWS_NOT_CONFIRMED}"
+    assert [message.jaws_empty for message in robot.settled()] == [False]
+
+
+def test_the_console_commands_close_is_an_open_with_the_close_action(console_robot):
+    robot = console_robot
+    assert robot.run("close") == 0  # jaws not proven empty: asked, "yes"
+    assert len(robot.asked) == 1 and "close on whatever they hold" in robot.asked[0]
+    (sent,) = robot.settled()
+    assert (type(sent), sent.action, sent.confirmed) == (Open, CLOSE_JAWS, True)

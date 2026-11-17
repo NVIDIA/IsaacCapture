@@ -9,7 +9,8 @@ machine program; its launcher is thor_runtime.py. Stand-ins take the place of
 the four modules the options load (thor_timing, thor_model_trace,
 thor_recording, thor_milestones), and the runs put the launcher on APAI's mock
 scene as test_launcher.py does. The last test runs the experiment's real
-modules, when its folder is there.
+modules, when its folder is there. Before it: three faults of the full stack
+that the first runs on the real arm showed.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import functools
 import json
 import signal
 import subprocess
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,7 +31,7 @@ from unittest import mock
 import pytest
 import test_launcher
 from isaaccapture_examples.agentic_remote.agent import config as agent_config
-from isaaccapture_examples.agentic_remote.agent import launcher, task_gate
+from isaaccapture_examples.agentic_remote.agent import checkahead, launcher, task_gate
 from isaaccapture_examples.agentic_remote.agent.arm_adapter import (
     AGENT_TERMINAL,
     RobotLinkArm,
@@ -55,12 +57,33 @@ ALL = RunOptions(
     debug_max_gib=2.0,
     batch_milestones=True,
 )
-# The spans (timed stretches) the launcher adds on the robot link arm and on the
-# link's stereo camera, in the order it adds them.
+# The spans (timed stretches) the launcher adds, in the order it adds them:
+# (class, method, span, category, the options the timing's wrap() gets). On
+# the robot link arm a move and its parts, on the check ahead what comes
+# before a MOVE and each of its passes, on the task gate the taking and the
+# giving back of the arm, on the link's stereo camera a stereo pair.
 LINK_SPANS = [
-    ("motor.stream_to", "Execution"),
-    ("gripper.close_two_stage", "Execution"),
-    ("camera.pair_wait_read_depth", "Look"),
+    ("RobotLinkArm", "stream_to", "motor.stream_to", "Execution", {}),
+    (
+        "RobotLinkArm",
+        "close_gripper_two_stage",
+        "gripper.close_two_stage",
+        "Execution",
+        {},
+    ),
+    ("RobotLinkArm", "_fresh_state", "motor.fresh_joint_readings", "Execution", {}),
+    ("RobotLinkArm", "_await_first", "motor.move_to_first_result", "Execution", {}),
+    ("RobotLinkArm", "_await_armed", "motor.move_to_armed", "Execution", {}),
+    ("RobotLinkArm", "_permit_loop", "motor.permits", "Execution", {}),
+    # A span without length per point of the permit loop, named by the point.
+    ("RobotLinkArm", "_mark", "motor.mark", "Execution", {"named_argument": 1}),
+    ("CheckAhead", "wait_fresh_grid", "safety.wait_fresh_grid", "Safety", {}),
+    ("CheckAhead", "vet_whole", "safety.check_whole_move", "Safety", {}),
+    # Counted in bulk inside the span of its move's permits.
+    ("MoveCheck", "step", "safety.check_ahead_pass", "Safety", {"hot": True}),
+    ("TaskGate", "_start", "task.take_control", "Task", {}),
+    ("TaskGate", "_end", "task.give_back_control", "Task", {}),
+    ("LinkStereoCamera", "_grab", "camera.pair_wait_read_depth", "Look", {}),
 ]
 # What the program says at its start, one line per option.
 SAID = ("timing: ", "model transcript: ", "debug recording: ", "milestone batching: ")
@@ -73,13 +96,14 @@ class Recorder:
 
     def __init__(self) -> None:
         self.hooks: list[str] = []
-        self.wrapped: list[tuple[str, str]] = []  # (span name, category)
+        # (span name, category, the options wrap() got)
+        self.wrapped: list[tuple[str, str, dict[str, Any]]] = []
         self.calls: list[str] = []  # the span name of each timed call
 
     def wrap(
-        self, function: Callable[..., Any], name: str, category: str
+        self, function: Callable[..., Any], name: str, category: str, **options: Any
     ) -> Callable[..., Any]:
-        self.wrapped.append((name, category))
+        self.wrapped.append((name, category, options))
 
         @functools.wraps(function)
         def measured(*args: Any, **kwargs: Any) -> Any:
@@ -87,6 +111,23 @@ class Recorder:
             return function(*args, **kwargs)
 
         return measured
+
+
+class Evidence:
+    """In place of the experiment's debug recorder: the events it was given."""
+
+    def __init__(self) -> None:
+        self.hooks: list[str] = []
+        self.events: list[tuple[str, dict[str, Any]]] = []  # (kind, data)
+
+    def record(self, kind: str, builder: Callable[[], dict[str, Any]]) -> int:
+        self.events.append((kind, builder()))
+        return len(self.events)
+
+
+def state_fields(state: Any) -> dict[str, Any]:
+    """In place of the experiment's state_fields: the pose and its time."""
+    return {"q": [float(value) for value in state.q], "t": float(state.t)}
 
 
 class Experiment:
@@ -111,6 +152,8 @@ class Experiment:
         # Per agent that got the batching: whether its run_task was the task
         # gate's wrapper already.
         self.batched: list[bool] = []
+        # What the recording session yields: None, or an Evidence.
+        self.evidence: Any = None
 
     def module(self, name: str) -> SimpleNamespace:
         """In place of launcher.experiment_module."""
@@ -119,7 +162,9 @@ class Experiment:
             "thor_model_trace": SimpleNamespace(
                 model_trace_session=self.model_trace_session
             ),
-            "thor_recording": SimpleNamespace(recording_session=self.recording_session),
+            "thor_recording": SimpleNamespace(
+                recording_session=self.recording_session, state_fields=state_fields
+            ),
             "thor_milestones": SimpleNamespace(
                 install_batched_milestones=self.install_batched_milestones
             ),
@@ -168,9 +213,9 @@ class Experiment:
             yield
 
     @contextmanager
-    def recording_session(self, run_dir: Any, *, max_bytes: int) -> Iterator[None]:
+    def recording_session(self, run_dir: Any, *, max_bytes: int) -> Iterator[Any]:
         with self._session("recording", directory=run_dir, max_bytes=max_bytes):
-            yield
+            yield self.evidence
 
     def install_batched_milestones(self, agent: Any) -> None:
         self.note("batch")
@@ -257,13 +302,35 @@ def test_the_command_line_of_the_experiments_launcher_is_taken(tmp_path: Path) -
         "--operate --interactive --record-debug --depth-backend ffs "
         "--motion-approval task --batch-milestones"
     ).split()
-    # --operate and --depth-backend ffs name what the program does anyway.
+    # --operate and --depth-backend ffs change nothing of what a run records.
     assert parsed(full, *old) == parsed(
         full, "--interactive", "--record-debug", "--batch-milestones"
     )
+    # Three of its arguments go to APAI's configuration: the stereo matcher by
+    # any name (the experiment's own list is asked when it is built), its two
+    # speed profiles and a mounting record.
+    parser = launcher._parser()
+    args = parser.parse_args(["--config", "x", *old])
+    assert launcher._config_arguments(args) == {
+        "speed_profile": None,
+        "depth_backend": "ffs",
+        "mounting": None,
+    }
+    more = ["--speed-profile", "conservative", "--mounting", "/m/latest.json"]
+    args = parser.parse_args(["--config", "x", "--depth-backend", "sgm", *more])
+    assert launcher._config_arguments(args) == {
+        "speed_profile": "conservative",
+        "depth_backend": "sgm",
+        "mounting": "/m/latest.json",
+    }
     with pytest.raises(SystemExit) as refused:
-        parsed(full, "--depth-backend", "sgm")
+        parsed(full, "--speed-profile", "fast")
     assert refused.value.code == 2
+    # The speed profile is the full stack's: the minimal one has its own key.
+    minimal = agent_config.load_settings(settings_file(tmp_path))
+    with pytest.raises(agent_config.ConfigError, match="--speed-profile needs"):
+        agent_config.joint_speed(minimal, "conservative")
+    assert agent_config.joint_speed(minimal) == minimal.task.max_joint_speed
 
 
 def test_the_shipped_files_name_the_two_recordings(
@@ -335,6 +402,11 @@ def test_the_shipped_files_name_the_two_recordings(
         ),
         (["--motion-approval", "tool"], {}, "--motion-approval tool is not built"),
         (
+            ["--speed-profile", "conservative"],
+            {},
+            "--speed-profile needs experiment.stack full (it is minimal)",
+        ),
+        (
             ["--motion-approval", "tool"],
             {"stack": "full"},
             "one typed yes per task (--motion-approval task)",
@@ -372,9 +444,10 @@ def test_without_an_option_a_run_loads_nothing_of_the_experiment_and_leaves_no_f
     monkeypatch.setattr(launcher, "experiment_module", never)
     execute, stream_to = task_gate.TaskGate.execute, RobotLinkArm.stream_to
     assert stage.run("--task", QUICK) == launcher.EXIT_OK
-    # As before the options were there: one typed yes, the arm given back.
+    # As before the options were there: one typed yes, the arm given back;
+    # then the question at the end of a session that used the arm.
     assert stage.order == ["agent:completed", "nobody:completed", "close:nobody"]
-    assert len(stage.asked) == 1
+    assert len(stage.asked) == 2 and stage.asked[1] == task_gate.END_QUESTION
     for name in LEFT:
         assert not (stage.run_dir / name).exists(), name
     assert not [line for line in stage.lines if line.startswith(SAID)]
@@ -423,26 +496,35 @@ def test_each_option_installs_its_hook_once_in_the_order_of_the_experiments_laun
     # The timing took the task gate for the experiment's tool admission and the
     # program's question for its confirmation: both ran through it.
     assert made.began["timing"]["module"].Admission is task_gate.TaskGate
-    assert made.confirmations == 1 == len(stage.asked)
+    # The task's typed yes and the question at the session's end.
+    assert made.confirmations == 2 == len(stage.asked)
+    assert stage.asked[1] == task_gate.END_QUESTION
     assert made.tools.count("open_gripper") == 1
     # The batching was put on the one agent before the task gate wrapped its
     # run_task, as the experiment's launcher does.
     assert made.batched == [False]
-    # The spans of the robot link arm and of the link's stereo camera, and the
-    # wait for a task line: the one typed task, then the end of the input.
+    # The launcher's own spans, and the wait for a task line.
     assert made.recorder.wrapped == [
-        *LINK_SPANS,
-        ("operator.terminal_input", "Operator"),
+        *[(name, category, options) for _, _, name, category, options in LINK_SPANS],
+        ("operator.terminal_input", "Operator", {}),
     ]
-    assert made.recorder.calls == ["operator.terminal_input"] * 2
+    # What ran through them: the one typed task, whose jaw command took the
+    # arm and gave it back, then the end of the input. No move was made.
+    assert made.recorder.calls == [
+        "operator.terminal_input",
+        "task.take_control",
+        "task.give_back_control",
+        "operator.terminal_input",
+    ]
     assert [hook.rsplit(".", 2)[1:] for hook in made.recorder.hooks] == [
-        ["RobotLinkArm", "stream_to"],
-        ["RobotLinkArm", "close_gripper_two_stage"],
-        ["LinkStereoCamera", "_grab"],
+        [owner, method] for owner, method, _, _, _ in LINK_SPANS
     ]
     # Nothing stays wrapped after the run.
     assert task_gate.TaskGate.execute is execute
     assert RobotLinkArm.stream_to is stream_to
+    assert not hasattr(RobotLinkArm._permit_loop, "__wrapped__")
+    assert not hasattr(checkahead.MoveCheck.step, "__wrapped__")
+    assert not hasattr(task_gate.TaskGate._start, "__wrapped__")
     # Said at the start, before the robot connection: what is recorded where,
     # and what the workstation cannot record.
     up = stage.lines.index(stage.said("robot connection up")[0])
@@ -454,8 +536,11 @@ def test_each_option_installs_its_hook_once_in_the_order_of_the_experiments_laun
     assert "Not timed here: the motor reads and sends" in timing
     (recording,) = stage.said("debug recording: ")
     assert f"{stage.run_dir / 'debug'}, at most 2 GiB" in recording
-    assert "Not recorded here: the motor feedback and the motor commands" in recording
-    assert "robot.feedback" in recording
+    assert "./run_viewer.sh shows it in a browser" in recording
+    assert "Not recorded here: the motor commands and the single motor reads" in (
+        recording
+    )
+    assert "robot.feedback, is what this program read from ROBOT_STATE" in recording
     written = json.loads((stage.run_dir / "run-options.json").read_text())
     assert written == dataclasses.asdict(ALL)
 
@@ -545,7 +630,8 @@ def test_without_the_timing_nothing_is_timed_and_the_question_is_the_programs_ow
     # model transcript, no span, and no batching that was not asked for.
     assert made.began["model_trace"]["timing"] is None
     assert made.recorder.wrapped == [] and made.batched == []
-    assert made.confirmations == 0 and len(stage.asked) == 1
+    # Both questions, the task's and the session's end, are the program's own.
+    assert made.confirmations == 0 and len(stage.asked) == 2
     assert [line for line in stage.lines if line.startswith(SAID)] == stage.said(
         "model transcript: "
     )
@@ -562,12 +648,281 @@ def test_a_timing_without_a_recorder_adds_no_span_and_keeps_the_question() -> No
     options = RunOptions(timing=True, model_trace=True)
     sessions = launcher.experiment_sessions(options, Path("run"), ask)
     with mock.patch.object(launcher, "experiment_module", made.module):
-        with sessions as (asking, timing):
+        with sessions as (asking, timing, recording):
             assert timing is None and asking("Type yes: ") == "yes"
+            assert recording is None  # no debug recording was asked for
             assert noted == ["begin:timing", "begin:model_trace"]
     assert noted[2:] == ["end:model_trace", "end:timing"]
     assert made.began["model_trace"]["timing"] is None
     assert made.recorder.wrapped == []
+
+
+# What the experiment's viewer needs of a run. The viewer (thor_viewer.py) is a
+# web page for a browser on a run's debug recording. It lists a run only with
+# APAI's configuration in the run folder, and it draws the measured joints
+# from the recording's robot.feedback events.
+
+
+@apai
+def test_a_run_writes_apais_configuration_before_it_attaches(stage: Stage) -> None:
+    import yaml
+
+    file = stage.run_dir / agent_config.RESOLVED_CONFIG
+    there: list[bool] = []
+
+    def attach(socket_path: str | None = None, *, timeout_s: float) -> AgentLink:
+        there.append(file.is_file())
+        return stage.attach(socket_path, timeout_s=timeout_s)
+
+    assert stage.run("--task", QUICK, attach=attach) == launcher.EXIT_OK
+    # Written at the start: a run that goes on can be listed already.
+    assert file.name == "resolved-config.yaml" and there == [True]
+    written = yaml.safe_load(file.read_text(encoding="utf-8"))
+    # APAI's configuration as the run built it, with what the viewer reads.
+    assert written["arm"]["type"] == "robot_link"
+    assert written["arm"]["model"] and written["arm"]["ee_frame"]
+    assert written["safety"]["max_joint_vel"] == test_launcher.SPEED
+    assert "table_z" in written["safety"]
+
+
+@apai
+def test_a_configuration_that_cannot_be_written_costs_the_run_nothing(
+    stage: Stage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    # A value YAML cannot hold is a ConfigError, and no file is left.
+    odd = SimpleNamespace(as_dict=lambda: {"arm": object()})
+    with pytest.raises(agent_config.ConfigError, match="cannot be written as YAML"):
+        agent_config.write_resolved_config(tmp_path, odd)
+    assert not (tmp_path / agent_config.RESOLVED_CONFIG).exists()
+
+    def full(run_dir: Path, cfg: Any) -> None:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(agent_config, "write_resolved_config", full)
+    with caplog.at_level(logging.WARNING):
+        assert stage.run("--task", QUICK) == launcher.EXIT_OK
+    assert stage.order == ["agent:completed", "nobody:completed", "close:nobody"]
+    assert not (stage.run_dir / agent_config.RESOLVED_CONFIG).exists()
+    assert (
+        "resolved-config.yaml was not written, so the experiment's viewer will "
+        "not list this run: no space left on device"
+    ) in caplog.text
+
+
+@apai
+def test_a_run_with_the_debug_recording_records_the_poses_of_robot_state(
+    stage: Stage, stand_ins: Callable[..., Experiment]
+) -> None:
+    made = stand_ins(stage.order.append)
+    made.evidence = Evidence()
+    get_state = RobotLinkArm.get_state
+    began = time.monotonic()
+    assert stage.run("--task", QUICK) == launcher.EXIT_OK
+    ended = time.monotonic()
+    events = made.evidence.events
+    # The measured joints, robot.feedback, and what else each ROBOT_STATE
+    # reports of the motors, robot.state (test_agent_measures.py).
+    assert {kind for kind, _ in events} == {"robot.feedback", launcher.STATE_EVENT}
+    poses = [data for kind, data in events if kind == "robot.feedback"]
+    for data in poses:
+        # The pose the robot app published: the arm did not move in this task.
+        assert data["state"]["q"] == pytest.approx([0.0, 0.1, 0.1, 0.0, 0.0, 0.0])
+        assert data["read_failures"] == 0
+        assert data["source"] == launcher.FEEDBACK_SOURCE
+        assert data["clock"] == launcher.FEEDBACK_CLOCK
+        # Its time is one of this machine's monotonic clock, during the run:
+        # the ROBOT_STATE's receipt less the age of the joint readings.
+        assert began - 1.0 < data["state"]["t"] < ended
+    assert "receipt on the workstation's monotonic clock" in launcher.FEEDBACK_CLOCK
+    assert "no time of the motors" in launcher.FEEDBACK_CLOCK
+    # A steady feed from the ROBOT_STATEs themselves, also while APAI does
+    # not read the arm: at most 10 a second, and no ROBOT_STATE twice.
+    seen = [data["seq"] for data in poses]
+    assert len(seen) >= 3 and len(set(seen)) == len(seen)
+    assert len(poses) <= 10 * (ended - began) + 1
+    # The arm's own read is not wrapped: nothing is recorded on the skill thread.
+    assert RobotLinkArm.get_state is get_state
+    assert [hook.rsplit(".", 2)[1:] for hook in made.evidence.hooks] == [
+        ["Measures", "on_state"]
+    ]
+
+
+# Three faults the first runs on the real arm showed: the detector's model
+# client, the tools the model is told about, and an empty task line.
+
+
+@contextmanager
+def full_stack_hooks(
+    folder: Path, monkeypatch: pytest.MonkeyPatch, cloud: Any, codex_bin: str = ""
+) -> Iterator[Any]:
+    """launcher.agent_hooks of the full stack, on stand-ins for the experiment.
+
+    The experiment's behaviour hooks do nothing; `cloud` is in place of its
+    thor_cloud module, whose detector builds a model client of its own.
+    Yields the settings of the run.
+    """
+
+    @contextmanager
+    def nothing(*args: Any, **kwargs: Any) -> Iterator[None]:
+        yield
+
+    parts = {
+        "register_detector": lambda: None,
+        "motion_adapters": nothing,
+        "perception_adapters": nothing,
+        "placement_adapters": nothing,
+        "target_map_adapters": nothing,
+        "colors": SimpleNamespace(mask_color=None),
+        "mask_color": None,
+        "guidance": "\nTarget naming: the experiment's own guidance.",
+    }
+
+    def module(name: str) -> Any:
+        assert name == "thor_cloud", f"the experiment's {name} was loaded"
+        return cloud
+
+    block = {"stack": "full", **({"codex_bin": codex_bin} if codex_bin else {})}
+    settings = agent_config.load_settings(settings_file(folder, experiment=block))
+    monkeypatch.setattr(launcher, "_experiment_parts", lambda: parts)
+    monkeypatch.setattr(launcher, "experiment_module", module)
+    gate = mock.Mock()
+    gate.bind_run_task = lambda run_task: run_task
+    with launcher.agent_hooks({}, settings, mock.Mock(), gate, folder):
+        yield settings
+
+
+@apai
+def test_the_detectors_model_client_gets_the_program_the_file_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: list[dict[str, Any]] = []
+
+    def make_client(config: dict[str, Any]) -> str:
+        built.append(config)
+        return "the detector's client"
+
+    cloud = SimpleNamespace(make_client=make_client)
+    # The experiment's own file for its detector: a program inside its folder,
+    # which on the workstation is the Thor's copy.
+    theirs = {
+        "llm": {"type": "codex_exec", "codex_bin": ".tools/codex", "model": "m"},
+        "segmenter": {"model": "sam.pt", "device": "cuda:0"},
+    }
+    with full_stack_hooks(tmp_path, monkeypatch, cloud, "codex") as settings:
+        named = settings.experiment.codex_bin
+        assert named == str(tmp_path / "codex")
+        assert cloud.make_client(theirs) == "the detector's client"
+    assert cloud.make_client is make_client  # the experiment's own again
+    # The detector's client was built with the program this run names, and
+    # with everything else the experiment's file says.
+    (given,) = built
+    assert given["llm"] == {"type": "codex_exec", "codex_bin": named, "model": "m"}
+    assert given["segmenter"] == theirs["segmenter"]
+    assert theirs["llm"]["codex_bin"] == ".tools/codex"  # their file is not changed
+    # Without the setting: the experiment's own program, as its file names it.
+    built.clear()
+    with full_stack_hooks(tmp_path, monkeypatch, cloud):
+        cloud.make_client(theirs)
+    assert built == [theirs] and built[0] is theirs
+    assert cloud.make_client is make_client
+
+
+@apai
+def test_the_model_is_told_which_tools_apai_names_and_the_program_does_not_offer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+    import re
+
+    demo = importlib.import_module("apai.apps.demo")
+    orchestrator = importlib.import_module("apai.agent.orchestrator")
+    prompts = importlib.import_module("apai.agent.prompts")
+    apai_tools = {spec["name"] for spec in orchestrator.tool_specs_for_config(None)}
+    cloud = SimpleNamespace(make_client=lambda config: None)
+    with full_stack_hooks(tmp_path, monkeypatch, cloud):
+        # APAI builds its agent through the name the hooks replaced.
+        agent = demo.AgentOrchestrator(
+            mock.Mock(supports_vision=False), SimpleNamespace(cfg=None)
+        )
+    instructions = agent.system_prompt
+    offered = {spec["name"] for spec in agent.tool_specs}
+    # The text is in the agent's instructions, behind APAI's own and the
+    # experiment's.
+    assert instructions.startswith(prompts.SYSTEM_PROMPT)
+    assert instructions.endswith("\n" + launcher.TOOLS_GUIDANCE)
+    assert "the experiment's own guidance." in instructions
+    assert launcher.TOOLS_GUIDANCE.startswith(
+        "Tools on this robot: the tool list you were given is complete. "
+    )
+    # What APAI tells the model: its instructions and the descriptions of the
+    # tools that are offered. They name one tool that is not offered, and the
+    # text names exactly that one as not offered. APAI's rest tool is offered,
+    # as in the experiment's launcher.
+    told = prompts.SYSTEM_PROMPT + " ".join(
+        str(spec.get("description", "")) for spec in agent.tool_specs
+    )
+    missing = {
+        name
+        for name in apai_tools - offered
+        if re.search(rf"\b{re.escape(name)}\b", told)
+    }
+    assert missing == {"preview_grasp"} and "move_to_rest" in offered
+    not_offered = re.findall(r"(\w+) is not offered", launcher.TOOLS_GUIDANCE)
+    assert sorted(not_offered) == sorted(missing)
+    # Every other tool it names is offered.
+    for name in apai_tools & set(re.findall(r"\w+", launcher.TOOLS_GUIDANCE)):
+        assert name in offered or name in missing, name
+    assert {"grasp_object", "task_done"} <= offered
+    # The minimal stack keeps APAI's instructions as they are.
+    monkeypatch.undo()
+    minimal = agent_config.load_settings(settings_file(tmp_path))
+    gate = mock.Mock()
+    gate.bind_run_task = lambda run_task: run_task
+    with launcher.agent_hooks({}, minimal, mock.Mock(), gate, tmp_path):
+        plain = demo.AgentOrchestrator(
+            mock.Mock(supports_vision=False), SimpleNamespace(cfg=None)
+        )
+    assert plain.system_prompt == prompts.SYSTEM_PROMPT
+
+
+@apai
+def test_an_empty_task_line_does_not_end_the_program(stage: Stage) -> None:
+    # APAI's own prompt ends at an empty line; an Enter typed during a task
+    # is such a line. Here it is read again, and only the end of the input ends.
+    stage.typed = ["", "   ", QUICK, "\t", ""]
+    code = stage.run("--interactive")
+    assert code == launcher.EXIT_OK, stage.lines
+    assert stage.typed == []  # every line was read, up to the end of the input
+    assert stage.order == ["agent:completed", "nobody:completed", "close:nobody"]
+    # One task was asked for; the second question is the session's end.
+    assert len(stage.asked) == 2 and stage.motion == ["gripper"]
+    (report,) = stage.reports()
+    assert report["task"] == QUICK and report["success"] is True
+
+
+@apai
+def test_the_end_of_the_input_at_the_first_prompt_ends_the_program(
+    stage: Stage,
+) -> None:
+    prompts: list[str] = []
+
+    def next_line(prompt: str = "") -> str:
+        prompts.append(prompt)
+        if len(prompts) < 3:
+            return ""
+        raise EOFError  # Ctrl+D
+
+    stage.next_line = next_line
+    assert stage.run("--interactive") == launcher.EXIT_OK
+    # The prompt came again after each empty line, with APAI's own text.
+    assert prompts == ["task> "] * 3
+    assert stage.asked == [] and stage.order == ["close:nobody"]
+    assert not (stage.run_dir / "task-reports.jsonl").exists()
 
 
 # The experiment's own modules
@@ -608,10 +963,8 @@ def test_the_experiments_own_modules_record_a_run_on_the_mock_scene(
     missing = [hook for hook in status["missing_hooks"] if "sam.lock" not in hook]
     assert missing == [] and status["writer_error"] is None
     ours = [hook for hook in status["hooks"] if "agentic_remote" in hook]
-    assert [hook.rsplit(".", 1)[1] for hook in ours] == [
-        "stream_to",
-        "close_gripper_two_stage",
-        "_grab",
+    assert [hook.rsplit(".", 2)[1:] for hook in ours] == [
+        [owner, method] for owner, method, _, _, _ in LINK_SPANS
     ]
     spans = {
         json.loads(line)["name"]
@@ -622,6 +975,8 @@ def test_the_experiments_own_modules_record_a_run_on_the_mock_scene(
         "tool:open_gripper",
         "operator.confirmation",
         "operator.terminal_input",
+        "task.take_control",
+        "task.give_back_control",
     } <= spans
     assert (run / "timing-report.txt").is_file() and (run / "timeline.html").is_file()
     # The model transcript: installed whole; the mock model made no request.
@@ -633,6 +988,11 @@ def test_the_experiments_own_modules_record_a_run_on_the_mock_scene(
     assert recording["finalized"] is True and recording["writer_error"] is None
     assert recording["max_bytes"] == 2 * GIB
     assert {"session.start", "session.end"} <= set(recording["counts"])
+    # The experiment's recorder took the launcher's two kinds of event, and
+    # dropped none of them: the feed ended before the recording did.
+    counts = recording["counts"]
+    assert counts[launcher.STATE_EVENT] >= counts["robot.feedback"] >= 1
+    assert recording["dropped_events"] == 0 and recording["snapshot_errors"] == 0
     assert (run / "debug" / "recording-report.txt").is_file()
     # Nothing of the experiment stays installed.
     assert task_gate.TaskGate.execute is execute and subprocess.Popen is popen

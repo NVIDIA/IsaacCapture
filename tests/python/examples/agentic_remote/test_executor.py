@@ -888,6 +888,47 @@ def test_a_further_permit_mid_move_lets_it_go_on(bare):
     assert bare.sent() == PATH
 
 
+def test_a_permit_that_comes_late_is_waited_for_in_a_hold(bare):
+    """The next permit arrives 0.06 s after the setpoint it covers was due."""
+    bare.permit(9)
+    sleep, given = bare.clock.sleep, []
+
+    def sleeping(s: float) -> None:
+        sleep(s)
+        times = bare.times()
+        if not given and len(times) == 10:
+            if bare.clock.monotonic() >= times[9] + PERIOD + 0.06:
+                given.append(bare.permit(len(PATH) - 1))
+
+    bare.patch.setattr(bare.clock, "sleep", sleeping)
+    outcome = bare.run(permit_gate=bare.gate)
+    assert outcome.status == "completed" and bare.sent() == PATH
+    times = bare.times()
+    # Nothing went out during the wait, and the move went on at its pace.
+    assert times[10] - times[9] == pytest.approx(PERIOD + 0.06, abs=PERIOD)
+    assert times[11] - times[10] == pytest.approx(PERIOD, abs=1e-6)
+    assert bare.arm.holds == [] and len(bare.missed) == 1
+
+
+def test_a_permit_that_does_not_come_ends_the_move_after_the_large_delay(bare):
+    bare.permit(9)
+    outcome = bare.run(permit_gate=bare.gate)
+    assert (outcome.status, outcome.index) == ("refused", 10)
+    # The arm held setpoint 9 for the large delay before the move ended.
+    waited = bare.clock.monotonic() - (bare.times()[9] + PERIOD)
+    assert waited >= bare.config.executor.large_delay_s - 1e-9
+    assert bare.arm.last_target()[0] == PATH[9]
+
+
+def test_a_cancel_ends_the_move_without_a_wait(bare):
+    bare.permit(len(PATH) - 1)
+    bare.on_send(lambda: bare.permit(-1), index=5)
+    outcome = bare.run(permit_gate=bare.gate)
+    assert (outcome.status, outcome.index) == ("refused", 6)
+    assert outcome.reason == "permit reaches setpoint -1, not 6"
+    assert bare.clock.monotonic() - bare.times()[5] < bare.config.executor.large_delay_s
+
+
 def test_no_setpoint_is_sent_once_the_permit_has_expired(bare):
     # Setpoints go out at 0.048, 0.068, ... s; the permit runs out between two.
     permit = bare.permit(len(PATH) - 1, expires_in_s=START_READ_S + 0.09)
@@ -1168,8 +1209,8 @@ def test_a_move_with_a_gate_is_armed_after_its_start_read_and_sends_after_a_perm
     bare.permit(len(PATH) - 1)
     outcome = bare.run(permit_gate=bare.gate)
     assert outcome.status == "completed"
-    # The start read, and the end pose read after the move.
-    assert stages.in_start_read == ["", "sending"]
+    # The start read: the end read asks joint by joint, not through read_all().
+    assert stages.in_start_read == [""]
     assert stages.in_wait == ["armed"]
     assert stages.at_begin == ["sending"]
     assert stages.at_send == ["sending"] * len(PATH)
@@ -1182,7 +1223,7 @@ def test_a_move_without_a_gate_is_never_armed(rig):
     rig.on_send(lambda: seen.add(rig.executor.stage()))
     outcome = rig.run()
     assert outcome.status == "completed"
-    assert stages.in_start_read == ["", "sending"]
+    assert stages.in_start_read == [""]
     assert stages.at_begin == ["sending"]
     assert seen == {"sending"}
     assert stages.in_wait == []
@@ -1300,7 +1341,7 @@ def test_the_first_setpoint_is_checked_from_the_pose_read_before_the_wait(rig):
     thread.join(WAIT_S)
     assert not thread.is_alive()
     assert outcomes[0].status == "completed"
-    assert reads == [0, len(PATH)]  # the start read and the end pose read
+    assert reads == [0]  # the start read; the end read asks joint by joint
     assert checked[0] == REST
 
 
@@ -1340,13 +1381,22 @@ def test_the_idle_reads_are_paused_for_the_start_read_and_the_sends_not_the_wait
     executor = paused_executor(bare, pauses)
     stages = Stages(bare, executor)
     in_read: list[int] = []
+    in_end_read: list[int] = []
     in_wait: list[int] = []
     in_send: list[int] = []
+    watch = reads_of_the_watch(bare)
     read, covers, send = bare.arm.read_all, bare.gate.covers, bare.arm.send_target
+    read_one = bare.arm.read_joint
 
     def read_all() -> list:
         in_read.append(pauses.open)
         return read()
+
+    def read_joint(joint: int) -> object:
+        # The executor's own reads once the last setpoint is out: the end read.
+        if not watch[0] and len(bare.arm.sent) == len(PATH):
+            in_end_read.append(pauses.open)
+        return read_one(joint)
 
     def asked(move_id: str, index: int, now: float) -> str | None:
         if executor.stage() == "armed":
@@ -1358,12 +1408,14 @@ def test_the_idle_reads_are_paused_for_the_start_read_and_the_sends_not_the_wait
         send(q)
 
     bare.patch.setattr(bare.arm, "read_all", read_all)
+    bare.patch.setattr(bare.arm, "read_joint", read_joint)
     bare.patch.setattr(bare.gate, "covers", asked)
     bare.patch.setattr(bare.arm, "send_target", send_target)
     bare.permit(len(PATH) - 1)
     outcome = bare.run(executor=executor, permit_gate=bare.gate)
     assert outcome.status == "completed"
-    assert in_read == [1, 1]  # the start read and the end pose read
+    assert in_read == [1]  # the start read
+    assert in_end_read == [1] * N  # the end read, joint by joint
     assert in_wait == [0]
     assert in_send == [1] * len(PATH)
     assert (pauses.open, pauses.entered) == (0, 2)
@@ -2090,28 +2142,97 @@ def script_reads(rig: Rig, how: Callable[[int, int], str]) -> list[tuple[int, st
     return reads
 
 
+def reads_of_the_watch(rig: Rig) -> list[bool]:
+    """Tell the contact watch's joint reads from the executor's own.
+
+    Returns a list of one flag: True while a watch of the agent checker makes
+    the reads of one pass.
+    """
+    inside = [False]
+    made = rig.agent.contact_watch
+
+    def contact_watch(arm: object, q_start: object, history: object) -> object:
+        watch = made(arm, q_start, history)
+        real = watch.after_send
+
+        def after_send(index: int, q: object, deadline_mono: float) -> list:
+            inside[0] = True
+            try:
+                return real(index, q, deadline_mono)
+            finally:
+                inside[0] = False
+
+        rig.patch.setattr(watch, "after_send", after_send)
+        return watch
+
+    rig.patch.setattr(rig.agent, "contact_watch", contact_watch)
+    return inside
+
+
 def full_reads_after_the_move(rig: Rig, spoil: str = "") -> list[int]:
     """Count the full reads made once the last setpoint is out.
 
-    spoil "invalid" hands each of them out with joint 3 not valid; "fails"
-    makes each raise ReadFailed.
+    A full read is the executor's own read of every joint in turn, outside
+    the contact watch's passes. spoil "invalid" hands each of them out with
+    joint 3 not valid; "fails" makes joint 3's read raise ReadFailed.
     """
-    real = rig.arm.read_all
+    watch = reads_of_the_watch(rig)
+    real = rig.arm.read_joint
     calls: list[int] = []
 
-    def read_all() -> list:
-        if len(rig.arm.sent) < len(PATH):
-            return real()
-        calls.append(1)
-        readings = real()
-        if spoil == "fails":
-            raise ReadFailed("the joints could not be read")
-        if spoil == "invalid":
-            readings[3] = dataclasses.replace(readings[3], valid=False)
-        return readings
+    def read(joint: int) -> object:
+        reading = real(joint)
+        if watch[0] or len(rig.arm.sent) < len(PATH):
+            return reading
+        if joint == 0:
+            calls.append(1)
+        if joint == 3 and spoil == "fails":
+            raise ReadFailed("joint index 3: the read failed")
+        if joint == 3 and spoil == "invalid":
+            return dataclasses.replace(reading, valid=False)
+        return reading
 
-    rig.patch.setattr(rig.arm, "read_all", read_all)
+    rig.patch.setattr(rig.arm, "read_joint", read)
     return calls
+
+
+# What a motor that gives no answer costs, as on the reBot arm: a read of one
+# joint waits the arm port's short timeout, read_all() the motor library's own.
+JOINT_TIMEOUT_S = 0.05
+FULL_TIMEOUT_S = 1.0
+
+
+def one_unanswered_read(rig: Rig, joint_wait_s: float = JOINT_TIMEOUT_S) -> list[str]:
+    """Joint 0's motor misses one answer once the last setpoint is out.
+
+    It misses the first read that the executor makes itself, outside the
+    contact watch's passes: read_joint(0) then waits joint_wait_s, read_all()
+    FULL_TIMEOUT_S, and both raise ReadFailed. Returns which of the two it was.
+    """
+    watch = reads_of_the_watch(rig)
+    read_joint, read_all = rig.arm.read_joint, rig.arm.read_all
+    missed: list[str] = []
+
+    def silent() -> bool:
+        return not (missed or watch[0]) and len(rig.arm.sent) == len(PATH)
+
+    def one(joint: int) -> object:
+        if joint == 0 and silent():
+            missed.append("read_joint")
+            rig.clock.advance(joint_wait_s)
+            raise ReadFailed("joint index 0: no answer")
+        return read_joint(joint)
+
+    def every() -> list:
+        if silent():
+            missed.append("read_all")
+            rig.clock.advance(FULL_TIMEOUT_S)
+            raise ReadFailed("the joints could not be read: no answer")
+        return read_all()
+
+    rig.patch.setattr(rig.arm, "read_joint", one)
+    rig.patch.setattr(rig.arm, "read_all", every)
+    return missed
 
 
 def assert_holds_at_the_last_setpoint(rig: Rig, outcome: MoveOutcome) -> None:
@@ -2223,3 +2344,105 @@ def test_a_move_whose_full_reads_stay_bad_is_not_settled_and_never_completed(
     assert outcome.end_q is None
     assert len(full_reads) > 2
     assert_holds_at_the_last_setpoint(rig, outcome)
+
+
+def test_a_motor_that_misses_one_answer_in_the_end_read_does_not_end_the_move(rig):
+    missed = one_unanswered_read(rig)
+    outcome = rig.run()
+    assert (outcome.status, outcome.reason) == ("completed", "")
+    # The end read asks joint by joint: the motor cost one short timeout, far
+    # under the 0.35 s the watch allows a joint without a good reading.
+    assert missed == ["read_joint"]
+    tol = rig.config.executor.settle_tol_rad
+    assert outcome.end_q == pytest.approx(PATH[-1], abs=tol)
+    assert [reading.value for reading in rig.history.latest()] == outcome.end_q
+    assert_holds_at_the_last_setpoint(rig, outcome)
+
+
+@pytest.mark.parametrize(
+    ("wait_s", "status", "reason"),
+    [
+        (0.2, "completed", ""),
+        # Longer than the arm port's timeout lets a joint read wait.
+        (0.4, "failed", "fault: joint feedback lost: joint index "),
+    ],
+)
+def test_the_time_an_end_read_waits_counts_for_the_watchs_lost_feedback_rule(
+    rig, wait_s, status, reason
+):
+    one_unanswered_read(rig, wait_s)
+    outcome = rig.run()
+    assert outcome.status == status
+    assert outcome.reason.startswith(reason)
+    assert_holds_at_the_last_setpoint(rig, outcome)
+
+
+# The move's expiry is asked before the first setpoint's check too
+
+
+def checks_made(rig: Rig) -> list[int]:
+    """Per call of the agent checker's check_setpoint: the setpoints sent by then."""
+    calls: list[int] = []
+    real = rig.agent.check_setpoint
+
+    def check(q_prev: object, q_next: object, dt: float) -> None:
+        calls.append(len(rig.arm.sent))
+        real(q_prev, q_next, dt)
+
+    rig.patch.setattr(rig.agent, "check_setpoint", check)
+    return calls
+
+
+def test_a_move_that_expired_in_its_start_read_is_not_given_to_the_checker(rig):
+    checks = checks_made(rig)
+    outcome = rig.run(expires_mono_s=rig.clock.monotonic() + 0.03)
+    assert outcome.status == "refused"
+    assert outcome.reason == "the move expired 0.018 s ago"
+    assert rig.arm.sent == []
+    assert checks == []
+
+
+def test_a_held_permit_does_not_get_an_expired_move_checked(bare):
+    checks = checks_made(bare)
+    bare.permit(len(PATH) - 1)
+    outcome = bare.run(
+        permit_gate=bare.gate, expires_mono_s=bare.clock.monotonic() + 0.03
+    )
+    assert outcome.status == "refused"
+    assert outcome.reason == "the move expired 0.018 s ago"
+    assert bare.arm.sent == []
+    assert checks == []
+
+
+def test_an_expired_move_is_refused_as_expired_whatever_the_checker_would_say(rig):
+    too_fast = list(REST)
+    too_fast[0] = 1.0  # far over the speed limit in one period
+    outcome = rig.run(
+        path_with(too_fast, index=0), expires_mono_s=rig.clock.monotonic() + 0.03
+    )
+    assert outcome.status == "refused"
+    assert outcome.reason == "the move expired 0.018 s ago"
+    assert rig.arm.sent == []
+
+
+def test_an_expiry_wins_over_a_first_setpoint_that_is_late_before_its_check(rig):
+    checks = checks_made(rig)
+    began = rig.clock.monotonic()
+    stalled: list[float] = []
+
+    def should_stop() -> None:
+        # The first question after the start read is the one before setpoint 0.
+        if not stalled and rig.clock.monotonic() >= began + START_READ_S:
+            stalled.append(rig.clock.monotonic())
+            rig.clock.advance(0.15)
+
+    outcome = rig.run(
+        should_stop=should_stop, expires_mono_s=began + START_READ_S + 0.02
+    )
+    assert stalled == [pytest.approx(began + START_READ_S)]
+    assert outcome.status == "refused"
+    assert outcome.reason == "the move expired 0.130 s ago"
+    assert rig.arm.sent == []
+    # No missed deadline is counted for a move that never began.
+    assert rig.missed == []
+    assert checks == []

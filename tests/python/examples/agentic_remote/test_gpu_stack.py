@@ -339,7 +339,7 @@ def test_the_segmenter_loads_on_cuda_0(
 ) -> None:
     np = pytest.importorskip("numpy")
     cv2 = pytest.importorskip("cv2")
-    torch = pytest.importorskip("torch")
+    pytest.importorskip("torch")
     pytest.importorskip("ultralytics")
     yaml = pytest.importorskip("yaml")
     import test_agent_end_to_end as end_to_end
@@ -352,8 +352,10 @@ def test_the_segmenter_loads_on_cuda_0(
     model = experiment_dir / profile["segmenter"]["model"]
     if not model.is_file():
         pytest.skip(f"the segmentation model {model} is not there")
-    # As run_agent.sh sets it: no fall back to the CPU, and masks stay on CUDA.
-    monkeypatch.setenv("APAI_REQUIRE_CUDA", "1")
+    # As run_agent.sh leaves it, and as the experiment's launcher runs: APAI's
+    # strict CUDA mode is not set. The model runs on the GPU and a mask comes
+    # back as a numpy array, which APAI's grasp code takes.
+    monkeypatch.delenv("APAI_REQUIRE_CUDA", raising=False)
     image = cv2.imread(str(recorded_folder(experiment_dir) / "left_rectified.png"))
     assert image is not None
     height, width = image.shape[:2]
@@ -373,9 +375,9 @@ def test_the_segmenter_loads_on_cuda_0(
         f"{time.perf_counter() - began:.3f} s"
     )
     assert mask is not None and again is not None
-    assert mask.device.type == "cuda" and mask.device.index == 0
-    assert mask.dtype == torch.bool and tuple(mask.shape) == (height, width)
-    covered = int(mask.sum().item())
+    assert isinstance(mask, np.ndarray) and mask.dtype == bool
+    assert mask.shape == (height, width)
+    covered = int(mask.sum())
     print(f"the mask covers {covered} of {height * width} pixels")
     assert 0 < covered < height * width
     # Nothing was written into APAI's checkout or the experiment folder.
@@ -437,7 +439,6 @@ def test_the_full_stack_builds_and_the_grid_goes_live_on_recorded_pairs(
     pytest.importorskip("ultralytics")
     yaml = pytest.importorskip("yaml")
     import test_agent_end_to_end as end_to_end
-    import test_launcher
     import test_stereo_camera as stereo
     from isaaccapture_examples.agentic_remote.agent import launcher
 
@@ -451,7 +452,8 @@ def test_the_full_stack_builds_and_the_grid_goes_live_on_recorded_pairs(
     agent_model, detector_model = no_model(), no_model()
     monkeypatch.setattr(demo, "make_llm", lambda cfg: agent_model)
     monkeypatch.setattr(thor_cloud, "make_client", lambda config: detector_model)
-    monkeypatch.setenv("APAI_REQUIRE_CUDA", "1")  # as run_agent.sh sets it
+    # As run_agent.sh leaves it: APAI's strict CUDA mode is not set.
+    monkeypatch.delenv("APAI_REQUIRE_CUDA", raising=False)
     # The real obstacle grid client: the experiment's bridge answers it.
     scene.grid = occupancy.OccupancyClient
     scene.typed = []  # --interactive, and the task prompt ends at once
@@ -468,7 +470,6 @@ def test_the_full_stack_builds_and_the_grid_goes_live_on_recorded_pairs(
             "depth_backend": "ffs",
         },
         experiment={"stack": "full"},
-        rig=yaml.safe_load(test_launcher.SHIPPED.read_text())["rig"],
         task={"grid_wait_s": GRID_WAIT_S},
     )
     print(f"the full stack ran for {time.monotonic() - began:.1f} s")

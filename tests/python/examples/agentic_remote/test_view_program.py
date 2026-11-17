@@ -346,6 +346,16 @@ def test_view_status_reaches_the_robot_app_and_shows_in_robot_state(
         assert told["picture"]["overlay"] == "" and told["robot"]["connected"] is True
         assert told["robot"]["driver"] == "sim"
         assert told["robot"]["clients"] == {"tool": 1, "viewer": 1}
+        # The joints table: what the robot app measures on the simulated arm,
+        # which holds at rest and was sent no target and no late setpoint.
+        joints = told["state"]["joints"]
+        assert [row["joint"] for row in joints] == list(range(len(state.joints)))
+        assert len(joints) == 6 and all(row["valid"] is True for row in joints)
+        assert [row["q"] for row in joints] == [s.value for s in state.joints]
+        assert [row["target"] for row in joints] == (state.target_q or [None] * 6)
+        assert told["state"]["jaw"]["opening"] == state.gripper.opening
+        assert 0.0 <= told["state"]["reading_age_s"] < 1.0
+        assert told["state"]["missed_deadlines"] == 0
 
         # The page stops acknowledging: after ack_timeout_s the age is unknown.
         watcher.ws.wait_state(lambda s: s.view_age_s is None, WAIT_S)
@@ -955,14 +965,20 @@ def test_the_script_sets_the_environment_and_names_what_is_missing(tmp_path):
 # The settings and the command line
 
 
-def test_the_shipped_file_holds_the_first_values():
+def test_the_shipped_file_holds_the_first_values(monkeypatch):
+    # The shipped file names the camera consumer's interpreter under the camera
+    # pull request's folder, as the rig's agent file does.
+    monkeypatch.setenv("AGENTIC_REMOTE_CAMERA_PR", "/the/pr")
+    bridge_python = "/the/pr/cuda_ipc_consumer/.venv/bin/python"
     settings = load_view_settings(EXAMPLE / "configs" / "view.yaml")
-    assert settings == ViewSettings(state_dir=EXAMPLE / ".state")
+    assert settings == ViewSettings(
+        state_dir=EXAMPLE / ".state", bridge_python=bridge_python
+    )
     assert (settings.http_address, settings.http_port) == ("127.0.0.1", 47620)
     assert (settings.width_px, settings.fps, settings.jpeg_quality) == (960, 5.0, 80)
     assert (settings.period_s, settings.ack_timeout_s) == (0.2, 1.0)
     assert settings.state_max_age_s == 1.0 and settings.socket_path is None
-    assert settings.bridge_python == "" and settings.camera_pr == ""
+    assert settings.bridge_python == bridge_python and settings.camera_pr == ""
     assert settings.receiver_socket == "/tmp/camera_receiver_avs1_cuda_ipc.sock"
     assert settings.streams == ("head.left", "head.right")
     assert settings.max_skew_ms == 5.0

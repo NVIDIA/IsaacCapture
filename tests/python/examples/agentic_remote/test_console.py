@@ -41,9 +41,11 @@ from isaaccapture_examples.agentic_remote.console.console import (
     main,
 )
 from isaaccapture_examples.agentic_remote.console.status import (
+    INVALID,
     event_bells,
     help_block,
     jaws_text,
+    joints_line,
     status_key,
     status_line,
     takeover_text,
@@ -62,6 +64,7 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     HUMAN_MOVE_ID,
     Event,
     GripperState,
+    JointSample,
     Open,
     OwnerRequest,
     Release,
@@ -1170,8 +1173,9 @@ def test_state_prints_the_takeover_line(
     desk.sees(lambda state: True)
     desk.type("state")
     desk.wait(NO_PROGRAM)
-    # It is the last line, below the state and the status line.
-    assert desk.said[-3] == console_cmd.state_text(robot.state)
+    # It is the last line, below the state, its joints line and the status line.
+    assert desk.said[-4] == console_cmd.state_text(robot.state)
+    assert desk.said[-3] == joints_line(robot.state)
     assert " | owner nobody #4 | " in desk.said[-2] and desk.said[-1] == NO_PROGRAM
     # An open takeover: how it ends.
     facts = {"human": human_facts(takeover_open=True)}
@@ -2186,6 +2190,49 @@ def test_the_event_kinds_are_the_robot_apps() -> None:
     assert SWITCHED_OFF == app_module.HUMAN_OFF
 
 
+@pytest.mark.parametrize(
+    ("fields", "torque"),
+    [
+        # A robot app that reports nothing of the hold, such as a simulated arm.
+        ({}, "torque on"),
+        ({"health": {"motors": {"state": "holding"}}}, "torque on (holding)"),
+        ({"health": {"motors": {"state": "not holding"}}}, "torque NOT HOLDING"),
+        ({"health": {"motors": {"state": "unknown"}}}, "torque on, hold unknown"),
+        ({"health": {"motors": {"state": 7}}}, "torque on"),
+        ({"torque_on": False, "motion": "rest_unpowered"}, "torque off"),
+        # After a torque release that failed the motors may be on or off.
+        ({"motion": "release_failed"}, "torque unknown"),
+        (
+            {"motion": "release_failed", "health": {"motors": {"state": "holding"}}},
+            "torque unknown",
+        ),
+    ],
+)
+def test_the_status_line_says_what_the_motors_do(fields, torque) -> None:
+    state = dataclasses.replace(robot_state(), **fields)
+    line = status_line(None, state, None, 0.04)
+    assert f" | {torque} | " in line
+    assert line.count("torque") == 1
+    assert status_module.motors_text(state) == torque
+
+
+def test_a_change_of_the_motors_makes_a_status_line_due() -> None:
+    def key(**fields) -> Any:
+        return status_key(dataclasses.replace(robot_state(), **fields), None)
+
+    def hold(word: str) -> dict[str, Any]:
+        return {"motors": {"state": word, "reason": "why"}}
+
+    holding = key(health=hold("holding"))
+    # A joint that left its hold, the motors off and a failed release do.
+    assert key(health=hold("not holding")) != holding
+    assert key(torque_on=False) != key()
+    assert key(motion="release_failed") != key()
+    # The hold is unknown from each joint target until every joint was read
+    # at it, which comes with every move: that makes no line due.
+    assert key(health=hold("unknown")) == holding
+
+
 def test_the_console_holds_no_copy_of_a_send() -> None:
     files = sorted(PACKAGE.glob("*.py"))
     assert [path.name for path in files] == [
@@ -2550,3 +2597,160 @@ def test_the_jaws_line_repeats_the_robot_app_through_a_takeover(
     # A human target without a jaw opening: the trigger must match again.
     feed(h)
     assert line() == f"{NOTHING}: {NO_OPENING}"
+
+
+# The joints line of the typed `state`, and the missed deadlines in the status
+# line. A missed deadline is a setpoint of a move that the robot app sent late;
+# ROBOT_STATE carries its count of them as health["missed_deadlines"].
+
+MEASURED = [0.0123, -0.05, -0.0496, 1.0, -1.5708, 0.25]
+SENT = [0.01, -0.05, -0.05, 1.0, -1.5708, 0.2504]
+JOINTS = "joints (rad): 0.012 -0.050 -0.050 1.000 -1.571 0.250"
+LAST_TARGET = "last target: 0.010 -0.050 -0.050 1.000 -1.571 0.250"
+
+
+def measuring(**fields: Any) -> dict[str, Any]:
+    """Fields of a ROBOT_STATE: six measured joints, the last target, the health."""
+    made = {
+        "joints": [
+            JointSample(joint, value, 990.0, 990.001, True)
+            for joint, value in enumerate(MEASURED)
+        ],
+        "target_q": list(SENT),
+        "target_t": 990.0,
+        "health": {"reading_age_s": 0.0234, "missed_deadlines": 0},
+    }
+    return {**made, **fields}
+
+
+def test_the_joints_line_names_each_joint_the_last_target_and_the_health() -> None:
+    state = dataclasses.replace(robot_state(), **measuring())
+    assert joints_line(state) == (
+        f"{JOINTS}; {LAST_TARGET}; reading age 0.02 s; missed deadlines 0"
+    )
+    # A joint without a valid reading has no value: the robot app sends 0.0.
+    assert INVALID == "invalid"
+    joints = measuring()["joints"]
+    joints[2] = JointSample(2, 0.0, 0.0, 0.0, False)
+    health = {"reading_age_s": None, "missed_deadlines": 12}
+    assert joints_line(dataclasses.replace(state, joints=joints, health=health)) == (
+        "joints (rad): 0.012 -0.050 invalid 1.000 -1.571 0.250; "
+        f"{LAST_TARGET}; reading age unknown; missed deadlines 12"
+    )
+    # No target was sent yet, and a robot app that reports neither number.
+    bare = dataclasses.replace(state, target_q=None, target_t=None, health={})
+    assert joints_line(bare) == (
+        f"{JOINTS}; last target: none; reading age unknown; "
+        "missed deadlines not reported"
+    )
+    for odd in (True, -1, 2.5, "3", float("nan")):
+        told = dataclasses.replace(state, health={"missed_deadlines": odd})
+        assert joints_line(told).endswith("; missed deadlines not reported"), odd
+    # A ROBOT_STATE that names no joint.
+    assert joints_line(robot_state()) == (
+        "joints (rad): none; last target: none; reading age unknown; "
+        "missed deadlines not reported"
+    )
+
+
+def test_the_joints_line_reads_the_robot_apps_own_robot_state(
+    make_robot_app: Callable[..., Any],
+) -> None:
+    state = state_now(make_robot_app())
+    measured = " ".join(f"{sample.value:.3f}" for sample in state.joints)
+    line = joints_line(state)
+    assert len(state.joints) == 6 and all(sample.valid for sample in state.joints)
+    assert line.startswith(f"joints (rad): {measured}; last target: ")
+    # The robot app reports both numbers under the names the line reads.
+    assert "reading age unknown" not in line and "reading age " in line
+    assert line.endswith("; missed deadlines 0")
+
+
+def test_state_prints_the_joints_line_below_the_robot_state(
+    robot: ScriptedRobot, desks: Callable[..., Desk], tmp_path: Path
+) -> None:
+    clock = FakeClock()
+    desk = desks(robot.bench.path, clock=clock, tick_s=None)
+    desk.wait("attached to the robot link service")
+    robot.show(**measuring())
+    desk.sees(lambda state: state.seq == robot.state.seq)
+    desk.type("state")
+    desk.wait(NO_PROGRAM)
+    assert desk.said[-4] == console_cmd.state_text(robot.state)
+    assert desk.said[-3] == (
+        f"{JOINTS}; {LAST_TARGET}; reading age 0.02 s; missed deadlines 0"
+    )
+    owner = " | owner nobody #4 | "
+    assert owner in desk.said[-2] and desk.said[-1] == NO_PROGRAM
+    # Only `state` prints it: the status line that is due later brings none.
+    clock.advance(10.0)
+    desk.console.tick()
+    assert desk.console._flush() and desk.count(owner) == 2
+    assert desk.count("joints (rad): ") == 1
+    # Without a ROBOT_STATE there is no such line.
+    alone = desks(str(tmp_path / "none.sock"), tick_s=None)
+    alone.wait("cannot attach to")
+    alone.type("state")
+    alone.wait("takeover: not possible: no ROBOT_STATE")
+    assert "ROBOT_STATE: none has arrived" in alone.said
+    assert alone.count("joints (rad): ") == 0
+
+
+def test_the_status_line_names_the_missed_deadlines_only_above_zero() -> None:
+    state = state_for_the_line()
+
+    def line(count: Any, **health: Any) -> str:
+        health = {**state.health, **health, "missed_deadlines": count}
+        return status_line(None, dataclasses.replace(state, health=health), None, 0.04)
+
+    # Behind the permit, ahead of the view age.
+    assert line(3).endswith(
+        " | torque on | permit 62, evidence 0.21 s | missed deadlines 3 | "
+        "view 0.3 s | state 0.04 s"
+    )
+    assert " | permit refused: too old | missed deadlines 1 | view " in line(
+        1, permit_refusal="too old"
+    )
+    # None so far, or a robot app that reports no count: the line is as it was.
+    plain = status_line(None, state, None, 0.04)
+    assert "missed" not in plain
+    for count in (0, None, -1, True, "3", 2.5):
+        assert line(count) == plain, count
+
+
+def test_a_status_line_is_due_for_the_first_missed_deadline_and_not_for_each_more(
+    robot: ScriptedRobot, desks: Callable[..., Desk]
+) -> None:
+    def key(count: Any) -> Any:
+        health = {"missed_deadlines": count}
+        return status_key(dataclasses.replace(robot_state(), health=health), None)
+
+    # The key holds whether there are any, not how many.
+    assert key(0) == key(None) == status_key(robot_state(), None)
+    assert key(1) != key(0)
+    assert key(1) == key(2) == key(250)
+    # At the console, on its own clock.
+    clock = FakeClock()
+    desk = desks(robot.bench.path, clock=clock, tick_s=None)
+    desk.sees(lambda state: True)
+    owner = " | owner nobody #4 | "
+
+    def lines(count: int, wait_s: float = 1.0) -> int:
+        """Show that count, let the time pass; the status lines printed so far."""
+        robot.show(health={"missed_deadlines": count})
+        desk.sees(lambda state: state.seq == robot.state.seq)
+        clock.advance(wait_s)
+        desk.console.tick()
+        assert desk.console._flush()
+        return desk.count(owner)
+
+    assert lines(0) == 1 and "missed" not in desk.said[-1]
+    assert lines(0) == 1
+    # The first one: a new line, with the count.
+    assert lines(1) == 2
+    assert " | permit none | missed deadlines 1 | view none | " in desk.said[-1]
+    # The count grows: no line for that.
+    assert lines(2) == 2 and lines(40) == 2
+    # The next line that is due, here by its ten seconds, has the count of then.
+    assert lines(41, wait_s=8.0) == 3
+    assert " | missed deadlines 41 | " in desk.said[-1]

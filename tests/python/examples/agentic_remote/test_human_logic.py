@@ -22,6 +22,7 @@ from typing import Any
 import numpy as np
 import pytest
 from isaaccapture_examples.agentic_remote.human import logic as logic_module
+from isaaccapture_examples.agentic_remote.human.__main__ import as_sent
 from isaaccapture_examples.agentic_remote.human.logic import (
     COUNT_KEYS,
     NOTE_AT_REST,
@@ -499,7 +500,10 @@ def test_the_takeover_waits_for_a_fresh_robot_state_that_shows_the_stop():
     bench.state = nobody(7)
     bench.step()
     bench.step(b=True)
-    assert of(bench.run(75, b=True), OwnerRequest) == []  # 1.5 s, still number 7
+    waiting = bench.run(75, b=True)  # 1.5 s, still number 7
+    assert of(waiting, OwnerRequest) == []
+    # The hold can still ask, once its STOP shows: the note stays the usual one.
+    assert notes(waiting) == {NOTE_TAKE_OVER}
     bench.state, bench.state_age_s = nobody(8, owner_number=6), 0.5
     assert of(bench.run(5, b=True), OwnerRequest) == []  # shown, but too old
     bench.state_age_s = 0.01
@@ -1939,6 +1943,42 @@ def test_the_note_says_release_b_while_b_is_held_after_a_press_that_cannot_ask()
     held_on(bench, 8)
 
 
+@pytest.mark.parametrize(
+    "case",
+    ["no ROBOT_STATE", "the ROBOT_STATE of the session before", "a new session"],
+)
+def test_the_note_says_release_b_while_no_robot_state_can_show_the_stop_of_its_press(
+    case,
+):
+    bench = Bench()
+    bench.state = nobody(7)
+    bench.step()  # B is seen up: the next press counts
+    session = "s1"  # of the robot app while right B is held
+    if case == "no ROBOT_STATE":
+        bench.state = None
+    elif case == "the ROBOT_STATE of the session before":
+        # The robot app is back; its first ROBOT_STATE has not arrived.
+        bench.welcome, session = welcome("s2"), "s2"
+    assert bench.step(b=True)[0] == STOP_B
+    assert bench.logic.counts()["b_pressed"] == 1
+    if case == "a new session":
+        bench.welcome, session = welcome("s2"), "s2"  # while B stays down
+    # The STOP quoted no ROBOT_STATE of this session, so none can show it:
+    # the hold asks for nothing, 3 s long, and the note says what to do.
+    bench.state = nobody(8, session_id=session)
+    held = bench.run(150, b=True)
+    assert of(held, (Stop, OwnerRequest)) == []
+    assert len(of(held, HumanSetpoint)) == 150
+    assert notes(held) == {NOTE_RELEASE_B}
+    # B up, then a new press: its STOP is shown, and its hold asks.
+    assert bench.status().note == NOTE_TAKE_OVER
+    assert bench.step(b=True)[0] == STOP_B
+    bench.state = nobody(9, session_id=session)
+    again = bench.run(50, b=True)
+    assert len(of(again, OwnerRequest)) == 1
+    assert notes(again) == {NOTE_TAKE_OVER}
+
+
 def test_a_hold_that_can_ask_keeps_the_takeover_note_until_its_result():
     bench = Bench()
     bench.state = nobody(7)
@@ -2718,7 +2758,26 @@ def cut(text: str) -> str:
     return text[:40] + NOTE_CUT + text[-57:]
 
 
-def test_a_long_note_is_cut_and_every_setpoint_stays_under_512_bytes():
+# What every HUMAN_SETPOINT stays under as the human program sends it, in bytes.
+SETPOINT_BYTES = 600
+
+
+def sent_size(setpoint: HumanSetpoint) -> int:
+    """The bytes of a HUMAN_SETPOINT as the human program sends it.
+
+    The program stamps the sample age and the send time with as_sent(); here
+    each has every digit. The sequence number has seven digits, as it has
+    hours into a run.
+    """
+    late = dataclasses.replace(setpoint, seq=1234567)
+    sent = as_sent(late, 100.0, 100.0 - 1.0 / 70.0, 100.0 + 1.0 / 300.0)
+    assert sent.sent_mono_s not in (None, setpoint.state_clock_mono_s)
+    if setpoint.sample_age_s is not None:
+        assert sent.sample_age_s > setpoint.sample_age_s
+    return len(sent.to_payload())
+
+
+def test_a_long_note_is_cut_and_every_setpoint_stays_under_600_bytes_as_it_is_sent():
     long = "the Teleop Session Server did not answer; " * 8
     value, age = 1.2345678901234567, 0.012345678901234567
     session_id = "0123456789abcdef0123456789abcdef"
@@ -2730,24 +2789,33 @@ def test_a_long_note_is_cut_and_every_setpoint_stays_under_512_bytes():
         q=(-value, value, value, -value, value, -value),
         clock_mono_s=1234567.8901234567,
         session_id=session_id,
+        # The trigger has not reached the grip level: a note while engaged.
+        jaws=jaws(asked=0.1, grip_level=0.5),
     )
     absent = {"outputs": False, "stage": "waiting_for_headset", "age": None}
     status = setpoint(bench.step(note=long, **absent))
     assert status.note == cut(long) and len(status.note) == NOTE_MAX_CHARS == 100
-    assert len(status.to_payload()) < 512
+    assert sent_size(status) < SETPOINT_BYTES
     # A note of 100 characters goes out whole, one of 101 does not.
     assert setpoint(bench.step(note=long[:100], **absent)).note == long[:100]
     assert setpoint(bench.step(note=long[:101], **absent)).note == cut(long[:101])
 
+    # The largest: a joint target, the longer note about the trigger and a
+    # jaw opening, each number with every digit.
+    pulled = {"squeeze": 1.0, "trigger": 0.123456789012345, "age": age}
     bench.step(age=age)
-    engaged = setpoint(bench.step(squeeze=1.0, age=age))
+    engaged = setpoint(bench.step(**pulled))
     assert engaged.engaged and len(engaged.q) == N_JOINTS
-    assert len(engaged.to_payload()) < 512
+    assert engaged.note == NOTE_TRIGGER_EASE
+    assert len(repr(engaged.jaw_opening)) >= 17
+    assert max(len(NOTE_TRIGGER_EASE), len(NOTE_TRIGGER_PULL)) == len(engaged.note)
+    # The stamps of the send are part of the size.
+    assert len(engaged.to_payload()) < sent_size(engaged) < SETPOINT_BYTES
 
     # The reason of a refusal is cut as well.
     refused = refused_handback(bench, long, age=age)
     assert refused.note == cut("handback refused: " + long)
-    assert len(refused.to_payload()) < 512
+    assert sent_size(refused) < SETPOINT_BYTES
 
     # Behind "release the grip and squeeze again: " the reason is cut by
     # itself: its first 40 characters, "..." and its last 21. The robot app
@@ -2759,7 +2827,7 @@ def test_a_long_note_is_cut_and_every_setpoint_stays_under_512_bytes():
     assert ended.note == NOTE_SQUEEZE_AGAIN + why[:40] + NOTE_CUT + why[-21:]
     assert ended.note.startswith(NOTE_SQUEEZE_AGAIN)
     assert len(ended.note) <= NOTE_MAX_CHARS
-    assert len(ended.to_payload()) < 512
+    assert sent_size(ended) < SETPOINT_BYTES
 
     # The cut keeps what the robot app's refusals end with: what to do next.
     measured = "joint index 0 is at 0.1180 rad, rest is 0.0000 rad (tolerance 0.02)"
@@ -2793,7 +2861,7 @@ def test_a_long_reason_behind_squeeze_again_keeps_its_first_forty_characters():
         " arm on ... the limit is 0.1 rad"
     )
     assert ended.note == AGAIN + why[:40] + NOTE_CUT + why[-21:]
-    assert len(ended.note) == NOTE_MAX_CHARS and len(ended.to_payload()) < 512
+    assert len(ended.note) == NOTE_MAX_CHARS and sent_size(ended) < SETPOINT_BYTES
 
     # Behind the prefix there is room for 64 characters: a reason of 64 goes
     # out whole, one of 65 does not.
@@ -2811,7 +2879,7 @@ def test_a_long_reason_behind_squeeze_again_keeps_its_first_forty_characters():
     assert ended_by_the_thor("caf\xe9").note == AGAIN + "caf?"
 
 
-def test_a_note_goes_out_as_printable_ascii_and_stays_under_512_bytes():
+def test_a_note_goes_out_as_printable_ascii_and_stays_under_600_bytes_as_sent():
     session_id = "0123456789abcdef0123456789abcdef"
     bench = Bench()
     bench.welcome = welcome(session_id)
@@ -2824,7 +2892,7 @@ def test_a_note_goes_out_as_printable_ascii_and_stays_under_512_bytes():
     # In JSON each of these takes more than one byte per character.
     for char in ("\xe4", "\U0001f600", "\x00", "\n", '"', "\\"):
         sent = bench.status(note=char * 300, **absent)
-        assert len(sent.note) == 100 and len(sent.to_payload()) < 512, repr(char)
+        assert len(sent.note) == 100 and sent_size(sent) < SETPOINT_BYTES, repr(char)
         assert decode(HumanSetpoint.TYPE, sent.to_payload()) == sent
     assert bench.status(note="\xe4" * 300, **absent).note == cut("?" * 300)
 

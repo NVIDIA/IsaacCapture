@@ -23,8 +23,20 @@ from typing import Any
 
 import numpy as np
 import pytest
+import yaml
 from isaaccapture_examples.agentic_remote.protocol.messages import GraspRegion, Result
-from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
+from isaaccapture_examples.agentic_remote.robot_app.app import (
+    MOTORS_UNKNOWN,
+    NEW_START,
+    RELEASE_FAILED,
+    TORQUE_UNKNOWN,
+)
+from isaaccapture_examples.agentic_remote.robot_app.authority import Authority
+from isaaccapture_examples.agentic_remote.robot_app.clock import (
+    Clock,
+    FakeClock,
+    SystemClock,
+)
 from isaaccapture_examples.agentic_remote.robot_app.config import (
     GraspConfig,
     Limits,
@@ -32,6 +44,7 @@ from isaaccapture_examples.agentic_remote.robot_app.config import (
     RestConfig,
     RobotAppConfig,
 )
+from isaaccapture_examples.agentic_remote.robot_app.executor import MoveExecutor
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     ArmFault,
     ArmPort,
@@ -43,9 +56,13 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     GripperOutcome,
     JointReading,
     MotionState,
+    MoveOutcome,
+    Owner,
     ReadFailed,
     Refusal,
+    StopLevel,
 )
+from isaaccapture_examples.agentic_remote.robot_app.state import JointHistory
 from conftest import AppHarness
 
 try:
@@ -1340,49 +1357,83 @@ def test_plain_command_moves_the_jaws_to_the_opening(
 ) -> None:
     cancel = threading.Event()
     before = clock.monotonic()
+    # A wider opening than the jaw target in force is the driver's opening.
     assert connected.gripper_command(1.0, 0.8, "plain", cancel) == GripperOutcome(
         "reached", pytest.approx(1.0)
     )
     assert connected.backend.get_state().gripper_pos == pytest.approx(0.0)
     assert connected.gripper_last_target() == pytest.approx(1.0)
+    # A close returns once it is sent, as the driver's set_gripper does.
     outcome = connected.gripper_command(0.25, 0.8, "plain", cancel)
-    assert outcome == GripperOutcome("reached", pytest.approx(0.25))
+    assert outcome == GripperOutcome("sent", pytest.approx(0.25))
     assert connected.backend.get_state().gripper_pos == pytest.approx(0.75)
     assert connected.gripper_read() == pytest.approx(0.25)
-    assert clock.monotonic() == before  # a jaw already there needs no waiting
+    assert clock.monotonic() == before  # no plain command waits for the jaws
 
 
-@pytest.mark.parametrize("mode", ["close_until_contact", "plain"])
-def test_close_onto_an_object_stalls_and_holds_lightly_in_either_mode(
-    connected: apai_backend.ApaiArm, clock: FakeClock, mode: str
+def test_a_plain_close_onto_an_object_is_sent_and_keeps_its_stiffness(
+    connected: apai_backend.ApaiArm, clock: FakeClock
 ) -> None:
     cancel = threading.Event()
     connected.gripper_command(1.0, 0.8, "plain", cancel)
     connected.backend.object_stop_frac = 0.6  # an object at opening 0.4
     before = clock.monotonic()
-    outcome = connected.gripper_command(0.0, 0.8, mode, cancel)
+    outcome = connected.gripper_command(0.0, 0.8, "plain", cancel)
+
+    assert outcome == GripperOutcome("sent", pytest.approx(0.4))
+    assert clock.monotonic() == before
+    assert connected.gripper_last_target() == pytest.approx(0.0)  # the target stands
+    assert connected.backend._gripper_effort == pytest.approx(0.8)  # no light hold
+
+
+def test_a_close_until_contact_waits_for_the_jaws_and_keeps_its_stiffness(
+    connected: apai_backend.ApaiArm, clock: FakeClock
+) -> None:
+    from apai.control.robstride import GRIP_GRACE_S, GRIP_POLL_S
+
+    cancel = threading.Event()
+    connected.gripper_command(1.0, 0.8, "plain", cancel)
+    connected.backend.object_stop_frac = 0.6  # an object at opening 0.4
+    before = clock.monotonic()
+    outcome = connected.gripper_command(0.0, 0.8, "close_until_contact", cancel)
 
     assert outcome == GripperOutcome("stalled", pytest.approx(0.4))
-    # Two polls of grace, then one more without movement.
-    assert clock.monotonic() - before == pytest.approx(0.45)
+    # APAI's grace after a command, then one more look without movement.
+    assert clock.monotonic() - before == pytest.approx(GRIP_GRACE_S + GRIP_POLL_S)
     assert connected.gripper_last_target() == pytest.approx(0.0)  # the target stands
-    assert connected.backend._gripper_effort == pytest.approx(1.0 / 6.0)
+    # The jaws go on pushing at the close's stiffness, as after APAI's own close.
+    assert connected.backend._gripper_effort == pytest.approx(0.8)
     assert connected.gripper_read() == pytest.approx(0.4)
 
 
-def test_a_command_that_reaches_or_opens_is_not_followed_by_a_light_hold(
-    connected: apai_backend.ApaiArm, monkeypatch: pytest.MonkeyPatch
+def test_the_other_modes_on_the_mock_arm_are_its_one_jaw_routine(
+    connected: apai_backend.ApaiArm,
 ) -> None:
+    from apai.grasping.force import select_profile
+
     cancel = threading.Event()
-    assert connected.gripper_command(1.0, 0.8, "plain", cancel).status == "reached"
-    assert connected.backend._gripper_effort == pytest.approx(0.8)
-    assert connected.gripper_command(0.3, 0.7, "plain", cancel).status == "reached"
-    assert connected.backend._gripper_effort == pytest.approx(0.7)
-    # An opening that ends short of its target: the jaws read 0.3 throughout.
-    monkeypatch.setattr(connected, "gripper_read", lambda: 0.3)
-    opened = connected.gripper_command(0.9, 0.6, "close_until_contact", cancel)
-    assert opened == GripperOutcome("stalled", 0.3)
+    # "open": the mock driver has no opening of its own: set_gripper to open.
+    assert connected.gripper_command(0.0, 0.6, "open", cancel) == GripperOutcome(
+        "reached", pytest.approx(1.0)
+    )
     assert connected.backend._gripper_effort == pytest.approx(0.6)
+    # The typed close: the seat stage of APAI's rigid grip profile, at its effort.
+    rigid = select_profile("", "rigid")
+    closed = connected.gripper_command(0.0, 0.5, "close", cancel)
+    assert closed == GripperOutcome(
+        "reached", pytest.approx(1.0 - rigid.close_frac_stage2)
+    )
+    assert connected.backend._gripper_effort == pytest.approx(rigid.effort)
+    # A two-stage close: its seat stage alone.
+    two = connected.gripper_close_two_stage(0.5, 0.05, 0.45, cancel)
+    assert two == GripperOutcome("reached", pytest.approx(0.05))
+    assert connected.backend._gripper_effort == pytest.approx(0.45)
+    # The close before a torque release: to the closed stop.
+    assert connected.gripper_command(0.0, 0.6, "close_torque", cancel).status == (
+        "reached"
+    )
+    assert connected.gripper_read() == pytest.approx(0.0)
+    assert connected.gripper_close_torque(cancel).status == "reached"
 
 
 def test_cancel_ends_a_jaw_command_in_a_light_hold(
@@ -1398,7 +1449,7 @@ def test_cancel_ends_a_jaw_command_in_a_light_hold(
         cancel.set()
 
     monkeypatch.setattr(clock, "sleep", sleep_then_cancel)
-    outcome = connected.gripper_command(0.0, 0.8, "plain", cancel)
+    outcome = connected.gripper_command(0.0, 0.8, "close_until_contact", cancel)
     assert outcome == GripperOutcome("cancelled", pytest.approx(0.4))
     assert connected.backend._gripper_effort == pytest.approx(1.0 / 6.0)
 
@@ -1421,23 +1472,32 @@ def test_light_hold_that_cannot_be_sent_is_an_arm_fault(
         connected.gripper_command(1.0, 0.5, "plain", threading.Event())
 
 
-@pytest.mark.parametrize("mode", ["close_until_contact", "plain"])
-@pytest.mark.parametrize(("opening", "effort_after"), [(0.5, 1.0 / 6.0), (1.0, 0.8)])
-def test_jaws_that_cannot_be_read_time_out(
+@pytest.mark.parametrize("opening", [0.5, 1.0])
+def test_a_close_until_contact_on_jaws_that_cannot_be_read_ends_stalled(
     connected: apai_backend.ApaiArm,
     clock: FakeClock,
     monkeypatch: pytest.MonkeyPatch,
-    mode: str,
     opening: float,
-    effort_after: float,
 ) -> None:
     monkeypatch.setattr(connected, "gripper_read", lambda: None)
     before = clock.monotonic()
-    outcome = connected.gripper_command(opening, 0.8, mode, threading.Event())
-    assert outcome == GripperOutcome("timeout", None)
+    outcome = connected.gripper_command(
+        opening, 0.8, "close_until_contact", threading.Event()
+    )
+    # The end of the wait is no fault, and the close keeps its stiffness.
+    assert outcome == GripperOutcome("stalled", None)
     assert clock.monotonic() - before == pytest.approx(4.05)
-    # Without a reading only a command to full open is known not to be a close.
-    assert connected.backend._gripper_effort == pytest.approx(effort_after)
+    assert connected.backend._gripper_effort == pytest.approx(0.8)
+
+
+def test_a_plain_command_on_jaws_that_cannot_be_read_does_not_wait(
+    connected: apai_backend.ApaiArm, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(connected, "gripper_read", lambda: None)
+    before = clock.monotonic()
+    outcome = connected.gripper_command(0.0, 0.8, "plain", threading.Event())
+    assert outcome == GripperOutcome("sent", None)
+    assert clock.monotonic() == before
 
 
 @pytest.mark.parametrize(
@@ -1677,8 +1737,7 @@ def test_rs_jaws_go_through_the_gripper_guard(
     jaw = sdk.gripper
     assert not arm.gripper_referenced()
     assert arm.gripper_read() is None
-    assert arm.gripper_command(1.0, 0.5, "plain", cancel).status == "refused"
-    assert jaw.sent == []  # an unreferenced gripper is not moved by a command
+    assert jaw.sent == []
 
     arm.gripper_reference()
     assert arm.gripper_referenced()
@@ -1693,27 +1752,210 @@ def test_rs_jaws_go_through_the_gripper_guard(
     )
     assert len(jaw.sent) - sends > 10
     assert jaw.sent[-1] == ([pytest.approx(6.2)], [1.0])
+    # A close is one command of the driver, which returns once it is sent.
     assert arm.gripper_command(0.5, 0.5, "plain", cancel) == GripperOutcome(
-        "reached", pytest.approx(0.5)
+        "sent", pytest.approx(0.5)
     )
     assert jaw.sent[-1] == ([pytest.approx(3.1)], [1.0])
     assert arm.gripper_last_target() == pytest.approx(0.5)
 
     jaw.stop = 2.0  # an object
+    sends = len(jaw.sent)
     outcome = arm.gripper_command(0.0, 0.5, "close_until_contact", cancel)
     assert outcome == GripperOutcome("stalled", pytest.approx(2.0 / 6.2))
-    # The closed target stands, at the profile's hold stiffness.
-    assert jaw.sent[-1] == ([0.0], [0.01])
+    # One command: the jaws go on pushing at the closed target with the
+    # close's stiffness, as after the driver's own close.
+    assert jaw.sent[sends:] == [([0.0], [1.0])]
     assert arm.gripper_last_target() == pytest.approx(0.0)
 
-    # A plain close that stalls ends the same way: sent at the closing stiffness,
-    # left at the hold stiffness.
+    # A plain close onto the object: sent, and nothing after it.
     sends = len(jaw.sent)
-    assert arm.gripper_command(0.0, 0.5, "plain", cancel).status == "stalled"
-    assert jaw.sent[sends:] == [([0.0], [1.0]), ([0.0], [0.01])]
+    assert arm.gripper_command(0.0, 0.5, "plain", cancel) == GripperOutcome(
+        "sent", pytest.approx(2.0 / 6.2)
+    )
+    assert jaw.sent[sends:] == [([0.0], [1.0])]
+    # The light hold is its own call: a STOP's.
     sends = len(jaw.sent)
     arm.gripper_light_hold()
     assert jaw.sent[sends:] == [([0.0], [0.01])]
+
+
+def test_rs_the_driver_references_the_jaws_before_their_first_command(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    # As at the arm: APAI's guard closes unreferenced jaws slowly to their
+    # stop, then runs the command.
+    arm, sdk = rs
+    jaw = sdk.gripper
+    assert not arm.gripper_referenced() and jaw.at() == pytest.approx(0.5)
+    outcome = arm.gripper_command(1.0, 0.5, "plain", threading.Event())
+    assert outcome == GripperOutcome("reached", pytest.approx(1.0))
+    assert arm.gripper_referenced()
+    positions = [q[0] for q, _ in jaw.sent]
+    closed = positions.index(min(positions))
+    assert positions[closed] <= 0.0  # the reference pressed the closed stop
+    assert positions[closed:] == sorted(positions[closed:])  # then one opening
+
+
+def test_rs_a_reference_before_a_command_that_finds_an_object_is_no_arm_fault(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    arm, sdk = rs
+    sdk.gripper._mm["jaw"].value = 1.5
+    sdk.gripper.stop = 1.0  # something between the jaws
+    outcome = arm.gripper_command(1.0, 0.5, "plain", threading.Event())
+    # The driver's own text; the jaws stay unreferenced and where they stopped.
+    assert outcome.status == "gripper_fault"
+    assert outcome.detail.startswith("gripper reference failed: the jaws stopped")
+    assert not arm.gripper_referenced()
+    assert sdk.gripper.at() == pytest.approx(1.0)
+
+
+def test_rs_the_two_stage_close_is_the_drivers(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import apai.control.rebot_rs_arm as rebot_rs_arm
+    from apai.control.robstride import GRIP_REACH_RAD
+
+    arm, sdk = rs
+    monkeypatch.setattr(rebot_rs_arm, "time", sdk.guard_time)
+    jaw, cancel = sdk.gripper, threading.Event()
+    arm.gripper_reference()
+    arm.gripper_command(1.0, 0.8, "plain", cancel)
+    calls: list[dict[str, float]] = []
+    close = arm.backend.close_gripper_two_stage
+    monkeypatch.setattr(
+        arm.backend,
+        "close_gripper_two_stage",
+        lambda **kwargs: calls.append(kwargs) or close(**kwargs),
+    )
+
+    # On nothing: both stages, the scout at 0.7 of the effort; reached.
+    sends = len(jaw.sent)
+    outcome = arm.gripper_close_two_stage(0.5, 0.15, 0.7, cancel)
+    assert calls == [
+        {
+            "width_frac_stage1": pytest.approx(0.5),
+            "width_frac_stage2": pytest.approx(0.85),
+            "effort": 0.7,
+        }
+    ]
+    assert jaw.sent[sends:] == [
+        ([pytest.approx(3.1)], [pytest.approx(0.98)]),
+        ([pytest.approx(0.93)], [pytest.approx(1.4)]),
+    ]
+    assert (outcome.status, outcome.stages_skipped) == ("reached", 0)
+    assert outcome.opening == pytest.approx(0.15)
+
+    # On an object: "stalled" once it is more than APAI's reach from the seat
+    # stage, and the jaws keep pushing at the seat stage with the close's
+    # stiffness: no light hold follows.
+    arm.gripper_command(1.0, 0.8, "plain", cancel)
+    jaw.stop = 0.93 + 2 * GRIP_REACH_RAD
+    sends = len(jaw.sent)
+    outcome = arm.gripper_close_two_stage(0.5, 0.15, 0.7, cancel)
+    assert (outcome.status, outcome.stages_skipped) == ("stalled", 0)
+    assert outcome.opening == pytest.approx(jaw.stop / RS_TRAVEL)
+    assert jaw.sent[sends:][-1] == ([pytest.approx(0.93)], [pytest.approx(1.4)])
+    assert not jaw.light_after(sends)
+    # A second close on the seated jaws: the driver skips the scout stage.
+    outcome = arm.gripper_close_two_stage(0.5, 0.15, 0.7, cancel)
+    assert outcome.stages_skipped == 1
+
+
+def test_rs_a_stop_during_the_two_stage_close_keeps_the_seat_stage_back(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import apai.control.rebot_rs_arm as rebot_rs_arm
+
+    arm, sdk = rs
+    monkeypatch.setattr(rebot_rs_arm, "time", sdk.guard_time)
+    jaw, cancel = sdk.gripper, threading.Event()
+    arm.gripper_reference()
+    arm.gripper_command(1.0, 0.8, "plain", cancel)
+    sends = len(jaw.sent)
+
+    def stop_after_the_scout_stage() -> None:
+        if len(jaw.sent) > sends:
+            cancel.set()
+
+    sdk.guard_time.on_sleep = stop_after_the_scout_stage
+    outcome = arm.gripper_close_two_stage(0.5, 0.15, 0.7, cancel)
+    assert outcome.status == "cancelled"
+    # The scout stage, then only the light hold at it: never the seat stage.
+    assert jaw.sent[sends:] == [
+        ([pytest.approx(3.1)], [pytest.approx(0.98)]),
+        ([pytest.approx(3.1)], [RS_HOLD_KP]),
+    ]
+    assert arm.backend._stopped is False  # the driver's own stop flag stays down
+
+
+def test_rs_the_close_before_a_torque_release_is_the_drivers(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import apai.control.rebot_rs_arm as rebot_rs_arm
+
+    arm, sdk = rs
+    monkeypatch.setattr(rebot_rs_arm, "time", sdk.guard_time)
+    jaw, cancel = sdk.gripper, threading.Event()
+    arm.gripper_reference()
+    arm.gripper_command(1.0, 0.8, "plain", cancel)
+    calls: list[dict[str, float]] = []
+    close = arm.backend.close_gripper_torque
+    monkeypatch.setattr(
+        arm.backend,
+        "close_gripper_torque",
+        lambda **kwargs: calls.append(kwargs) or close(**kwargs),
+    )
+    jaw.stop = 0.5  # the jaws meet something
+    sends = len(jaw.sent)
+    outcome = arm.gripper_close_torque(cancel)
+    assert calls == [{}]  # the driver's own effort and limits
+    assert (outcome.status, outcome.closed) == ("stalled", True)
+    assert outcome.opening == pytest.approx(0.5 / RS_TRAVEL)
+    # Closed at the driver's effort, then held lightly on what the jaws met.
+    assert jaw.sent[sends:] == [([0.0], [pytest.approx(1.2)]), ([0.0], [RS_HOLD_KP])]
+    # The same routine as a GRIPPER's mode, at the effort the GRIPPER names.
+    jaw.stop = 0.0
+    arm.gripper_command(1.0, 0.8, "plain", cancel)
+    outcome = arm.gripper_command(0.0, 0.4, "close_torque", cancel)
+    assert calls[-1] == {"effort": 0.4}
+    assert (outcome.status, outcome.closed) == ("reached", True)
+
+
+def test_rs_the_typed_open_and_close_are_the_drivers_routines(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import apai.control.rebot_rs_arm as rebot_rs_arm
+    from apai.grasping.force import select_profile
+
+    arm, sdk = rs
+    monkeypatch.setattr(rebot_rs_arm, "time", sdk.guard_time)
+    jaw, cancel = sdk.gripper, threading.Event()
+    arm.gripper_reference()
+    opened: list[int] = []
+    open_gripper = arm.backend.open_gripper
+    monkeypatch.setattr(
+        arm.backend, "open_gripper", lambda: opened.append(1) or open_gripper()
+    )
+    # "open": the driver's open_gripper, whatever effort the command names.
+    outcome = arm.gripper_command(0.0, 0.1, "open", cancel)
+    assert opened == [1]
+    assert outcome == GripperOutcome("reached", pytest.approx(1.0))
+    assert jaw.sent[-1] == ([pytest.approx(6.2)], [pytest.approx(1.6)])
+    # "close": the driver's two-stage close with APAI's rigid grip profile.
+    rigid = select_profile("", "rigid")
+    sends = len(jaw.sent)
+    outcome = arm.gripper_command(0.0, 0.1, "close", cancel)
+    assert outcome.opening == pytest.approx(1.0 - rigid.close_frac_stage2)
+    assert [kp for _, kp in jaw.sent[sends:]] == [
+        [pytest.approx(2.0 * 0.7 * rigid.effort)],
+        [pytest.approx(2.0 * rigid.effort)],
+    ]
 
 
 def test_rs_gripper_fault_is_an_arm_fault(
@@ -1768,8 +2010,13 @@ def test_the_profile_gives_the_tolerance_for_at_rest_at_start(
     rig = apai_backend.config_for_profile(config, rs_profile)
     # The rig profile's rest_check_tol_rad; the release keeps its own.
     assert (rig.rest.start_rest_tol_rad, rig.rest.rest_tol_rad) == (0.12, 0.05)
-    # Nothing but that and the jaw target tolerance differs.
-    assert dataclasses.replace(rig, rest=config.rest, gripper=config.gripper) == config
+    # Nothing but that, the jaw tolerances and the driver's settle rule differs.
+    assert (
+        dataclasses.replace(
+            rig, rest=config.rest, gripper=config.gripper, executor=config.executor
+        )
+        == config
+    )
     # The mock profile names none: APAI's default.
     mock = apai_backend.config_for_profile(config, profile)
     assert mock.rest.start_rest_tol_rad == 0.12
@@ -1966,41 +2213,32 @@ def test_rs_cancel_during_a_close_leaves_the_close_target_at_the_hold_stiffness(
 
     monkeypatch.setattr(clock, "sleep", sleep_then_cancel)
     sends = len(jaw.sent)
-    outcome = arm.gripper_command(0.0, 0.5, "plain", cancel)
+    outcome = arm.gripper_command(0.0, 0.5, "close_until_contact", cancel)
     assert outcome == GripperOutcome("cancelled", pytest.approx(2.0 / RS_TRAVEL))
     assert jaw.sent[sends:] == [([0.0], [1.0]), ([0.0], [RS_HOLD_KP])]
     assert arm.gripper_last_target() == pytest.approx(0.0)
 
 
-def test_rs_one_missed_jaw_answer_before_an_opening_is_not_a_fault(
+def test_rs_a_missed_jaw_answer_before_an_opening_ends_it_as_the_driver_does(
     rs: tuple[apai_backend.ApaiArm, MotorSdk], clock: FakeClock
 ) -> None:
     arm, sdk = rs
     arm.gripper_reference()
+    sends = len(sdk.gripper.sent)
     before = clock.monotonic()
     sdk.gripper._mm["jaw"].missed = 1
     outcome = arm.gripper_command(1.0, 0.5, "plain", threading.Event())
-    assert outcome == GripperOutcome("reached", pytest.approx(1.0))
-    assert arm.gripper_referenced()
-    assert clock.monotonic() - before == pytest.approx(0.05)  # one wait, then again
-
-
-def test_rs_an_opening_from_jaws_that_stay_unread_is_refused_and_sends_nothing(
-    rs: tuple[apai_backend.ApaiArm, MotorSdk],
-) -> None:
-    arm, sdk = rs
-    arm.gripper_reference()
-    sends = len(sdk.gripper.sent)
-    sdk.gripper._mm["jaw"].missed = 3
-    outcome = arm.gripper_command(1.0, 0.5, "plain", threading.Event())
-    assert (outcome.status, outcome.opening) == ("refused", None)
-    assert outcome.detail.startswith("the jaws could not be read, so no jaw command")
-    assert "no gripper command sent" in outcome.detail
+    # The driver's own fault and text; nothing was sent, and nothing is tried
+    # again: at the arm the skill fails here too.
+    assert outcome.status == "gripper_fault"
+    assert outcome.detail.startswith("gripper position unknown")
+    assert outcome.detail.endswith("no gripper command sent")
     assert sdk.gripper.sent[sends:] == []
-    # Three reads in a row without an answer: APAI's guard drops its reference.
-    assert not arm.gripper_referenced()
-    refused = arm.gripper_command(1.0, 0.5, "plain", threading.Event())
-    assert refused == GripperOutcome("refused", None, "the jaws are not referenced")
+    assert clock.monotonic() == before
+    # The arm stays usable: the next command opens the jaws.
+    assert arm.gripper_referenced()
+    opened = arm.gripper_command(1.0, 0.5, "plain", threading.Event())
+    assert opened == GripperOutcome("reached", pytest.approx(1.0))
 
 
 def test_rs_a_close_makes_no_read_before_it_is_sent(
@@ -2012,19 +2250,26 @@ def test_rs_a_close_makes_no_read_before_it_is_sent(
     sends = len(sdk.gripper.sent)
     sdk.gripper._mm["jaw"].missed = 1
     outcome = arm.gripper_command(0.0, 0.5, "plain", threading.Event())
-    assert outcome == GripperOutcome("reached", pytest.approx(0.0))
+    # The one read that missed is the one after the command was sent.
+    assert outcome == GripperOutcome("sent", None)
     assert sdk.gripper.sent[sends:] == [([0.0], [1.0])]
 
 
-def test_rs_jaws_blocked_while_they_open_are_still_an_arm_fault(
+def test_rs_jaws_blocked_while_they_open_are_the_drivers_fault_not_an_arm_fault(
     rs: tuple[apai_backend.ApaiArm, MotorSdk],
 ) -> None:
     arm, sdk = rs
     arm.gripper_reference()
     sdk.gripper.blocked_at = 1.0
-    with pytest.raises(ArmFault, match=r"jaw command failed: gripper blocked while"):
-        arm.gripper_command(1.0, 0.5, "plain", threading.Event())
+    outcome = arm.gripper_command(1.0, 0.5, "plain", threading.Event())
+    assert outcome.status == "gripper_fault"
+    assert outcome.opening == pytest.approx(1.0 / RS_TRAVEL)
+    assert outcome.detail.startswith(
+        "gripper blocked while opening at 1.00 rad (target 6.20): holding there"
+    )
+    # The guard holds the jaws where they stopped, at the opening's stiffness.
     assert sdk.gripper.at() == pytest.approx(1.0)
+    assert sdk.gripper.sent[-1] == ([pytest.approx(1.0)], [1.0])
 
 
 def test_rs_feedback_lost_during_an_opening_is_still_an_arm_fault(
@@ -2049,19 +2294,30 @@ def test_the_profile_gives_the_jaw_target_tolerance_of_proven_empty(
     profile: apai_backend.ApaiProfile,
     config: RobotAppConfig,
 ) -> None:
+    from apai.control import rs_gripper
+    from apai.control.robstride import GRIP_REACH_RAD
+
     assert config.gripper.target_tol == 0.03  # 0.186 rad of the rig's 6.2 rad
     rig = apai_backend.config_for_profile(config, rs_profile)
-    assert rig.gripper.target_tol == pytest.approx(0.1 / RS_TRAVEL)
-    # The other two jaw tolerances stay as configured.
-    assert (rig.gripper.reach_tol, rig.gripper.full_open_tol) == (0.03, 0.03)
-    assert dataclasses.replace(rig, rest=config.rest, gripper=config.gripper) == config
-    # A tolerance already tighter than 0.1 rad stays.
+    # How near its target APAI's driver takes a close as reached.
+    assert rig.gripper.target_tol == pytest.approx(GRIP_REACH_RAD / RS_TRAVEL)
+    # How far short of its target APAI's guarded opening may end.
+    assert rig.gripper.full_open_tol == pytest.approx(
+        rs_gripper.OPEN_SHORT_RAD / RS_TRAVEL
+    )
+    # Below this APAI takes the jaws as closed on nothing.
+    assert rig.gripper.closed_frac == rs_profile.apai_cfg.grasp.air_grasp_frac
+    # The tolerance of the jaws under a person's trigger stays as configured.
+    assert rig.gripper.reach_tol == config.gripper.reach_tol
+    # A tolerance already tighter than APAI's reach stays.
     tight = dataclasses.replace(
         config, gripper=dataclasses.replace(config.gripper, target_tol=0.01)
     )
-    assert apai_backend.config_for_profile(tight, rs_profile).gripper == tight.gripper
-    # The mock arm's jaw position is not an angle: its tolerance stays.
-    assert apai_backend.config_for_profile(config, profile).gripper == config.gripper
+    assert apai_backend.config_for_profile(tight, rs_profile).gripper.target_tol == 0.01
+    # The mock arm's jaw position is not an angle: its tolerances stay.
+    mock = apai_backend.config_for_profile(config, profile).gripper
+    assert (mock.target_tol, mock.full_open_tol) == (0.03, 0.03)
+    assert mock.closed_frac == profile.apai_cfg.grasp.air_grasp_frac
 
 
 def test_build_arm_refuses_a_real_arm_with_a_jaw_target_tolerance_over_a_tenth_rad(
@@ -2080,6 +2336,16 @@ def test_build_arm_refuses_a_real_arm_with_a_jaw_target_tolerance_over_a_tenth_r
         r"config_for_profile\(\)",
     ):
         apai_backend.build_apai_arm(wide, rs_profile, clock)
+    # "Open" and "closed" must be APAI's too.
+    copied = dataclasses.replace(
+        rig, gripper=dataclasses.replace(rig.gripper, full_open_tol=0.03)
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"gripper\.full_open_tol 0\.03 and gripper\.closed_frac 0\.04 differ "
+        r"from APAI's 0\.0645161 and 0\.04: use config_for_profile\(\)",
+    ):
+        apai_backend.build_apai_arm(copied, rs_profile, clock)
 
 
 # The robot app on the reBot RS branch
@@ -2124,7 +2390,8 @@ def hold_an_object(h: AppHarness, sdk: MotorSdk, at_rad: float) -> None:
         "outcome": "stalled",
         "opening": pytest.approx(at_rad / RS_TRAVEL),
     }
-    assert sdk.gripper.sent[-1] == ([0.0], [RS_HOLD_KP])
+    # The jaws grip at the close's stiffness: effort 0.5 of the profile's 2.0.
+    assert sdk.gripper.sent[-1] == ([0.0], [1.0])
 
 
 def break_the_link(h: AppHarness) -> None:
@@ -2206,13 +2473,17 @@ def test_the_operators_open_ends_where_it_is_stopped(
             time.sleep(0.001)
 
     sdk.guard_time.on_sleep = stop_part_open
+    mark = len(jaw.sent)
     open_id = h.client.open_jaws()
     result = final(h, open_id)
     assert result.status == "cancelled"
-    # The step under way from 0.62 rad ended at once; no further step was sent.
-    assert targets_at(jaw, marks[0], 1.0) == []
-    assert jaw.at() == pytest.approx(0.82)
-    assert jaw.sent[-1] == ([pytest.approx(0.82)], [RS_HOLD_KP])
+    # One ramp of the driver's own opening, 0.1 rad per pass: it ended at the
+    # pass after the stop, and nothing but the light hold followed.
+    ramp = [q[0] for q, _ in jaw.sent[mark : marks[0]]]
+    assert ramp == pytest.approx([0.1 * step for step in range(len(ramp))])
+    assert jaw.at() == pytest.approx(0.8)
+    after = jaw.sent[marks[0] :]
+    assert after and all(sent == ([pytest.approx(0.8)], [RS_HOLD_KP]) for sent in after)
 
 
 @pytest.mark.parametrize(
@@ -2236,7 +2507,7 @@ def test_jaws_more_than_a_tenth_rad_from_their_target_are_not_proven_empty(
     assert final(h, h.client.gripper(1.0)).status == "completed"
     sdk.gripper.stop = object_rad
     closed = final(h, h.client.gripper(0.0))
-    assert closed.status == "completed"  # inside the tolerance of "reached"
+    assert closed.status == "completed"  # a plain close is done once it is sent
     assert closed.detail["opening"] == pytest.approx(object_rad / RS_TRAVEL)
     assert final(h, h.client.request_owner("nobody", reason="done")).status == (
         "completed"
@@ -2248,31 +2519,84 @@ def test_jaws_more_than_a_tenth_rad_from_their_target_are_not_proven_empty(
     assert h.arm.torque_on() is (release != "completed")
 
 
-def test_one_missed_jaw_answer_before_an_agents_opening_is_no_fault_stop(
-    rs_app: tuple[AppHarness, MotorSdk],
-) -> None:
-    h, sdk = rs_app
-    h.new_task()
-    sdk.gripper._mm["jaw"].missed = 1
-    result = final(h, h.client.gripper(1.0))
-    assert (result.status, result.reason) == ("completed", "")
-    state = h.client.wait_state(lambda s: s.gripper.opening == pytest.approx(1.0))
-    assert (state.stop_level, state.owner) == ("none", "agent")
-
-
-def test_an_agents_opening_from_jaws_that_stay_unread_is_refused_without_a_fault_stop(
+def test_an_agents_opening_from_jaws_that_give_no_answer_is_no_fault_stop(
     rs_app: tuple[AppHarness, MotorSdk],
 ) -> None:
     h, sdk = rs_app
     h.new_task()
     sends = len(sdk.gripper.sent)
-    sdk.gripper._mm["jaw"].missed = 3
+    sdk.gripper._mm["jaw"].missed = 1
     result = final(h, h.client.gripper(1.0))
-    assert result.status == "refused"
-    assert result.reason.startswith("the jaws could not be read, so no jaw command")
+    # The driver's own fault, with its text: the agent's skill fails with it,
+    # as at the arm, and the arm stays the agent's.
+    assert result.status == "failed"
+    assert result.detail["outcome"] == "gripper_fault"
+    assert result.reason.startswith("gripper position unknown")
+    assert result.reason.endswith("no gripper command sent")
     assert sdk.gripper.sent[sends:] == []
-    state = h.client.wait_state(lambda s: not s.gripper.referenced)
+    state = h.client.wait_state(
+        lambda s: (s.last_result or {}).get("command_id") == result.command_id
+    )
     assert (state.stop_level, state.owner, state.torque_on) == ("none", "agent", True)
+    sdk.gripper._mm["jaw"].missed = 0
+    assert final(h, h.client.gripper(1.0)).status == "completed"
+
+
+def test_an_agents_opening_that_is_blocked_is_no_fault_stop(
+    rs_app: tuple[AppHarness, MotorSdk],
+) -> None:
+    h, sdk = rs_app
+    h.new_task()
+    sdk.gripper.blocked_at = 1.0
+    result = final(h, h.client.gripper(1.0))
+    assert (result.status, result.detail["outcome"]) == ("failed", "gripper_fault")
+    assert result.reason.startswith("gripper blocked while opening at 1.00 rad")
+    assert result.detail["opening"] == pytest.approx(1.0 / RS_TRAVEL)
+    state = h.client.wait_state(
+        lambda s: (s.last_result or {}).get("command_id") == result.command_id
+    )
+    assert (state.stop_level, state.owner) == ("none", "agent")
+    # What blocked them is taken away: the next opening runs.
+    sdk.gripper.blocked_at = None
+    assert final(h, h.client.gripper(1.0)).status == "completed"
+
+
+def test_an_agents_two_stage_close_reports_what_the_driver_skipped(
+    rs_app: tuple[AppHarness, MotorSdk], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import apai.control.rebot_rs_arm as rebot_rs_arm
+
+    h, sdk = rs_app
+    monkeypatch.setattr(rebot_rs_arm, "time", sdk.guard_time)
+    h.new_task()
+    assert final(h, h.client.gripper(1.0)).status == "completed"
+    sdk.gripper.stop = 2.0  # an object
+    sends = len(sdk.gripper.sent)
+    closed = final(
+        h,
+        h.client.gripper(
+            0.15, max_effort=0.7, mode="close_until_contact", scout_opening=0.5
+        ),
+    )
+    assert closed.status == "completed"
+    assert closed.detail == {
+        "outcome": "stalled",
+        "opening": pytest.approx(2.0 / RS_TRAVEL),
+        "close_stages_skipped": 0,
+    }
+    # The scout stage, then the seat stage; the grip keeps the seat's stiffness.
+    assert [q[0] for q, _ in sdk.gripper.sent[sends:]] == pytest.approx([3.1, 0.93])
+    assert not sdk.gripper.light_after(sends)
+    state = h.client.wait_state(lambda s: s.gripper.may_be_holding)
+    assert state.gripper.load == "loaded"
+    # The agent gives the arm back and a STOP follows: the grip is not relaxed.
+    assert final(h, h.client.request_owner("nobody", reason="done")).status == (
+        "completed"
+    )
+    h.client.stop("operator pressed stop")
+    h.client.wait_state(lambda s: s.stop_number == 1)
+    assert h.app._worker.wait_idle(WAIT_S)
+    assert not sdk.gripper.light_after(sends)
 
 
 # The hold after a contact, on the reBot RS driver
@@ -2485,7 +2809,8 @@ def test_a_light_jaw_hold_that_reaches_no_motor_raises_nothing(
     sdk.gripper.stop = 2.0  # an object between the jaws
     sdk.gripper.lost_from = len(sdk.gripper.sent) + 1  # the close itself arrives
     outcome = arm.gripper_command(0.0, 1.0, "plain", cancel)
-    assert outcome.status == "stalled"
+    assert outcome.status == "sent"
+    arm.gripper_light_hold()
     arm.gripper_light_hold()
     # Nothing tells the app that the jaws are still at the closing stiffness.
     assert [kp for _, kp in sdk.gripper.lost] == [[RS_HOLD_KP], [RS_HOLD_KP]]
@@ -2805,3 +3130,664 @@ def test_a_hold_folder_that_cannot_be_listed_counts_as_a_confirmation(
     finally:
         folder.chmod(0o700)
     assert sorted(path.name for path in folder.iterdir()) == ["_any.confirm.json"]
+
+
+# The end read of a move on the reBot RS driver: the read of every joint that
+# decides whether the move has settled
+
+RS_READ_S = 0.008  # what one motor read costs on the arm's motor bus
+RS_LIBRARY_WAIT_S = 1.0  # the motor library's wait for a read given no timeout
+RS_NUDGE = straight(REST, moved(REST, 0, 0.01), 10)  # 0.05 rad/s for 0.2 s
+
+
+def run_rs_nudge(
+    arm: apai_backend.ApaiArm,
+    rig: RobotAppConfig,
+    rs_profile: apai_backend.ApaiProfile,
+    clock: Clock,
+    in_watch: list[bool],
+) -> MoveOutcome:
+    """Run RS_NUDGE from rest on a move executor, as a return to rest runs.
+
+    in_watch[0] is True while the move's contact watch makes the reads of
+    one pass. On a clock that is not a fake one the watch paces itself.
+    """
+    recovery = apai_backend.build_apai_checkers(rig, rs_profile, clock).recovery
+    made = recovery.contact_watch
+
+    def contact_watch(port: Any, q_start: Any, history: Any) -> Any:
+        watch = made(port, q_start, history)
+        real = watch.after_send
+
+        def after_send(index: int, q: Any, deadline_mono: float) -> list:
+            in_watch[0] = True
+            try:
+                return real(index, q, deadline_mono)
+            finally:
+                in_watch[0] = False
+
+        watch.after_send = after_send
+        return watch
+
+    recovery.contact_watch = contact_watch
+    authority = Authority()
+    authority.set_owner(Owner.RECOVERY, "return to rest")
+    history = JointHistory(rig.n_joints, rig.state.history_s)
+    executor = MoveExecutor(arm, authority, history, rig.executor, clock)
+    return executor.run(
+        RS_NUDGE,
+        REST,
+        0.02,
+        STEP_S,
+        Owner.RECOVERY,
+        recovery,
+        authority.snapshot(),
+        "nudge",
+    )
+
+
+def test_the_end_read_of_a_move_gives_every_motor_read_the_short_timeout(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+    rs_profile: apai_backend.ApaiProfile,
+    config: RobotAppConfig,
+    clock: FakeClock,
+) -> None:
+    arm, sdk = rs
+    motors = list(sdk.arm._mm.values())
+    marks: list[int] = []
+    send = arm.send_target
+
+    def send_target(q: Sequence[float]) -> None:
+        send(q)
+        if len(sdk.arm.sent) == len(RS_NUDGE):
+            marks.extend(len(motor.reads) for motor in motors)
+
+    arm.send_target = send_target
+    rig = apai_backend.config_for_profile(config, rs_profile)
+    outcome = run_rs_nudge(arm, rig, rs_profile, clock, [False])
+    assert (outcome.status, outcome.reason) == ("completed", "")
+    assert outcome.end_q == pytest.approx(RS_NUDGE[-1])
+    # Once the last setpoint is out no motor is asked without a timeout: such
+    # a read waits the motor library's own time for a motor that is silent.
+    after = [motor.reads[mark:] for motor, mark in zip(motors, marks, strict=True)]
+    assert all(reads for reads in after)
+    assert {read for reads in after for read in reads} == {(0x7019, 50)}
+
+
+def test_a_motor_that_misses_one_answer_in_the_end_read_does_not_end_the_move(
+    rs_profile: apai_backend.ApaiProfile,
+    config: RobotAppConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In real time, each motor read costing what it costs on the arm's bus.
+
+    With motors that answer at once the watch reads every joint in its next
+    pass, and a read that waited too long would not show.
+    """
+    clock = SystemClock()
+    rig = apai_backend.config_for_profile(config, rs_profile)
+    arm, sdk = rs_arm(rig, rs_profile, clock, monkeypatch)
+    arm.connect()
+    in_watch = [False]
+    missed: list[int | None] = []  # the timeout of the read that got no answer
+    silent = sdk.arm._mm["motor1"]
+
+    def on_the_bus(motor: Motor) -> None:
+        answer = motor.robstride_get_param_f32
+
+        def read(param: int, timeout_ms: int | None = None) -> float:
+            own = len(sdk.arm.sent) == len(RS_NUDGE) and not in_watch[0]
+            if motor is silent and own and not missed:
+                # The executor's own first read of it once the move is sent.
+                missed.append(timeout_ms)
+                wait_ms = (
+                    1000.0 * RS_LIBRARY_WAIT_S if timeout_ms is None else timeout_ms
+                )
+                time.sleep(wait_ms / 1000.0)
+                raise OSError("no answer")
+            time.sleep(RS_READ_S)
+            return answer(param, timeout_ms)
+
+        motor.robstride_get_param_f32 = read
+
+    for motor in sdk.arm._mm.values():
+        on_the_bus(motor)
+    outcome = run_rs_nudge(arm, rig, rs_profile, clock, in_watch)
+    assert (outcome.status, outcome.reason) == ("completed", "")
+    # The silent motor cost the contact monitor's 50 ms, under the 0.35 s it
+    # allows a joint without a reading.
+    assert missed == [50]
+    assert outcome.end_q == pytest.approx(RS_NUDGE[-1])
+    assert len(sdk.arm.sent) == len(RS_NUDGE)
+    assert arm.torque_on() and sdk.disconnects == 0
+
+
+# A torque release on the reBot RS driver: while the driver's disconnect runs,
+# and after one that raised
+
+RS_RELEASE_FAULT = f"{RELEASE_FAILED}: the driver's disconnect failed: bus off"
+UNDER_WAY = "a torque release is under way"
+
+
+def hold_disconnect(
+    sdk: MotorSdk, error: Exception | None = None
+) -> tuple[threading.Event, threading.Event]:
+    """Hold the motor SDK's disconnect inside its call until `go` is set.
+
+    Returns (inside, go); inside is set once the call waits. With an error
+    the call then raises it.
+    """
+    inside, go = threading.Event(), threading.Event()
+
+    def disconnect() -> None:
+        sdk.disconnects += 1
+        inside.set()
+        go.wait(WAIT_S)
+        if error is not None:
+            raise error
+
+    sdk.disconnect = disconnect
+    return inside, go
+
+
+def stop_over_the_link(h: AppHarness) -> None:
+    """A STOP link message, handled by the robot app before this returns."""
+    heard = len(h.heard("stop"))
+    h.client.stop("operator pressed stop")
+    h.wait_local_events("stop", heard + 1)
+
+
+RELEASE_STOPS: dict[str, Callable[[AppHarness], Any]] = {
+    "a STOP": stop_over_the_link,
+    "the robot connection lost": lambda h: h.lose_link(),
+}
+
+
+@pytest.mark.parametrize("stopped_by", RELEASE_STOPS)
+def test_while_the_drivers_disconnect_runs_a_stop_sends_the_driver_nothing(
+    rs_app: tuple[AppHarness, MotorSdk], stopped_by: str
+) -> None:
+    h, sdk = rs_app
+    inside, go = hold_disconnect(sdk)
+    try:
+        h.client.release()
+        assert inside.wait(WAIT_S), "the release never reached the disconnect"
+        jaw_mark, arm_mark = len(sdk.gripper.sent), len(sdk.arm.sent)
+        RELEASE_STOPS[stopped_by](h)
+        # The stop's light jaw hold did not go to a driver that is switching
+        # off, and the motors are not reported off before the call returned.
+        assert sdk.gripper.sent[jaw_mark:] == [] and sdk.arm.sent[arm_mark:] == []
+        assert h.arm.torque_on()
+    finally:
+        go.set()
+    h.idle()
+    assert not h.arm.torque_on() and sdk.disconnects == 1
+    assert h.app.motion_state is MotionState.REST_UNPOWERED
+    assert h.heard("fault") == []
+    assert sdk.gripper.sent[jaw_mark:] == []
+
+
+def test_a_stop_during_a_disconnect_that_then_raises_sends_the_driver_nothing(
+    rs_app: tuple[AppHarness, MotorSdk],
+) -> None:
+    h, sdk = rs_app
+    inside, go = hold_disconnect(sdk, OSError("bus off"))
+    try:
+        release_id = h.client.release()
+        assert inside.wait(WAIT_S), "the release never reached the disconnect"
+        jaw_mark = len(sdk.gripper.sent)
+        stop_over_the_link(h)
+        assert sdk.gripper.sent[jaw_mark:] == []
+    finally:
+        go.set()
+    result = final(h, release_id)
+    assert (result.status, result.reason) == ("failed", f"fault: {RS_RELEASE_FAULT}")
+    state = h.client.wait_state(lambda s: s.stop_level == "fault")
+    assert (state.motion, state.torque_on) == ("release_failed", True)
+    assert state.fault_reason == RS_RELEASE_FAULT
+    assert sdk.gripper.sent[jaw_mark:] == []
+
+
+def test_a_stop_between_the_drivers_disconnect_and_the_arm_ports_note_is_no_fault(
+    rs_app: tuple[AppHarness, MotorSdk],
+) -> None:
+    h, sdk = rs_app
+    backend = h.arm.backend
+    real = backend.disconnect
+    stopped: list[int] = []
+
+    def disconnect() -> None:
+        real()
+        # The driver has dropped its motor SDK; the arm port's call goes on.
+        assert backend._arm is None
+        stop = threading.Thread(
+            target=lambda: stopped.append(h.app.stop("operator pressed stop"))
+        )
+        stop.start()
+        stop.join(WAIT_S)
+
+    backend.disconnect = disconnect
+    result = final(h, h.client.release())
+    assert (result.status, result.reason) == ("completed", "")
+    assert len(stopped) == 1, "the STOP did not return"
+    state = h.client.wait_state(lambda s: not s.torque_on)
+    # No light jaw hold was tried on a driver without its motor SDK.
+    assert (state.motion, state.stop_level) == ("rest_unpowered", "stop")
+    assert h.heard("fault") == []
+    assert sdk.disconnects == 1
+
+
+def test_rs_arm_port_sends_the_driver_nothing_while_its_disconnect_runs(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    arm, sdk = rs
+    arm.gripper_reference()
+    opened = arm.gripper_command(1.0, 1.0, "plain", threading.Event())
+    assert opened.status == "reached"
+    inside, go = hold_disconnect(sdk)
+    release = threading.Thread(target=arm.release_torque)
+    release.start()
+    try:
+        assert inside.wait(WAIT_S), "the release never reached the disconnect"
+        jaw_mark, arm_mark = len(sdk.gripper.sent), len(sdk.arm.sent)
+        arm.gripper_light_hold()
+        with pytest.raises(ArmFault, match=UNDER_WAY):
+            arm.send_target(REST)
+        with pytest.raises(ArmFault, match=UNDER_WAY):
+            arm.gripper_reference()
+        refused = arm.gripper_command(0.0, 0.5, "plain", threading.Event())
+        assert (refused.status, refused.detail) == ("refused", UNDER_WAY)
+        assert sdk.gripper.sent[jaw_mark:] == [] and sdk.arm.sent[arm_mark:] == []
+        # Not off before the driver's call has returned.
+        assert arm.torque_on()
+    finally:
+        go.set()
+    release.join(WAIT_S)
+    assert not release.is_alive() and not arm.torque_on()
+    arm.gripper_light_hold()
+    assert sdk.gripper.sent[jaw_mark:] == []
+
+
+class WhenItFalls:
+    """In place of ApaiArm._releasing, the arm port's note that its driver's
+    disconnect is under way: calls `then` each time the note is taken back."""
+
+    def __init__(self, then: Callable[[], None]) -> None:
+        self._then = then
+
+    def __get__(self, arm: Any, owner: Any = None) -> bool:
+        return False if arm is None else arm.__dict__.get("under way", False)
+
+    def __set__(self, arm: Any, value: bool) -> None:
+        arm.__dict__["under way"] = value
+        if not value:
+            self._then()
+
+
+def test_rs_arm_port_counts_a_release_before_it_stops_refusing_commands_for_it(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm, sdk = rs
+    arm.gripper_reference()
+    opened = arm.gripper_command(1.0, 1.0, "plain", threading.Event())
+    assert opened.status == "reached"
+    seen: list[tuple[bool, list]] = []
+
+    def a_stop_right_then() -> None:
+        # What a STOP that lands at this moment does: a light jaw hold.
+        mark = len(sdk.gripper.sent)
+        arm.gripper_light_hold()
+        seen.append((arm.torque_on(), sdk.gripper.sent[mark:]))
+
+    port = apai_backend.ApaiArm
+    monkeypatch.setattr(port, "_releasing", WhenItFalls(a_stop_right_then), False)
+    arm.release_torque()
+    # No gap in which the driver, without its motor SDK by then, is sent one.
+    assert seen == [(False, [])]
+    assert sdk.disconnects == 1
+
+
+def fail_first_disconnect(sdk: MotorSdk) -> None:
+    """The motor SDK's first disconnect raises; a later one would work."""
+    real = sdk.disconnect
+
+    def disconnect() -> None:
+        if sdk.disconnects:
+            real()
+            return
+        sdk.disconnects += 1
+        raise OSError("bus off")
+
+    sdk.disconnect = disconnect
+
+
+def test_rs_arm_port_takes_no_second_release_after_a_disconnect_that_raised(
+    rs: tuple[apai_backend.ApaiArm, MotorSdk],
+) -> None:
+    arm, sdk = rs
+    fail_first_disconnect(sdk)
+    with pytest.raises(ArmFault, match=r"the driver's disconnect failed: bus off"):
+        arm.release_torque()
+    assert arm.torque_on() and not arm.release_confirmed()
+    # APAI's driver dropped its motor SDK when its disconnect raised: its next
+    # disconnect returns without reaching a motor, which proves nothing.
+    assert arm.backend._arm is None
+    with pytest.raises(
+        ArmFault,
+        match=r"an earlier disconnect failed: the motors may be on or off, and "
+        r"this driver takes no second release",
+    ):
+        arm.release_torque()
+    assert sdk.disconnects == 1
+    assert arm.torque_on() and not arm.release_confirmed()
+    with pytest.raises(ArmFault, match=r"a torque release failed: the motors may"):
+        arm.send_target(REST)
+
+
+def test_after_a_failed_release_on_the_rs_driver_only_a_new_start_is_left(
+    rs_app: tuple[AppHarness, MotorSdk], clock: FakeClock
+) -> None:
+    h, sdk = rs_app
+    fail_first_disconnect(sdk)
+    port_calls: list[int] = []
+    release_torque = h.arm.release_torque
+
+    def counted() -> None:
+        port_calls.append(1)
+        release_torque()
+
+    h.arm.release_torque = counted
+    result = final(h, h.client.release())
+    assert (result.status, result.reason) == ("failed", f"fault: {RS_RELEASE_FAULT}")
+    state = h.client.wait_state(lambda s: s.stop_level == "fault")
+    assert (state.motion, state.torque_on) == ("release_failed", True)
+    # The fault-stop's line names the new start, not a reset.
+    assert h.heard("fault")[-1][1] == (
+        f"FAULT-STOP: {RS_RELEASE_FAULT}; end the robot app with SIGTERM and "
+        f"start it again with the arm at rest, stop number {state.stop_number}"
+    )
+    # APAI's driver dropped its motor SDK: no joint and no jaw reads from here.
+    with pytest.raises(ReadFailed):
+        h.arm.read_all()
+    assert h.arm.gripper_read() is None
+
+    # A reset clears the fault-stop; a release sent at once is refused.
+    assert final(h, h.client.reset()).status == "completed"
+    h.client.wait_state(lambda s: s.stop_level == "none")
+    refused = final(h, h.client.release())
+    # The release that failed had judged the jaws: they are not judged again,
+    # and the joints, which must be read at rest, cannot be read.
+    assert refused.status == "refused"
+    assert refused.reason.startswith(
+        "a joint read failed: the joints could not be read: "
+    )
+    assert h.heard("refused")[-1][1] == (
+        f"release refused: {refused.reason}; {TORQUE_UNKNOWN}; {NEW_START}"
+    )
+    # Without joint reads the fault-stop latches again.
+    for _ in range(25):
+        clock.advance(0.02)
+        h.step()
+    state = h.client.wait_state(lambda s: s.stop_level == "fault")
+    assert state.fault_reason.startswith("joint feedback lost for ")
+    assert h.heard("fault")[-1][1] == (
+        f"FAULT-STOP: {state.fault_reason}; {MOTORS_UNKNOWN}, stop number "
+        f"{state.stop_number}"
+    )
+    refused = final(h, h.client.release())
+    latched = f"fault-stop latched: {state.fault_reason}"
+    assert (refused.status, refused.reason) == ("refused", latched)
+    # A quit tries the release again: refused too, and the app runs on.
+    reason = f"a torque release failed and {TORQUE_UNKNOWN}; release refused: {latched}"
+    typed = h.thor_terminal().ask("quit", answer="quit:")
+    assert typed == f"quit: failed: {reason}; the robot app keeps running"
+    assert h.heard("shutdown")[-1][1] == (
+        f"shutdown failed: {reason}; the robot app keeps running; {NEW_START}"
+    )
+    refused = h.client.start_task()
+    assert (refused.status, refused.reason) == (
+        "refused",
+        "a torque release failed and the motors may be on or off; end the robot "
+        "app with SIGTERM and start it again with the arm at rest",
+    )
+    # Nothing reached the driver a second time, and nothing said "motors off".
+    assert port_calls == [1] and sdk.disconnects == 1
+    assert not [text for _, text, _ in h.local_events if "motors are off" in text]
+    state = h.client.state
+    assert (state.motion, state.torque_on) == ("release_failed", True)
+    assert h.app.running and h.arm.torque_on()
+
+
+# A wanted motors-off at rest on the reBot RS driver
+
+
+def test_no_joint_read_meets_the_driver_while_its_disconnect_runs(
+    rs_app: tuple[AppHarness, MotorSdk], clock: FakeClock
+) -> None:
+    """Seen on the arm: "joint feedback lost for 0.58 s in hold" after a release."""
+    h, sdk = rs_app
+    inside, go = hold_disconnect(sdk)
+    motors = list(sdk.arm._mm.values())
+    try:
+        release_id = h.client.release()
+        assert inside.wait(WAIT_S), "the release never reached the disconnect"
+        # A motor that is being switched off answers no read.
+        for motor in motors:
+            motor.missed = 10**6
+        # Nor is a joint that leaves its hold target a fault meanwhile.
+        watch = h.arm._hold
+        watch._off[0], watch._last[0] = watch._samples, (0.3, 0.3)
+        assert watch.problem() is not None and h.arm.faults() == []
+        reads = [len(motor.reads) for motor in motors]
+        # 0.8 s of the app's clock pass, an idle joint read due on every pass.
+        for _ in range(40):
+            clock.advance(0.02)
+            h.step()
+        assert [len(motor.reads) for motor in motors] == reads
+        assert h.heard("fault") == []
+    finally:
+        go.set()
+    assert final(h, release_id).status == "completed"
+    state = h.client.wait_state(lambda s: s.motion == "rest_unpowered")
+    assert (state.stop_level, state.fault_reason) == ("none", "")
+    assert not state.torque_on
+    # No fault-stop follows either: nothing is read with the motors off.
+    for _ in range(40):
+        clock.advance(0.02)
+        h.step()
+    assert [len(motor.reads) for motor in motors] == reads
+    assert h.heard("fault") == []
+    assert h.app.snapshot().stop_level is StopLevel.NONE
+
+
+def test_a_release_leaves_the_jaws_in_the_light_hold_of_the_drivers_close(
+    rs_app: tuple[AppHarness, MotorSdk], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h, sdk = rs_app
+    jaw = sdk.gripper
+    calls: list[dict[str, float]] = []
+    close = h.arm.backend.close_gripper_torque
+    monkeypatch.setattr(
+        h.arm.backend,
+        "close_gripper_torque",
+        lambda **kwargs: calls.append(kwargs) or close(**kwargs),
+    )
+    # The jaws are open, proven empty, and meet something 0.2 rad short of
+    # their closed stop.
+    opened = h.thor_terminal().ask("open", "yes", answer="open: ")
+    assert opened == "open: completed"
+    jaw.stop = 0.2
+    mark = len(jaw.sent)
+    released = final(h, h.client.release())
+    assert (released.status, released.reason) == ("completed", "")
+    # The close of APAI's rest, at the driver's own effort: to the closed
+    # stop, then the light hold where the jaws met something. Not the typed
+    # close, which leaves them pushing at 0.15 of the travel.
+    assert calls == [{}]
+    assert jaw.sent[mark:] == [([0.0], [pytest.approx(1.2)]), ([0.0], [RS_HOLD_KP])]
+    assert jaw.at() == pytest.approx(0.2)
+    assert sdk.disconnects == 1 and not h.arm.torque_on()
+    assert [text for _, text, _ in h.heard("jaws")] == [
+        "at rest: closing the jaws with the driver's close",
+        "at rest: the jaws are closed",
+    ]
+
+
+# The joint speed caps of the arm profile the experiment's launcher runs
+
+# The launcher's joint speed in the workstation's copy of the experiment:
+# overrides.safety.max_joint_vel of its configs/rebot_workstation.yaml.
+LAUNCHER_SPEED = 0.4
+
+
+def thor_arm_profile(root: Path, speed: float = LAUNCHER_SPEED, **arm: Any) -> str:
+    """An arm profile laid out as the experiment's on the Thor; its path.
+
+    The experiment is the on-device agent this example was split from. Its
+    launcher's settings name the arm profile it runs, and a second arm
+    profile holds the joint speed it runs it at. Here the first extends
+    APAI's rebot_rs profile; `arm` are further keys of it. The robot app
+    loads such a profile as on the Thor: with the launcher's speed for its
+    speed cap.
+    """
+    configs = root / "configs"
+    configs.mkdir(parents=True, exist_ok=True)
+    files = {
+        apai_backend.LAUNCHER_SETTINGS: {"arm_profile": "configs/thor_operation.yaml"},
+        f"{apai_backend.SPEED_SOURCE}.yaml": {
+            "extends": apai_backend.SPEED_CEILING,
+            "overrides": {"safety": {"max_joint_vel": speed}},
+        },
+        "thor_operation.yaml": {"extends": apai_backend.SPEED_CEILING, **arm},
+    }
+    for name, content in files.items():
+        (configs / name).write_text(yaml.safe_dump(content), encoding="utf-8")
+    return str(configs / "thor_operation")
+
+
+def test_on_the_launchers_profile_only_a_person_may_be_faster_than_the_launcher(
+    tmp_path: Path,
+    config: RobotAppConfig,
+    rs_profile: apai_backend.ApaiProfile,
+    clock: FakeClock,
+) -> None:
+    thor = apai_backend.load_apai_profile(thor_arm_profile(tmp_path))
+    assert thor.launcher_dir == tmp_path.resolve()
+    # The profile's cap is the launcher's speed; a person's bound is the cap
+    # of APAI's rebot_rs profile, which the launcher holds its own speed to.
+    assert apai_backend.speed_cap(thor) == LAUNCHER_SPEED
+    ceiling = apai_backend.speed_cap(rs_profile)
+    assert apai_backend.human_speed_cap(thor) == ceiling == 0.8
+    fits = with_speed(with_speed(config, "agent", LAUNCHER_SPEED), "human", ceiling)
+    checkers = apai_backend.build_apai_checkers(fits, thor, clock)
+    speeds = [checker.harness.limits.max_joint_vel for checker in checkers.all()]
+    assert speeds == [LAUNCHER_SPEED, ceiling, 0.1]
+    for owner in ("agent", "recovery"):
+        with pytest.raises(
+            ValueError,
+            match=rf"limits\.{owner}\.max_joint_speed 0\.41 rad/s is above the APAI "
+            r"profile's speed cap of 0\.4 rad/s \(safety\.max_joint_vel\)",
+        ):
+            apai_backend.build_apai_checkers(with_speed(fits, owner, 0.41), thor, clock)
+    with pytest.raises(
+        ValueError,
+        match=r"limits\.human\.max_joint_speed 0\.81 rad/s is above the speed cap "
+        r"of APAI's rebot_rs profile of 0\.8 rad/s \(safety\.max_joint_vel\)",
+    ):
+        apai_backend.build_apai_checkers(with_speed(fits, "human", 0.81), thor, clock)
+    # A profile no launcher runs binds a person by its own cap.
+    capped = {"safety": {"max_joint_vel": LAUNCHER_SPEED}}
+    plain = apai_backend.load_apai_profile("rebot_rs", capped)
+    assert plain.launcher_dir is None
+    assert apai_backend.human_speed_cap(plain) == LAUNCHER_SPEED
+    with pytest.raises(
+        ValueError,
+        match=r"limits\.human\.max_joint_speed 0\.8 rad/s is above the APAI "
+        r"profile's speed cap of 0\.4 rad/s",
+    ):
+        apai_backend.build_apai_checkers(fits, plain, clock)
+
+
+# A new task from where the arm was left
+
+START_POSES = {
+    "at rest": REST,
+    "at home": HOME,
+    "the tip above the table clearance": ABOVE,
+    "the tip under the table clearance": BELOW,
+    "the tip beside the workspace box": moved(HOME, 0, 0.9),
+    "a link on the table": (0.0, 2.0, 0.2, 0.0, 0.0, 0.0),
+}
+
+
+@pytest.mark.parametrize("where", START_POSES)
+def test_a_task_may_start_where_apais_step_check_takes_a_hold(
+    profile: apai_backend.ApaiProfile,
+    config: RobotAppConfig,
+    checkers: CheckerSet,
+    where: str,
+) -> None:
+    """APAI checks no pose when a task starts.
+
+    Its stream checks a move's first setpoint from where the arm is, and that
+    check lets a low gripper tip rise and one outside the workspace box come
+    back. A hold where the arm is is the least such step.
+    """
+    from apai.safety.harness import SafetyHarness, SafetyLimits
+
+    pose = np.array(START_POSES[where], dtype=float)
+    # The checker as the experiment builds it for its agent, without a map.
+    limits = dataclasses.replace(
+        SafetyLimits.from_config(profile.apai_cfg.safety),
+        max_joint_vel=config.limits.agent.max_joint_speed,
+    )
+    functional = SafetyHarness(limits, kinematics=profile.kinematics)
+    # On a joint stop, as at rest, APAI holds at the nearest pose its joint
+    # margin takes.
+    inside = profile.kinematics.clamp(pose, limits.joint_margin)
+    theirs = functional.vet_step(inside, inside, STEP_S)
+    try:
+        checkers.agent.check_start_pose(pose)
+        ours = None
+    except Refusal as refusal:
+        ours = refusal.reason
+    assert ours == theirs
+    assert (theirs is None) == (where != "a link on the table")
+    # The pose check takes a pose for a target, without the escape rules.
+    low = where in (
+        "the tip under the table clearance",
+        "the tip beside the workspace box",
+    )
+    if low:
+        with pytest.raises(Refusal, match=r"below table clearance|outside workspace"):
+            checkers.agent.check_pose(pose)
+
+
+def test_from_a_low_tip_the_agent_checker_takes_a_lift_and_no_lowering(
+    checkers: CheckerSet,
+) -> None:
+    agent = checkers.agent
+    agent.check_start_pose(BELOW)
+    start_motion(agent)
+    # Every setpoint is checked as APAI's stream checks it: the tip may rise.
+    lift = min_jerk_path(BELOW, ABOVE, 40)
+    prev: Sequence[float] = BELOW
+    for row in lift:
+        agent.check_setpoint(prev, row, STEP_S)
+        prev = row
+    lower = moved(BELOW, 1, BELOW[1] + 0.002)
+    refusal_of(
+        lambda: agent.check_setpoint(BELOW, lower, STEP_S), r"below table clearance"
+    )
+    agent.end_motion()
+
+
+def test_a_latched_checker_and_a_pose_outside_the_envelope_start_no_task(
+    checkers: CheckerSet,
+) -> None:
+    agent = checkers.agent
+    outside = moved(HOME, 5, 1.6)
+    refusal_of(lambda: agent.check_start_pose(outside), r"outside the agent envelope")
+    refusal_of(lambda: agent.check_start_pose(HOME[:3]), r"needs 6 values")
+    agent.latch("motor fault")
+    refusal_of(lambda: agent.check_start_pose(HOME), r"e-stop latched")

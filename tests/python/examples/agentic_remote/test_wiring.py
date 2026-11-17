@@ -35,7 +35,11 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     StopLevel,
 )
 from isaaccapture_examples.agentic_remote.robot_app.permits import PermitGate
-from isaaccapture_examples.agentic_remote.robot_app.rest import ReturnToRest
+from isaaccapture_examples.agentic_remote.robot_app.rest import (
+    MOTORS_ARE_ON,
+    ReturnToRest,
+    SwitchedArm,
+)
 from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
 from isaaccapture_examples.agentic_remote.robot_app.state import (
     IdleReader,
@@ -648,15 +652,34 @@ def test_torque_is_released_at_one_place_in_the_package():
     assert method_calls("release_torque") == ["rest.py"]
 
 
-def test_only_the_app_connects_the_arm_and_only_once():
+def test_only_the_app_connects_the_arm_at_its_start_and_for_motors_on_again(clock):
     # apai_backend.py connects its own backend inside ApaiArm.connect().
     # Link.connect and LinkCarrier.connect dial the robot connection, not the arm.
     callers = method_calls("connect", not_on=frozenset({"Link", "LinkCarrier"}))
     # human/retarget.py wires Isaac Capture's retargeting graph
     # (BaseRetargeter.connect); it holds no arm.
-    assert set(callers) <= {"apai_backend.py", "app.py", "retarget.py"}
+    assert set(callers) <= {"apai_backend.py", "app.py", "rest.py", "retarget.py"}
     assert callers.count("apai_backend.py") == 1
-    assert callers.count("app.py") <= 1
+    # The app connects at its start and when the motors are switched on again
+    # after a release at rest. rest.py's SwitchedArm passes that call on to the
+    # arm port in use: a new one after a release.
+    assert callers.count("app.py") == 2
+    assert callers.count("rest.py") == 1
+    arm, built = SimArm(clock=clock), []
+
+    def build() -> SimArm:
+        built.append(SimArm(clock=clock))
+        return built[-1]
+
+    switched = SwitchedArm(arm, build)
+    switched.connect()
+    assert arm.torque_on() and built == []
+    # A second connect is taken only with the motors off, on a new arm port.
+    with pytest.raises(RuntimeError, match=MOTORS_ARE_ON):
+        switched.connect()
+    arm.release_torque()
+    switched.connect()
+    assert len(built) == 1 and built[0].torque_on() and not arm.torque_on()
     package = Path(agentic_remote.__file__).resolve().parent
     text = (package / "human" / "retarget.py").read_text(encoding="utf-8")
     assert "robot_app" not in text and "ArmPort" not in text

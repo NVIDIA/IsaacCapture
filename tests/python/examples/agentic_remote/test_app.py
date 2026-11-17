@@ -154,6 +154,9 @@ def test_start_connects_the_arm_and_sends_welcome_and_state(robot_app):
     versions = {"agent": "sim-1", "human": "sim-1", "recovery": "sim-1"}
     assert welcome.limit_set_versions == versions
     assert welcome.camera_calibration_id == ""  # the shipped file names none
+    # The agent program plans no faster than this.
+    assert welcome.agent_max_joint_speed == config.limits.agent.max_joint_speed
+    assert welcome.agent_max_joint_speed != config.limits.recovery.max_joint_speed
     state = h.client.state
     assert state.session_id == welcome.session_id
     assert (state.owner, state.owner_number) == ("nobody", 0)
@@ -1202,7 +1205,12 @@ def test_the_command_that_follows_a_jaw_commands_result_does_not_find_the_jaws_b
             "rest": h.client.rest,
             "shutdown": h.client.shutdown,
         }[next_command]
-        result = final(h, send())
+        command_id = send()
+        # Taken, not refused as busy. A release and a shutdown then close the
+        # jaws themselves, which needs the gripper worker back.
+        assert h.client.wait_result(command_id, final=False).status == "accepted"
+        go_on.set()
+        result = final(h, command_id)
         assert (result.status, result.reason) == ("completed", "")
     finally:
         go_on.set()
@@ -1257,7 +1265,10 @@ def test_no_jaw_command_is_taken_while_the_jaws_must_stay_proven_empty(
     assert statuses(h, jaw_id) == ["refused"]
     release.set()
     assert final(h, work_id).status == "completed"
-    assert h.arm.jaw_commands == []
+    # The only jaw command is the work's own: a release and a shutdown close
+    # the jaws at measured rest before the motors go off.
+    own = [] if work == "rest" else [0.0]
+    assert [command.opening for command in h.arm.jaw_commands] == own
 
 
 def test_no_jaw_command_is_taken_once_a_return_to_rest_is_queued(robot_app):
@@ -1311,7 +1322,7 @@ def test_open_needs_a_confirmation_and_nobody_owning_the_arm(robot_app):
     ]
 
 
-def test_open_goes_to_full_open_in_guarded_steps(robot_app):
+def test_open_goes_to_full_open_in_one_opening(robot_app):
     h = robot_app
     h.new_task()
     assert final(h, h.client.gripper(0.8)).status == "completed"
@@ -1320,8 +1331,9 @@ def test_open_goes_to_full_open_in_guarded_steps(robot_app):
     result = final(h, command_id)
     assert statuses(h, command_id) == ["accepted", "completed"]
     assert result.detail == {"outcome": "reached", "opening": pytest.approx(1.0)}
+    # The typed open is one jaw command of the driver, not steps of open_step.
     openings = [command.opening for command in h.arm.jaw_commands]
-    assert openings == pytest.approx([0.8, 0.85, 0.9, 0.95, 1.0])
+    assert openings == pytest.approx([0.8, 1.0])
 
 
 def test_open_is_refused_while_motion_work_is_under_way(robot_app):
@@ -2327,7 +2339,9 @@ def test_release_switches_the_motors_off_at_measured_rest(robot_app):
     assert (refused.status, refused.reason) == ("refused", MOTORS_OFF)
     assert final(h, h.client.rest()).reason == "the motors are off"
     assert final(h, h.client.release()).reason == "the motors are already off"
-    assert h.arm.sent == [] and h.arm.jaw_commands == []
+    # The release closed the jaws at rest, then switched the motors off.
+    assert h.arm.sent == []
+    assert [command.opening for command in h.arm.jaw_commands] == [0.0]
     h.advance(1.0, step_s=0.1)
     assert h.app.snapshot().stop_level is StopLevel.NONE
 
@@ -3144,3 +3158,111 @@ def test_robot_state_names_the_last_permit_refusal(robot_app):
     assert state.health["permit_refusal"] == ""
     release.set()
     assert h.client.wait_result(move_id, timeout_s=WAIT_S).status == "completed"
+
+
+# How long one joint read takes on the motor bus
+
+
+def read_time_lines(caplog) -> list[str]:
+    said = [record.getMessage() for record in caplog.records]
+    return [line for line in said if "joint read takes" in line]
+
+
+def test_the_app_says_once_how_long_one_joint_read_takes_on_the_bus(
+    make_robot_app, config, caplog
+):
+    reads = app_module.READ_TIMING_READS
+    period = config.state.idle_read_period_s
+    with caplog.at_level("INFO", logger=APP_LOGGER):
+        h = make_robot_app(start=False)
+        real, calls = h.arm.read_joint, []
+
+        def read_joint(joint):
+            calls.append(joint)
+            # One of the idle reads the app makes anyway is a slow one.
+            h.arm.read_time_s = 0.03 if len(calls) == 10 else 0.008
+            return real(joint)
+
+        h.arm.read_joint = read_joint
+        h.start()
+        assert read_time_lines(caplog) == []  # not before the reads were made
+        h.advance_until(lambda: read_time_lines(caplog), step_s=period, limit_s=5.0)
+        assert len(calls) >= reads
+        told = len(calls)
+        h.advance(2 * reads * period, step_s=period)
+    # Said once, of the first idle reads after the connect and of no other.
+    assert read_time_lines(caplog) == [
+        f"one joint read takes 8.0 ms on the motor bus (median of {reads} idle "
+        "reads; worst 30.0 ms): the bus allows about 125 joint reads a second; "
+        f"state.idle_read_period_s asks for {1.0 / period:.0f}"
+    ]
+    assert len(calls) >= told + reads
+
+
+def test_a_read_longer_than_the_idle_period_is_said_as_a_warning(
+    make_robot_app, config, caplog
+):
+    fast = with_config(config, state={"idle_read_period_s": 0.005})
+    with caplog.at_level("INFO", logger=APP_LOGGER):
+        h = make_robot_app(config=fast)  # the simulated read takes 8 ms
+        h.advance(2 * app_module.READ_TIMING_READS * 0.005, step_s=0.005)
+    told, warned = read_time_lines(caplog)
+    assert told.startswith("one joint read takes 8.0 ms on the motor bus")
+    assert told.endswith("state.idle_read_period_s asks for 200")
+    assert warned == (
+        "one joint read takes longer than state.idle_read_period_s (0.005 s): "
+        "the idle reads follow each other without a pause, and a link message "
+        "waits for the read under way"
+    )
+
+
+def test_the_read_time_is_said_again_after_the_motors_are_switched_on_again(
+    sim_arm, checkers, config, clock, caplog
+):
+    from conftest import AppHarness
+    from isaaccapture_examples.agentic_remote.robot_app.sim import SimArm
+
+    # As the robot app's program builds it: a new arm port for "on".
+    options = {"rebuild_arm": lambda: SimArm(clock=clock, read_time_s=0.004)}
+    h = AppHarness(config, sim_arm, checkers, clock, app_options=options)
+    period = config.state.idle_read_period_s
+    try:
+        with caplog.at_level("INFO", logger=APP_LOGGER):
+            h.start()
+            h.advance(2 * app_module.READ_TIMING_READS * period, step_s=period)
+            assert final(h, h.client.release()).status == "completed"
+            done = Done()
+            assert h.app.request_power_on(True, done) is None
+            assert done.wait().status == "completed"
+            h.advance(2 * app_module.READ_TIMING_READS * period, step_s=period)
+        lines = read_time_lines(caplog)
+        assert [line.split(" on the motor bus")[0] for line in lines] == [
+            "one joint read takes 8.0 ms",
+            "one joint read takes 4.0 ms",
+        ]
+    finally:
+        h.close()
+
+
+# The jaws when the motors go off
+
+
+def test_a_release_leaves_the_jaws_closed_in_the_light_hold(robot_app):
+    h = robot_app
+    h.new_task()
+    assert final(h, h.client.gripper(1.0)).status == "completed"
+    assert final(h, h.client.request_owner("nobody")).status == "completed"
+    assert h.arm.light_holds == []
+    assert final(h, h.client.release()).status == "completed"
+    # The close before the torque release: to the closed stop, then the light
+    # hold, so the jaws do not push when the motors go off.
+    close = h.arm.jaw_commands[-1]
+    assert (close.opening, close.status) == (0.0, "reached")
+    assert close.stiffness == "light" and h.arm.jaw_stiffness == "light"
+    assert len(h.arm.light_holds) == 1 and h.arm.light_holds[0] >= close.t
+    assert h.arm.gripper_read() == 0.0
+    assert not h.arm.torque_on() and len(h.arm.released_at) == 1
+    assert [text for _, text, _ in h.heard("jaws")] == [
+        "at rest: closing the jaws with the driver's close",
+        "at rest: the jaws are closed",
+    ]

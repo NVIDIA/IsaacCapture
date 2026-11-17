@@ -542,17 +542,19 @@ def test_a_new_task_is_accepted_at_rest_on_the_joint_stops(
 @pytest.mark.parametrize(
     ("pose", "reason"),
     [
-        (BELOW, r"type rest first: TCP z=0\.011 below table clearance 0\.020"),
-        (moved(HOME, 0, 0.9), r"type rest first: TCP .* outside workspace"),
+        (
+            [0.0, 2.0, 0.2, 0.0, 0.0, 0.0],
+            r"type rest first: link/joint 6 at z=0\.001 would hit the table",
+        ),
         (
             moved(HOME, 5, 1.6),
             r"type rest first: the step starts outside the agent envelope, which "
             r"cannot be re-entered: joint 6 at 1\.600 rad",
         ),
     ],
-    ids=["below the table clearance", "beside the workspace", "outside the envelope"],
+    ids=["a link on the table", "outside the envelope"],
 )
-def test_a_new_task_is_refused_at_a_pose_the_agent_checker_refuses(
+def test_a_new_task_is_refused_where_no_setpoint_could_leave_the_pose(
     apai_app: ApaiHarness, pose: list[float], reason: str
 ) -> None:
     h = apai_app
@@ -563,6 +565,54 @@ def test_a_new_task_is_refused_at_a_pose_the_agent_checker_refuses(
     state = h.app.snapshot()
     assert (state.owner, state.owner_number) == ("nobody", 0)
     assert h.spy.targets == []
+
+
+def test_a_new_task_starts_with_the_gripper_tip_left_low_and_may_only_lift_it(
+    apai_app: ApaiHarness,
+) -> None:
+    """A task that ended with the gripper at a thin object left the tip low.
+
+    APAI checks no pose when a task starts: its step check lets a tip under
+    the table clearance rise. So the next task is taken, a move that lowers
+    the tip is refused and one that lifts it runs.
+    """
+    h = apai_app
+    h.hold_at(BELOW)
+    agent = h.checkers.agent
+    assert agent.tip_state(BELOW, None).low is not None
+    # The typed rest stays refused there: its path could drag the gripper.
+    rest = final(h, h.client.rest())
+    assert rest.status == "refused" and "below the table clearance" in rest.reason
+    h.new_task()
+    assert h.app.snapshot().owner is Owner.AGENT
+    lower = straight(BELOW, moved(BELOW, 1, BELOW[1] + 0.01), 5)
+    refused = run(h, lower, BELOW)
+    assert refused.status == "refused" and h.spy.targets == []
+    assert re.search(r"TCP z=0\.0\d+ below table clearance 0\.020", refused.reason)
+    lift = straight(BELOW, ABOVE, 30)
+    assert run(h, lift, BELOW).status == "completed"
+    assert h.sent() == lift and h.spy.pose() == pytest.approx(ABOVE)
+    heights = [agent.tip_state(q, None).z for q in [BELOW, *lift]]
+    assert all(b > a for a, b in zip(heights, heights[1:]))
+    assert agent.tip_state(ABOVE, None).low is None
+
+
+def test_a_new_task_starts_with_the_gripper_tip_outside_the_workspace_box(
+    apai_app: ApaiHarness,
+) -> None:
+    h = apai_app
+    beside = moved(HOME, 0, 0.9)
+    h.hold_at(beside)
+    h.new_task()
+    # Only back toward the box: a move further out is refused, one back runs.
+    out = run(h, straight(beside, moved(HOME, 0, 0.95), 10), beside)
+    assert out.status == "refused" and "outside workspace" in out.reason
+    assert h.spy.targets == []
+    inside = moved(HOME, 0, 0.7)
+    result = run(h, straight(beside, inside, 40), beside)
+    assert result.status == "completed", result.reason
+    assert h.spy.pose() == pytest.approx(inside)
+    h.checkers.agent.check_pose(inside)  # a pose the agent may also aim at
 
 
 # MOVE
@@ -801,6 +851,7 @@ def test_a_stop_during_a_move_halts_all_three_harnesses_and_not_the_driver(
     h.new_task()
     counts = [checker.halt_count() for checker in h.checkers.all()]
     move_id, release = held_move(h, 6)
+    jaw_commands = len(h.spy.jaw_commands)
     h.client.stop("operator pressed stop")
     state = h.client.wait_state(lambda s: s.stop_number == 1)
     assert (state.owner, state.stop_level) == ("nobody", "stop")
@@ -822,8 +873,9 @@ def test_a_stop_during_a_move_halts_all_three_harnesses_and_not_the_driver(
     assert h.spy.pose() == pytest.approx(LIFT[5])
     assert h.arm.torque_on()
     assert not {"stop", "hard_estop", "disconnect"} & set(h.spy.calls)
-    # The jaws were told to hold lightly where they are; nothing opened them.
-    assert h.spy.jaw_commands[-1] == (JAWS_CLOSED, pytest.approx(LIGHT))
+    # No jaw command was running: the jaws were sent nothing and keep their
+    # target and stiffness.
+    assert len(h.spy.jaw_commands) == jaw_commands
 
 
 def test_after_a_stop_old_commands_are_refused_and_a_new_task_moves_again(
@@ -947,27 +999,28 @@ def test_a_jaw_close_under_way_at_a_stop_ends_at_the_light_holding_effort(
 
 
 @pytest.mark.parametrize(
-    ("mode", "status"), [("plain", "failed"), ("close_until_contact", "completed")]
+    ("mode", "outcome"), [("plain", "sent"), ("close_until_contact", "stalled")]
 )
-def test_a_close_that_stalls_on_an_object_is_left_at_the_light_holding_effort(
-    apai_app: ApaiHarness, mode: str, status: str
+def test_a_close_that_stalls_on_an_object_keeps_its_closing_effort(
+    apai_app: ApaiHarness, mode: str, outcome: str
 ) -> None:
     h = apai_app
     h.new_task()
     assert final(h, h.client.gripper(1.0)).status == "completed"
     h.spy.backend.object_stop_frac = 0.6  # an object: the jaws jam at opening 0.4
     result = final(h, h.client.gripper(0.0, max_effort=0.8, mode=mode))
-    assert result.status == status
-    assert result.detail == {"outcome": "stalled", "opening": pytest.approx(0.4)}
-    # The closed target stands, at the light effort; the jaws were not opened.
-    assert h.spy.jaw_commands[-2:] == [
-        (JAWS_CLOSED, 0.8),
-        (JAWS_CLOSED, pytest.approx(LIGHT)),
-    ]
+    # A plain close returns once it is sent; a close until contact waits for
+    # the jaws to stop. Neither is followed by a light hold: the grip stays.
+    assert result.status == "completed"
+    assert result.detail["outcome"] == outcome
+    if mode != "plain":
+        assert result.detail["opening"] == pytest.approx(0.4)
+    assert h.spy.jaw_commands[-1] == (JAWS_CLOSED, 0.8)
     h.advance(5.0)
-    assert h.spy.backend._gripper_effort == pytest.approx(LIGHT)
-    state = h.client.wait_state(lambda s: s.gripper.may_be_holding)
-    assert (state.gripper.opening, state.gripper.load) == (pytest.approx(0.4), "loaded")
+    assert h.spy.jaw_commands[-1] == (JAWS_CLOSED, 0.8)
+    assert h.spy.backend._gripper_effort == pytest.approx(0.8)
+    state = h.client.wait_state(lambda s: s.gripper.load == "loaded")
+    assert state.gripper.opening == pytest.approx(0.4)
 
 
 def test_jaws_closed_on_an_object_refuse_a_release_and_a_return_to_rest(
@@ -980,7 +1033,8 @@ def test_jaws_closed_on_an_object_refuse_a_release_and_a_return_to_rest(
     result = final(h, h.client.gripper(0.0, mode="close_until_contact"))
     assert result.status == "completed"
     assert result.detail == {"outcome": "stalled", "opening": pytest.approx(0.4)}
-    assert h.spy.jaw_commands[-1] == (JAWS_CLOSED, pytest.approx(LIGHT))
+    # The close keeps the stiffness of its effort, the client's default.
+    assert h.spy.jaw_commands[-1] == (JAWS_CLOSED, 0.5)
 
     loaded = "the jaws are not proven empty (loaded): the jaws may be holding something"
     # The arm is at rest; only the jaws stand in the way of a release.
@@ -1281,8 +1335,8 @@ def test_a_stop_after_a_release_sends_the_driver_nothing(
     h.arm.gripper_light_hold = lambda: light_holds.append(True) or light_hold()
     stop(h.app)
     h.step()
-    # The stop asked the arm port for its light jaw hold, as every stop does.
-    assert light_holds == [True]
+    # No jaw command was running: the stop asked the arm port for no light hold.
+    assert light_holds == []
     after = h.spy.calls[h.spy.calls.index("disconnect") + 1 :]
     assert not {"send_joint_target", "set_gripper", "connect"} & set(after)
     assert not h.arm.torque_on()
@@ -1333,10 +1387,12 @@ def test_no_joint_value_comes_from_the_drivers_cached_state(
     mark = len(h.spy.state_reads)
     assert run(h, LIFT, REST).status == "completed"
     # During the move the driver's state was read inside its fresh joint read
-    # only: every joint after every setpoint, and the start and end poses.
+    # only: every joint after every setpoint, and the start and end poses. The
+    # one jaw reading is taken after the move's last setpoint.
     during = h.spy.state_reads[mark:]
-    assert set(during) == {FRESH_READ}
-    assert len(during) >= len(LIFT) * 6
+    assert set(during) - {JAW_READ} == {FRESH_READ}
+    assert during.count(FRESH_READ) >= len(LIFT) * 6
+    assert JAW_READ not in during[: len(LIFT) * 6]
     give_back(h)
     assert final(h, h.client.rest()).status == "completed"
     assert final(h, h.client.release()).status == "completed"

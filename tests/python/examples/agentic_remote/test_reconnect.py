@@ -112,6 +112,7 @@ def test_an_app_built_without_a_carrier_has_no_link(config, sim_arm, checkers, c
     app = RobotApp(config, sim_arm, checkers, None, clock)
     assert not app.link_alive
     assert not app.wants_carrier  # not started yet
+    app.close()  # ends the jaw worker's thread
 
 
 def test_the_thor_terminal_is_served_with_no_robot_connection(make_robot_app):
