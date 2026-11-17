@@ -6,7 +6,4 @@ add_subdirectory(deviceio_live_view)
 add_subdirectory(manus_calibration)
 add_subdirectory(soma_body_publisher)
 add_subdirectory(soma_hand_publisher)
-
-if(BUILD_PLUGIN_JMEX)
-    add_subdirectory(jmex)
-endif()
+add_subdirectory(jmex)

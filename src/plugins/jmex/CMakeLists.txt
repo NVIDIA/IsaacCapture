@@ -6,8 +6,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     return()
 endif()
 
-# core/ builds with or without the SDK; app/ is the part that needs it.
 add_subdirectory(core)
+
+if(NOT BUILD_PLUGIN_JMEX)
+    return()
+endif()
 
 if(NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     message(WARNING "BUILD_PLUGIN_JMEX=ON but the MOXI Receiver SDK is built for x86_64 only and this "
@@ -19,7 +22,22 @@ endif()
 set(_JMEX_LOCAL_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/MOXIReceiverSDK")
 set(_JMEX_MIN_SDK_VERSION 0.8.1)
 
-find_package(MOXIReceiverSDK ${_JMEX_MIN_SDK_VERSION} QUIET PATHS "${_JMEX_LOCAL_SDK_ROOT}/sdk/linux-x64")
+# find_package rewrites a MOXIReceiverSDK_DIR it cannot use to -NOTFOUND in the cache. It is written
+# back before stopping, or the next configure would search the other places.
+if(MOXIReceiverSDK_DIR)
+    set(_JMEX_REQUESTED_SDK_DIR "${MOXIReceiverSDK_DIR}")
+    find_package(MOXIReceiverSDK ${_JMEX_MIN_SDK_VERSION} QUIET NO_DEFAULT_PATH)
+    if(NOT TARGET Moxi::Receiver)
+        set(MOXIReceiverSDK_DIR "${_JMEX_REQUESTED_SDK_DIR}" CACHE PATH
+            "The directory containing a CMake configuration file for MOXIReceiverSDK." FORCE)
+        message(FATAL_ERROR "MOXIReceiverSDK_DIR='${_JMEX_REQUESTED_SDK_DIR}' holds no MOXIReceiverSDK "
+                            "${_JMEX_MIN_SDK_VERSION} or newer. Point it at "
+                            "<sdk>/sdk/linux-x64/lib/cmake/MOXIReceiverSDK, or clear it to search "
+                            "CMAKE_PREFIX_PATH and ${_JMEX_LOCAL_SDK_ROOT}.")
+    endif()
+else()
+    find_package(MOXIReceiverSDK ${_JMEX_MIN_SDK_VERSION} QUIET PATHS "${_JMEX_LOCAL_SDK_ROOT}/sdk/linux-x64")
+endif()
 
 if(NOT TARGET Moxi::Receiver)
     message(WARNING "BUILD_PLUGIN_JMEX=ON but no MOXIReceiverSDK ${_JMEX_MIN_SDK_VERSION} or newer was found; "

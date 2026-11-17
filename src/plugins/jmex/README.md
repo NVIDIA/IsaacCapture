@@ -28,9 +28,10 @@ Mocap Suit -> MOXI Player -- channel --> jmex_plugin -- "jmex_full_body" --> Ful
 
 ## Building
 
-The plugin builds only with `BUILD_PLUGIN_JMEX` on. Unpack the SDK into this directory as
-`MOXIReceiverSDK/`, so that `src/plugins/jmex/MOXIReceiverSDK/sdk/linux-x64/lib/cmake/MOXIReceiverSDK/`
-exists, then:
+The plugin builds only with `BUILD_PLUGIN_JMEX` on; its unit tests need neither the option nor the
+SDK (see [Running the offline tests](../../../examples/jmex/README.md#running-the-offline-tests)).
+Unpack the SDK into this directory as `MOXIReceiverSDK/`, so that
+`src/plugins/jmex/MOXIReceiverSDK/sdk/linux-x64/lib/cmake/MOXIReceiverSDK/` exists, then:
 
 ```bash
 cmake -B build -DBUILD_PLUGIN_JMEX=ON
@@ -48,8 +49,10 @@ cmake -B build -DBUILD_PLUGIN_JMEX=ON -DCMAKE_PREFIX_PATH=/path/to/MOXIReceiverS
 
 The configure output names the SDK it found: `jmex plugin: MOXIReceiverSDK <version> from <dir>`.
 Without one, configure warns `BUILD_PLUGIN_JMEX=ON but no MOXIReceiverSDK <minimum version> or newer`,
-skips the plugin, and the rest of the tree still builds. The project's own build prerequisites
-still apply; see [Build from Source](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html).
+skips the plugin, and the rest of the tree still builds. A `MOXIReceiverSDK_DIR` that is set is the
+only place searched: if it holds no SDK that new, configure stops with an error instead. The
+project's own build prerequisites still apply; see
+[Build from Source](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html).
 
 ## Running
 
@@ -227,7 +230,8 @@ MCAP, see the [example](../../../examples/jmex/README.md).
 | `Failed to create OpenXR instance: -51` | The environment is loaded, but the runtime it names is not running |
 | `OpenXR session unrecoverable after` … | The runtime went away and did not come back before the retries ran out. Start it again, then the plugin |
 | No `install/plugins/jmex/` after `cmake --install build` | The build was configured without `-DBUILD_PLUGIN_JMEX=ON`, or found no SDK (next row) |
-| `BUILD_PLUGIN_JMEX=ON but no MOXIReceiverSDK` at configure time | No SDK in `MOXIReceiverSDK/`, and neither `CMAKE_PREFIX_PATH` nor `MOXIReceiverSDK_DIR` points at one. An SDK older than the version the warning names is skipped the same way |
+| `BUILD_PLUGIN_JMEX=ON but no MOXIReceiverSDK` at configure time | No SDK in `MOXIReceiverSDK/` and none on `CMAKE_PREFIX_PATH`. An SDK older than the version the warning names is skipped the same way |
+| `MOXIReceiverSDK_DIR='<dir>' holds no MOXIReceiverSDK` at configure time | `<dir>` has no SDK of that version or newer, including one moved or deleted since an earlier configure found it there. Correct it, or clear it with `-UMOXIReceiverSDK_DIR` to search the other places |
 | `no joint on this channel is named for a body slot` | Player has a model loaded whose joint names match no slot. Load the standard human skeleton |
 | Fewer than 24 of 24 slots filled at pairing | Player has another model loaded. The lines after the count name each empty slot |
 | A consumer never receives a sample while the plugin is paired | The consumer's `collection_id` is not the one `--collection-id=` names |

@@ -246,8 +246,9 @@ Each with the `LocomanipulationG1EnvCfg` base task and the Pink IK controller th
 ## Running the offline tests
 
 The retargeting tests need only the staged `isaaccapture` package: no Isaac Sim, Isaac Lab, device
-or MOXI Player. They carry the ctest label `jmex`, as do the plugin's C++ tests, which need no MOXI
-Receiver SDK. A build with `BUILD_PLUGIN_JMEX`, `BUILD_EXAMPLES` and `BUILD_VIZ` on has them all:
+or MOXI Player. They carry the ctest label `jmex`, as do the plugin's C++ tests, which build on Linux
+without `BUILD_PLUGIN_JMEX` or the MOXI Receiver SDK. A build with `BUILD_EXAMPLES` and `BUILD_VIZ`
+on has them all:
 
 ```bash
 ctest --test-dir build -L jmex --output-on-failure
