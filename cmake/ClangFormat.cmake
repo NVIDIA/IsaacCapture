@@ -43,7 +43,7 @@ set(_cf_exclude_patterns
   ".*/node_modules/.*"
   ".*/third_party/.*"
   ".*/venv/.*"
-  ".*/\\.venv/.*"
+  ".*/\\.?venv[^/]*/.*"
   ".*/__pycache__/.*"
 )
 
