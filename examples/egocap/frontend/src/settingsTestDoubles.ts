@@ -13,6 +13,7 @@ export const OPERATOR_SETTINGS_FIXTURE: OperatorSettings = {
   roles: ["ego", "wrist_left", "wrist_right"],
   task_file: null,
   preselected_task: null,
+  require_calibration: false,
 };
 
 /** A registry with no stations: the configuration-free default, where the deployment's own label applies. */

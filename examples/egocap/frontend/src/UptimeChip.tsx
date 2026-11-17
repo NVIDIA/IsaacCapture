@@ -38,7 +38,10 @@ export interface UptimeChipProps {
 
 /** Show whether the station can record right now and, once the day has a take, its active and down time. */
 export function UptimeChip({ stationLabel, refreshKey, load = fetchStationUptime }: UptimeChipProps) {
-  const [loaded, setLoaded] = useState<{ uptime: StationUptime; receivedAt: number } | null>(null);
+  // Kept with the station it was read for: until that station's own answer arrives, another station's state,
+  // totals and clock must not stand beside its name.
+  const [answer, setLoaded] = useState<{ uptime: StationUptime; receivedAt: number; stationLabel: string | null } | null>(null);
+  const loaded = answer !== null && answer.stationLabel === stationLabel ? answer : null;
   const [refresh, bumpRefresh] = useReducer((n: number) => n + 1, 0);
   const [, tick] = useReducer((n: number) => n + 1, 0);
 
@@ -47,7 +50,7 @@ export function UptimeChip({ stationLabel, refreshKey, load = fetchStationUptime
     load(controller.signal).then(
       (uptime) => {
         // Kept with the moment it arrived, which is what the live count is measured from.
-        if (!controller.signal.aborted) setLoaded({ uptime, receivedAt: performance.now() });
+        if (!controller.signal.aborted) setLoaded({ uptime, receivedAt: performance.now(), stationLabel });
       },
       () => {
         // The strip stays usable without it; the next refresh tries again.

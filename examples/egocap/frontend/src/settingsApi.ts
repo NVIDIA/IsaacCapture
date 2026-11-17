@@ -52,7 +52,16 @@ export interface EffectiveSettings {
 }
 
 /** The backend answered, but not with 200: `message` carries its `detail` or the HTTP status. */
-export class SettingsHttpError extends Error {}
+export class SettingsHttpError extends Error {
+  /** The HTTP status, kept only where a caller treats one refusal differently from the rest: the station routes' 409. */
+  readonly status?: number;
+
+  /** Keep the public reason and, when given, the status it came with. */
+  constructor(message: string, status?: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 /** The body was not the expected shape; the page shows nothing rather than guessing. */
 export class SettingsParseError extends Error {}
@@ -87,7 +96,7 @@ export function parseSettings(value: unknown): EffectiveSettings {
 export interface OperatorSettings {
   /** Invalid saved settings can be replaced by an authenticated save. */
   warning?: string;
-  /** The camera type in effect: the station in use supplies it, else the value saved before stations existed. */
+  /** The camera type in effect: the station in use supplies it, else the value saved with these settings. */
   camera_type: string | null;
   /** The accepted values, from the backend, so the page keeps no second copy of the list. */
   camera_types: string[];
@@ -100,6 +109,8 @@ export interface OperatorSettings {
   task_file: string | null;
   /** The task (by catalog name) preselected while the current task is still unset. */
   preselected_task: string | null;
+  /** Whether a missing calibration file holds recording; when false it is only a warning on the checklist. */
+  require_calibration: boolean;
 }
 
 /** Operator-facing names for the camera types the backend accepts; an unknown value shows its raw name. */
@@ -142,6 +153,7 @@ function parseOperatorSettings(value: unknown): OperatorSettings {
   if (typeof record.camera_roles !== "object" || record.camera_roles === null || !Array.isArray(record.roles)) {
     throw new SettingsParseError("operator settings camera_roles/roles are missing");
   }
+  if (typeof record.require_calibration !== "boolean") throw new SettingsParseError("operator settings require_calibration must be a boolean");
   return value as OperatorSettings;
 }
 
@@ -159,9 +171,10 @@ export const ROLE_LABELS: Record<string, string> = {
   wrist_right: "Right wrist",
 };
 
-/** The fields the page may `PUT`; the backend keeps the stored value of every field left out. The camera type
- * and roles are read here but changed only through the station routes. */
-export type OperatorSettingsChange = Partial<Pick<OperatorSettings, "task_file" | "preselected_task">>;
+/** The fields the page may `PUT`; the backend keeps the stored value of every field left out, and of every role
+ * a `camera_roles` change does not name. The camera type and roles are accepted only while no station is in use:
+ * a station in use holds its own, changed through the station routes. */
+export type OperatorSettingsChange = Partial<Pick<OperatorSettings, "task_file" | "preselected_task" | "camera_type" | "camera_roles" | "require_calibration">>;
 
 /** Persist a partial setup change using header authentication. */
 export async function saveOperatorSettings(controlToken: string, changes: OperatorSettingsChange): Promise<OperatorSettings> {

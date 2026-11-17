@@ -457,6 +457,14 @@ width, so a long line wraps inside it instead of pushing the row's buttons onto 
   color: var(--text-secondary);
 }
 
+/* A single on/off setting: the box beside its own words. */
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
 /* The role a camera fills, shown in the tile caption beside its name. */
 .camera-role {
   margin-left: var(--space-2);
@@ -758,6 +766,11 @@ button.step:hover {
 .check-row--fail .check-mark,
 .check-row--fail .check-detail {
   color: var(--critical);
+}
+
+.check-row--warn .check-mark,
+.check-row--warn .check-detail {
+  color: var(--warning);
 }
 
 .check-row--skip {

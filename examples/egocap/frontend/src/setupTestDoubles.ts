@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/** Start-of-day flow bodies for tests: a station in use held by a camera that stopped, and the same station ready. */
+/** Start-of-day flow bodies for tests: a station in use held by a camera that stopped, the same station ready,
+ * and the same station ready on real cameras whose calibration files are missing but not required. */
 import type { CheckItem, SetupStatus } from "./setupApi";
 
 const SYSTEM: CheckItem[] = [
@@ -37,4 +38,22 @@ export const SETUP_READY: SetupStatus = {
   steps: SETUP_HELD.steps.map((step) => (step.id === "devices" ? { ...step, status: "done", detail: null } : step)),
   checks: SETUP_HELD.checks.map((check) => (check.status === "fail" ? { ...check, status: "pass", detail: null } : check)),
   blocked_reason: null,
+};
+
+const MISSING_CALIBRATION = "missing head_intrinsics.json, head_extrinsics.json";
+
+/** The ready station without its calibration files, in a deployment that does not require them: a warning that
+ * holds nothing, with the Devices step done. */
+export const SETUP_ADVISED: SetupStatus = {
+  ...SETUP_READY,
+  steps: SETUP_READY.steps.map((step) => (step.id === "devices" ? { ...step, detail: "Camera calibration: missing: head_camera_intrinsics.json; takes are not held" } : step)),
+  checks: SETUP_READY.checks.map((check) => (check.id === "calibration" ? { ...check, status: "warn", detail: MISSING_CALIBRATION } : check)),
+};
+
+/** The same station in a deployment that requires the files: the same finding fails and holds recording. */
+export const SETUP_UNCALIBRATED: SetupStatus = {
+  ...SETUP_READY,
+  steps: SETUP_READY.steps.map((step) => (step.id === "devices" ? { ...step, status: "attention", detail: `Camera calibration: ${MISSING_CALIBRATION}` } : step)),
+  checks: SETUP_READY.checks.map((check) => (check.id === "calibration" ? { ...check, status: "fail", detail: MISSING_CALIBRATION } : check)),
+  blocked_reason: `Camera calibration: ${MISSING_CALIBRATION}`,
 };

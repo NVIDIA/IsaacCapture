@@ -46,7 +46,9 @@ and already has a default (`<data root>/calibration`, where `<data root>` is `EG
 resolved value — so the backend does read `EGOCAP_DATA_DIR` for this, just not for the output
 root) — `EGOCAP_CALIBRATION_DIR` only needs setting when calibration lives somewhere else.
 Calibration copying is best-effort either way: a file simply absent at that location is skipped
-with a warning, recording still proceeds.
+with a warning, recording still proceeds. Calibration files are optional unless the deployment
+requires them: the web backend holds a station in use from recording over a missing file only while
+its operator setting `require_calibration` is on (see [`backend/README.md`](../backend/README.md)).
 
 `video_sources`/`numeric_sources` declare the *recorded dataset*, not how to open a device — no
 device handle, index, or launcher path belongs in them. See

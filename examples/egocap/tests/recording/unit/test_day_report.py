@@ -273,3 +273,25 @@ def test_only_recording_service_sessions_are_read(tmp_path):
         },
         "sessions": [],
     }
+
+
+def test_a_session_opened_after_the_day_is_passed_over_without_being_read(tmp_path, monkeypatch):
+    earlier, later = _session(tmp_path, "session_20260308-230000_aaa111"), "session_20260310-070000_bbb222"
+    _take(earlier, _manifest(0, "FINALIZED", session=earlier.name), recorded_at=f"{DAY}; 00-10-00")
+    _take(_session(tmp_path), _manifest(0, "FINALIZED"), recorded_at=f"{DAY}; 09-00-00")
+    _take(_session(tmp_path, later), _manifest(0, "FINALIZED", session=later), day="2026-03-10")
+    _take(_session(tmp_path, "legacy_session"), _manifest(0, "DISCARDED", session="legacy_session"))
+    opened: list[str] = []
+    station_name = day_report._read_session_station_name
+
+    def reading(session_path):
+        opened.append(session_path.name)
+        return station_name(session_path)
+
+    monkeypatch.setattr(day_report, "_read_session_station_name", reading)
+    report = build_day_report(tmp_path, DAY, stations={"Bench A"})
+    # A session opened on an earlier day may hold the day's takes, and one without a date may too.
+    assert [s["session_id"] for s in report["sessions"]] == ["legacy_session", earlier.name, SESSION]
+    # No take of the day can be in a session opened on a later day, so that one is never opened.
+    assert later not in opened and set(opened) == {"legacy_session", earlier.name, SESSION}
+    assert [s["session_id"] for s in build_day_report(tmp_path, "2026-03-10")["sessions"]] == [later]

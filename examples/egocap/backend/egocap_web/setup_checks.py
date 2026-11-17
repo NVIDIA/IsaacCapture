@@ -4,9 +4,13 @@
 
 """The station checklist: what a station must show before it records.
 
-A list of items, each passed, failed with the reason, or skipped. It covers every tracking device the capture
-session reports, every camera the station uses, the calibration files of those cameras, and room on the recording
-disk. A device or check the station does not use is skipped, never failed.
+A list of items, each passed, failed with the reason, warned about, or skipped. It covers every tracking device
+the capture session reports, every camera the station uses, the calibration files of those cameras, and room on
+the recording disk. A device or check the station does not use is skipped, never failed.
+
+Only a failed item holds a take. An item fails for what recording readiness itself refuses (capture not running,
+no recent tracking sample or camera frame, a camera that cannot be recorded) and for a full disk. What goes beyond
+that is a warning: a device's reported state, and calibration files unless the deployment requires them.
 
 This module is pure: it judges a :class:`CaptureFacts` value and never reads the capture session itself.
 setup_service.py gathers the facts, keeps the checklist fresh and turns it into the recording gate.
@@ -19,7 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-PASS, FAIL, SKIP = "pass", "fail", "skip"
+#: ``warn`` is advisory: shown with its reason, and never a reason to hold a take.
+PASS, FAIL, WARN, SKIP = "pass", "fail", "warn", "skip"
 
 #: The groups items are listed under, in display order.
 TRACKING, CAMERAS, SYSTEM = "tracking", "cameras", "system"
@@ -48,7 +53,7 @@ class CheckItem:
     group: str
     label: str
     status: str
-    #: Why it failed or was skipped; None for a pass that needs no comment.
+    #: Why it failed, warns or was skipped; None for a pass that needs no comment.
     detail: str | None = None
 
     def to_json(self) -> dict[str, Any]:
@@ -107,13 +112,17 @@ class CaptureFacts:
 
 
 def _tracking_items(facts: CaptureFacts) -> list[CheckItem]:
-    """One item per tracking device the session reports, and one for whether their data is arriving."""
+    """One item per tracking device the session reports, and one for whether their data is arriving.
+
+    A device that is not connected warns and does not fail. Recording readiness judges the tracking data, not
+    the state each device reports, and a station may leave a controller or a glove unused.
+    """
     items = [
         CheckItem(
             f"device:{index}",
             TRACKING,
             device.label,
-            PASS if device.connected else FAIL,
+            PASS if device.connected else WARN,
             None if device.connected else (device.detail or "not connected"),
         )
         for index, device in enumerate(facts.devices)
@@ -125,18 +134,21 @@ def _tracking_items(facts: CaptureFacts) -> list[CheckItem]:
 
 
 def _camera_item(item_id: str, label: str, name: str, facts: CaptureFacts) -> CheckItem:
-    """How one named camera stands: a CaptureServer camera must be connected and delivering frames, a LiveKit
-    camera offered and recordable (its video is joined when a take starts)."""
+    """How one named camera stands: a CaptureServer camera must be delivering frames, a LiveKit camera offered
+    and recordable (its video is joined when a take starts). A camera that delivers frames while reporting
+    another state than connected warns: its frames are what recording readiness judges."""
     if name in facts.livekit_cameras:
         blocked = facts.livekit_blocked
         return CheckItem(item_id, CAMERAS, label, FAIL if blocked else PASS, blocked)
     camera = (facts.cameras or {}).get(name)
     if camera is None:
         return CheckItem(item_id, CAMERAS, label, FAIL, f"camera {name!r} is not offered by the capture session")
-    if not camera.connected:
-        return CheckItem(item_id, CAMERAS, label, FAIL, camera.detail or "not connected")
     if not camera.fresh:
-        return CheckItem(item_id, CAMERAS, label, FAIL, "no recent frame")
+        # The camera's own reason, when it has one, says more than the missing frame it caused.
+        detail = "no recent frame" if camera.connected else (camera.detail or "not connected")
+        return CheckItem(item_id, CAMERAS, label, FAIL, detail)
+    if not camera.connected:
+        return CheckItem(item_id, CAMERAS, label, WARN, camera.detail or "not connected")
     return CheckItem(item_id, CAMERAS, label, PASS)
 
 
@@ -157,9 +169,14 @@ def _camera_items(facts: CaptureFacts, roles: Mapping[str, str | None] | None) -
 
 
 def _calibration_item(
-    facts: CaptureFacts, roles: Mapping[str, str | None] | None, calibration_dir: Path
+    facts: CaptureFacts, roles: Mapping[str, str | None] | None, calibration_dir: Path, required: bool
 ) -> CheckItem:
-    """The calibration file each camera role in use needs; skipped for a mock session or with no station."""
+    """The calibration file each camera role in use needs; skipped for a mock session or with no station.
+
+    Calibration files are optional unless the deployment requires them: a missing or unreadable one fails
+    when ``required`` and otherwise warns, so a station that has not captured its calibration still records.
+    """
+    absent = FAIL if required else WARN
     if facts.mock or roles is None:
         why = "mock capture has nothing to calibrate" if facts.mock else "no station in use"
         return CheckItem("calibration", SYSTEM, "Camera calibration", SKIP, why)
@@ -171,11 +188,11 @@ def _calibration_item(
     try:
         missing = [name for name in needed if not (calibration_dir / name).is_file()]
     except OSError as exc:
-        # A directory that cannot be searched is a failed check with its cause, never an exception for the caller.
+        # A directory that cannot be searched is reported with its cause, never an exception for the caller.
         detail = f"cannot read the calibration directory: {exc.strerror}"
-        return CheckItem("calibration", SYSTEM, "Camera calibration", FAIL, detail)
+        return CheckItem("calibration", SYSTEM, "Camera calibration", absent, detail)
     detail = f"missing: {', '.join(missing)}" if missing else None
-    return CheckItem("calibration", SYSTEM, "Camera calibration", FAIL if missing else PASS, detail)
+    return CheckItem("calibration", SYSTEM, "Camera calibration", absent if missing else PASS, detail)
 
 
 def _disk_item(output_root: Path, free_bytes: Callable[[Path], int], min_free_bytes: int) -> CheckItem:
@@ -203,13 +220,16 @@ def checklist(
     output_root: Path,
     free_bytes: Callable[[Path], int],
     min_free_bytes: int = MIN_FREE_BYTES,
+    require_calibration: bool = False,
 ) -> list[CheckItem]:
     """Every item of the station checklist, in display order.
 
     ``roles`` is the station in use's camera per role, or None when no station is in use.
+    ``require_calibration`` is the deployment's choice of whether missing calibration files hold a take.
+    Reads the calibration directory and the disk, so it is called from a worker thread.
     """
     system = [
-        _calibration_item(facts, roles, calibration_dir),
+        _calibration_item(facts, roles, calibration_dir, require_calibration),
         _disk_item(output_root, free_bytes, min_free_bytes),
     ]
     if not facts.running:
@@ -219,12 +239,22 @@ def checklist(
     return [*_tracking_items(facts), *_camera_items(facts, roles), *system]
 
 
-def first_failure(items: list[CheckItem]) -> str | None:
-    """The first failing item as one phrase, or None when nothing failed."""
+def _first(items: list[CheckItem], status: str) -> str | None:
+    """The first item with ``status`` as one phrase, or None when there is none."""
     for item in items:
-        if item.status == FAIL:
+        if item.status == status:
             return f"{item.label}: {item.detail}" if item.detail else item.label
     return None
+
+
+def first_failure(items: list[CheckItem]) -> str | None:
+    """The first failing item as one phrase, or None when nothing failed."""
+    return _first(items, FAIL)
+
+
+def first_warning(items: list[CheckItem]) -> str | None:
+    """The first item that warns as one phrase, or None when nothing does."""
+    return _first(items, WARN)
 
 
 def free_bytes_under(path: Path, disk_usage: Callable[[Path], Any]) -> int:

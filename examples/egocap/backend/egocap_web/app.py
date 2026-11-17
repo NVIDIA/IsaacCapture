@@ -63,10 +63,11 @@ from .recording_adapter import (
 from .recording_command import RecordingContext, interrupted_take
 from .recording_session import CoordinatorBusyError, RecordingSessionCoordinator, TaskContext
 from .recordings import router as recordings_router
+from .session_locks import SessionLocks
 from .settings_routes import EffectiveSettings
 from .settings_routes import router as settings_router
 from .setup_routes import router as setup_router
-from .setup_service import SetupService, capture_facts
+from .setup_service import CHECKLIST_SECONDS, SetupService, capture_facts
 from .station_config import ResolvedStation, StationConfigError, load_station_config, station_config_path_from_env
 from .station_routes import router as station_router
 from .station_service import TAKE_IN_PROGRESS, StationService, session_adapter
@@ -151,9 +152,10 @@ def _recording_output_root(station_data_dir: Path | None = None) -> Path:
 
 
 # Per-station calibration files copied into every new session (and, once there, into each
-# routed group) when present at EGOCAP_CALIBRATION_DIR. All optional: a station that hasn't
-# captured one yet must not be blocked from recording -- see ServiceConfig.calibration_assets'
-# own required=False handling for the same reason the old per-manager copy only ever warned.
+# routed group) when present at EGOCAP_CALIBRATION_DIR. Calibration files are optional unless
+# the deployment requires them: the copy never fails for a missing one (required=False), and a
+# station in use is held from recording only while the operator setting require_calibration is
+# on (see setup_checks.py).
 _STATION_CALIBRATION_FILES = (
     "head_camera_intrinsics.json",
     "head_camera_extrinsics.json",
@@ -352,6 +354,8 @@ def _station_change_blocked(coordinator: RecordingSessionCoordinator) -> str | N
 
 #: The reason the station is logged down while an interrupted take waits to be recovered or discarded.
 INTERRUPTED_TAKE = "an interrupted take needs recovery"
+#: Why a change that would start a new batch is refused while an interrupted take waits.
+RESOLVE_INTERRUPTED_TAKE = "recover or discard the interrupted take first"
 
 #: How often the station's state is asked for the uptime log; a take's start and end are logged this late at most.
 _UPTIME_SAMPLE_SECONDS = 2.0
@@ -394,7 +398,8 @@ async def _remember_headset_address(
     candidates = await asyncio.to_thread(headset_addresses, capture_server_url)
     addresses = [candidate.address for candidate in candidates]
     if addresses and selected.headset_address not in addresses:
-        await stations.remember_headset_address(addresses[0])
+        # Another station may have been put in use during the await; the service checks what was seen here.
+        await stations.remember_headset_address(selected.station_id, selected.headset_address, addresses[0])
 
 
 async def _every(seconds: float, duty: Callable[[], Any], what: str) -> None:
@@ -410,7 +415,12 @@ async def _every(seconds: float, duty: Callable[[], Any], what: str) -> None:
 
 async def _rotate_batch_for_station(coordinator: RecordingSessionCoordinator) -> None:
     """Ends the current batch so the next take opens a session under the new station label. A session's
-    configuration is frozen when it opens, so the label can only change between sessions."""
+    configuration is frozen when it opens, so the label can only change between sessions.
+
+    Refused while an interrupted take waits: a new batch would leave it on disk with nothing on the page to
+    recover or discard it, and the station would stop being logged as down for it."""
+    if interrupted_take(coordinator.snapshot().service):
+        raise StationError(RESOLVE_INTERRUPTED_TAKE)
     try:
         await coordinator.new_batch()
     except (CoordinatorBusyError, StateError) as exc:
@@ -510,14 +520,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lambda: recordable_livekit_streams(monitor.native.started),
         _recorder_livekit_token,
     )
+    # Shared by the aligner and the end-of-day correction: whichever holds a session's lock has its labels.
+    session_locks = SessionLocks()
+    app.state.session_locks = session_locks
     # Kept episodes are time-aligned in the background when the station configures an index camera.
     aligner = (
-        AutoAligner(recording_output_root, resolved_station.alignment_index)
+        AutoAligner(recording_output_root, resolved_station.alignment_index, session_locks)
         if resolved_station is not None and resolved_station.alignment_index is not None
         else None
     )
-    # The end-of-day correction asks it whether a take's labels are being copied right now.
-    app.state.aligner = aligner
     # The station's time today, observed rather than entered: see the sampler started below.
     station_uptime = UptimeLog(recording_output_root / UPTIME_DIR)
     app.state.station_uptime = station_uptime
@@ -558,6 +569,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         stations=station_service,
         calibration_dir=calibration_dir,
         output_root=recording_output_root,
+        require_calibration=app.state.operator_settings_store.calibration_required,
     )
     app.state.setup_service = setup_service
     await monitor.start()
@@ -602,8 +614,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         observed = sampler.settle(*_station_state(coordinator, app.state.recording_context, station_service))
         await asyncio.to_thread(station_uptime.observe, *observed)
 
-    # Owned by the lifespan: both stop with the application.
+    # Owned by the lifespan: all stop with the application.
     duties = [
+        # The gate answers from this duty's last result; a station in use is held until the first one.
+        asyncio.create_task(_every(CHECKLIST_SECONDS, setup_service.refresh, "the station checklist")),
         asyncio.create_task(_every(_UPTIME_SAMPLE_SECONDS, sample_uptime, "the uptime sample")),
         asyncio.create_task(
             _every(

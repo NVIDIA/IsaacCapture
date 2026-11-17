@@ -59,8 +59,8 @@ class StationService:
         self._default_label = default_label
         # One change at a time: a rotation awaits, and a second change must not interleave with it.
         self._changing = asyncio.Lock()
-        # True from the moment a change of the label is decided until the new label is live.
-        self._relabelling = False
+        # True while a change to the station in use is being applied; no take is admitted meanwhile.
+        self._applying = False
         self._warning: str | None = None
         self._registry = self._load()
         self._label = self._label_of(self._registry)
@@ -98,9 +98,9 @@ class StationService:
 
         An empty registry blocks nothing: that is the configuration-free default. Once stations exist, one must
         be selected and able to record. While the station in use is being changed nothing may start: the
-        take would open a session under the label that is on its way out.
+        take would open a session under the label, or record against the cameras, on their way out.
         """
-        if self._relabelling:
+        if self._applying:
             return STATION_CHANGING
         if not self._registry.stations:
             return None
@@ -163,18 +163,22 @@ class StationService:
         async with self._changing:
             await self._persist(lambda registry: registry.selecting(station_id), touches_station_in_use=True)
 
-    async def remember_headset_address(self, address: str) -> None:
+    async def remember_headset_address(self, station_id: str, observed: str | None, address: str) -> None:
         """Keep the capture host address a connected headset is evidently using, for the station in use.
+
+        ``station_id`` and ``observed`` are the station the caller looked at and the address it had saved
+        then. The caller decided across an await, so both are checked again here: another station put in use
+        meanwhile, or an address the operator just entered, is left alone.
 
         It changes nothing about what is recorded, so unlike an edit of the station in use it is allowed while
         a take is being written.
         """
         async with self._changing:
-            selected_id = self._registry.selected_id
-            if selected_id is None:
+            selected = self._registry.selected
+            if selected is None or selected.station_id != station_id or selected.headset_address != observed:
                 return
             await self._persist(
-                lambda registry: registry.updated(selected_id, {"headset_address": address}),
+                lambda registry: registry.updated(station_id, {"headset_address": address}),
                 touches_station_in_use=False,
             )
 
@@ -197,8 +201,9 @@ class StationService:
             and candidate.selected_id is not None
             and candidate.selected_id == self._registry.selected_id
         )
-        # Held across the awaits below: a take admitted between them would open a session under the old label.
-        self._relabelling = relabelled
+        # Held across the awaits below, for every change to the station in use: a take admitted between them
+        # would open a session under the old label, or record against camera assignments being replaced.
+        self._applying = touches_station_in_use
         try:
             # Rotated before the file is written: a session still open under the old label must never
             # receive a take attributed to the new one, so a refused rotation refuses the whole change.
@@ -212,7 +217,7 @@ class StationService:
                 # The label is live from here; what follows only keeps the day's records in step with it.
                 self._session.show_label(self._label)
         finally:
-            self._relabelling = False
+            self._applying = False
         if renamed:
             await self._carry_day(previous, self._label)
         return after

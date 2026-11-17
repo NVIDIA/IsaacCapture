@@ -3,18 +3,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * The Devices tab of the Settings dialog: the live checklist of what the station in use needs, and the
- * calibration tools.
+ * The Devices tab of the Settings dialog: the live checklist of what the station in use needs, whether missing
+ * calibration files hold recording, and the calibration tools.
  *
  * The backend judges every device continuously and holds recording while a required one fails. This tab shows
  * that verdict and never judges a device itself, and nothing here runs a test: the list is read again every
  * couple of seconds while the tab is shown. The dialog is over the page, so the cameras and the 3D view stay
  * live behind it while a device is being fixed.
  */
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { sentence } from "./sentence";
 import { CAMERA_TYPE_LABELS, type OperatorSettings, type ToolInfo } from "./settingsApi";
-import { Card, LoadState, type Loaded } from "./settingsParts";
+import { Card, LoadState, TokenHint, useAction, type Loaded } from "./settingsParts";
 import type { CheckGroup, CheckItem, CheckStatus, SetupStatus } from "./setupApi";
 import { useSetup } from "./useSetup";
 
@@ -25,6 +25,8 @@ export const DEVICES_REFRESH_MS = 2_000;
 const OUTCOMES: Record<CheckStatus, { mark: string; word: string }> = {
   pass: { mark: "✓", word: "passed" },
   fail: { mark: "✗", word: "failed" },
+  // A finding that does not hold recording, so it must not read as a failure or as a pass.
+  warn: { mark: "!", word: "advisory" },
   skip: { mark: "–", word: "not needed" },
 };
 
@@ -90,8 +92,43 @@ function Checklist({ checks }: { checks: readonly CheckItem[] }) {
   );
 }
 
-/** What the tools card reads from the dialog's station setup. */
-type ToolSetup = Loaded<{ tools: ToolInfo[]; operator: Pick<OperatorSettings, "camera_type"> }>;
+/** The deployment's choice of whether a missing calibration file holds recording or only warns. */
+function CalibrationRequirement({
+  required,
+  controlToken,
+  save,
+}: {
+  /** The saved choice. */
+  required: boolean;
+  controlToken: string | null;
+  /** Saves the choice; resolves once the dialog shows the saved value, rejects with the backend's reason. */
+  save: (required: boolean) => Promise<void>;
+}) {
+  const [{ busy, failure }, run] = useAction();
+  // The choice on its way to the backend, shown until that answers; a refusal drops it, so the box reverts.
+  const [pending, setPending] = useState<boolean | null>(null);
+  /** Send the new choice and show it meanwhile. */
+  const change = (next: boolean) => {
+    setPending(next);
+    run(() => save(next).finally(() => setPending(null)));
+  };
+  return (
+    <Card title="Calibration requirement">
+      <label className="settings-check">
+        <input type="checkbox" checked={pending ?? required} disabled={controlToken === null || busy} aria-describedby="require-calibration-help" onChange={(e) => change(e.target.checked)} />
+        Require calibration files before recording
+      </label>
+      <p className="settings-note" id="require-calibration-help">
+        Off: missing calibration files are shown as a warning and takes are allowed.
+      </p>
+      {failure !== null && <p className="settings-note tone-warning">Not saved: {failure}</p>}
+      <TokenHint controlToken={controlToken} />
+    </Card>
+  );
+}
+
+/** What the tab reads from the dialog's station setup: the tools, and the settings they and the checklist go by. */
+type ToolSetup = Loaded<{ tools: ToolInfo[]; operator: Pick<OperatorSettings, "camera_type" | "require_calibration"> }>;
 
 /** The calibration tools this build knows about, and why an unavailable one cannot be opened. */
 function CalibrationTools({ stationSetup }: { stationSetup: ToolSetup }) {
@@ -128,13 +165,19 @@ export interface DevicesTabProps {
   setup: SetupStatus | null;
   controlToken: string | null;
   loadSetup: (signal: AbortSignal, controlToken?: string | null) => Promise<SetupStatus>;
-  /** The dialog's station setup, which lists the tools and the camera type they are judged against. */
+  /** The dialog's station setup: the tools, the camera type they are judged against, and the calibration choice. */
   stationSetup: ToolSetup;
+  /** Saves whether calibration files are required; resolves once `stationSetup` carries the saved value. */
+  saveRequireCalibration: (required: boolean) => Promise<void>;
 }
 
-/** Show whether station setup holds recording, each device and check as it stands now, and the calibration tools. */
-export function DevicesTab({ setup, controlToken, loadSetup, stationSetup }: DevicesTabProps) {
-  const live = useSetup(null, { controlToken, intervalMs: DEVICES_REFRESH_MS, load: loadSetup });
+/** Show whether station setup holds recording, each device and check as it stands now, the calibration
+ * requirement, and the calibration tools. */
+export function DevicesTab({ setup, controlToken, loadSetup, stationSetup, saveRequireCalibration }: DevicesTabProps) {
+  // Bumped when the calibration requirement is saved: it changes what the checklist says, so the list is read
+  // at once instead of on its timer.
+  const [saves, countSave] = useReducer((n: number) => n + 1, 0);
+  const live = useSetup(saves, { controlToken, intervalMs: DEVICES_REFRESH_MS, load: loadSetup });
   // Once the tab has answered, the page's older read must not stand in for a failed one: it would show a
   // device as it was up to ten seconds ago with no sign that the list had stopped following.
   const [answered, setAnswered] = useState(false);
@@ -149,6 +192,9 @@ export function DevicesTab({ setup, controlToken, loadSetup, stationSetup }: Dev
           <Verdict setup={shown} />
           <Checklist checks={shown.checks} />
         </>
+      )}
+      {stationSetup.kind === "loaded" && (
+        <CalibrationRequirement required={stationSetup.value.operator.require_calibration} controlToken={controlToken} save={(required) => saveRequireCalibration(required).then(countSave)} />
       )}
       <CalibrationTools stationSetup={stationSetup} />
     </>

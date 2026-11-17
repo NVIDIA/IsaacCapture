@@ -254,7 +254,8 @@ if enabled():
         target = _resolve(base, path)
         if target is None or not target.is_file() or _hidden_path(base, target):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-        return FileResponse(target, filename=target.name)
+        # The download is admitted by a credential; a cache that kept it could hand it to a request without one.
+        return FileResponse(target, filename=target.name, headers=_NO_STORE_HEADERS)
 
     # Mounted under router so app.py can register everything this module
     # needs with one `app.include_router(recordings.router)` call. Only

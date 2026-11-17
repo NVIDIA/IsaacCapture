@@ -10,6 +10,10 @@
  * Closing would drop notes that are not saved and a correction that is half typed, so while there are any the
  * dialog asks before it closes, whichever way the close was asked for.
  *
+ * Notes are written for one station's day. They are saved for the station of the report they were typed over,
+ * and the backend refuses them when another station is in use by then; the operator reloads the report, sees
+ * which station it is now for, and saves again.
+ *
  * Everything shown comes from the backend's report, which reads the recording service's own manifests: a
  * rejected, discarded or interrupted take is listed with its real outcome, never left out. The dialog itself
  * decides nothing about a take, and the station's time is the backend's own log, not something set here.
@@ -29,6 +33,7 @@ import {
 } from "./dayReportApi";
 import { formatElapsed } from "./RecordingPanel";
 import { sentence } from "./sentence";
+import { SettingsHttpError } from "./settingsApi";
 import { Card, errorMessage, useAction, useEscapeToClose, useModalFocus, type Loaded } from "./settingsParts";
 import { saveStationNotes, type StationUptime, type UptimeBlocker } from "./stationsApi";
 import { formatActivity, formatTotal } from "./stationTime";
@@ -38,7 +43,14 @@ export interface WrapUpBackend {
   load: (controlToken: string, signal: AbortSignal) => Promise<DayReportReply>;
   save: (controlToken: string) => Promise<DayReportReply>;
   correct: (controlToken: string, correction: Correction) => Promise<CorrectionReply>;
-  saveNotes: (controlToken: string, notes: string) => Promise<StationUptime>;
+  /** Saves the day's notes for `station`; rejects with a 409 `SettingsHttpError` when that is no longer the station in use. */
+  saveNotes: (controlToken: string, station: string, notes: string) => Promise<StationUptime>;
+}
+
+/** Notes as typed, with the station whose day they were typed for. */
+interface NotesDraft {
+  station: string;
+  text: string;
 }
 
 export const REAL_WRAP_UP_BACKEND: WrapUpBackend = { load: fetchDayReport, save: saveDayReport, correct: correctSession, saveNotes: saveStationNotes };
@@ -91,7 +103,12 @@ export function WrapUpDialog({ open, onClose, controlToken, backend = REAL_WRAP_
   const [state, setState] = useState<Loaded<DayReportReply>>({ kind: "loading" });
   // The notes as typed, kept here so that reading the report again never replaces them. Null while the operator
   // has typed nothing: the field then shows what is saved.
-  const [notesDraft, setNotesDraft] = useState<string | null>(null);
+  const [notesDraft, setNotesDraft] = useState<NotesDraft | null>(null);
+  // Whether the backend refused the notes because another station is in use than the one they were typed for.
+  const [stationChanged, setStationChanged] = useState(false);
+  // Set by the reload the operator asks for after that refusal: the report it brings is the one they then save
+  // the notes over, so the draft moves to that report's station. No other read moves it.
+  const adoptStation = useRef(false);
   // Bumped after a correction or saved notes, so the report shows what is now on disk.
   const [generation, setGeneration] = useState(0);
   // Why the latest read failed. A report already on screen stays there with this beside it: the correction or
@@ -143,6 +160,10 @@ export function WrapUpDialog({ open, onClose, controlToken, backend = REAL_WRAP_
         if (controller.signal.aborted) return;
         setState({ kind: "loaded", value });
         setReadFailure(null);
+        if (adoptStation.current) {
+          adoptStation.current = false;
+          setNotesDraft((draft) => (draft === null ? null : { ...draft, station: value.station_in_use }));
+        }
       },
       (error: unknown) => {
         if (controller.signal.aborted) return;
@@ -160,8 +181,15 @@ export function WrapUpDialog({ open, onClose, controlToken, backend = REAL_WRAP_
   const notesSaved = (uptime: StationUptime) => {
     setState((current) => (current.kind === "loaded" ? { kind: "loaded", value: { ...current.value, uptime } } : current));
     setNotesDraft(null);
+    setStationChanged(false);
     // Saved notes are no longer something to discard.
     if (typedCorrections.current.size === 0) setConfirmingDiscard(false);
+    reload();
+  };
+  /** Read the report for the station now in use, keeping the notes as typed to be saved over it. */
+  const reloadForStation = () => {
+    adoptStation.current = true;
+    setStationChanged(false);
     reload();
   };
   return (
@@ -216,12 +244,17 @@ export function WrapUpDialog({ open, onClose, controlToken, backend = REAL_WRAP_
                       uptime={reply.uptime}
                       // The report counts the takes; the time figures alone can all be zero after the first one.
                       hasTake={reply.report.totals.episodes > 0}
-                      notes={notesDraft ?? reply.uptime.notes}
+                      notes={notesDraft?.text ?? reply.uptime.notes}
+                      // A draft stays with the station it was begun for, whatever report is read meanwhile.
+                      station={notesDraft?.station ?? reply.station_in_use}
                       // Typing back to what is saved leaves nothing to keep.
-                      onNotes={(notes) => setNotesDraft(notes === reply.uptime.notes ? null : notes)}
+                      onNotes={(text) => setNotesDraft((draft) => (text === reply.uptime.notes ? null : { station: draft?.station ?? reply.station_in_use, text }))}
                       controlToken={controlToken}
                       saveNotes={backend.saveNotes}
                       onSaved={notesSaved}
+                      stationChanged={stationChanged}
+                      onStationChanged={() => setStationChanged(true)}
+                      onReload={reloadForStation}
                     />
                     <Sessions sessions={reply.report.sessions} controlToken={controlToken} correct={backend.correct} onCorrected={reload} onTyped={noteCorrectionTyped} />
                     <SaveReport controlToken={controlToken} save={backend.save} />
@@ -268,26 +301,44 @@ function StationTime({
   uptime,
   hasTake,
   notes,
+  station,
   onNotes,
   controlToken,
   saveNotes,
   onSaved,
+  stationChanged,
+  onStationChanged,
+  onReload,
 }: {
   uptime: StationUptime;
   /** Whether the day has a take; before one there is no time to show. */
   hasTake: boolean;
   /** The notes as the field shows them: the operator's draft, or what is saved. */
   notes: string;
+  /** The station the notes are saved for. */
+  station: string;
   onNotes: (notes: string) => void;
   controlToken: string;
   saveNotes: WrapUpBackend["saveNotes"];
   onSaved: (uptime: StationUptime) => void;
+  /** Whether the last save was refused because another station is in use by now. */
+  stationChanged: boolean;
+  onStationChanged: () => void;
+  /** Reads the report for the station now in use, keeping the notes as typed. */
+  onReload: () => void;
 }) {
   const [{ busy, failure }, run] = useAction();
   const dirty = notes !== uptime.notes;
   /** Save the draft; a save already on its way is not sent twice. */
   const save = () => {
-    if (!busy) run(() => saveNotes(controlToken, notes).then(onSaved));
+    if (busy) return;
+    run(() =>
+      saveNotes(controlToken, station, notes).then(onSaved, (error: unknown) => {
+        // That refusal has its own words and a way out, shown in place of the backend's reason.
+        if (!(error instanceof SettingsHttpError) || error.status !== 409) throw error;
+        onStationChanged();
+      }),
+    );
   };
   return (
     <Card title="Station time" lead="Logged by the backend between the first and the last take of the day: active while the station could record, down while something held it.">
@@ -317,7 +368,16 @@ function StationTime({
         <button type="button" className="settings-primary" disabled={!dirty} aria-busy={busy} onClick={save}>
           {busy ? "Saving…" : "Save notes"}
         </button>
-        {failure !== null && <span className="settings-note tone-warning">Not saved: {failure}</span>}
+        {stationChanged ? (
+          <span className="settings-note tone-warning" role="alert">
+            The station in use changed; reload the report.{" "}
+            <button type="button" className="settings-quiet" onClick={onReload}>
+              Reload
+            </button>
+          </span>
+        ) : (
+          failure !== null && <span className="settings-note tone-warning">Not saved: {failure}</span>
+        )}
         {!dirty && uptime.notes !== "" && failure === null && <span className="settings-note tone-positive">✓ Saved</span>}
       </div>
     </Card>
@@ -372,9 +432,10 @@ function SessionDetails({
   const counts = DISPOSITIONS.filter((name) => session.by_disposition[name].count > 0).map((name) => `${session.by_disposition[name].count} ${DISPOSITION_LABELS[name].toLowerCase()}`);
   // Only a take that was finalized has recorded data whose task can be relabelled.
   const holders = [...new Set(session.episodes.filter((episode) => episode.disposition === "kept" || episode.disposition === "flagged").map(holderOf))];
-  // Each routed group numbers its takes from zero, so with more than one a number alone does not name a take.
-  const routed = holders.length > 1;
   const { session_id: sessionId } = session;
+  // A routed take is numbered by its slot in its group and an unfinished one by its place in the session, and
+  // each group numbers from zero: once any take is held outside the session, a number alone does not name a take.
+  const routed = session.episodes.some((episode) => holderOf(episode) !== sessionId);
   const noteTyped = useCallback((typed: boolean) => onTyped(sessionId, typed), [onTyped, sessionId]);
   return (
     <details className="wrap-up-session" open={open}>

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import time
 
 import pytest
 
@@ -632,3 +633,177 @@ def test_a_state_must_hold_before_it_is_logged_but_a_take_is_logged_at_once():
         "Capture session: stopped",
     )
     assert sampler.settle("Cart B", READY, None) == ("Cart B", READY, None)  # another station: at once
+
+
+# --- a stop that lasts past midnight, and writes that fail -------------------------------------------------------
+
+
+def _activity(tmp_path, day: str) -> dict:
+    return json.loads((tmp_path / "station_status" / f"bench_a_{day}_activity.json").read_text())
+
+
+def test_a_backend_restarted_after_midnight_finishes_the_day_it_stopped_in(tmp_path):
+    late = _Clock(datetime.datetime(2026, 3, 9, 23, 40, 0).timestamp())
+    log, clock = _log(tmp_path, late)
+    _run(log, clock, [(RECORDING, None, 120), (READY, None, 60), (RECORDING, None, 300)])
+    log.observe("Bench A", RECORDING, None)  # 23:48, the last sample before the backend stops mid-take
+    stopped = clock.now
+    midnight = datetime.datetime(2026, 3, 10).timestamp()
+    clock.now = datetime.datetime(2026, 3, 10, 8, 0, 0).timestamp()
+    restarted, _ = _log(tmp_path, clock)
+    restarted.observe("Bench A", READY, None)
+    # The old day's take ends where it was last seen, and the rest of that day is the backend not running.
+    segments = _day_file(tmp_path)["stations"]["Bench A"]["segments"]
+    assert [(s["state"], s["end"]) for s in segments[-2:]] == [(RECORDING, stopped), (DOWN, midnight)]
+    assert segments[-1]["reason"] == BACKEND_NOT_RUNNING
+    # Its daily log, which only a take's end or a rollover writes, covers the take that never ended.
+    assert _activity(tmp_path, "2026-03-09")["active_station_time_seconds"] == 480.0
+    # The new day begins with the outage carried over from midnight, then what is observed now.
+    today = restarted._payload["stations"]["Bench A"]["segments"]
+    assert restarted._payload["date"] == "2026-03-10"
+    assert [(s["state"], s["reason"], s["start"]) for s in today] == [
+        (DOWN, BACKEND_NOT_RUNNING, midnight),
+        (READY, None, clock.now),
+    ]
+    assert restarted.took_today("Bench A") is False
+
+
+def test_a_day_left_open_for_several_days_ends_at_its_own_midnight(tmp_path):
+    log, clock = _log(tmp_path, _Clock(datetime.datetime(2026, 3, 9, 23, 0, 0).timestamp()))
+    _run(log, clock, [(RECORDING, None, 60), (READY, None, 30)])
+    log.observe("Bench A", READY, None)
+    clock.now = datetime.datetime(2026, 3, 12, 8, 0, 0).timestamp()
+    restarted, _ = _log(tmp_path, clock)
+    report = restarted.report("Bench A")
+    assert (report["date"], report["since"]) == ("2026-03-12", datetime.datetime(2026, 3, 12).timestamp())
+    last = _day_file(tmp_path)["stations"]["Bench A"]["segments"][-1]
+    assert (last["state"], last["end"]) == (DOWN, datetime.datetime(2026, 3, 10).timestamp())
+
+
+@pytest.fixture
+def clocks_go_back(monkeypatch):
+    """A time zone whose 2026-11-01 lasts 25 hours; the process's own zone is restored afterwards."""
+    monkeypatch.setenv("TZ", "America/Los_Angeles")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_a_day_the_clocks_go_back_on_still_ends_at_its_midnight(tmp_path, clocks_go_back):
+    log, clock = _log(tmp_path, _Clock(datetime.datetime(2026, 11, 1, 23, 58, 0).timestamp()))
+    _run(log, clock, [(RECORDING, None, 60)])
+    log.observe("Bench A", READY, None)
+    midnight = datetime.datetime(2026, 11, 2).timestamp()
+    clock.now = midnight + 10
+    assert log.report("Bench A")["date"] == "2026-11-02"
+    # 24 hours after the day began is 23:00 on a 25-hour day; the hour after it belongs to the day too.
+    assert _day_file(tmp_path, "2026-11-01")["stations"]["Bench A"]["segments"][-1]["end"] == midnight
+
+
+def test_a_restart_finds_nothing_to_finish_in_a_day_that_was_closed_or_already_followed(tmp_path):
+    log, clock = _log(tmp_path)
+    _run(log, clock, [(RECORDING, None, 60)])
+    _run(log, clock, [(READY, None, 30)], station="Cart B")  # Bench A's day is closed; Cart B is never written
+    stored = _day_file(tmp_path)
+    stored["stations"].pop("Cart B")
+    (tmp_path / "station_status" / "2026-03-09_timeline.json").write_text(json.dumps(stored))
+    clock.now = datetime.datetime(2026, 3, 10, 8, 0, 0).timestamp()
+    restarted, _ = _log(tmp_path, clock)
+    assert restarted.report("Bench A")["date"] == "2026-03-10" and restarted._payload["stations"] == {}
+    assert _day_file(tmp_path) == stored
+    # A day that has a file of its own was started by a run that finished the one before it.
+    restarted.set_notes("Bench A", "second day")
+    again, _ = _log(tmp_path, clock)
+    assert again.report("Bench A")["notes"] == "second day"
+
+
+def test_a_file_that_is_not_a_day_of_this_log_or_a_directory_that_cannot_be_listed_is_not_finished(
+    tmp_path, monkeypatch
+):
+    directory = tmp_path / "station_status"
+    directory.mkdir()
+    (directory / "0000_timeline.json").write_text("{}")
+    log, _ = _log(tmp_path)
+    assert log.report("Bench A")["date"] == "2026-03-09" and log._payload["stations"] == {}
+    from pathlib import Path
+
+    def unlistable(self, pattern):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "glob", unlistable)
+    other, _ = _log(tmp_path)
+    assert other.report("Bench A")["date"] == "2026-03-09"
+
+
+def test_a_rollover_whose_write_fails_still_carries_the_take_into_the_new_day(tmp_path, monkeypatch):
+    log, clock = _log(tmp_path, _Clock(datetime.datetime(2026, 3, 9, 23, 59, 0).timestamp()))
+    log.observe("Bench A", RECORDING, None)
+    midnight = datetime.datetime(2026, 3, 10).timestamp()
+    write, failures = UptimeLog._write, [OSError("disk full")]
+
+    def failing_once(self, payload):
+        if payload["date"] == "2026-03-09" and failures:
+            raise failures.pop()
+        write(self, payload)
+
+    monkeypatch.setattr(UptimeLog, "_write", failing_once)
+    clock.advance(80)
+    with pytest.raises(OSError):
+        log.observe("Bench A", RECORDING, None)
+    clock.advance(2)
+    log.observe("Bench A", RECORDING, None)
+    # The take is still open on the new day, from midnight: nothing between midnight and now was lost.
+    report = log.report("Bench A")
+    assert (report["date"], report["state"], report["since"]) == ("2026-03-10", RECORDING, midnight)
+    assert report["active_seconds"] == clock.now - midnight
+    assert _day_file(tmp_path)["stations"]["Bench A"]["segments"][-1]["end"] == midnight
+    assert _activity(tmp_path, "2026-03-09")["active_station_time_seconds"] == 60.0
+
+
+@pytest.mark.parametrize("failing_write", [1, 2], ids=["the timeline", "the daily log"])
+def test_a_daily_log_that_could_not_be_written_when_a_take_ended_is_written_at_the_next_save(
+    tmp_path, monkeypatch, failing_write
+):
+    log, clock = _log(tmp_path)
+    _run(log, clock, [(RECORDING, None, 120)])
+    write, writes = station_uptime.write_json_atomic, [0]
+
+    def failing_once(path, data):
+        writes[0] += 1
+        if writes[0] == failing_write:
+            raise OSError("disk full")
+        write(path, data)
+
+    monkeypatch.setattr(station_uptime, "write_json_atomic", failing_once)
+    with pytest.raises(OSError):
+        log.observe("Bench A", READY, None)  # the take ends; its log cannot be written
+    assert not (tmp_path / "station_status" / "bench_a_2026-03-09_activity.json").exists()
+    # No further take ends. The next periodic save of the timeline makes the log good.
+    clock.advance(10)
+    log.observe("Bench A", READY, None)
+    assert not (tmp_path / "station_status" / "bench_a_2026-03-09_activity.json").exists()
+    clock.advance(30)
+    log.observe("Bench A", READY, None)
+    assert _activity(tmp_path, "2026-03-09")["active_station_time_seconds"] == 120.0
+    assert log._owed_logs == set()
+
+
+def test_a_daily_log_still_owed_follows_a_rename(tmp_path, monkeypatch):
+    log, clock = _log(tmp_path)
+    _run(log, clock, [(RECORDING, None, 120)], station="Bnech A")
+    write_log, failures = UptimeLog._write_log, [OSError("disk full")]
+
+    def failing_once(self, *args):
+        if failures:
+            raise failures.pop()
+        return write_log(self, *args)
+
+    monkeypatch.setattr(UptimeLog, "_write_log", failing_once)
+    with pytest.raises(OSError):
+        log.observe("Bnech A", READY, None)
+    log.rename("Bnech A", "Bench A")
+    clock.advance(40)
+    log.observe("Bench A", READY, None)
+    assert _activity(tmp_path, "2026-03-09")["station"] == "Bench A"
+    assert not (tmp_path / "station_status" / "bnech_a_2026-03-09_activity.json").exists()

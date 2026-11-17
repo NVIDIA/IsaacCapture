@@ -35,9 +35,10 @@ class _Context:
 
 
 class _World:
-    """What a test can change between requests: whether the headset is connected."""
+    """What a test can change between requests: whether the headset is connected and tracking arrives."""
 
     headset_connected = True
+    tracking_fresh = True
 
 
 async def _rotate() -> None:
@@ -56,7 +57,7 @@ def _client(tmp_path, world: _World | None = None, ready: bool = True) -> TestCl
         return CaptureFacts(
             running=True,
             mock=True,
-            tracking_fresh=True,
+            tracking_fresh=world.tracking_fresh,
             devices=(DeviceFact("Headset", world.headset_connected, "disconnected", headset=True),),
             cameras={"cam_head": CameraFact(True, True)},
         )
@@ -81,8 +82,6 @@ def _client(tmp_path, world: _World | None = None, ready: bool = True) -> TestCl
         calibration_dir=lambda: tmp_path / "calibration",
         output_root=tmp_path,
         free_bytes=lambda path: 50 * 1024**3,
-        # Every request judges afresh, so a test can change the world between two of them.
-        monotonic=iter(range(0, 10_000, 5)).__next__,
     )
     small.state.recording_context = _Context(control_token=TOKEN)
     small.state.settings = SimpleNamespace(capture=SimpleNamespace(capture_server_url="ws://127.0.0.1:8082"))
@@ -138,11 +137,16 @@ def test_the_flow_and_the_live_checklist_are_read_openly(tmp_path, monkeypatch):
         ("Camera calibration", "skip"),
         ("Free disk space", "pass"),
     ]
-    # Nothing is run: the next read simply shows what changed.
+    # Nothing is run: the next read simply shows what changed. A device's state alone is advisory.
     world.headset_connected = False
+    warned = client.get("/api/setup").json()
+    assert warned["blocked_reason"] is None
+    assert _steps(warned)["devices"] == ("done", "Headset: disconnected; takes are not held")
+    assert {item["status"] for item in warned["checks"]} == {"pass", "warn", "skip"}
+    world.tracking_fresh = False
     held = client.get("/api/setup").json()
-    assert held["blocked_reason"] == "Headset: disconnected"
-    assert _steps(held)["devices"] == ("attention", "Headset: disconnected")
+    assert held["blocked_reason"] == "Tracking data: no recent sample"
+    assert _steps(held)["devices"] == ("attention", "Tracking data: no recent sample")
     # A batch's count alone is not a take today: it may be left from yesterday.
     client.app.state.recording_context.saved_count = 2
     assert _steps(client.get("/api/setup").json())["record"] == ("todo", None)
@@ -159,6 +163,50 @@ def test_the_flow_and_the_live_checklist_are_read_openly(tmp_path, monkeypatch):
     client.app.state.recording_context.saved_count = 0
     assert _steps(client.get("/api/setup").json())["record"] == ("done", "recorded today")
     assert not hasattr(client.app.state.setup_service, "run_connection_test")
+
+
+def _change_station_during(client: TestClient, times: int) -> list[int]:
+    """Put another station in use during the first ``times`` evaluations of a read; returns the call count."""
+    setup, stations = client.app.state.setup_service, client.app.state.station_service
+    refresh, calls = setup.refresh, [0]
+
+    async def refresh_while_the_station_changes():
+        calls[0] += 1
+        result = await refresh()
+        if calls[0] <= times:
+            other = await stations.add({"name": f"Cart {calls[0]}", "camera_roles": {"ego": "cam_head"}})
+            await stations.select(other.station_id)
+        return result
+
+    setup.refresh = refresh_while_the_station_changes
+    return calls
+
+
+def test_a_read_during_which_the_station_in_use_changed_starts_over_for_the_new_station(tmp_path, monkeypatch):
+    _host(monkeypatch, "10.0.0.42")
+    client = _client(tmp_path)
+    _use_bench(client, headset_address="10.0.0.7")
+    uptime = client.app.state.station_uptime
+    uptime.observe("Bench A", RECORDING, None)
+    uptime.observe("Bench A", READY, None)
+    uptime.save_report("Bench A", {})
+    calls = _change_station_during(client, 1)
+    body = client.get("/api/setup", headers=AUTH).json()
+    # Cart 1 has recorded nothing and saved no report and no address: none of Bench A's day is shown as its own.
+    steps = _steps(body)
+    assert calls == [2] and steps["station"] == ("done", "Cart 1")
+    assert (steps["record"], steps["wrap_up"]) == (("todo", None), ("todo", None))
+    assert body["headset"]["saved"] is None and body["blocked_reason"] is None
+
+
+def test_a_read_that_never_sees_one_station_throughout_is_refused_rather_than_mixed(tmp_path, monkeypatch):
+    _host(monkeypatch, "10.0.0.42")
+    client = _client(tmp_path)
+    _use_bench(client)
+    calls = _change_station_during(client, 99)
+    response = client.get("/api/setup")
+    assert response.status_code == 503 and calls == [3]
+    assert response.json() == {"detail": "the station in use is changing; try again"}
 
 
 def test_the_headset_address_is_returned_only_with_the_token(tmp_path, monkeypatch):

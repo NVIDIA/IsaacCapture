@@ -51,8 +51,11 @@ function renderCard(initial: StationListing = STATIONS_FIXTURE, options: CardOpt
     ...options.backend,
   };
   const onListing = vi.fn();
+  // Lets a test deliver a listing the card did not ask for, as a reload after another browser's change does.
+  const outside: { deliver: (listing: StationListing) => void } = { deliver: () => undefined };
   function Harness() {
     const [listing, setListing] = useState(initial);
+    outside.deliver = setListing;
     return (
       <StationsCard
         listing={listing}
@@ -69,7 +72,7 @@ function renderCard(initial: StationListing = STATIONS_FIXTURE, options: CardOpt
     );
   }
   render(<Harness />);
-  return { backend, onListing, registry };
+  return { backend, onListing, registry, deliver: (listing: StationListing) => act(() => outside.deliver(listing)) };
 }
 
 const rows = () => within(screen.getByRole("list", { name: "Stations" })).getAllByRole("listitem");
@@ -189,6 +192,29 @@ describe("StationsCard with stations", () => {
     expect(rows()).toHaveLength(3);
   });
 
+  it("shows why the station in use cannot change while an interrupted take waits for recovery", async () => {
+    const refused = async (): Promise<StationListing> => {
+      throw new SettingsHttpError("recover or discard the interrupted take first");
+    };
+    const { backend } = renderCard(TWO_STATIONS, { backend: { selectStation: vi.fn(refused), deleteStation: vi.fn(refused), updateStation: vi.fn(refused) } });
+    const refusal = "Not saved: recover or discard the interrupted take first";
+    fireEvent.click(screen.getByLabelText("Use Cart B"));
+    expect(await screen.findByText(refusal)).toBeTruthy();
+    expect((screen.getByLabelText("Use Bench A") as HTMLInputElement).checked).toBe(true);
+    // Deleting the station in use is refused the same way, and the row stays.
+    fireEvent.click(within(rows()[0]).getByRole("button", { name: "Delete" }));
+    fireEvent.click(button("Delete Bench A"));
+    await waitFor(() => expect(backend.deleteStation).toHaveBeenCalledWith("tok", "st_1"));
+    expect(await screen.findByText(refusal)).toBeTruthy();
+    expect(rows()).toHaveLength(3);
+    // A rename of it is refused in its own editor, beside what was typed.
+    edit(0);
+    fireEvent.change(field("Bench A", "Name"), { target: { value: "Bench Z" } });
+    fireEvent.click(button("Save"));
+    expect(await within(editor("Bench A")).findByText(refusal)).toBeTruthy();
+    expect(field("Bench A", "Name").value).toBe("Bench Z");
+  });
+
   it("keeps the typed name when the add is refused, so it can be corrected", async () => {
     const addStation = vi.fn(async () => {
       throw new SettingsHttpError("a station named 'Bench A' already exists");
@@ -298,6 +324,22 @@ describe("a station's inline editor", () => {
     expect(onListing).toHaveBeenCalledTimes(1);
     expect(rows()[0].textContent).toContain("Ego (head): cam_head · Left wrist: cam_left · Right wrist: cam_right");
     expect(screen.getByLabelText("Use Bench Z")).toBeTruthy();
+  });
+
+  it("does not send back a field another browser changed while the editor was open", async () => {
+    const { backend, registry, deliver } = renderCard(TWO_STATIONS);
+    edit(0);
+    // Another browser renames the station and changes its camera type; a reload brings that here.
+    const renamed = await registry.updateStation("tok", "st_1", { name: "Bench Prime", camera_type: "sensing_gmsl" });
+    deliver(renamed);
+    expect(editor("Bench Prime")).toBeTruthy();
+    fireEvent.change(field("Bench Prime", "Right wrist"), { target: { value: "cam_right" } });
+    fireEvent.click(button("Save"));
+    await waitFor(() => expect(screen.queryByRole("group")).toBeNull());
+    // Only the camera this editor assigned: the name and type it never touched are not sent as they were.
+    expect(backend.updateStation).toHaveBeenCalledWith("tok", "st_1", { camera_roles: { wrist_right: "cam_right" } });
+    expect(registry.listing.stations[0]).toMatchObject({ name: "Bench Prime", camera_type: "sensing_gmsl" });
+    expect(screen.getByLabelText("Use Bench Prime")).toBeTruthy();
   });
 
   it("sends a single changed field alone, and can clear the camera type and a role", async () => {

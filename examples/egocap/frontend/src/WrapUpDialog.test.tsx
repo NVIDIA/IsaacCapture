@@ -22,7 +22,7 @@ function fakeBackend(reply: DayReportReply | Error = DAY_REPORT_FIXTURE): WrapUp
     }),
     save: vi.fn(async () => ({ ...DAY_REPORT_FIXTURE, saved: { report: "bench_a_2026-03-09_report.json", activity_log: "bench_a_2026-03-09_activity.json" } })),
     correct: vi.fn(async () => ({ session: "s", updated: ["episode_0", "episode_1"], missing: ["episode_2"], config_updated: true })),
-    saveNotes: vi.fn(async (_token: string, next: string) => {
+    saveNotes: vi.fn(async (_token: string, _station: string, next: string) => {
       notes = next;
       return { ...UPTIME_FIXTURE, notes };
     }),
@@ -208,7 +208,7 @@ describe("station time in the end-of-day dialog", () => {
     fireEvent.change(notes, { target: { value: "left glove battery; replaced at 14:10" } });
     expect(within(time).queryByText("✓ Saved")).toBeNull();
     fireEvent.click(save);
-    await waitFor(() => expect(backend.saveNotes).toHaveBeenCalledWith("tok", "left glove battery; replaced at 14:10"));
+    await waitFor(() => expect(backend.saveNotes).toHaveBeenCalledWith("tok", "Bench A", "left glove battery; replaced at 14:10"));
     await waitFor(() => expect(backend.load).toHaveBeenCalledTimes(2)); // the report is read again
     expect(notes.value).toBe("left glove battery; replaced at 14:10");
     expect(await within(time).findByText("✓ Saved")).toBeTruthy();
@@ -294,6 +294,46 @@ describe("station time in the end-of-day dialog", () => {
     fireEvent.click(within(time).getByRole("button", { name: "Save notes" }));
     expect(await within(time).findByText("Not saved: notes may be at most 4000 characters")).toBeTruthy();
     expect(notesField(time).value).toBe("too long");
+  });
+
+  it("saves notes for the station they were typed for, even after the report was read again for another", async () => {
+    const backend = fakeBackend();
+    renderDialog({}, backend);
+    const time = await region("Station time");
+    fireEvent.change(notesField(time), { target: { value: "left glove swapped" } });
+    // The station in use changes, and a correction has the report read again: it is Cart B's now.
+    vi.mocked(backend.load).mockResolvedValue({ ...DAY_REPORT_FIXTURE, station_in_use: "Cart B", uptime: { ...UPTIME_FIXTURE, station: "Cart B", notes: "" } });
+    const sessions = screen.getByRole("region", { name: "Sessions" });
+    fireEvent.change(within(sessions).getByLabelText("Takes to correct"), { target: { value: "0" } });
+    fireEvent.change(within(sessions).getByLabelText("Correct task"), { target: { value: "Wash the cup." } });
+    fireEvent.click(within(sessions).getByRole("button", { name: "Correct" }));
+    await waitFor(() => expect(backend.load).toHaveBeenCalledTimes(2));
+    await within(sessions).findByText(/^Corrected/);
+    fireEvent.click(within(time).getByRole("button", { name: "Save notes" }));
+    await waitFor(() => expect(backend.saveNotes).toHaveBeenCalledWith("tok", "Bench A", "left glove swapped"));
+  });
+
+  it("says the station in use changed when the notes are refused for that, keeps them, and saves them after a reload", async () => {
+    const backend = fakeBackend();
+    const saveNotes = vi.mocked(backend.saveNotes);
+    saveNotes.mockRejectedValueOnce(new SettingsHttpError("the station in use changed; reload the report", 409));
+    renderDialog({}, backend);
+    const time = await region("Station time");
+    fireEvent.change(notesField(time), { target: { value: "left glove swapped" } });
+    fireEvent.click(within(time).getByRole("button", { name: "Save notes" }));
+    const refusal = await within(time).findByRole("alert");
+    expect(refusal.textContent).toBe("The station in use changed; reload the report. Reload");
+    expect(within(time).queryByText(/^Not saved/)).toBeNull();
+    expect(saveNotes).toHaveBeenLastCalledWith("tok", "Bench A", "left glove swapped");
+    expect(notesField(time).value).toBe("left glove swapped");
+    // Reloading reads the report of the station now in use; the draft stays and is then saved for that station.
+    vi.mocked(backend.load).mockResolvedValue({ ...DAY_REPORT_FIXTURE, report: { ...DAY_REPORT_FIXTURE.report, station: "Cart B" }, station_in_use: "Cart B", uptime: { ...UPTIME_FIXTURE, station: "Cart B", notes: "" } });
+    fireEvent.click(within(refusal).getByRole("button", { name: "Reload" }));
+    expect(await screen.findByRole("heading", { name: "End of day — Cart B, 2026-03-09" })).toBeTruthy();
+    expect(within(time).queryByRole("alert")).toBeNull();
+    expect(notesField(time).value).toBe("left glove swapped");
+    fireEvent.click(within(time).getByRole("button", { name: "Save notes" }));
+    await waitFor(() => expect(saveNotes).toHaveBeenLastCalledWith("tok", "Cart B", "left glove swapped"));
   });
 
   it("closes on Escape in the notes while nothing is unsaved, also after typing back to what is saved", async () => {
@@ -480,6 +520,38 @@ describe("correcting a task", () => {
     expect(sessions.querySelectorAll(".wrap-up-correction")).toHaveLength(1);
     expect(within(sessions).getByText("session_nothing_kept")).toBeTruthy();
     expect(within(sessions).getByText("Unreadable take record: episode_9.json: unsupported manifest")).toBeTruthy();
+  });
+
+  it("says where each take is recorded as soon as one is held outside its session, even in a single group", async () => {
+    const [session] = DAY_REPORT_FIXTURE.report.sessions;
+    const routed = {
+      ...DAY_REPORT_FIXTURE,
+      report: {
+        ...DAY_REPORT_FIXTURE.report,
+        sessions: [
+          {
+            ...session,
+            episodes: [
+              // Kept takes carry their slot in the one group; the interrupted take keeps its place in the session.
+              { ...session.episodes[0], location: "Kitchen/2026-03-09-08-15-00/episode_0" },
+              { ...session.episodes[1], location: "Kitchen/2026-03-09-08-15-00/episode_1" },
+              { ...session.episodes[4], location: `${session.session_id}/episode_1` },
+            ],
+          },
+        ],
+      },
+    };
+    renderDialog({}, fakeBackend(routed));
+    const sessions = await region("Sessions");
+    const table = within(sessions).getByRole("table");
+    expect(within(table).getAllByRole("columnheader").map((head) => head.textContent)).toContain("Recorded under");
+    expect(within(table).getAllByRole("row").slice(1).map((row) => Array.from(row.querySelectorAll("td")).slice(0, 2).map((cell) => cell.textContent))).toEqual([
+      ["0", "Kitchen/2026-03-09-08-15-00"],
+      ["1", "Kitchen/2026-03-09-08-15-00"],
+      ["1", session.session_id],
+    ]);
+    // One group leaves nothing to choose for a correction.
+    expect(within(sessions).queryByLabelText("Recorded under")).toBeNull();
   });
 });
 

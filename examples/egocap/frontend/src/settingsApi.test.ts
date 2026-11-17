@@ -8,6 +8,7 @@ import {
   fetchSettings,
   fetchTaskFile,
   fetchTaskFiles,
+  fetchOperatorSettings,
   importTaskFile,
   parseSettings,
   removeTaskFile,
@@ -78,20 +79,39 @@ describe("task catalog calls", () => {
     expect(init.body).toBeUndefined();
   });
 
+  const SAVED = {
+    camera_type: "oak_d",
+    camera_types: ["sensing_gmsl", "oak_d"],
+    camera_roles: { ego: null, wrist_left: null, wrist_right: null },
+    roles: ["ego", "wrist_left", "wrist_right"],
+    task_file: "Kitchen.csv",
+    preselected_task: null,
+    require_calibration: false,
+  };
+
   it("saves only the operator-setting fields it is given", async () => {
-    const fn = stubFetch(200, {
-      camera_type: "oak_d",
-      camera_types: ["sensing_gmsl", "oak_d"],
-      camera_roles: { ego: null, wrist_left: null, wrist_right: null },
-      roles: ["ego", "wrist_left", "wrist_right"],
-      task_file: "Kitchen.csv",
-      preselected_task: null,
-    });
+    const fn = stubFetch(200, SAVED);
     await saveOperatorSettings("tok", { task_file: "Kitchen.csv" });
     const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
     expect(init.method).toBe("PUT");
     expect(new Headers(init.headers).get("X-Control-Token")).toBe("tok");
     expect(JSON.parse(init.body as string)).toEqual({ task_file: "Kitchen.csv" });
+  });
+
+  it("saves the camera setup and the calibration requirement as operator settings", async () => {
+    const fn = stubFetch(200, { ...SAVED, require_calibration: true });
+    const saved = await saveOperatorSettings("tok", { camera_type: "oak_d", camera_roles: { wrist_left: "cam_left" }, require_calibration: true });
+    expect(saved.require_calibration).toBe(true);
+    const [, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ camera_type: "oak_d", camera_roles: { wrist_left: "cam_left" }, require_calibration: true });
+  });
+
+  it("rejects operator settings that do not say whether calibration is required", async () => {
+    const { require_calibration: _dropped, ...without } = SAVED;
+    for (const body of [without, { ...SAVED, require_calibration: "yes" }]) {
+      stubFetch(200, body);
+      await expect(fetchOperatorSettings()).rejects.toThrow(SettingsParseError);
+    }
   });
 
   it("rejects a malformed listing or catalog", async () => {

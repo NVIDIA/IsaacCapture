@@ -23,6 +23,8 @@ from .recording_command import control_token_valid
 router = APIRouter()
 
 _NO_STORE = {"Cache-Control": "no-store"}
+#: How many times a read starts over because the station in use changed while it was gathering.
+_ATTEMPTS = 3
 
 
 def _reply(body: dict[str, Any], status: int = 200) -> JSONResponse:
@@ -68,9 +70,19 @@ async def read_setup(request: Request) -> JSONResponse:
     if state is None:
         return _reply({"detail": "setup is not available yet"}, 503)
     setup, stations, uptime, context, settings = state
-    headset = await headset_address(setup, stations, settings.capture.capture_server_url)
-    # Both read the day's files, so they stay off the event loop.
-    took_today, report_saved = await asyncio.to_thread(_day_so_far, uptime, stations.label())
+    for _ in range(_ATTEMPTS):
+        in_use = (stations.registry.selected_id, stations.label())
+        # The checklist reads the disk, so it is judged in a worker thread; the reply below reads that result.
+        await setup.refresh()
+        headset = await headset_address(setup, stations, settings.capture.capture_server_url)
+        # Both read the day's files, so they stay off the event loop.
+        took_today, report_saved = await asyncio.to_thread(_day_so_far, uptime, in_use[1])
+        # Everything gathered must describe one station: a change during the awaits starts the read over.
+        if in_use == (stations.registry.selected_id, stations.label()):
+            break
+    else:
+        # Never answered with one station's day under another's name; the page reads again shortly.
+        return _reply({"detail": "the station in use is changing; try again"}, 503)
     body = setup.status(
         took_today=took_today,
         saved_count=context.saved_count,

@@ -182,6 +182,8 @@ def test_a_successful_download(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert response.content == b"video-bytes"
     assert "attachment" in response.headers["content-disposition"]
+    # Admitted by a credential, so no cache may keep it for a request that has none.
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_recording_output_root_uses_app_state_when_set(monkeypatch, tmp_path):

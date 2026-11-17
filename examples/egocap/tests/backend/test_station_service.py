@@ -135,8 +135,16 @@ async def test_a_take_is_held_for_the_moment_the_station_in_use_is_being_changed
     await service.select(bench_id)
     assert during == [(STATION_CHANGING, "Deployment")]
     assert service.block_reason() is None and service.label() == "Bench A"
-    # A change that leaves the label alone holds nothing.
-    await service.remember_headset_address("10.0.0.42")
+    # A change of the station in use that leaves the label alone holds a take too: one admitted while the
+    # file is written would record against the camera assignments being replaced.
+    session.events.clear()
+    await service.update(bench_id, {"camera_roles": {"wrist_left": None}})
+    assert during[-1] == (STATION_CHANGING, "Bench A") and service.block_reason() is None
+    assert session.events == []  # and the batch is rotated only for a change of the label
+    # A change that does not touch the station in use holds nothing.
+    await service.update(cart_id, {"camera_roles": {"wrist_left": None}})
+    assert during[-1] == (None, "Bench A")
+    await service.remember_headset_address(bench_id, None, "10.0.0.42")
     assert during[-1] == (None, "Bench A")
     # A refused change releases the hold as well.
     session.rotation_refusal = "an episode is active"
@@ -173,12 +181,12 @@ async def test_a_rename_is_kept_even_when_its_day_cannot_be_carried_over(tmp_pat
 
 async def test_the_headset_address_is_remembered_even_during_a_take(tmp_path):
     service, session, bench_id, _ = await _with_two_stations(tmp_path)
-    await service.remember_headset_address("10.0.0.42")  # nothing in use: nothing to remember it for
+    await service.remember_headset_address(bench_id, None, "10.0.0.42")  # nothing in use: nothing to remember
     assert all(station.headset_address is None for station in service.registry.stations)
     await service.select(bench_id)
     session.events.clear()
     session.blocked = TAKE_IN_PROGRESS
-    await service.remember_headset_address("10.0.0.42")
+    await service.remember_headset_address(bench_id, None, "10.0.0.42")
     assert service.registry.selected.headset_address == "10.0.0.42"
     assert StationStore(tmp_path / "stations.json").load().selected.headset_address == "10.0.0.42"
     assert session.events == []  # nothing about what is recorded changed
@@ -277,3 +285,18 @@ async def test_a_registry_that_cannot_be_read_starts_empty_with_a_warning_and_is
         "Saved stations cannot be read. Check the registry file's permissions."
     )
     assert path.exists() and not (tmp_path / "stations.json.invalid").exists()
+
+
+async def test_an_address_decided_for_another_station_or_another_saved_address_is_not_written(tmp_path):
+    service, session, bench_id, cart_id = await _with_two_stations(tmp_path)
+    await service.update(cart_id, {"headset_address": "10.0.0.9"})
+    # Decided while Bench A was in use; Cart B was put in use before the write. Its own address stays.
+    await service.select(cart_id)
+    await service.remember_headset_address(bench_id, None, "10.0.0.42")
+    assert service.registry.selected.headset_address == "10.0.0.9"
+    # Decided for an address the operator has replaced since: the operator's entry stays.
+    await service.remember_headset_address(cart_id, "10.0.0.7", "10.0.0.42")
+    assert service.registry.selected.headset_address == "10.0.0.9"
+    assert StationStore(tmp_path / "stations.json").load().selected.headset_address == "10.0.0.9"
+    await service.remember_headset_address(cart_id, "10.0.0.9", "10.0.0.42")
+    assert service.registry.selected.headset_address == "10.0.0.42"

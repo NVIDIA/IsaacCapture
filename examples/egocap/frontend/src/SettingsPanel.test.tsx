@@ -5,7 +5,7 @@
 /** The Settings dialog: tabs, the token-gated station and task changes, the live device checklist, catalog import
  * and removal, display and the read-only deployment tab. */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { SettingsPanel, type SettingsBackend, type StationSetup } from "./SettingsPanel";
 import { SettingsHttpError, type OperatorSettings, type TaskFileListing } from "./settingsApi";
 import { KITCHEN_FIXTURE, OPERATOR_SETTINGS_FIXTURE, SETTINGS_FIXTURE, STATIONS_FIXTURE, TASK_FILES_FIXTURE, TOOLS_FIXTURE, fakeStationRegistry } from "./settingsTestDoubles";
@@ -49,7 +49,8 @@ function fakeBackend(
     loadStationSetup: vi.fn(async () => ({ operator: effective(), tools: state.tools, taskFiles: state.listing, stations: registry.listing })),
     loadTaskFile: vi.fn(async (name: string) => (name === "Mid.csv" ? MID_TRAIN : KITCHEN_FIXTURE)),
     saveOperator: vi.fn(async (_token: string, changes) => {
-      state.operator = { ...state.operator, ...changes };
+      // As the backend does: a role change names only the roles it moves.
+      state.operator = { ...state.operator, ...changes, camera_roles: { ...state.operator.camera_roles, ...changes.camera_roles } };
       return effective();
     }),
     importTaskFile: vi.fn(async (_token: string, source) => {
@@ -120,6 +121,129 @@ describe("Station tab", () => {
     await stations();
     const body = document.querySelector(".settings-content-body") as HTMLElement;
     expect(Array.from(body.children).map((part) => part.getAttribute("aria-label"))).toEqual(["Stations"]);
+  });
+
+  it("edits the camera setup itself while there are no stations, saving only what changed", async () => {
+    const backend = fakeBackend({ operator: { ...OPERATOR_SETTINGS_FIXTURE, camera_type: "oak_d", camera_roles: { ego: "Ego", wrist_left: "Wrist A", wrist_right: null } } });
+    renderPanel({ cameraSources: ["Ego", "Wrist A", "Wrist B"] }, backend);
+    await stations();
+    const body = document.querySelector(".settings-content-body") as HTMLElement;
+    expect(Array.from(body.children).map((part) => part.getAttribute("aria-label"))).toEqual(["Stations", "Camera setup"]);
+    const card = () => within(screen.getByRole("region", { name: "Camera setup" }));
+    const save = () => card().getByRole("button", { name: "Save camera setup" }) as HTMLButtonElement;
+    const select = (label: string) => card().getByLabelText(label) as HTMLSelectElement;
+    expect(card().getByText(/Adding a station moves this setup onto the station/)).toBeTruthy();
+    expect(select("Camera type").value).toBe("oak_d");
+    expect(save().disabled).toBe(true); // nothing changed yet
+    // The cameras offered are the session's, and one camera fills one role only.
+    expect(Array.from(select("Right wrist").options).map((option) => [option.value, option.disabled])).toEqual([["", false], ["Ego", true], ["Wrist A", true], ["Wrist B", false]]);
+    fireEvent.click(card().getByRole("button", { name: "Swap wrists" }));
+    expect(select("Right wrist").value).toBe("Wrist A");
+    fireEvent.click(save());
+    await waitFor(() => expect(backend.saveOperator).toHaveBeenCalledWith("tok", { camera_roles: { wrist_left: null, wrist_right: "Wrist A" } }));
+    await waitFor(() => expect(save().disabled).toBe(true));
+    expect(select("Right wrist").value).toBe("Wrist A");
+    fireEvent.change(select("Camera type"), { target: { value: "sensing_gmsl" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(backend.saveOperator).toHaveBeenLastCalledWith("tok", { camera_type: "sensing_gmsl" }));
+    // The first station takes the setup over, and from then on holds it: the card is gone.
+    await waitFor(() => expect(backend.operator.camera_type).toBe("sensing_gmsl"));
+    await waitFor(() => expect(save().textContent).toBe("Save camera setup"));
+    fireEvent.change(screen.getByLabelText("New station name"), { target: { value: "Bench A" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add station" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Camera setup" })).toBeNull());
+    expect(backend.registry.inUse()).toMatchObject({ camera_type: "sensing_gmsl", camera_roles: { ego: "Ego", wrist_left: null, wrist_right: "Wrist A" } });
+  });
+
+  it("shows why a camera setup save was refused and keeps what was chosen", async () => {
+    const backend = fakeBackend();
+    backend.saveOperator = vi.fn(async () => {
+      throw new SettingsHttpError("camera 'Ego' is not offered by the capture session");
+    });
+    renderPanel({ cameraSources: ["Ego"] }, backend);
+    await stations();
+    const card = screen.getByRole("region", { name: "Camera setup" });
+    fireEvent.change(within(card).getByLabelText("Ego (head)"), { target: { value: "Ego" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Save camera setup" }));
+    expect(await within(card).findByText("Not saved: camera 'Ego' is not offered by the capture session")).toBeTruthy();
+    expect((within(card).getByLabelText("Ego (head)") as HTMLSelectElement).value).toBe("Ego");
+  });
+
+  it("shows the camera setup read-only without the control token", async () => {
+    renderPanel({ controlToken: null, cameraSources: ["Ego"] });
+    await stations();
+    const card = screen.getByRole("region", { name: "Camera setup" });
+    expect((within(card).getByLabelText("Camera type") as HTMLSelectElement).disabled).toBe(true);
+    expect((within(card).getByLabelText("Ego (head)") as HTMLSelectElement).disabled).toBe(true);
+    expect((within(card).getByRole("button", { name: "Save camera setup" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(card).getByText(/Enter the control token in the recording panel/)).toBeTruthy();
+  });
+
+  it("shows the setup saved with the settings once the last station is deleted, not that station's", async () => {
+    const backend = fakeBackend({ stations: BENCH_IN_USE, operator: { ...OPERATOR_SETTINGS_FIXTURE, camera_type: "sensing_gmsl" } });
+    renderPanel({ cameraSources: ["Ego"] }, backend);
+    const card = await stations();
+    const reads: Array<() => void> = [];
+    vi.mocked(backend.loadStationSetup).mockImplementation(
+      () => new Promise<StationSetup>((resolve) => reads.push(() => resolve({ operator: backend.operator, tools: TOOLS_FIXTURE, taskFiles: backend.listing, stations: backend.registry.listing }))),
+    );
+    fireEvent.click(within(card).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Delete Bench A" }));
+    // The card appears with the registry change, before the setup has been read again without the station.
+    const setup = await screen.findByRole("region", { name: "Camera setup" });
+    expect(reads).toHaveLength(1);
+    await act(async () => reads[0]());
+    expect((within(setup).getByLabelText("Camera type") as HTMLSelectElement).value).toBe("sensing_gmsl");
+    expect((within(setup).getByLabelText("Ego (head)") as HTMLSelectElement).value).toBe("");
+    expect((within(setup).getByRole("button", { name: "Save camera setup" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does not let an older read of the station setup replace a newer change", async () => {
+    const backend = fakeBackend({ stations: BENCH_IN_USE });
+    renderPanel({ cameraSources: ["Ego", "Wrist A"] }, backend);
+    const card = await stations();
+    // From here each read of the setup answers only when the test lets it, with the registry as it was when sent.
+    const reads: Array<() => void> = [];
+    vi.mocked(backend.loadStationSetup).mockImplementation(() => {
+      const picture = { operator: backend.operator, tools: TOOLS_FIXTURE, taskFiles: backend.listing, stations: backend.registry.listing };
+      return new Promise<StationSetup>((resolve) => reads.push(() => resolve(picture)));
+    });
+    const editButton = () => within(card).getByRole("button", { name: "Edit" }) as HTMLButtonElement;
+    // A rename starts a read; a camera change is saved while that read is still on its way.
+    fireEvent.click(editButton());
+    fireEvent.change(within(card).getByLabelText("Name"), { target: { value: "Bench Z" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Save" }));
+    await within(card).findByLabelText("Use Bench Z");
+    await waitFor(() => expect(editButton().disabled).toBe(false));
+    fireEvent.click(editButton());
+    fireEvent.change(within(card).getByLabelText("Left wrist"), { target: { value: "Wrist A" } });
+    fireEvent.click(within(card).getByRole("button", { name: "Save" }));
+    const assigned = "Ego (head): Ego · Left wrist: Wrist A · Right wrist: —";
+    await within(card).findByText(assigned);
+    expect(reads).toHaveLength(2);
+    // The newer read answers first, then the older one, which still shows no left wrist camera.
+    await act(async () => reads[1]());
+    await act(async () => reads[0]());
+    expect(within(card).getByText(assigned)).toBeTruthy();
+  });
+
+  it("reads the station setup again when a change is saved while a read is on its way", async () => {
+    const backend = fakeBackend({ stations: BENCH_IN_USE });
+    renderPanel({}, backend);
+    const card = await stations();
+    const reads: Array<(setup: StationSetup) => void> = [];
+    const current = (): StationSetup => ({ operator: backend.operator, tools: TOOLS_FIXTURE, taskFiles: backend.listing, stations: backend.registry.listing });
+    vi.mocked(backend.loadStationSetup).mockImplementation(() => new Promise<StationSetup>((resolve) => reads.push(resolve)));
+    fireEvent.click(within(card).getByLabelText("Use no station"));
+    await waitFor(() => expect(reads).toHaveLength(1));
+    const before = current(); // read before the requirement is saved
+    fireEvent.click(tab("Devices"));
+    fireEvent.click(await screen.findByLabelText("Require calibration files before recording"));
+    await waitFor(() => expect(reads).toHaveLength(2));
+    await act(async () => reads[0](before));
+    expect((screen.getByLabelText("Require calibration files before recording") as HTMLInputElement).checked).toBe(true);
+    await act(async () => reads[1](current()));
+    expect((screen.getByLabelText("Require calibration files before recording") as HTMLInputElement).checked).toBe(true);
   });
 
   it("adds the first station, puts it in use, and then edits that station's cameras in its row", async () => {
@@ -196,6 +320,19 @@ describe("Devices tab", () => {
     const checklist = screen.getByRole("region", { name: "Checklist" });
     expect(within(checklist).getAllByRole("region").map((group) => group.getAttribute("aria-label"))).toEqual(["Tracking", "Cameras", "System"]);
     expect(within(checklist).getByText("Left wrist: cam_left")).toBeTruthy();
+  });
+
+  it("turns the calibration requirement on with the control token, and the checklist is read again at once", async () => {
+    const backend = fakeBackend({ flow: SETUP_READY });
+    renderPanel({ initialTab: "devices" }, backend);
+    const box = (await screen.findByLabelText("Require calibration files before recording")) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    await waitFor(() => expect(backend.loadSetup).toHaveBeenCalledTimes(1));
+    fireEvent.click(box);
+    await waitFor(() => expect(backend.saveOperator).toHaveBeenCalledWith("tok", { require_calibration: true }));
+    await waitFor(() => expect(backend.loadSetup).toHaveBeenCalledTimes(2));
+    expect(box.checked).toBe(true);
+    expect(backend.operator.require_calibration).toBe(true);
   });
 
   it("shows the page's flow at once, before its own read answers", () => {

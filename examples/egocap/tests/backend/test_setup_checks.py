@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""The station checklist: what passes, what fails with which reason, what is skipped."""
+"""The station checklist: what passes, what fails or only warns and with which reason, what is skipped."""
 
 from __future__ import annotations
 
@@ -14,12 +14,14 @@ from egocap_web.setup_checks import (
     FAIL,
     PASS,
     SKIP,
+    WARN,
     CameraFact,
     CaptureFacts,
     CheckItem,
     DeviceFact,
     checklist,
     first_failure,
+    first_warning,
     free_bytes_under,
 )
 
@@ -45,7 +47,7 @@ def _facts(**overrides) -> CaptureFacts:
     return CaptureFacts(**{**base, **overrides})
 
 
-def _items(tmp_path, facts=None, roles=ROLES, free=50 * 1024**3) -> list[CheckItem]:
+def _items(tmp_path, facts=None, roles=ROLES, free=50 * 1024**3, require_calibration=False) -> list[CheckItem]:
     def free_bytes(path):
         if isinstance(free, OSError):
             raise free
@@ -57,6 +59,7 @@ def _items(tmp_path, facts=None, roles=ROLES, free=50 * 1024**3) -> list[CheckIt
         calibration_dir=tmp_path / "calibration",
         output_root=tmp_path / "recordings",
         free_bytes=free_bytes,
+        require_calibration=require_calibration,
     )
 
 
@@ -97,12 +100,14 @@ def test_a_stopped_capture_session_is_one_failure_and_the_system_checks_still_sh
     assert _by_id(_items(tmp_path, CaptureFacts(), None))["capture"] == (FAIL, "capture is not running")
 
 
-def test_a_disconnected_device_fails_with_its_own_reason(tmp_path):
-    devices = (HEADSET, DeviceFact("Left controller", False, "battery empty"), DeviceFact("Left glove", False))
+def test_a_device_that_is_not_connected_warns_with_its_own_reason_and_holds_nothing(tmp_path):
+    # Recording readiness judges the tracking data, not each device's state; the checklist is no stricter.
+    devices = (HEADSET, DeviceFact("Left controller", False, "degraded"), DeviceFact("Left glove", False))
     items = _items(tmp_path, _facts(devices=devices, mock=True))
-    assert _by_id(items)["device:1"] == (FAIL, "battery empty")
-    assert _by_id(items)["device:2"] == (FAIL, "not connected")
-    assert first_failure(items) == "Left controller: battery empty"
+    assert _by_id(items)["device:1"] == (WARN, "degraded")
+    assert _by_id(items)["device:2"] == (WARN, "not connected")
+    assert first_failure(items) is None
+    assert first_warning(items) == "Left controller: degraded"
 
 
 def test_only_devices_the_session_reports_are_judged(tmp_path):
@@ -122,7 +127,7 @@ def test_connected_devices_that_deliver_nothing_fail(tmp_path):
     [
         (None, "camera 'cam_left' is not offered by the capture session"),
         (CameraFact(False, False, "unplugged"), "unplugged"),
-        (CameraFact(False, True), "not connected"),
+        (CameraFact(False, False), "not connected"),
         (CameraFact(True, False), "no recent frame"),
     ],
 )
@@ -131,6 +136,15 @@ def test_a_station_camera_fails_with_the_specific_reason(tmp_path, camera, detai
     if camera is not None:
         cameras["cam_left"] = camera
     assert _by_id(_items(tmp_path, _facts(cameras=cameras)))["camera:wrist_left"] == (FAIL, detail)
+
+
+def test_a_camera_that_delivers_frames_in_another_state_than_connected_only_warns(tmp_path):
+    cameras = {"cam_head": CameraFact(True, True), "cam_left": CameraFact(False, True, "degraded")}
+    items = _items(tmp_path, _facts(cameras=cameras, mock=True))
+    assert _by_id(items)["camera:wrist_left"] == (WARN, "degraded")
+    assert first_failure(items) is None
+    cameras["cam_left"] = CameraFact(False, True)
+    assert _by_id(_items(tmp_path, _facts(cameras=cameras)))["camera:wrist_left"] == (WARN, "not connected")
 
 
 def test_a_livekit_camera_passes_when_offered_and_fails_with_why_it_cannot_be_recorded(tmp_path):
@@ -153,21 +167,33 @@ def test_without_a_station_every_offered_camera_is_checked_by_name(tmp_path):
 
 
 def test_calibration_needs_the_files_of_the_roles_in_use(tmp_path):
-    assert _by_id(_items(tmp_path))["calibration"] == (FAIL, "missing: " + ", ".join(CALIBRATED))
+    def required(**kwargs):
+        return _by_id(_items(tmp_path, require_calibration=True, **kwargs))["calibration"]
+
+    assert required() == (FAIL, "missing: " + ", ".join(CALIBRATED))
     _calibrate(tmp_path, *CALIBRATED[:3])
-    assert _by_id(_items(tmp_path))["calibration"] == (FAIL, "missing: wrist_calibration_offsets.json")
+    assert required() == (FAIL, "missing: wrist_calibration_offsets.json")
     _calibrate(tmp_path, CALIBRATED[3])
-    assert _by_id(_items(tmp_path))["calibration"] == (PASS, None)
+    assert required() == (PASS, None)
     # A station with only the right wrist needs that wrist's file, not the left's.
     right_only = {"ego": None, "wrist_left": None, "wrist_right": "cam_right"}
-    assert _by_id(_items(tmp_path, roles=right_only))["calibration"] == (
-        FAIL,
-        "missing: right_wrist_camera_intrinsics.json",
-    )
+    assert required(roles=right_only) == (FAIL, "missing: right_wrist_camera_intrinsics.json")
     # A station without wrist cameras needs no wrist calibration.
     assert _by_id(_items(tmp_path, roles={"ego": "cam_head", "wrist_left": None, "wrist_right": None}))[
         "calibration"
     ] == (PASS, None)
+
+
+def test_missing_calibration_only_warns_unless_the_deployment_requires_it(tmp_path):
+    missing = "missing: " + ", ".join(CALIBRATED)
+    advisory = _items(tmp_path)
+    assert _by_id(advisory)["calibration"] == (WARN, missing)
+    assert first_failure(advisory) is None and first_warning(advisory) == f"Camera calibration: {missing}"
+    required = _items(tmp_path, require_calibration=True)
+    assert _by_id(required)["calibration"] == (FAIL, missing)
+    assert first_failure(required) == f"Camera calibration: {missing}"
+    # The item itself is the same either way, so the page lists it under one id and label.
+    assert [(item.id, item.label) for item in advisory] == [(item.id, item.label) for item in required]
 
 
 @pytest.mark.parametrize(
@@ -182,15 +208,18 @@ def test_calibration_is_skipped_where_it_does_not_apply(tmp_path, facts, roles, 
     assert _by_id(_items(tmp_path, facts=facts, roles=roles))["calibration"] == (SKIP, detail)
 
 
-def test_a_calibration_directory_that_cannot_be_searched_fails_the_check_instead_of_raising(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("required", "status"), [(True, FAIL), (False, WARN)])
+def test_a_calibration_directory_that_cannot_be_searched_is_reported_instead_of_raising(
+    tmp_path, monkeypatch, required, status
+):
     from pathlib import Path
 
     def denied(self):
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr(Path, "is_file", denied)
-    assert _by_id(_items(tmp_path))["calibration"] == (
-        FAIL,
+    assert _by_id(_items(tmp_path, require_calibration=required))["calibration"] == (
+        status,
         "cannot read the calibration directory: Permission denied",
     )
 
@@ -229,5 +258,6 @@ def test_the_first_failure_reads_as_one_phrase():
         CheckItem("b", "system", "Gloves", FAIL),
         CheckItem("c", "system", "Cam", FAIL, "x"),
     ]
-    assert first_failure(items) == "Gloves"
+    assert first_failure(items) == "Gloves" and first_warning(items) is None
+    assert first_warning([CheckItem("d", "tracking", "Glove", WARN, "degraded")]) == "Glove: degraded"
     assert items[2].to_json() == {"id": "c", "group": "system", "label": "Cam", "status": "fail", "detail": "x"}

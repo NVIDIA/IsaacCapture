@@ -40,9 +40,9 @@ describe("the station registry", () => {
 
   it("surfaces the backend's reason for a refusal, or the status when it gave none", async () => {
     stubFetch(400, { detail: "a station named 'Bench A' already exists" });
-    await expect(addStation("tok", { name: "bench a" })).rejects.toThrow(new SettingsHttpError("a station named 'Bench A' already exists"));
+    await expect(addStation("tok", { name: "bench a" })).rejects.toThrow(new SettingsHttpError("a station named 'Bench A' already exists", 400));
     vi.stubGlobal("fetch", vi.fn(async () => new Response("gateway down", { status: 502 })));
-    await expect(fetchStations()).rejects.toThrow(new SettingsHttpError("HTTP 502"));
+    await expect(fetchStations()).rejects.toThrow(new SettingsHttpError("HTTP 502", 502));
   });
 
   it("rejects a listing of the wrong shape", async () => {
@@ -54,24 +54,27 @@ describe("the station registry", () => {
 });
 
 describe("station uptime", () => {
-  it("is read without a credential", async () => {
-    const fn = stubFetch(200, UPTIME_FIXTURE);
-    await expect(fetchStationUptime()).resolves.toEqual(UPTIME_FIXTURE);
+  it("is read without a credential, so with the notes left empty", async () => {
+    const withheld = { ...UPTIME_FIXTURE, notes: "" };
+    const fn = stubFetch(200, withheld);
+    await expect(fetchStationUptime()).resolves.toEqual(withheld);
     expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { signal: undefined });
   });
 
-  it("saves the day's notes with the control token and sets nothing else", async () => {
+  it("saves the day's notes for the station they were written for, with the control token, and sets nothing else", async () => {
     const saved = { ...UPTIME_FIXTURE, notes: "left glove battery; replaced at 14:10" };
     const fn = stubFetch(200, saved);
-    await expect(saveStationNotes("tok", "left glove battery; replaced at 14:10")).resolves.toEqual(saved);
-    expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { method: "POST", headers: JSON_AUTH, body: JSON.stringify({ notes: "left glove battery; replaced at 14:10" }) });
+    await expect(saveStationNotes("tok", "Bench A", "left glove battery; replaced at 14:10")).resolves.toEqual(saved);
+    expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { method: "POST", headers: JSON_AUTH, body: JSON.stringify({ station: "Bench A", notes: "left glove battery; replaced at 14:10" }) });
   });
 
   it("reports a refusal and a malformed body", async () => {
     stubFetch(400, { detail: "notes may be at most 4000 characters" });
-    await expect(saveStationNotes("tok", "x")).rejects.toThrow(new SettingsHttpError("notes may be at most 4000 characters"));
+    await expect(saveStationNotes("tok", "Bench A", "x")).rejects.toThrow(new SettingsHttpError("notes may be at most 4000 characters", 400));
+    stubFetch(409, { detail: "the station in use changed; reload the report" });
+    await expect(saveStationNotes("tok", "Bench A", "x")).rejects.toMatchObject({ message: "the station in use changed; reload the report", status: 409 });
     stubFetch(503, { detail: "stations are not available yet" });
-    await expect(fetchStationUptime()).rejects.toThrow(new SettingsHttpError("stations are not available yet"));
+    await expect(fetchStationUptime()).rejects.toThrow(new SettingsHttpError("stations are not available yet", 503));
     for (const body of [null, { ...UPTIME_FIXTURE, state: "active" }, { ...UPTIME_FIXTURE, down_seconds: "60" }, { ...UPTIME_FIXTURE, blockers: 2 }, { ...UPTIME_FIXTURE, notes: null }]) {
       stubFetch(200, body);
       await expect(fetchStationUptime()).rejects.toThrow(SettingsParseError);

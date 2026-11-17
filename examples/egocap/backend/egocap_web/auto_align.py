@@ -10,6 +10,10 @@ live take inside the recorder's own process, and a shutdown can stop it. An epis
 logged with the reason and left as recorded; the raw episode is never modified. Output is published by one rename,
 so an alignment that is killed leaves no partial result. At startup the worker re-queues the kept episodes that
 still have no aligned copy.
+
+The child copies an episode's labels into the aligned copy, so the worker holds the session's lock
+(session_locks.py) for the whole alignment: a task correction of that session is refused meanwhile, and an
+episode waiting its turn does not start while a correction is being written.
 """
 
 from __future__ import annotations
@@ -32,12 +36,16 @@ from egocap.recording.episode_layout import (
 )
 from recording_service import Disposition, EpisodeResult
 
+from .session_locks import ALIGNER, SessionLocks
+
 logger = logging.getLogger("isaaccapture.egocap_web.auto_align")
 
 #: The command-line aligner, run once per episode.
 _ALIGN_TOOL = Path(__file__).resolve().parents[2] / "recording" / "tools" / "align_episode.py"
 #: A staging directory untouched this long belongs to a run that is no longer going.
 _STALE_STAGING_SECONDS = 24 * 3600
+#: How soon the worker looks again when a correction holds the session it is about to align.
+_LOCK_RETRY_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -62,15 +70,15 @@ class _Job:
 class AutoAligner:
     """Aligns kept episodes one at a time on its own worker task."""
 
-    def __init__(self, output_root: Path, index_source: str) -> None:
-        """``output_root`` holds the recording sessions; ``index_source`` is the camera that sets the timeline."""
+    def __init__(self, output_root: Path, index_source: str, locks: SessionLocks | None = None) -> None:
+        """``output_root`` holds the recording sessions; ``index_source`` is the camera that sets the timeline;
+        ``locks`` is shared with whatever else rewrites a session's labels (none does when it is omitted)."""
         self._output_root = output_root
         self._index_source = index_source
+        self._locks = locks if locks is not None else SessionLocks()
         # Unbounded: a job is three small fields, and the number waiting is the number of kept episodes.
         self._queue: asyncio.Queue[_Job] = asyncio.Queue()
         self._process: asyncio.subprocess.Process | None = None
-        #: The episode being aligned right now, or None between episodes.
-        self._aligning: _Job | None = None
         # False while the open session cannot be aligned; set once per session open.
         self._session_alignable = True
 
@@ -95,16 +103,6 @@ class AutoAligner:
         """Queue a finished take for alignment; anything other than a kept episode is ignored."""
         if result.disposition is Disposition.KEPT and result.final_path is not None and self._session_alignable:
             self._queue.put_nowait(_Job(result.session_id, result.episode_index, result.final_path))
-
-    def busy_with(self, group: Path) -> bool:
-        """Whether the episode being aligned right now is in ``group``, a session or a routed group directory.
-
-        Its labels were copied when the alignment began, so a change to them now would miss the aligned copy.
-        Episodes still waiting are not counted: they read their labels when their turn comes. Safe to call
-        from another thread; it resolves paths, so not from the event loop.
-        """
-        job = self._aligning
-        return job is not None and job.final.parent.resolve() == group.resolve()
 
     def scan(self) -> list[_Job]:
         """Every kept episode, in any session, that has no aligned copy and whose evidence allows one.
@@ -157,14 +155,24 @@ class AutoAligner:
             logger.warning("time-alignment recovery failed: %s", exc)
         while True:
             job = await self._queue.get()
-            self._aligning = job
             try:
-                await self._align(job)
+                await self._align_holding(job)
             except Exception as exc:  # noqa: BLE001 - one episode's failure must not end the worker
                 logger.warning("%s episode %d was not time-aligned: %s", job.session_id, job.episode_index, exc)
             finally:
-                self._aligning = None
                 self._queue.task_done()
+
+    async def _align_holding(self, job: _Job) -> None:
+        """Align one episode while holding its session's lock, so its labels cannot change under the copy."""
+        # Resolving asks the filesystem, which stays off the event loop.
+        group = await asyncio.to_thread(job.final.parent.resolve)
+        # A correction is brief; waiting here, not in a thread, keeps a shutdown able to cancel the wait.
+        while self._locks.acquire(group, ALIGNER) is not None:
+            await asyncio.sleep(_LOCK_RETRY_SECONDS)
+        try:
+            await self._align(job)
+        finally:
+            self._locks.release(group)
 
     async def close(self, task: asyncio.Task[None], timeout: float) -> None:
         """Let the queued episodes finish for up to ``timeout`` seconds, then stop the worker ``task``.

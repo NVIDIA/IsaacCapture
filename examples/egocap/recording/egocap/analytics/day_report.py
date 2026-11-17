@@ -170,6 +170,17 @@ def _session_dirs(root: Path) -> list[Path]:
     return [entry for entry in entries if not entry.name.startswith(".") and (entry / MANIFEST_DIR).is_dir()]
 
 
+def _cannot_hold(session_path: Path, date: str) -> bool:
+    """Whether a session can be passed over for ``date`` without reading it, judged from its name alone.
+
+    Only a session whose name says it was opened on a later day: no take recorded on ``date`` can be in it.
+    A session opened on ``date`` or earlier is always read, since it may have been recorded into across
+    midnight or reopened on a later day, and one whose name carries no date is always read too.
+    """
+    started = _session_started(session_path.name)
+    return started is not None and started[:10] > date
+
+
 def build_day_report(
     root: Path, date: str, *, stations: Collection[str] | None = None, active_episode_id: str | None = None
 ) -> dict[str, Any]:
@@ -182,6 +193,9 @@ def build_day_report(
     totals = _empty_tally()
     sessions = []
     for session_path in _session_dirs(root):
+        # Before its station name is read: that already opens the session's files.
+        if _cannot_hold(session_path, date):
+            continue
         if stations is not None and _read_session_station_name(session_path) not in stations:
             continue
         found = _session_record(session_path, date, active_episode_id)

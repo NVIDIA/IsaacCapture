@@ -255,22 +255,119 @@ function StationRow({
   );
 }
 
-/** The editor's working copy of a station. */
-interface StationDraft {
-  name: string;
+/** A camera setup as saved: the camera type and the camera filling each role. */
+export type CameraSetup = Pick<StationRecord, "camera_type" | "camera_roles">;
+
+/** An editor's working copy of a camera setup. */
+export interface CameraDraft {
   cameraType: string | null;
   cameraRoles: Record<string, string | null>;
 }
 
-/** Only what the draft changes, so a save cannot overwrite a field another browser changed in the meantime. */
-function changesOf(station: StationRecord, roles: readonly string[], draft: StationDraft): StationChange {
-  const changes: StationChange = {};
-  if (draft.name.trim() !== station.name) changes.name = draft.name.trim();
-  if (draft.cameraType !== station.camera_type) changes.camera_type = draft.cameraType;
-  const moved = roles.filter((role) => (draft.cameraRoles[role] ?? null) !== (station.camera_roles[role] ?? null));
+/** The editor's working copy of a station. */
+interface StationDraft extends CameraDraft {
+  name: string;
+}
+
+/** A working copy of a saved camera setup. */
+export function cameraDraftOf(saved: CameraSetup): CameraDraft {
+  return { cameraType: saved.camera_type, cameraRoles: { ...saved.camera_roles } };
+}
+
+/** Only the camera fields the draft changes from `original`, the setup the editor was opened on. */
+export function cameraChangesOf(original: CameraSetup, roles: readonly string[], draft: CameraDraft): Pick<StationChange, "camera_type" | "camera_roles"> {
+  const changes: Pick<StationChange, "camera_type" | "camera_roles"> = {};
+  if (draft.cameraType !== original.camera_type) changes.camera_type = draft.cameraType;
+  const moved = roles.filter((role) => (draft.cameraRoles[role] ?? null) !== (original.camera_roles[role] ?? null));
   if (moved.length > 0) changes.camera_roles = Object.fromEntries(moved.map((role) => [role, draft.cameraRoles[role] ?? null]));
   return changes;
 }
+
+/** Only what the draft changes from `original`, the station as it was when the editor opened. Comparing with
+ * the station as it is now would send back, as a change, every field another browser changed in the meantime. */
+function changesOf(original: StationRecord, roles: readonly string[], draft: StationDraft): StationChange {
+  const changes: StationChange = cameraChangesOf(original, roles, draft);
+  if (draft.name.trim() !== original.name) changes.name = draft.name.trim();
+  return changes;
+}
+
+/** Whether a draft has a wrist camera to swap. */
+export function hasWristCamera(draft: CameraDraft): boolean {
+  return (draft.cameraRoles.wrist_left ?? null) !== null || (draft.cameraRoles.wrist_right ?? null) !== null;
+}
+
+/** The draft with its wrists exchanged, in one step so the assignments stay unique throughout. */
+export function withWristsSwapped<T extends CameraDraft>(draft: T): T {
+  return { ...draft, cameraRoles: { ...draft.cameraRoles, wrist_left: draft.cameraRoles.wrist_right ?? null, wrist_right: draft.cameraRoles.wrist_left ?? null } };
+}
+
+/** The camera type and the camera for each role, as label and control pairs for a `settings-fields` grid. */
+export function CameraFields<T extends CameraDraft>({
+  idPrefix,
+  draft,
+  onDraft,
+  saved,
+  roles,
+  cameraTypes,
+  cameraSources,
+  disabled,
+}: {
+  /** Makes the field ids unique on the page. */
+  idPrefix: string;
+  draft: T;
+  onDraft: (update: (current: T) => T) => void;
+  /** The roles as saved: a saved camera stays selectable when the session no longer offers it, so it can be seen and cleared. */
+  saved: Record<string, string | null>;
+  roles: readonly string[];
+  cameraTypes: readonly string[];
+  /** The cameras the current session offers, by name. */
+  cameraSources: string[];
+  disabled: boolean;
+}) {
+  const cameras = selectableCameras(cameraSources, saved);
+  /** The cameras the other roles hold: one camera cannot fill two roles. */
+  const takenBy = (role: string) => new Set(roles.filter((other) => other !== role).map((other) => draft.cameraRoles[other]));
+  return (
+    <>
+      <label htmlFor={`${idPrefix}-type`}>Camera type</label>
+      <select
+        id={`${idPrefix}-type`}
+        className="settings-input"
+        value={draft.cameraType ?? ""}
+        disabled={disabled}
+        onChange={(e) => onDraft((current) => ({ ...current, cameraType: e.target.value === "" ? null : e.target.value }))}
+      >
+        <option value="">Not set</option>
+        {cameraTypes.map((type) => (
+          <option key={type} value={type}>
+            {CAMERA_TYPE_LABELS[type] ?? type}
+          </option>
+        ))}
+      </select>
+      {roles.map((role) => (
+        <RoleField
+          key={role}
+          id={`${idPrefix}-${role}`}
+          role={role}
+          value={draft.cameraRoles[role] ?? null}
+          cameras={cameras}
+          offered={cameraSources}
+          taken={takenBy(role)}
+          disabled={disabled}
+          onChange={(camera) => onDraft((current) => ({ ...current, cameraRoles: { ...current.cameraRoles, [role]: camera } }))}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Every camera a role can be given: the ones the session offers and the ones already saved. */
+export function selectableCameras(cameraSources: readonly string[], saved: Record<string, string | null>): string[] {
+  return [...new Set([...cameraSources, ...Object.values(saved).filter((name): name is string => name !== null)])];
+}
+
+/** What to say where no camera can be chosen yet. */
+export const NO_CAMERAS_NOTE = "The session offers no cameras yet; roles can be assigned once CaptureServer lists them.";
 
 /** A station's inline editor: its name, camera type and the camera for each role, saved together. */
 function StationEditor({
@@ -292,24 +389,15 @@ function StationEditor({
   onClose: () => void;
 }) {
   const fieldId = useId();
-  const [draft, setDraft] = useState<StationDraft>({ name: station.name, cameraType: station.camera_type, cameraRoles: { ...station.camera_roles } });
+  // The station as the editor opened on it. The listing can bring another browser's change while the editor is
+  // open; what this editor changed is judged against what the operator started from, never against that.
+  const [original] = useState(station);
+  const [draft, setDraft] = useState<StationDraft>({ name: station.name, ...cameraDraftOf(station) });
   const [{ busy, failure }, run] = useAction();
   const { roles } = listing;
-  const changes = changesOf(station, roles, draft);
+  const changes = changesOf(original, roles, draft);
   const dirty = Object.keys(changes).length > 0;
   const named = draft.name.trim() !== "";
-  // A camera saved for the station stays selectable when the session no longer offers it, so it can be seen and cleared.
-  const cameras = [...new Set([...cameraSources, ...Object.values(station.camera_roles).filter((name): name is string => name !== null)])];
-  /** The cameras the other roles hold: one camera cannot fill two roles. */
-  const takenBy = (role: string) => new Set(roles.filter((other) => other !== role).map((other) => draft.cameraRoles[other]));
-  /** Assign a camera to a role, or none. */
-  const setRole = (role: string, camera: string | null) => setDraft((current) => ({ ...current, cameraRoles: { ...current.cameraRoles, [role]: camera } }));
-  /** Swap both wrists in one update so the assignments stay unique throughout. */
-  const swapWrists = () =>
-    setDraft((current) => ({
-      ...current,
-      cameraRoles: { ...current.cameraRoles, wrist_left: current.cameraRoles.wrist_right ?? null, wrist_right: current.cameraRoles.wrist_left ?? null },
-    }));
   /** Send what changed and close on success; with nothing changed there is nothing to send. */
   const save = () => {
     if (!named || busy) return;
@@ -346,32 +434,15 @@ function StationEditor({
             if (e.key === "Enter") save();
           }}
         />
-        <label htmlFor={`${fieldId}-type`}>Camera type</label>
-        <select
-          id={`${fieldId}-type`}
-          className="settings-input"
-          value={draft.cameraType ?? ""}
-          disabled={busy}
-          onChange={(e) => setDraft((current) => ({ ...current, cameraType: e.target.value === "" ? null : e.target.value }))}
-        >
-          <option value="">Not set</option>
-          {listing.camera_types.map((type) => (
-            <option key={type} value={type}>
-              {CAMERA_TYPE_LABELS[type] ?? type}
-            </option>
-          ))}
-        </select>
-        {roles.map((role) => (
-          <RoleField key={role} id={`${fieldId}-${role}`} role={role} value={draft.cameraRoles[role] ?? null} cameras={cameras} offered={cameraSources} taken={takenBy(role)} disabled={busy} onChange={(camera) => setRole(role, camera)} />
-        ))}
+        <CameraFields idPrefix={fieldId} draft={draft} onDraft={setDraft} saved={station.camera_roles} roles={roles} cameraTypes={listing.camera_types} cameraSources={cameraSources} disabled={busy} />
       </div>
-      {cameras.length === 0 && <p className="settings-note">The session offers no cameras yet; roles can be assigned once CaptureServer lists them.</p>}
+      {selectableCameras(cameraSources, station.camera_roles).length === 0 && <p className="settings-note">{NO_CAMERAS_NOTE}</p>}
       <div className="settings-actions">
         {/* Not disabled while saving, for the same reason as the name field; `save` ignores a second press. */}
         <button type="button" className="settings-primary" disabled={!canSave || !dirty || !named} aria-busy={busy} onClick={save}>
           {busy ? "Saving…" : "Save"}
         </button>
-        <button type="button" className="settings-quiet" disabled={busy || ((draft.cameraRoles.wrist_left ?? null) === null && (draft.cameraRoles.wrist_right ?? null) === null)} onClick={swapWrists}>
+        <button type="button" className="settings-quiet" disabled={busy || !hasWristCamera(draft)} onClick={() => setDraft(withWristsSwapped)}>
           Swap wrists
         </button>
         <button type="button" className="settings-quiet" onClick={onClose}>

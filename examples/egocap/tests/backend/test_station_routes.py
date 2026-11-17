@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from egocap_web import app as app_module
 from egocap_web import station_routes
 from egocap_web.app import app as real_app
 from egocap_web.operator_settings import OperatorSettingsStore
@@ -20,6 +22,8 @@ from egocap_web.operator_settings import router as operator_settings_router
 from egocap_web.station_service import TAKE_IN_PROGRESS, StationService, session_adapter
 from egocap_web.station_uptime import READY, RECORDING, UptimeLog
 from egocap_web.stations import StationStore
+from recording_service import RecordingPhase
+from tests.backend.test_preview_routes import _poll_until_sync
 
 TOKEN = "t" * 43
 AUTH = {"X-Control-Token": TOKEN}
@@ -35,6 +39,8 @@ class _Live:
     """The live-session facts a test can change between requests."""
 
     blocked: str | None = None
+    #: A stand-in recording coordinator the application's own batch rotation is run against, when set.
+    coordinator = None
 
 
 def _client(tmp_path: Path, live: _Live | None = None, ready: bool = True) -> TestClient:
@@ -47,7 +53,9 @@ def _client(tmp_path: Path, live: _Live | None = None, ready: bool = True) -> Te
     uptime = UptimeLog(tmp_path / "station_status")
 
     async def rotate() -> None:
-        """Nothing to rotate in these tests."""
+        """Nothing to rotate, unless the test supplies a coordinator for the application's rotation."""
+        if live.coordinator is not None:
+            await app_module._rotate_batch_for_station(live.coordinator)
 
     small.state.station_service = StationService(
         StationStore(tmp_path / "stations.json"),
@@ -137,8 +145,10 @@ def test_a_change_without_the_token_is_refused_and_changes_nothing(tmp_path, met
 def test_a_delete_needs_the_token_in_its_header(tmp_path):
     client = _client(tmp_path)
     bench = _add(client)
-    assert client.delete(f"/api/stations/{bench}").status_code == 403
-    assert client.delete(f"/api/stations/{bench}", headers={"X-Control-Token": "wrong"}).status_code == 403
+    without_token = client.delete(f"/api/stations/{bench}")
+    assert without_token.status_code == 403
+    wrong_token = client.delete(f"/api/stations/{bench}", headers={"X-Control-Token": "wrong"})
+    assert wrong_token.status_code == 403
     assert len(client.get("/api/stations").json()["stations"]) == 1
 
 
@@ -180,6 +190,54 @@ def test_the_station_in_use_cannot_change_during_a_take(tmp_path):
     assert client.post("/api/stations/select", json={"id": cart}, headers=AUTH).json()["selected"] == cart
 
 
+def test_a_change_that_would_start_a_new_batch_is_refused_while_an_interrupted_take_waits(tmp_path):
+    live = _Live()
+    client = _client(tmp_path, live)
+    bench, cart = _add(client), _add(client, {"name": "Cart B"})
+    client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
+    rotations: list[str] = []
+
+    async def new_batch() -> None:
+        rotations.append("rotated")
+
+    service = SimpleNamespace(phase=RecordingPhase.RECOVERY_REQUIRED, episode=object())
+    live.coordinator = SimpleNamespace(snapshot=lambda: SimpleNamespace(service=service), new_batch=new_batch)
+    for response in (
+        client.post("/api/stations/select", json={"id": cart}, headers=AUTH),
+        client.post("/api/stations/select", json={"id": None}, headers=AUTH),
+        client.put(f"/api/stations/{bench}", json={"name": "Bench Z"}, headers=AUTH),
+        client.delete(f"/api/stations/{bench}", headers=AUTH),
+    ):
+        assert (response.status_code, response.json()) == (
+            400,
+            {"detail": "recover or discard the interrupted take first"},
+        )
+    listing = client.get("/api/stations").json()
+    assert (listing["selected"], listing["label"], rotations) == (bench, "Bench A", [])
+    assert StationStore(tmp_path / "stations.json").load().selected.name == "Bench A"
+    # What leaves the batch alone is still allowed: the station's cameras, and another station's record.
+    kept = client.put(f"/api/stations/{bench}", json={"camera_roles": {"wrist_left": None}}, headers=AUTH)
+    assert kept.status_code == 200 and client.delete(f"/api/stations/{cart}", headers=AUTH).status_code == 200
+    # Once the take is recovered or discarded the change goes through.
+    service.episode = None
+    renamed = client.put(f"/api/stations/{bench}", json={"name": "Bench Z"}, headers=AUTH)
+    assert renamed.json()["label"] == "Bench Z" and rotations == ["rotated"]
+
+
+def test_the_first_station_cannot_be_put_in_use_while_an_interrupted_take_waits(tmp_path):
+    live = _Live()
+    client = _client(tmp_path, live)
+    service = SimpleNamespace(phase=RecordingPhase.RECOVERY_REQUIRED, episode=object())
+    live.coordinator = SimpleNamespace(snapshot=lambda: SimpleNamespace(service=service))
+    bench = _add(client)  # adding it rotates nothing
+    refused = client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
+    assert (refused.status_code, refused.json()["detail"]) == (
+        400,
+        "recover or discard the interrupted take first",
+    )
+    assert client.get("/api/stations").json()["selected"] is None
+
+
 def test_a_registry_that_cannot_be_written_is_a_503(tmp_path, monkeypatch):
     client = _client(tmp_path)
     bench = _add(client)
@@ -189,7 +247,8 @@ def test_a_registry_that_cannot_be_written_is_a_503(tmp_path, monkeypatch):
 
     monkeypatch.setattr(StationStore, "save", refuse)
     assert client.post("/api/stations", json={"name": "Cart B"}, headers=AUTH).status_code == 503
-    assert client.delete(f"/api/stations/{bench}", headers=AUTH).status_code == 503
+    deleted = client.delete(f"/api/stations/{bench}", headers=AUTH)
+    assert deleted.status_code == 503
 
 
 def test_the_camera_setup_the_page_reads_is_the_station_in_use_and_is_changed_on_the_station(tmp_path):
@@ -237,18 +296,59 @@ def test_the_stations_time_is_read_openly_and_only_its_notes_can_be_set(tmp_path
         None,
         [],
     )
-    noted = client.post("/api/station-uptime", json={"notes": "left glove battery"}, headers=AUTH).json()
+    note = {"station": "Bench A", "notes": "left glove battery"}
+    noted = client.post("/api/station-uptime", json=note, headers=AUTH).json()
     assert (noted["state"], noted["notes"]) == (READY, "left glove battery")
-    assert client.get("/api/station-uptime").json()["notes"] == "left glove battery"
     # The state is observed, never set: a request cannot mark the station down.
-    still = client.post("/api/station-uptime", json={"state": "down", "notes": "x"}, headers=AUTH).json()
+    still = client.post(
+        "/api/station-uptime", json={"station": "Bench A", "state": "down", "notes": "x"}, headers=AUTH
+    ).json()
     assert still["state"] == READY
-    refused = client.post("/api/station-uptime", json={"notes": 7}, headers=AUTH)
-    assert (refused.status_code, refused.json()["detail"]) == (
-        400,
-        "notes must be text of at most 4000 characters",
+    for notes in (7, "x" * 4001):
+        refused = client.post("/api/station-uptime", json={"station": "Bench A", "notes": notes}, headers=AUTH)
+        assert (refused.status_code, refused.json()["detail"]) == (
+            400,
+            "notes must be text of at most 4000 characters",
+        )
+    assert client.post("/api/station-uptime", json={"station": "Bench A"}, headers=AUTH).status_code == 400
+    assert uptime.report("Bench A")["notes"] == "x"
+
+
+def test_the_days_notes_are_returned_only_with_the_token(tmp_path):
+    client = _client(tmp_path)
+    bench = _add(client)
+    client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
+    client.post("/api/station-uptime", json={"station": "Bench A", "notes": "operator was unwell"}, headers=AUTH)
+    # The operator's free text: an open read gets the station's time and an empty note.
+    for headers in ({}, {"X-Control-Token": "wrong"}):
+        opened = client.get("/api/station-uptime", headers=headers).json()
+        assert (opened["station"], opened["notes"]) == ("Bench A", "")
+    assert client.get("/api/station-uptime", headers=AUTH).json()["notes"] == "operator was unwell"
+
+
+def test_notes_written_for_another_station_than_the_one_in_use_are_refused_and_nothing_is_written(tmp_path):
+    client = _client(tmp_path)
+    uptime = client.app.state.station_uptime
+    bench, cart = _add(client), _add(client, {"name": "Cart B"})
+    client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
+    client.post("/api/station-uptime", json={"station": "Bench A", "notes": "bench notes"}, headers=AUTH)
+    # The dialog was opened for Bench A; Cart B was put in use before its draft was saved.
+    client.post("/api/stations/select", json={"id": cart}, headers=AUTH)
+    client.post("/api/station-uptime", json={"station": "Cart B", "notes": "cart notes"}, headers=AUTH)
+    stale = client.post("/api/station-uptime", json={"station": "Bench A", "notes": "a draft"}, headers=AUTH)
+    assert (stale.status_code, stale.json()) == (
+        409,
+        {"detail": "the station in use changed; reload the report"},
     )
-    assert client.post("/api/station-uptime", json={}, headers=AUTH).status_code == 400
+    assert uptime.report("Cart B")["notes"] == "cart notes" and uptime.report("Bench A")["notes"] == "bench notes"
+    # A save that does not say which station it is for cannot be checked, so it is not accepted either.
+    for body in ({"notes": "a draft"}, {"station": 7, "notes": "a draft"}):
+        unnamed = client.post("/api/station-uptime", json=body, headers=AUTH)
+        assert (unnamed.status_code, unnamed.json()["detail"]) == (
+            400,
+            "station must name the station the notes are for",
+        )
+    assert uptime.report("Cart B")["notes"] == "cart notes"
 
 
 def test_renaming_the_station_in_use_carries_its_time_and_notes(tmp_path):
@@ -257,9 +357,9 @@ def test_renaming_the_station_in_use_carries_its_time_and_notes(tmp_path):
     bench = _add(client, {**BENCH, "name": "Bnech A"})
     client.post("/api/stations/select", json={"id": bench}, headers=AUTH)
     uptime.observe("Bnech A", RECORDING, None)
-    client.post("/api/station-uptime", json={"notes": "typo in the name"}, headers=AUTH)
+    client.post("/api/station-uptime", json={"station": "Bnech A", "notes": "typo in the name"}, headers=AUTH)
     client.put(f"/api/stations/{bench}", json={"name": "Bench A"}, headers=AUTH)
-    report = client.get("/api/station-uptime").json()
+    report = client.get("/api/station-uptime", headers=AUTH).json()
     assert (report["station"], report["state"], report["notes"]) == ("Bench A", RECORDING, "typo in the name")
     assert uptime.names("Bench A") == frozenset({"Bench A", "Bnech A"})
 
@@ -271,15 +371,15 @@ def test_notes_that_cannot_be_written_are_a_503(tmp_path, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(UptimeLog, "set_notes", refuse)
-    assert client.post("/api/station-uptime", json={"notes": "x"}, headers=AUTH).status_code == 503
+    note = {"station": "Deployment", "notes": "x"}
+    assert client.post("/api/station-uptime", json=note, headers=AUTH).status_code == 503
 
 
 def test_the_real_application_gates_recording_on_the_station_in_use(monkeypatch, unused_tcp_port, tmp_path):
-    from egocap_web import app as app_module
-
     monkeypatch.setenv("EGOCAP_CAPTURE_SERVER_URL", f"ws://127.0.0.1:{unused_tcp_port}")
     monkeypatch.delenv("EGOCAP_OPERATOR_SETTINGS_FILE", raising=False)
     monkeypatch.delenv("EGOCAP_STATION_CONFIG", raising=False)
+    monkeypatch.setenv("EGOCAP_CALIBRATION_DIR", str(tmp_path / "calibration"))
     monkeypatch.setattr(app_module, "_recording_output_root", lambda data_dir: tmp_path)
     with TestClient(real_app) as client:
         context = client.app.state.recording_context
@@ -297,7 +397,19 @@ def test_the_real_application_gates_recording_on_the_station_in_use(monkeypatch,
         assert client.app.state.station_service.label() == "Bench A"
         # Capture never connected here, so the station itself is fine and the checklist is what holds a take.
         assert client.app.state.station_service.block_reason() is None
-        assert context.setup_block().startswith("Capture session: ")
+        # The checklist is judged by a background duty, so the new station's result arrives within a moment.
+        _poll_until_sync(lambda: (context.setup_block() or "").startswith("Capture session: "))
+
+        def calibration() -> str:
+            checks = client.get("/api/setup").json()["checks"]
+            return next(item["status"] for item in checks if item["id"] == "calibration")
+
+        # No calibration file exists. That is advisory until the deployment says calibration is required.
+        assert calibration() == "warn"
+        required = client.put("/api/operator-settings", json={"require_calibration": True}, headers=auth)
+        assert required.status_code == 200 and calibration() == "fail"
+        client.put("/api/operator-settings", json={"require_calibration": False}, headers=auth)
+        assert calibration() == "warn"
         client.put(f"/api/stations/{bench}", json={"camera_roles": {"ego": None}}, headers=auth)
         assert context.snapshot()["not_ready_reason"] == (
             "station 'Bench A': no camera is assigned to the ego (head) role"

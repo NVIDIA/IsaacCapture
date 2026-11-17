@@ -5,7 +5,8 @@
 /**
  * The station registry (`/api/stations`) and the station's uptime for today (`/api/station-uptime`).
  *
- * Reading either needs nothing; every change carries the run's control token, as recording commands do.
+ * Reading either needs nothing, though the uptime's notes are left empty for a read without the run's control
+ * token; every change carries that token, as recording commands do.
  */
 import { SettingsHttpError, SettingsParseError } from "./settingsApi";
 
@@ -51,7 +52,7 @@ async function failureOf(response: Response): Promise<SettingsHttpError> {
   } catch {
     // A non-JSON error body keeps the status-code message.
   }
-  return new SettingsHttpError(detail);
+  return new SettingsHttpError(detail, response.status);
 }
 
 /** Checks the fields the page reads without guarding; the rest is trusted, since the two halves ship together. */
@@ -128,7 +129,7 @@ export interface StationUptime {
   active_seconds: number;
   down_seconds: number;
   blockers: UptimeBlocker[];
-  /** The operator's notes for the day. */
+  /** The operator's notes for the day; empty in a reply to a read that carried no control token. */
   notes: string;
   /** Epoch seconds the figures were computed at. */
   as_of: number;
@@ -146,16 +147,18 @@ export function parseUptime(value: unknown): StationUptime {
   return value as StationUptime;
 }
 
-/** Load today's uptime for the station in use. */
+/** Load today's uptime for the station in use. No credential is sent, so the reply's notes are empty: the
+ * end-of-day dialog reads them from the day report instead. */
 export async function fetchStationUptime(signal?: AbortSignal): Promise<StationUptime> {
   const response = await fetch("/api/station-uptime", { signal });
   if (!response.ok) throw await failureOf(response);
   return parseUptime(await response.json());
 }
 
-/** Save the day's notes. Notes are all that can be set: the state is the backend's own. */
-export async function saveStationNotes(controlToken: string, notes: string): Promise<StationUptime> {
-  const response = await fetch("/api/station-uptime", { method: "POST", headers: changeHeaders(controlToken, true), body: JSON.stringify({ notes }) });
+/** Save the day's notes for `station`, the one they were written for; the backend refuses them with 409 when
+ * another station is in use by now. Notes are all that can be set: the state is the backend's own. */
+export async function saveStationNotes(controlToken: string, station: string, notes: string): Promise<StationUptime> {
+  const response = await fetch("/api/station-uptime", { method: "POST", headers: changeHeaders(controlToken, true), body: JSON.stringify({ station, notes }) });
   if (!response.ok) throw await failureOf(response);
   return parseUptime(await response.json());
 }

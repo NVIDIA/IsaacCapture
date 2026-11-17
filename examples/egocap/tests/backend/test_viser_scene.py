@@ -751,8 +751,8 @@ _HEAD_ALIGNED = _HEAD_VIDEO + "alignment:\n  index_source: head\n"
 class _FakeAligner:
     instances = []
 
-    def __init__(self, output_root, index_source):
-        self.output_root, self.index_source = output_root, index_source
+    def __init__(self, output_root, index_source, locks):
+        self.output_root, self.index_source, self.locks = output_root, index_source, locks
         self.submitted = []
         self.cancelled = False
         self.closed_with = None
@@ -809,6 +809,8 @@ async def test_the_lifespan_runs_the_aligner_for_the_index_camera_and_cancels_it
         (aligner,) = _FakeAligner.instances
         await asyncio.sleep(0)  # let the worker start so its cancellation is observable
         assert aligner.index_source == "head" and aligner.output_root == tmp_path / "rec"
+        # The same locks the end-of-day correction takes, or the two would not exclude each other.
+        assert aligner.locks is app.state.session_locks
         assert app.state.recording_context.coordinator.on_episode_kept == aligner.submit
     assert aligner.cancelled and aligner.closed_with == app_module._ALIGNER_SHUTDOWN_SECONDS
 

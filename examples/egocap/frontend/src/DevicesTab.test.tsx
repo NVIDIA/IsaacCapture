@@ -2,13 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/** The Devices tab: the verdict, the live checklist and how often it is read, and the calibration tools. */
+/** The Devices tab: the verdict, the live checklist and how often it is read, the calibration requirement, and the calibration tools. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { DEVICES_REFRESH_MS, DevicesTab, type DevicesTabProps } from "./DevicesTab";
+import { SettingsHttpError } from "./settingsApi";
 import { OPERATOR_SETTINGS_FIXTURE, TOOLS_FIXTURE } from "./settingsTestDoubles";
 import type { SetupStatus } from "./setupApi";
-import { SETUP_HELD, SETUP_READY } from "./setupTestDoubles";
+import { SETUP_ADVISED, SETUP_HELD, SETUP_READY, SETUP_UNCALIBRATED } from "./setupTestDoubles";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => {
@@ -32,10 +33,16 @@ async function renderTab(first: SetupStatus | Error, overrides: Partial<DevicesT
     if (state.answer instanceof Error) throw state.answer;
     return state.answer;
   });
-  render(<DevicesTab setup={null} controlToken="tok" loadSetup={loadSetup} stationSetup={TOOLS} {...overrides} />);
+  const saveRequireCalibration = vi.fn(async (_required: boolean) => undefined);
+  const props: DevicesTabProps = { setup: null, controlToken: "tok", loadSetup, stationSetup: TOOLS, saveRequireCalibration, ...overrides };
+  const utils = render(<DevicesTab {...props} />);
   await settle();
-  return { state, loadSetup };
+  return { state, loadSetup, saveRequireCalibration, rerender: (next: Partial<DevicesTabProps>) => utils.rerender(<DevicesTab {...props} {...next} />) };
 }
+
+/** The dialog's station setup with the calibration requirement as saved. */
+const withRequirement = (required: boolean): DevicesTabProps["stationSetup"] => ({ kind: "loaded", value: { tools: TOOLS_FIXTURE, operator: { ...OPERATOR_SETTINGS_FIXTURE, require_calibration: required } } });
+const requirement = () => within(screen.getByRole("region", { name: "Calibration requirement" })).getByRole("checkbox") as HTMLInputElement;
 
 const rowsOf = (group: string) => within(screen.getByRole("region", { name: group })).getAllByRole("listitem").map((row) => row.textContent);
 
@@ -59,6 +66,76 @@ describe("the verdict", () => {
     const verdict = screen.getByRole("status");
     expect(verdict.textContent).toBe("No station is in use, so these checks advise and do not hold recording.");
     expect(verdict.className).toBe("setup-verdict");
+  });
+});
+
+describe("a check that only warns", () => {
+  it("has its own mark, colour class and spoken outcome, and its reason", async () => {
+    await renderTab(SETUP_ADVISED);
+    expect(rowsOf("System")).toEqual(["!Camera calibration advisoryMissing head_intrinsics.json, head_extrinsics.json", "✓Free disk space passed211.3 GB free"]);
+    const advised = within(screen.getByRole("region", { name: "System" })).getAllByRole("listitem")[0];
+    expect(advised.className).toBe("check-row check-row--warn");
+    expect(advised.querySelector(".visually-hidden")?.textContent).toBe(" advisory");
+  });
+
+  it("leaves the verdict saying recording is allowed", async () => {
+    await renderTab(SETUP_ADVISED);
+    const verdict = screen.getByRole("status");
+    expect(verdict.textContent).toBe("Station setup allows recording.");
+    expect(verdict.className).toContain("setup-verdict--clear");
+  });
+});
+
+describe("the calibration requirement", () => {
+  it("is off by default, beside the checklist, with what Off means", async () => {
+    await renderTab(SETUP_ADVISED);
+    const card = screen.getByRole("region", { name: "Calibration requirement" });
+    expect(card.previousElementSibling?.getAttribute("aria-label")).toBe("Checklist");
+    expect(within(card).getByLabelText("Require calibration files before recording")).toBe(requirement());
+    expect(requirement().checked).toBe(false);
+    expect(requirement().disabled).toBe(false);
+    expect(within(card).getByText("Off: missing calibration files are shown as a warning and takes are allowed.").id).toBe(requirement().getAttribute("aria-describedby"));
+  });
+
+  it("saves the new choice and reads the checklist again at once", async () => {
+    const { state, loadSetup, saveRequireCalibration, rerender } = await renderTab(SETUP_ADVISED);
+    expect(loadSetup).toHaveBeenCalledTimes(1);
+    state.answer = SETUP_UNCALIBRATED;
+    fireEvent.click(requirement());
+    expect(saveRequireCalibration).toHaveBeenCalledWith(true);
+    // The dialog then carries the saved value; no timer has run.
+    rerender({ stationSetup: withRequirement(true) });
+    await settle();
+    expect(loadSetup).toHaveBeenCalledTimes(2);
+    expect(requirement().checked).toBe(true);
+    expect(screen.getByRole("status").textContent).toBe("Recording is held: Camera calibration: missing head_intrinsics.json, head_extrinsics.json.");
+    expect(rowsOf("System")[0]).toBe("✗Camera calibration failedMissing head_intrinsics.json, head_extrinsics.json");
+  });
+
+  it("shows why a save was refused and goes back to the saved choice", async () => {
+    const saveRequireCalibration = vi.fn(async () => {
+      throw new SettingsHttpError("control token is invalid");
+    });
+    const { loadSetup } = await renderTab(SETUP_ADVISED, { saveRequireCalibration });
+    fireEvent.click(requirement());
+    expect(requirement().checked).toBe(true); // shown while the save is on its way
+    await settle();
+    expect(requirement().checked).toBe(false);
+    expect(within(screen.getByRole("region", { name: "Calibration requirement" })).getByText("Not saved: control token is invalid")).toBeTruthy();
+    expect(loadSetup).toHaveBeenCalledTimes(1);
+  });
+
+  it("cannot be changed without the control token, and says where to enter it", async () => {
+    const { saveRequireCalibration } = await renderTab(SETUP_ADVISED, { controlToken: null, stationSetup: withRequirement(true) });
+    expect(requirement().checked).toBe(true);
+    expect(requirement().disabled).toBe(true);
+    expect(within(screen.getByRole("region", { name: "Calibration requirement" })).getByText(/Enter the control token in the recording panel/)).toBeTruthy();
+    expect(saveRequireCalibration).not.toHaveBeenCalled();
+  });
+
+  it("is absent until the dialog's station setup has loaded", async () => {
+    await renderTab(SETUP_READY, { stationSetup: { kind: "loading" } });
+    expect(screen.queryByRole("region", { name: "Calibration requirement" })).toBeNull();
   });
 });
 
@@ -163,7 +240,7 @@ describe("the calibration tools", () => {
 
   it("opens a tool this build can launch, unless it is for another camera type", async () => {
     const tools = TOOLS_FIXTURE.map((tool) => ({ ...tool, available: true, unavailable_reason: null }));
-    await renderTab(SETUP_READY, { stationSetup: { kind: "loaded", value: { tools, operator: { camera_type: "oak_d" } } } });
+    await renderTab(SETUP_READY, { stationSetup: { kind: "loaded", value: { tools, operator: { camera_type: "oak_d", require_calibration: false } } } });
     const buttons = screen.getAllByRole("button", { name: "Open" }) as HTMLButtonElement[];
     expect(buttons.map((button) => button.disabled)).toEqual([false, false, true]);
     expect(screen.getByText(/Only fisheye lenses need this; rectilinear cameras do not\. — for SENSING GMSL cameras stations\./)).toBeTruthy();

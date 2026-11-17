@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from egocap.recording.episode_layout import ROUTE_ATTR, EpisodeManifest, manifest_path, route_id, write_manifest
 from egocap_web import day_report_routes
+from egocap_web.session_locks import ALIGNER, SessionLocks
 from egocap_web.station_uptime import DOWN, READY, RECORDING, UptimeLog
 from recording_service import RecordingPhase
 
@@ -63,6 +64,7 @@ def _client(tmp_path: Path, ready: bool = True) -> tuple[TestClient, _Recorder]:
         small.state.station_service = SimpleNamespace(label=lambda: "Bench A")
         small.state.station_uptime = UptimeLog(tmp_path / "station_status")
         small.state.recording_output_root = tmp_path
+        small.state.session_locks = SessionLocks()
     return TestClient(small), recorder
 
 
@@ -403,7 +405,9 @@ def test_a_correction_waits_while_a_take_of_that_session_is_being_time_aligned(t
     session = _day(tmp_path)
     other = f"session_{TODAY.replace('-', '')}-090000_def456"
     _session(tmp_path, other, takes=(_manifest(0, "FINALIZED", session=other),))
-    client.app.state.aligner = SimpleNamespace(busy_with=lambda group: group == session.resolve())
+    locks = client.app.state.session_locks
+    # The aligner holds the session while it copies a take's labels and until the copy is published.
+    assert locks.acquire(session.resolve(), ALIGNER) is None
     before = (session / "config.yaml").read_text()
     busy = _correct(client, session=SESSION, episodes="0", task="x")
     assert (busy.status_code, busy.json()["detail"]) == (
@@ -412,8 +416,60 @@ def test_a_correction_waits_while_a_take_of_that_session_is_being_time_aligned(t
     )
     assert (session / "config.yaml").read_text() == before
     assert _correct(client, session=other, episodes="0", task="x").status_code == 200
-    client.app.state.aligner = SimpleNamespace(busy_with=lambda group: False)
+    locks.release(session.resolve())
     assert _correct(client, session=SESSION, episodes="0", task="x").status_code == 200
+
+
+def test_a_correction_holds_its_session_from_its_first_write_to_its_last(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path)
+    session = _day(tmp_path)
+    locks = client.app.state.session_locks
+    update = day_report_routes.update_episode_task_description
+    during: list[tuple[str | None, int]] = []
+
+    def writing(target, episodes, *, task_description):
+        # What the aligner, and a second correction, find while this one is between its files.
+        second = _correct(client, session=SESSION, episodes="0", task="other")
+        during.append((locks.acquire(target, ALIGNER), second.status_code))
+        return update(target, episodes, task_description=task_description)
+
+    monkeypatch.setattr(day_report_routes, "update_episode_task_description", writing)
+    first = _correct(client, session=SESSION, episodes="0", task="Wash the cup.")
+    assert first.status_code == 200 and during == [("correction", 400)]
+    assert zarr.open_group(str(session / "episode_0"), mode="r").attrs["task_description"] == "Wash the cup."
+    # Let go when it ends, however it ends.
+    assert locks.acquire(session.resolve(), ALIGNER) is None
+    locks.release(session.resolve())
+
+    def failing(target, episodes, *, task_description):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(day_report_routes, "update_episode_task_description", failing)
+    assert _correct(client, session=SESSION, episodes="0", task="x").status_code == 400
+    assert locks.acquire(session.resolve(), ALIGNER) is None
+
+
+def test_two_corrections_of_one_session_never_interleave(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path)
+    _day(tmp_path)
+    update = day_report_routes.update_episode_task_description
+    replies: list[tuple[int, str]] = []
+
+    def writing(target, episodes, *, task_description):
+        second = _correct(client, session=SESSION, episodes="0", task="second")
+        replies.append((second.status_code, second.json()["detail"]))
+        return update(target, episodes, task_description=task_description)
+
+    monkeypatch.setattr(day_report_routes, "update_episode_task_description", writing)
+    assert _correct(client, session=SESSION, episodes="0", task="first").status_code == 200
+    assert replies == [(400, "another correction of this session is still being written; try again in a moment")]
+
+
+def test_a_correction_needs_the_session_locks_the_application_sets(tmp_path):
+    client, _ = _client(tmp_path)
+    _day(tmp_path)
+    del client.app.state.session_locks
+    assert _correct(client, session=SESSION, episodes="0", task="x").status_code == 503
 
 
 @pytest.mark.parametrize(

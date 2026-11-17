@@ -6,13 +6,16 @@
  * The Settings dialog: a tabbed modal over the page.
  *
  * Tabs, in the order an operator sets up a station: Station (the stations, the one in use, and each station's
- * cameras), Devices (the live checklist of what the station in use needs, and the calibration tools), Tasks (the
- * catalogs the task picker offers, imports, and the preselected task), Display (this browser's choices and the
- * keyboard shortcuts), Advanced (what the deployment is running with, read-only). Station and Tasks are saved by
- * the backend for every browser and need the run's control token to change, as recording commands do; Devices
- * only reports; Display is this browser's only; Advanced values are set where the backend is launched.
+ * cameras; the camera setup itself while there are no stations), Devices (the live checklist of what the station
+ * in use needs, whether calibration files are required, and the calibration tools), Tasks (the catalogs the task
+ * picker offers, imports, and the preselected task), Display (this browser's choices and the keyboard
+ * shortcuts), Advanced (what the deployment is running with, read-only). Station, Tasks and the calibration
+ * requirement are saved by the backend for every browser and need the run's control token to change, as
+ * recording commands do; the rest of Devices only reports; Display is this browser's only; Advanced values are
+ * set where the backend is launched.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CameraSetupCard } from "./CameraSetupCard";
 import { DevicesTab } from "./DevicesTab";
 import { Card, LoadState, TokenHint, errorMessage, useAction, useEscapeToClose, useModalFocus, type Loaded } from "./settingsParts";
 import { StationsCard } from "./StationsCard";
@@ -37,7 +40,7 @@ import {
 } from "./settingsApi";
 
 export interface StationSetup {
-  /** The camera setup in effect: the station in use supplies it, else the values saved before stations existed. */
+  /** The camera setup in effect: the station in use supplies it, else the values saved with the operator settings. */
   operator: OperatorSettings;
   tools: ToolInfo[];
   taskFiles: TaskFileListing;
@@ -157,7 +160,8 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
 
 // --- Station ---------------------------------------------------------------------------------------------------
 
-/** The stations and the one in use; each station's cameras are edited in its own row. */
+/** The stations and the one in use; each station's cameras are edited in its own row. While there are no
+ * stations the camera setup is edited here instead, since no station holds it yet. */
 function StationTab({
   stationSetup,
   setup,
@@ -165,6 +169,7 @@ function StationTab({
   backend,
   cameraSources,
   onStations,
+  onSetup,
 }: {
   stationSetup: Loaded<StationSetup>;
   setup: SetupStatus | null;
@@ -172,20 +177,31 @@ function StationTab({
   backend: SettingsBackend;
   cameraSources: string[];
   onStations: (stations: StationListing) => void;
+  onSetup: (update: (value: StationSetup) => StationSetup) => void;
 }) {
   if (stationSetup.kind !== "loaded") return <LoadState state={stationSetup} what="Station setup" />;
   const { operator, stations } = stationSetup.value;
   return (
-    <StationsCard
-      listing={stations}
-      controlToken={controlToken}
-      backend={backend}
-      // The first station takes over the camera setup saved before any station existed.
-      inherited={{ camera_type: operator.camera_type, camera_roles: operator.camera_roles }}
-      cameraSources={cameraSources}
-      headset={setup?.headset ?? null}
-      onListing={onStations}
-    />
+    <>
+      <StationsCard
+        listing={stations}
+        controlToken={controlToken}
+        backend={backend}
+        // The first station takes over the camera setup saved before any station existed.
+        inherited={{ camera_type: operator.camera_type, camera_roles: operator.camera_roles }}
+        cameraSources={cameraSources}
+        headset={setup?.headset ?? null}
+        onListing={onStations}
+      />
+      {stations.stations.length === 0 && (
+        <CameraSetupCard
+          operator={operator}
+          cameraSources={cameraSources}
+          controlToken={controlToken}
+          save={(changes) => (controlToken === null ? Promise.resolve() : backend.saveOperator(controlToken, changes).then((saved) => onSetup((value) => ({ ...value, operator: saved }))))}
+        />
+      )}
+    </>
   );
 }
 
@@ -533,21 +549,47 @@ export function SettingsPanel({
   const loadDeployment = useCallback((signal: AbortSignal) => backend.loadDeployment(signal, controlToken), [backend, controlToken]);
   const [deployment] = useLoaded(open && controlToken !== null, loadDeployment);
   const { loadStationSetup } = backend;
-  const [stationSetup, updateStationSetup] = useLoaded(open, loadStationSetup);
+  const [stationSetup, applyStationSetup] = useLoaded(open, loadStationSetup);
+  // The newest read of the station setup asked for after a change, and whether it is still to answer. A read is
+  // a picture of the backend from when it was sent, so only the newest may replace what the dialog shows.
+  const reloads = useRef({ latest: 0, pending: false });
 
   useEscapeToClose(open, onClose);
 
   if (!open) return null;
 
+  /** Read the station setup again, and show it unless a newer read or change has been made by the time it answers. */
+  const reloadStationSetup = () => {
+    const mine = ++reloads.current.latest;
+    reloads.current.pending = true;
+    /** Whether this read is still the newest; if so it is no longer pending. */
+    const settled = () => {
+      if (reloads.current.latest !== mine) return false;
+      reloads.current.pending = false;
+      return true;
+    };
+    loadStationSetup(new AbortController().signal).then(
+      (fresh) => {
+        if (settled()) applyStationSetup(() => fresh);
+      },
+      () => void settled(), // the change itself succeeded; the next open reloads everything
+    );
+  };
+  /** Apply a saved change to what the dialog shows. A read still on its way was sent before this change and
+   * would put the older value back, so it is replaced by a new one. */
+  const updateStationSetup = (update: (value: StationSetup) => StationSetup) => {
+    applyStationSetup(update);
+    if (reloads.current.pending) reloadStationSetup();
+  };
   /** Show a changed registry at once, then read the station setup again: the station in use supplies the camera
    * type and roles the rest of the dialog and the page's tiles go by, so a change of it changes those. */
   const setStations = (stations: StationListing) => {
-    updateStationSetup((value) => ({ ...value, stations }));
-    loadStationSetup(new AbortController().signal).then(
-      (fresh) => updateStationSetup(() => fresh),
-      () => undefined, // the registry change itself succeeded; the next open reloads everything
-    );
+    applyStationSetup((value) => ({ ...value, stations }));
+    reloadStationSetup();
   };
+  /** Save whether calibration files are required, and show the saved value. */
+  const saveRequireCalibration = (required: boolean): Promise<void> =>
+    controlToken === null ? Promise.resolve() : backend.saveOperator(controlToken, { require_calibration: required }).then((saved) => updateStationSetup((value) => ({ ...value, operator: saved })));
 
   return (
     <>
@@ -576,8 +618,8 @@ export function SettingsPanel({
           </header>
           <div className="settings-content-body">
             {stationSetup.kind === "loaded" && stationSetup.value.operator.warning && <p className="settings-note tone-warning">{stationSetup.value.operator.warning}</p>}
-            {tab === "station" && <StationTab stationSetup={stationSetup} setup={setup} controlToken={controlToken} backend={backend} cameraSources={cameraSources} onStations={setStations} />}
-            {tab === "devices" && <DevicesTab setup={setup} controlToken={controlToken} loadSetup={backend.loadSetup} stationSetup={stationSetup} />}
+            {tab === "station" && <StationTab stationSetup={stationSetup} setup={setup} controlToken={controlToken} backend={backend} cameraSources={cameraSources} onStations={setStations} onSetup={updateStationSetup} />}
+            {tab === "devices" && <DevicesTab setup={setup} controlToken={controlToken} loadSetup={backend.loadSetup} stationSetup={stationSetup} saveRequireCalibration={saveRequireCalibration} />}
             {tab === "tasks" && <TasksTab stationSetup={stationSetup} controlToken={controlToken} backend={backend} onSetup={updateStationSetup} />}
             {tab === "display" && <DisplayTab sidebarWidth={sidebarWidth} sidebarDefault={sidebarDefault} onResetSidebar={onResetSidebar} />}
             {tab === "advanced" && (controlToken === null ? <p className="settings-note">Enter the control token in the recording panel to view deployment settings.</p> : <AdvancedTab deployment={deployment} />)}

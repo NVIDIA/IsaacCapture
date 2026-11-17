@@ -20,7 +20,7 @@ from egocap_web.stations import StationError
 from recording_service import RecordingPhase
 
 
-def _coordinator(phase: RecordingPhase | None, operation=None, refusal: Exception | None = None):
+def _coordinator(phase: RecordingPhase | None, operation=None, refusal: Exception | None = None, episode=None):
     """A stand-in coordinator in one recording phase; ``phase`` None means no session was ever opened."""
     rotations: list[str] = []
 
@@ -29,7 +29,7 @@ def _coordinator(phase: RecordingPhase | None, operation=None, refusal: Exceptio
             raise refusal
         rotations.append("rotated")
 
-    service = None if phase is None else SimpleNamespace(phase=phase)
+    service = None if phase is None else SimpleNamespace(phase=phase, episode=episode)
     snapshot = SimpleNamespace(service=service, active_operation=operation)
     return SimpleNamespace(snapshot=lambda: snapshot, new_batch=new_batch, rotations=rotations)
 
@@ -63,6 +63,21 @@ async def test_a_station_change_rotates_the_batch_and_a_refused_rotation_says_wh
     with pytest.raises(StationError) as refused:
         await app_module._rotate_batch_for_station(busy)
     assert refused.value.public_message == "the recording session cannot change stations now: an episode is active"
+
+
+async def test_a_change_that_would_start_a_new_batch_is_refused_while_an_interrupted_take_waits():
+    interrupted = _coordinator(RecordingPhase.RECOVERY_REQUIRED, episode=object())
+    with pytest.raises(StationError) as refused:
+        await app_module._rotate_batch_for_station(interrupted)
+    assert refused.value.public_message == "recover or discard the interrupted take first"
+    assert interrupted.rotations == []  # the take is still the batch's, with Recover and Discard on the page
+    # A session that needs recovery but holds no take has nothing to leave behind.
+    resolved = _coordinator(RecordingPhase.RECOVERY_REQUIRED)
+    await app_module._rotate_batch_for_station(resolved)
+    assert resolved.rotations == ["rotated"]
+    never_opened = _coordinator(None)
+    await app_module._rotate_batch_for_station(never_opened)
+    assert never_opened.rotations == ["rotated"]
 
 
 def test_a_session_is_labelled_with_the_station_in_use_when_it_opens(tmp_path):
@@ -165,12 +180,12 @@ class _Stations:
     """A stand-in station service that records what it was asked to remember."""
 
     def __init__(self, saved: str | None, in_use: bool = True):
-        selected = SimpleNamespace(headset_address=saved) if in_use else None
+        selected = SimpleNamespace(station_id="st_bench", headset_address=saved) if in_use else None
         self.registry = SimpleNamespace(selected=selected)
-        self.remembered: list[str] = []
+        self.remembered: list[tuple[str, str | None, str]] = []
 
-    async def remember_headset_address(self, address: str) -> None:
-        self.remembered.append(address)
+    async def remember_headset_address(self, station_id: str, observed: str | None, address: str) -> None:
+        self.remembered.append((station_id, observed, address))
 
 
 async def _remember(
@@ -187,10 +202,10 @@ async def _remember(
 
 
 async def test_a_connected_headset_has_its_host_address_remembered_for_the_station_in_use(monkeypatch):
-    assert await _remember(monkeypatch, _Stations(None)) == ["10.0.0.42"]
-    assert await _remember(monkeypatch, _Stations("10.0.0.7")) == [
-        "10.0.0.42"
-    ]  # the old one is gone from the host
+    # Sent with the station and the saved address it was decided for, so the service can check both again.
+    assert await _remember(monkeypatch, _Stations(None)) == [("st_bench", None, "10.0.0.42")]
+    # The old one is gone from the host.
+    assert await _remember(monkeypatch, _Stations("10.0.0.7")) == [("st_bench", "10.0.0.7", "10.0.0.42")]
 
 
 async def test_a_remembered_address_the_host_still_has_is_never_overwritten(monkeypatch):

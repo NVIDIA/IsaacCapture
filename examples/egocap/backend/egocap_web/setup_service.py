@@ -5,17 +5,23 @@
 """The start-of-day flow: its steps, the live station checklist, and whether station setup allows a take.
 
 The flow is station, devices, record, wrap-up. The checklist is judged continuously from the capture session, so
-there is nothing to run and no result to go stale. With a station in use it is the recording gate: a take is
-refused while any item fails. With no stations set up nothing here gates recording, the same configuration-free
-default the station registry keeps; the checklist is then advisory.
+there is nothing to run. With a station in use it is the recording gate: a take is refused while any item fails;
+an item that only warns never holds one. With no stations set up nothing here gates recording, the same
+configuration-free default the station registry keeps; the checklist is then advisory.
+
+The checklist reads the calibration directory and the recording disk, which can stall on a slow mount, so it is
+judged in a worker thread (:meth:`SetupService.refresh`, run as a background duty and by the route). The gate and
+every other synchronous reader take the last result from memory and never touch the filesystem.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +39,7 @@ from .setup_checks import (
     DeviceFact,
     checklist,
     first_failure,
+    first_warning,
     free_bytes_under,
 )
 from .station_service import StationService
@@ -43,8 +50,13 @@ DONE, TODO, ATTENTION, SKIPPED = "done", "todo", "attention", "skipped"
 
 #: How old a sample may be and still count as arriving; the same window recording readiness uses.
 _FRESH_SECONDS = 2.0
-#: The gate is asked many times a second by every viewer; one evaluation of the checklist serves this long.
-_CHECKLIST_SECONDS = 1.0
+#: How often the application judges the checklist afresh (see app.py's duties).
+CHECKLIST_SECONDS = 1.0
+#: A result older than this no longer speaks for the station: the evaluation is stuck, on a stalled disk for one.
+_STALE_SECONDS = 10.0
+#: Why a take is held while no current result exists: before the first one, just after the station in use
+#: changed, or while an evaluation is stuck.
+CHECKS_PENDING = "the station checks are being evaluated"
 
 
 def capture_facts(monitor: CaptureStatusMonitor, config: CaptureStatusConfig) -> CaptureFacts:
@@ -91,6 +103,18 @@ def _step(step_id: str, label: str, status: str, detail: str | None = None) -> d
     return {"id": step_id, "label": label, "status": status, "detail": detail}
 
 
+@dataclass(frozen=True)
+class Evaluation:
+    """One judgement of the checklist: what was judged, what was found, and when."""
+
+    #: The camera per role of the station judged, as a comparable value; None with no station in use.
+    key: tuple[tuple[str, str | None], ...] | None
+    facts: CaptureFacts
+    items: tuple[CheckItem, ...]
+    #: Monotonic time the judgement finished.
+    at: float
+
+
 class SetupService:
     """The start-of-day state for the station in use, and the gate recording asks."""
 
@@ -101,18 +125,24 @@ class SetupService:
         stations: StationService,
         calibration_dir: Callable[[], Path],
         output_root: Path,
+        require_calibration: Callable[[], bool] = lambda: False,
         free_bytes: Callable[[Path], int] = lambda path: free_bytes_under(path, shutil.disk_usage),
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        """``facts`` reads the capture session now; ``calibration_dir`` is read each time, since the directory
-        is an environment setting a relaunch may change."""
+        """``facts`` reads the capture session now, on the event loop. ``calibration_dir`` and
+        ``require_calibration`` are read at each evaluation, in its worker thread: the directory is an
+        environment setting a relaunch may change, and the requirement is a setting the page can change."""
         self._facts = facts
         self._stations = stations
         self._calibration_dir = calibration_dir
         self._output_root = output_root
+        self._require_calibration = require_calibration
         self._free_bytes = free_bytes
         self._monotonic = monotonic
-        self._cache: tuple[float, Any, CaptureFacts, list[CheckItem]] | None = None
+        self._latest: Evaluation | None = None
+        # One evaluation at a time, so a stalled disk holds one worker thread however many callers wait.
+        self._refreshing = asyncio.Lock()
+        self._finished = 0
         self._last_failure: str | None = None
 
     def _roles(self) -> dict[str, str | None] | None:
@@ -120,53 +150,85 @@ class SetupService:
         selected = self._stations.registry.selected
         return dict(selected.camera_roles) if selected is not None else None
 
-    def _evaluated(self) -> tuple[CaptureFacts, list[CheckItem]]:
-        """The capture facts and the checklist judged from them, from a short cache keyed by what was judged."""
-        roles = self._roles()
-        key = tuple(sorted(roles.items())) if roles is not None else None
-        now = self._monotonic()
-        cached = self._cache
-        if cached is not None and cached[1] == key and now - cached[0] < _CHECKLIST_SECONDS:
-            return cached[2], cached[3]
-        try:
-            facts = self._facts()
-            items = checklist(
-                facts,
-                roles,
-                calibration_dir=self._calibration_dir(),
-                output_root=self._output_root,
-                free_bytes=self._free_bytes,
-            )
-            self._last_failure = None
-        except Exception as exc:  # noqa: BLE001 -- the gate runs in every viewer's loop and must never raise there
-            facts = CaptureFacts()
-            items = [
-                CheckItem("checklist", SYSTEM, "Station checks", FAIL, "could not be evaluated; see backend logs")
-            ]
-            # Logged when the cause changes, not on every evaluation, or one fault would fill the log.
-            if repr(exc) != self._last_failure:
-                self._last_failure = repr(exc)
-                logger.exception("The station checklist could not be evaluated")
-        self._cache = (now, key, facts, items)
-        return facts, items
+    @staticmethod
+    def _key_of(roles: dict[str, str | None] | None) -> tuple[tuple[str, str | None], ...] | None:
+        """The comparable value an evaluation of these roles is kept under."""
+        return tuple(sorted(roles.items())) if roles is not None else None
 
-    def checks(self) -> list[CheckItem]:
-        """The station checklist as it stands now."""
-        return self._evaluated()[1]
+    def _key(self) -> tuple[tuple[str, str | None], ...] | None:
+        """What an evaluation for the station in use now would be keyed by."""
+        return self._key_of(self._roles())
+
+    async def refresh(self) -> Evaluation:
+        """Judge the checklist now and keep the result for the synchronous readers.
+
+        A caller that waited for another evaluation takes that one's result when it is for the same station:
+        it finished after this caller asked, so it is as fresh as its own would be.
+        """
+        asked = self._finished
+        async with self._refreshing:
+            latest = self._latest
+            if latest is not None and self._finished > asked and latest.key == self._key():
+                return latest
+            roles = self._roles()
+            try:
+                # The capture facts are plain memory and belong to the event loop; only the files leave it.
+                facts = self._facts()
+                items = await asyncio.to_thread(self._judged, facts, roles)
+                self._last_failure = None
+            except Exception as exc:  # noqa: BLE001 -- the gate must hold with a reason, never raise
+                facts = CaptureFacts()
+                items = [
+                    CheckItem(
+                        "checklist", SYSTEM, "Station checks", FAIL, "could not be evaluated; see backend logs"
+                    )
+                ]
+                # Logged when the cause changes, not on every evaluation, or one fault would fill the log.
+                if repr(exc) != self._last_failure:
+                    self._last_failure = repr(exc)
+                    logger.exception("The station checklist could not be evaluated")
+            self._latest = Evaluation(self._key_of(roles), facts, tuple(items), self._monotonic())
+            self._finished += 1
+            return self._latest
+
+    def _judged(self, facts: CaptureFacts, roles: dict[str, str | None] | None) -> list[CheckItem]:
+        """The checklist for these facts; blocking file work, run in a worker thread."""
+        return checklist(
+            facts,
+            roles,
+            calibration_dir=self._calibration_dir(),
+            output_root=self._output_root,
+            free_bytes=self._free_bytes,
+            require_calibration=self._require_calibration(),
+        )
+
+    def _current(self) -> Evaluation | None:
+        """The last evaluation while it still speaks for the station in use, else None."""
+        latest = self._latest
+        if latest is None or latest.key != self._key():
+            return None
+        return latest if self._monotonic() - latest.at <= _STALE_SECONDS else None
 
     def headset_connected(self) -> bool:
-        """Whether a headset is connected now, which is what shows the host address it was given still works."""
-        return self._evaluated()[0].headset_connected
+        """Whether a headset was connected at the last evaluation, which is what shows the host address it
+        was given still works. The headset is the same whichever station is in use."""
+        latest = self._latest
+        return latest is not None and latest.facts.headset_connected
 
     def block_reason(self) -> str | None:
-        """Why station setup does not allow a take now, or None when it does."""
+        """Why station setup does not allow a take now, or None when it does. Reads memory only: it is asked
+        on the event loop, by every viewer's sender and by the uptime sample."""
         blocked = self._stations.block_reason()
         if blocked is not None:
             return blocked
         # With no station in use the checklist is advisory: the configuration-free default records as before.
         if self._stations.registry.selected is None:
             return None
-        return first_failure(self.checks())
+        current = self._current()
+        # Held rather than guessed: a take admitted on no result could fill a disk nobody measured.
+        if current is None:
+            return CHECKS_PENDING
+        return first_failure(list(current.items))
 
     def status(
         self, *, took_today: bool, saved_count: int, report_saved: bool, headset_address_changed: bool
@@ -176,11 +238,15 @@ class SetupService:
         ``took_today`` is whether the station in use has recorded a take today; ``saved_count`` is the takes
         kept in the current batch, which is only a detail of the step.
         """
-        items = self.checks()
+        current = self._current()
+        items = list(current.items) if current is not None else []
         return {
             "steps": [
                 self._station_step(headset_address_changed),
-                self._devices_step(items),
+                # Without a current result nothing is known about the devices; "all checks pass" would be a guess.
+                self._devices_step(items)
+                if current is not None
+                else _step("devices", "Devices", TODO, CHECKS_PENDING),
                 self._record_step(took_today, saved_count),
                 _step(
                     "wrap_up", "Wrap up", DONE if report_saved else TODO, "report saved" if report_saved else None
@@ -216,8 +282,12 @@ class SetupService:
 
     @staticmethod
     def _devices_step(items: list[CheckItem]) -> dict[str, Any]:
-        """Devices: needs attention while any item of the checklist fails."""
+        """Devices: needs attention while any item of the checklist fails. A warning leaves the step done
+        and is named in its detail, since it does not hold a take."""
         failure = first_failure(items)
         if failure is not None:
             return _step("devices", "Devices", ATTENTION, failure)
+        warning = first_warning(items)
+        if warning is not None:
+            return _step("devices", "Devices", DONE, f"{warning}; takes are not held")
         return _step("devices", "Devices", DONE, "all checks pass")

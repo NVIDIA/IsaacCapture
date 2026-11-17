@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsHttpError, SettingsParseError } from "./settingsApi";
 import { fetchSetup, type SetupStatus } from "./setupApi";
-import { SETUP_HELD, SETUP_READY } from "./setupTestDoubles";
+import { SETUP_ADVISED, SETUP_HELD, SETUP_READY } from "./setupTestDoubles";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -38,8 +38,22 @@ describe("the start-of-day flow", () => {
     await expect(fetchSetup()).rejects.toThrow(new SettingsHttpError("HTTP 502"));
   });
 
+  it("reads a check that only warns", async () => {
+    stubFetch(200, SETUP_ADVISED);
+    const setup = await fetchSetup();
+    expect(setup.checks.find((check) => check.id === "calibration")?.status).toBe("warn");
+    expect(setup.blocked_reason).toBeNull();
+  });
+
+  it("draws a check whose status it does not know as not judged, keeping the rest of the flow", async () => {
+    stubFetch(200, { ...SETUP_READY, checks: [{ ...SETUP_READY.checks[0], status: "maybe" }, SETUP_READY.checks[1]] });
+    const setup = await fetchSetup();
+    expect(setup.checks.map((check) => check.status)).toEqual(["skip", SETUP_READY.checks[1].status]);
+    expect(setup.steps).toEqual(SETUP_READY.steps);
+  });
+
   it("rejects a body of the wrong shape", async () => {
-    for (const body of [null, { ...SETUP_READY, steps: {} }, { ...SETUP_READY, checks: null }, { ...SETUP_READY, enforced: "yes" }]) {
+    for (const body of [null, { ...SETUP_READY, steps: {} }, { ...SETUP_READY, checks: null }, { ...SETUP_READY, checks: [null] }, { ...SETUP_READY, enforced: "yes" }]) {
       stubFetch(200, body);
       await expect(fetchSetup()).rejects.toThrow(SettingsParseError);
     }

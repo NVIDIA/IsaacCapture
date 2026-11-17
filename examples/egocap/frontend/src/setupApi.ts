@@ -21,7 +21,10 @@ export interface SetupStep {
   detail: string | null;
 }
 
-export type CheckStatus = "pass" | "fail" | "skip";
+/** How a check stands: `warn` is a finding the deployment chose not to hold recording for. */
+export type CheckStatus = "pass" | "fail" | "warn" | "skip";
+
+const CHECK_STATUSES: readonly unknown[] = ["pass", "fail", "warn", "skip"];
 export type CheckGroup = "tracking" | "cameras" | "system";
 
 /** One device or check, and how it stands right now. */
@@ -62,7 +65,12 @@ function parseSetup(value: unknown): SetupStatus {
   if (!Array.isArray(record.steps) || !Array.isArray(record.checks) || typeof record.enforced !== "boolean") {
     throw new SettingsParseError("setup status is malformed");
   }
-  return value as SetupStatus;
+  if (!record.checks.every((check) => typeof check === "object" && check !== null)) {
+    throw new SettingsParseError("setup status has a malformed check");
+  }
+  // A status this page has no mark for is drawn as not judged: one unknown row must not blank the rail and the list.
+  const checks = record.checks.map((check: CheckItem) => (CHECK_STATUSES.includes(check?.status) ? check : { ...check, status: "skip" as const }));
+  return { ...(value as SetupStatus), checks };
 }
 
 /** Read where the flow stands; with the control token the reply carries the headset address. */

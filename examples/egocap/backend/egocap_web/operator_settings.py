@@ -5,7 +5,8 @@
 """Operator-adjustable station setup kept by the backend, and the operator tools it knows about.
 
 Unlike the deployment settings (settings_routes.py), these are the operator's to change from the page:
-camera type and roles, task catalog, and preselected task. They live in one JSON file under a hidden
+camera type and roles, task catalog, preselected task, and whether calibration files are required before
+recording. They live in one JSON file under a hidden
 ``.egocap/`` directory in the recording output
 (``EGOCAP_OPERATOR_SETTINGS_FILE`` overrides the location) so every browser sees the same value and it survives a
 restart. A change needs the run's control token, the same credential that admits recording commands, so a stray
@@ -104,6 +105,9 @@ class OperatorSettings:
     task_file: str | None = None
     #: The task (by its catalog name) the picker preselects when the current task is still unset.
     preselected_task: str | None = None
+    #: Whether a station in use is held from recording while a calibration file of its cameras is missing.
+    #: Off by default: calibration files are optional unless the deployment requires them.
+    require_calibration: bool = False
 
     def to_json(self) -> dict[str, Any]:
         """The wire form, with the accepted camera types and roles so the page needs no second copy of either."""
@@ -114,6 +118,7 @@ class OperatorSettings:
             "roles": list(CAMERA_ROLES),
             "task_file": self.task_file,
             "preselected_task": self.preselected_task,
+            "require_calibration": self.require_calibration,
         }
 
     def stored(self) -> dict[str, Any]:
@@ -123,6 +128,7 @@ class OperatorSettings:
             "camera_roles": dict(self.camera_roles),
             "task_file": self.task_file,
             "preselected_task": self.preselected_task,
+            "require_calibration": self.require_calibration,
         }
 
     def updated(self, changes: dict[str, Any]) -> OperatorSettings:
@@ -186,7 +192,12 @@ def _parse(raw: Any) -> OperatorSettings:
     camera_type = raw.get("camera_type")
     if camera_type is not None and camera_type not in CAMERA_TYPES:
         raise OperatorSettingsError(f"camera_type must be one of {', '.join(CAMERA_TYPES)} or null")
+    # Absent in a file saved before the setting existed, which keeps the default.
+    require_calibration = raw.get("require_calibration", False)
+    if not isinstance(require_calibration, bool):
+        raise OperatorSettingsError("require_calibration must be true or false")
     return OperatorSettings(
+        require_calibration=require_calibration,
         camera_type=camera_type,
         camera_roles=parse_camera_roles(raw.get("camera_roles")),
         task_file=_optional_text(raw, "task_file", check=is_catalog_name, what="a plain *.csv file name"),
@@ -217,6 +228,15 @@ class OperatorSettingsStore:
         except json.JSONDecodeError as exc:
             raise OperatorSettingsError("operator settings are not valid JSON") from exc
         return _parse(raw)
+
+    def calibration_required(self) -> bool:
+        """Whether the deployment holds a station from recording until its calibration files exist. Settings
+        that cannot be read keep the default, not required: an unreadable file must not start blocking takes.
+        Reads the file, so not for the event loop."""
+        try:
+            return self.load().require_calibration
+        except (OperatorSettingsError, OSError):
+            return False
 
     def save(self, settings: OperatorSettings) -> None:
         """Write the settings, through a temporary file so a crash never leaves a half-written one."""
@@ -328,7 +348,8 @@ async def write_operator_settings(request: Request) -> JSONResponse:
     if body is None:
         return refused  # type: ignore[return-value]
     # With a station in use its own record holds the camera setup. Saving these fields here would store
-    # values nothing reads, so the caller is pointed at the station instead.
+    # values nothing reads, so the caller is pointed at the station instead. Every other field, the
+    # calibration requirement included, is the deployment's and is saved whether or not a station is in use.
     service = _station_service(request)
     in_use = service.registry.selected if service is not None else None
     if in_use is not None and any(key in body for key in ("camera_type", "camera_roles")):

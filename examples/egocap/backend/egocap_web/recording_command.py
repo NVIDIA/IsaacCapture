@@ -233,8 +233,9 @@ class RecordingContext:
     #: still always requires the operator's own explicit "Set operator" action.
     auto_fill_operator_name: bool = False
     #: Why station setup does not allow a take right now, or None when it does (see app.py's lifespan for
-    #: what it checks). Asked only when a take is admitted and when readiness is published, never while one
-    #: records: a setup fact changing mid-take must not interrupt it, unlike a capture source going stale.
+    #: what it checks). It decides admission and the readiness that is published, and never interrupts a
+    #: take: a setup fact changing mid-take does not stop it, unlike a capture source going stale. It is asked
+    #: on the event loop at any time, during a take too, so it must answer from memory.
     setup_gate: Callable[[], str | None] | None = field(default=None, repr=False)
     batch_id: str = field(default_factory=_new_batch_id)
     saved_count: int = 0
@@ -485,7 +486,7 @@ class RecordingContext:
             if command.action == "start_episode":
                 if self.coordinator.snapshot().context.task_text.strip() == "":
                     return "rejected", "set a task before starting an episode"
-                # Station setup is checked here, at admission only (see setup_gate).
+                # Station setup decides admission here; it never stops a take already recording (see setup_gate).
                 blocked = self.setup_block()
                 if blocked is not None:
                     return "rejected", blocked

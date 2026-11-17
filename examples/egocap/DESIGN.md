@@ -43,8 +43,11 @@ The day follows a fixed order, shown as a progress rail: station, devices, recor
 operator puts their station in use and the page shows a live checklist of what that station needs:
 every tracking device and camera, the calibration files of its cameras, and room on the recording
 disk. Nothing is run; the checklist is judged continuously. With a station in use a take is refused,
-with the reason, while any item fails; a device or check the station does not use is skipped. With
-no stations set up the checklist only advises.
+with the reason, while any item fails; a device or check the station does not use is skipped. An
+item fails for what would stop a take anyway (capture not running, no tracking data, a camera with
+no frames) and for a full disk. What goes beyond that only warns: a device reporting another state
+than connected, and missing calibration files, which are optional unless the deployment requires
+them (an operator setting, off by default). With no stations set up the checklist only advises.
 
 Before recording, the operator also selects or enters the task being demonstrated, and confirms the
 live preview — camera video and tracked pose — looks correct. Starting an episode requires every required source to be
@@ -74,7 +77,8 @@ versus excluded episodes from the saved session metadata, for offline use.
 A misfiled task can be corrected from the report for one take or a range of a session's takes. Only
 labels change; recorded video and tracking stay as captured, and a session is never moved from the
 page. A correction is refused for the session still open for recording, while a take of that session
-is being time-aligned, and for anything that is not a recorded session inside the recording output. A library function, for offline use, relocates an
+is being time-aligned or another correction of it is being written, and for anything that is not a
+recorded session inside the recording output. A library function, for offline use, relocates an
 older session saved under the wrong studio.
 
 ### Timing and calibration requirements
@@ -133,8 +137,9 @@ intrinsics and extrinsics, and the wrist cameras' intrinsics and calibration off
 preserved with the recording session alongside its episodes, so a take stays tied to the
 calibration active when it was captured rather than whatever calibration is live on the station
 later. Camera latency and glove calibration remain station-setup requirements this copying does
-not archive; a station missing an optional calibration file can still record, just without that
-sidecar present. Keeping a take commits all of this to the local record; discarding one removes
+not archive. Calibration files are optional unless the deployment requires them: a station missing
+one can still record, just without that sidecar present, and is held from recording only while the
+operator setting that requires them is on. Keeping a take commits all of this to the local record; discarding one removes
 its recorded media, so a discarded take's video and tracking never appear in the saved session.
 
 ### Downstream dataset use

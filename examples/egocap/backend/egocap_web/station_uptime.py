@@ -15,6 +15,7 @@ Everything here is a local file written atomically; nothing uploads it.
 
 from __future__ import annotations
 
+import copy
 import datetime
 import json
 import logging
@@ -53,6 +54,18 @@ _MAX_SEGMENTS = 5000
 
 class UptimeError(ValueError):
     """A refused change to the day's notes, with a public reason."""
+
+
+def notes_problem(notes: Any) -> str | None:
+    """Why a value cannot be saved as the day's notes, or None when it can."""
+    if not isinstance(notes, str) or len(notes) > MAX_NOTES_CHARS:
+        return f"notes must be text of at most {MAX_NOTES_CHARS} characters"
+    return None
+
+
+def _midnight(day: str) -> float:
+    """The moment a local calendar day (``YYYY-MM-DD``) begins, in epoch seconds."""
+    return datetime.datetime.combine(datetime.date.fromisoformat(day), datetime.time.min).timestamp()
 
 
 def _day(now: float) -> str:
@@ -129,6 +142,8 @@ class UptimeLog:
         #: Why the station is down right now. A segment keeps the reason it began with; this is the current one.
         self._live_reason: str | None = None
         self._full_warned = False
+        #: Stations whose daily log is behind the timeline: a take ended and the log has not been written since.
+        self._owed_logs: set[str] = set()
 
     # --- the day file ----------------------------------------------------------------------------------------
 
@@ -164,12 +179,39 @@ class UptimeLog:
         """Today's timeline, loaded on first use and rolled over when the local day changes."""
         day = _day(now)
         if self._payload is None:
-            self._payload = self._load(day)
+            self._payload = self._unfinished_before(day) or self._load(day)
         # Before a rollover, so a silence that crossed midnight is down time on the day it began.
         self._bridge_gap(self._payload, now)
         if self._payload["date"] != day:
             self._payload = self._rolled(self._payload, day)
         return self._payload
+
+    def _unfinished_before(self, day: str) -> dict[str, Any] | None:
+        """The most recent earlier day's timeline when the backend stopped with a segment still open in it
+        and ``day`` has no timeline yet, else None.
+
+        Starting from that day lets the ordinary gap and rollover steps finish it: its open segment is ended,
+        its daily log brought up to its midnight, and the state carried into ``day``.
+        """
+        # A day that already has a file was started by a run that finished the one before it.
+        if self._path(day).exists():
+            return None
+        suffix = "_timeline.json"
+        try:
+            names = [path.name for path in self._directory.glob(f"*{suffix}")]
+        except OSError:
+            return None
+        # ISO dates sort as text, so the greatest name below ``day`` is the latest earlier day.
+        earlier = sorted(name[: -len(suffix)] for name in names if name[: -len(suffix)] < day)
+        if not earlier:
+            return None
+        try:
+            datetime.date.fromisoformat(earlier[-1])
+        except ValueError:
+            # Not a day file of this log; nothing to finish.
+            return None
+        payload = self._load(earlier[-1])
+        return payload if any(_open(record) is not None for record in payload["stations"].values()) else None
 
     @staticmethod
     def _bridge_gap(payload: dict[str, Any], now: float) -> None:
@@ -196,27 +238,37 @@ class UptimeLog:
             payload["last_sample"] = now
 
     def _rolled(self, previous: dict[str, Any], day: str) -> dict[str, Any]:
-        """Close the old day at midnight and carry each open segment into the new one, so time that crosses
-        midnight is counted on both days and no state is lost."""
-        midnight = datetime.datetime.combine(datetime.date.fromisoformat(day), datetime.time.min).timestamp()
+        """Close the old day at its midnight and carry each open segment into the new one, so time that
+        crosses midnight is counted on both days and no state is lost.
+
+        ``previous`` is left as it was: the closed day is a copy, so when its write fails the open segments
+        are still there to be carried by the next attempt.
+        """
+        midnight = _midnight(day)
+        # The old day ends at its own midnight, which is earlier than the new day's start after a longer stop.
+        # Found by the calendar, not by adding 24 hours: a day on which the clocks change is not that long.
+        following = datetime.date.fromisoformat(previous["date"]) + datetime.timedelta(days=1)
+        closing = min(midnight, _midnight(following.isoformat()))
         last = previous["last_sample"]
         # A sample later than midnight is a silence already bridged up to then; it must not be bridged again.
         sampled = max(midnight, last) if isinstance(last, (int, float)) else midnight
+        closed = copy.deepcopy(previous)
         current: dict[str, Any] = {"date": day, "last_sample": sampled, "stations": {}}
-        for name, record in previous["stations"].items():
+        for name, record in closed["stations"].items():
             segment = _open(record)
             if segment is None:
                 continue
-            segment["end"] = midnight
+            segment["end"] = max(closing, segment["start"])
             carried = {"state": segment["state"], "reason": segment["reason"], "start": midnight, "end": None}
             current["stations"][name] = {"segments": [carried], "notes": "", "aliases": []}
             # The old day's log is otherwise written only when a take ends, so the time after its last take, or
             # the part of a take that crosses midnight, would never reach it.
             if any(part["state"] == RECORDING for part in record["segments"]):
-                self._close_log(name, previous, midnight)
-        self._write(previous)
-        # Each day is told once when its log fills up.
+                self._close_log(name, closed, closing)
+        self._write(closed)
+        # Each day is told once when its log fills up, and owes nothing for the day before.
         self._full_warned = False
+        self._owed_logs.clear()
         return current
 
     def _close_log(self, station: str, payload: dict[str, Any], midnight: float) -> None:
@@ -285,11 +337,19 @@ class UptimeLog:
                 changed = True
             self._live_reason = reason if state == DOWN else None
             payload["last_sample"] = now
+            # The daily log follows each take, so it is current without anyone saving a report. Owed until
+            # it is written: a failed write here is made good at the next one below.
+            if took:
+                self._owed_logs.add(station)
             if changed or now - self._written_at >= _HEARTBEAT_SECONDS:
                 self._write(payload)
-            # The daily log follows each take, so it is current without anyone saving a report.
-            if took:
-                self._write_log(station, payload, now, self._measured(station, payload["date"]))
+                self._settle_logs(payload, now)
+
+    def _settle_logs(self, payload: dict[str, Any], now: float) -> None:
+        """Write each daily log that is owed; one that cannot be written stays owed for the next attempt."""
+        for station in sorted(self._owed_logs):
+            self._write_log(station, payload, now, self._measured(station, payload["date"]))
+            self._owed_logs.discard(station)
 
     def _has_room(self, record: dict[str, Any]) -> bool:
         """Whether a station's day takes another segment. At its bound the day stops being logged, and says so
@@ -321,6 +381,10 @@ class UptimeLog:
                 self._claim(payload, name)
             record["aliases"] = sorted({*record["aliases"], previous} - {name})
             payload["stations"][name] = record
+            # A log still owed to the old name is owed to the new one.
+            if previous in self._owed_logs:
+                self._owed_logs.discard(previous)
+                self._owed_logs.add(name)
             self._write(payload)
             # The carried log still names the old station and lacks whatever the new name had done today.
             if self._log_path(name, payload["date"]).is_file():
@@ -346,8 +410,9 @@ class UptimeLog:
 
     def set_notes(self, station: str, notes: Any) -> dict[str, Any]:
         """Save the operator's notes for the day; returns the station's report."""
-        if not isinstance(notes, str) or len(notes) > MAX_NOTES_CHARS:
-            raise UptimeError(f"notes must be text of at most {MAX_NOTES_CHARS} characters")
+        problem = notes_problem(notes)
+        if problem is not None:
+            raise UptimeError(problem)
         with self._lock:
             now = self._clock()
             payload = self._today(now)

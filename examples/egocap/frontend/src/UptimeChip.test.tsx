@@ -169,6 +169,23 @@ describe("UptimeChip", () => {
     unmount();
   });
 
+  it("shows nothing of the last station while the new station's uptime is still on its way", async () => {
+    const pending: Array<(uptime: StationUptime) => void> = [];
+    const load = vi.fn(() => new Promise<StationUptime>((resolve) => pending.push(resolve)));
+    const { rerender } = render(<UptimeChip stationLabel="Bench A" load={load} />);
+    pending[0](UPTIME_FIXTURE);
+    await settle();
+    expect(chip().textContent).toBe("Down · 5m 00s");
+    rerender(<UptimeChip stationLabel="Cart B" load={load} />);
+    // Bench A's state, totals and down-time clock must not stand beside Cart B's name, however long this takes.
+    expect(document.querySelector(".station-uptime")).toBeNull();
+    await settle(3_000);
+    expect(document.querySelector(".station-uptime")).toBeNull();
+    pending[1](READY);
+    await settle();
+    expect(chip().textContent).toBe("Ready");
+  });
+
   it("keeps the last answer when an abandoned read fails late", async () => {
     const pending: Array<{ resolve: (uptime: StationUptime) => void; reject: (reason: Error) => void }> = [];
     const load = vi.fn(() => new Promise<StationUptime>((resolve, reject) => pending.push({ resolve, reject })));
