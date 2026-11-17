@@ -542,9 +542,13 @@ tensors and consumes inbound haptic commands for vibration gloves.</p>
 <li><p><a class="reference internal" href="#haptic-inbound-vibration" id="id15">Haptic (inbound vibration)</a></p></li>
 </ul>
 </li>
-<li><p><a class="reference internal" href="#wrist-positioning-controllers-vs-optical-hand-tracking" id="id16">Wrist Positioning — Controllers vs Optical Hand Tracking</a></p></li>
-<li><p><a class="reference internal" href="#troubleshooting" id="id17">Troubleshooting</a></p></li>
-<li><p><a class="reference internal" href="#license" id="id18">License</a></p></li>
+<li><p><a class="reference internal" href="#wrist-positioning-controllers-vs-optical-hand-tracking" id="id16">Wrist Positioning — Controllers vs Optical Hand Tracking</a></p>
+<ul>
+<li><p><a class="reference internal" href="#controller-offsets" id="id17">Controller offsets</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#troubleshooting" id="id18">Troubleshooting</a></p></li>
+<li><p><a class="reference internal" href="#license" id="id19">License</a></p></li>
 </ul>
 </nav>
 <section id="components">
@@ -791,9 +795,26 @@ actively tracked wrist pose; otherwise it falls back to the controller pose.</p>
 hand-tracking–to–controller switching to avoid unexpected source changes
 mid-session.</p>
 </div>
+<section id="controller-offsets">
+<h3><a class="toc-backref" href="#id17" role="doc-backlink">Controller offsets</a><a class="headerlink" href="#controller-offsets" title="Link to this heading">#</a></h3>
+<p>When the wrist comes from a controller, the plugin applies a fixed per-hand
+offset from the controller’s aim pose to the wrist. To use a different
+controller or mount, pass your own offsets to the plugin:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./install/plugins/manus/manus_hand_plugin<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--left-aim-to-wrist<span class="o">=</span>px,py,pz,qx,qy,qz,qw<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--right-aim-to-wrist<span class="o">=</span>px,py,pz,qx,qy,qz,qw
+</pre></div>
+</div>
+<p>Each value is the wrist pose in the controller’s aim frame: position in
+meters, then an <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y,</span> <span class="pre">z,</span> <span class="pre">w)</span></code> quaternion. For mirror-image mounts, the left
+value is the right one with <code class="docutils literal notranslate"><span class="pre">px</span></code>, <code class="docutils literal notranslate"><span class="pre">qy</span></code> and <code class="docutils literal notranslate"><span class="pre">qz</span></code> negated. When
+<code class="docutils literal notranslate"><span class="pre">TeleopSession</span></code> starts the plugin, add the same flags to
+<code class="docutils literal notranslate"><span class="pre">PluginConfig.</span><wbr><span class="pre">plugin_</span><wbr><span class="pre">args</span></code>. The plugin logs each offset it applies and exits
+with an error on a value it cannot use.</p>
+</section>
 </section>
 <section id="troubleshooting">
-<h2><a class="toc-backref" href="#id17" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id18" role="doc-backlink">Troubleshooting</a><a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h2>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 40.0%" />
@@ -862,7 +883,7 @@ Isaac ROS dev container does this automatically; for a custom
 </div>
 </section>
 <section id="license">
-<h2><a class="toc-backref" href="#id18" role="doc-backlink">License</a><a class="headerlink" href="#license" title="Link to this heading">#</a></h2>
+<h2><a class="toc-backref" href="#id19" role="doc-backlink">License</a><a class="headerlink" href="#license" title="Link to this heading">#</a></h2>
 <p>Source files are covered by their stated licenses (Apache-2.0). The Manus SDK is
 proprietary to MANUS and is subject to its own license; it is <strong>not</strong> redistributed
 by this project.</p>
@@ -939,7 +960,10 @@ by this project.</p>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#haptic-inbound-vibration">Haptic (inbound vibration)</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#wrist-positioning-controllers-vs-optical-hand-tracking">Wrist Positioning — Controllers vs Optical Hand Tracking</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#wrist-positioning-controllers-vs-optical-hand-tracking">Wrist Positioning — Controllers vs Optical Hand Tracking</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#controller-offsets">Controller offsets</a></li>
+</ul>
+</li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#troubleshooting">Troubleshooting</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#license">License</a></li>
 </ul>
