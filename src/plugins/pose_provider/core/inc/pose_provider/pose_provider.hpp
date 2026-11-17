@@ -7,10 +7,12 @@
 #include <pose_engine_api/pose_engine.hpp>
 
 #include <chrono>
-#include <functional>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace pose_provider
 {
@@ -22,7 +24,7 @@ struct ProviderConfig
 {
     //! From construction until the camera input is ready and the run is started; initialize() is not interrupted.
     std::chrono::milliseconds startup_timeout{ 30'000 };
-    //! From entering Draining until the engine has drained.
+    //! From entering Draining until the camera input has ended and the engine has drained.
     std::chrono::milliseconds drain_timeout{ 5'000 };
 };
 
@@ -40,8 +42,13 @@ enum class ProviderComponent
 {
     Provider, //!< abort(), no start within the startup timeout, or an internal error.
     Setup, //!< The source description does not resolve to a setup, or the engine rejected the setup.
-    Engine, //!< An engine call threw, a fatal error, an out-of-contract estimate, or no drain within the drain timeout.
-    CameraInput, //!< No source description within the startup timeout, or the input failed or ended before a finish.
+    Engine, //!< An engine call threw, a fatal error, a rejected image group, an estimate out of accepted-group order,
+            //!< or no drain within the drain timeout.
+    CameraInput, //!< No source description within the startup timeout, the input failed or ended before a finish, or
+                 //!< it did not end within the drain timeout.
+    InputPreparation, //!< A frame does not match the setup, a frame or loss report repeats or goes back in capture
+                      //!< number, or the left eye's times are missing, negative on the device clock, or do not
+                      //!< increase.
 };
 
 struct ProviderStatus
@@ -51,9 +58,14 @@ struct ProviderStatus
     std::string failure_reason; //!< The first failure.
     std::optional<ProviderComponent> failed_component; //!< Present once failed.
     EngineHealth engine_health; //!< As last read; final once Finished.
+    uint64_t frames_lost = 0; //!< Captures missing after the first frame taken while Running, until the finish request.
+    uint64_t frames_dropped = 0; //!< Frames dropped while Running because the engine held all prepared storage.
     std::chrono::milliseconds startup_timeout{ 0 }; //!< Applied limits.
     std::chrono::milliseconds drain_timeout{ 0 };
+    std::size_t prepared_image_groups = 0; //!< Image groups whose prepared storage the engine can hold at once.
 };
+
+class PoseInputAdapter;
 
 /**
  * @brief Runs one engine adapter through one run on one camera input.
@@ -101,8 +113,8 @@ public:
     ProviderStatus status() const;
 
     /**
-     * @brief The camera input's descriptor, readable when update() has camera events to take; -1 without an input.
-     * Valid until the next update() or abort(): wait on it, never read or close it.
+     * @brief The camera input's descriptor, readable when update() has camera events to take; -1 without an input or
+     * once its last event is taken. Valid until the next update() or abort(): wait on it, never read or close it.
      */
     int wait_fd() const;
 
@@ -124,12 +136,14 @@ private:
     void prepare(); // Preparing
     void await_start(); // Ready
     void run(); // Running
-    void drain(); // Draining: the finish-input step once, then the engine drain.
+    void drain(); // Draining: detach() once, the camera input to its end, finish_input() once, then the engine drain.
     void enter(ProviderState state);
     bool take_camera_events(); // false after a failure.
+    bool admit(CameraEvent& event); // Running: a frame's group offered, or a loss counted. false after a failure.
     bool take_estimates(); // false after a failure.
     bool check_health(); // false after a failure.
-    bool call_engine(const char* call, const std::function<void()>& work); // false after fail(Engine, ...).
+    template <typename Work>
+    bool call_engine(const char* call, Work&& work); // false after fail(Engine, ...).
     void fail(ProviderComponent component, std::string reason);
     void record_failure(ProviderComponent component, std::string reason);
     void stop_engine(); // Exactly once.
@@ -139,11 +153,16 @@ private:
     std::unique_ptr<ICameraInput> camera_; // Destroyed by finish_run().
     std::optional<SourceDescription> source_; // As delivered, so its lenses are not the applied ones.
     std::optional<ResolvedPoseSetup> setup_;
+    std::unique_ptr<PoseInputAdapter> input_; // Built after initialize().
     std::unique_ptr<IPoseEngine> engine_; // After any collaborator whose storage the engine may hold.
+    std::vector<uint64_t> accepted_groups_; // Accepted group IDs, oldest first, that may still get an estimate.
     Clock::time_point startup_deadline_;
     Clock::time_point drain_deadline_;
     bool start_requested_ = false;
     bool finish_requested_ = false;
+    bool detached_ = false;
+    bool camera_ended_ = false; // The camera input's last event was taken.
+    uint64_t frames_after_cutoff_ = 0; // Frames taken in Draining, which are released unread.
     bool input_finished_ = false;
     bool engine_stopped_ = false;
     ProviderStatus status_;

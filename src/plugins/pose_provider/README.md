@@ -20,7 +20,7 @@ stream through an interchangeable pose estimation engine.
 | `camera_input/` | `pose_provider::pose_camera_input` | Header-only camera input interface: `ICameraInput`, its events and `StereoFrame`, for one stereo camera source read without blocking |
 | `undistort/` | `pose_provider::pose_undistort` | Undistortion of one camera image to a distortion-free pinhole of the same size and optical frame: the widest valid output calibration, its map and bilinear `Gray8` resampling |
 | `engines/stub/` | `pose_provider::pose_engine_stub` | Adapter of the full contract with no engine library behind it |
-| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, camera input, setup resolution, status and failure handling around one engine adapter; links no adapter |
+| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, camera input, setup resolution, input preparation, status and failure handling around one engine adapter; links no adapter |
 | `app/` | `pose_provider_plugin` | The plugin executable; links the adapter that `POSE_ENGINE_TARGET` names. Its manifest is [`plugin.yaml`](plugin.yaml) |
 
 ## Build
@@ -54,7 +54,7 @@ as soon as the engine is ready; an application cannot start it separately.
 | Option | Meaning |
 | --- | --- |
 | `--startup-timeout=<seconds>` | Time allowed from launch for the camera input to become ready and the run to start; engine initialization is not interrupted |
-| `--drain-timeout=<seconds>` | Time allowed from a finish request until the engine has processed its accepted input |
+| `--drain-timeout=<seconds>` | Time allowed from a finish request until the camera input has ended and the engine has processed its accepted input |
 | `--plugin-root-id=<id>` | Set by the plugin launcher |
 
 `--help` prints the defaults. SIGINT or SIGTERM finishes the run: a running engine drains,
@@ -119,7 +119,10 @@ or the startup timeout fails it.
    [`engine_api` headers](engine_api/inc/pose_engine_api/), starting with
    [`pose_engine.hpp`](engine_api/inc/pose_engine_api/pose_engine.hpp).
    Geometry and calibration come from `ResolvedPoseSetup`; engine-specific settings come
-   from its opaque `engine_settings`.
+   from its opaque `engine_settings`. Prepared image storage is a fixed set
+   (`ProviderStatus::prepared_image_groups`): release each hold after the image's last
+   read, and copy any image kept longer. While the engine holds every group, the provider
+   drops new frames and counts them in `frames_dropped`.
 4. Start the adapter's tests from the stub's test,
    [`test_stub_contract.cpp`](../../../tests/cpp/plugins/pose_provider/test_stub_contract.cpp).
    Keep the cases that apply to the engine, and add cases for its own settings and modes.

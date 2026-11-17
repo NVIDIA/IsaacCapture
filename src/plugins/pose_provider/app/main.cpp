@@ -79,7 +79,8 @@ std::string usage()
            "to start (default " +
            seconds_text(defaults.startup_timeout) +
            ")\n"
-           "  --drain-timeout=<seconds>    Time allowed from a finish request until the engine has drained (default " +
+           "  --drain-timeout=<seconds>    Time allowed from a finish request until the camera input has ended and "
+           "the engine has drained (default " +
            seconds_text(defaults.drain_timeout) +
            ")\n"
            "  --plugin-root-id=<id>        Set by the plugin launcher\n"

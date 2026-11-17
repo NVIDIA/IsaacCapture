@@ -17,6 +17,9 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -25,6 +28,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace pose_provider;
@@ -47,12 +51,23 @@ struct Script
     std::set<std::string> throwing;
     std::string fatal_reason;
     bool drains = true;
-    int estimates = 0;
-    bool estimate_when_drained = false;
+    std::deque<uint64_t> estimates; // Group IDs of the estimates try_get_next_pose() returns, in order.
+    std::optional<uint64_t> estimate_when_drained; // Queued as input_drained() first returns true.
     int estimates_taken = 0;
+    EnqueueResult admission = EnqueueResult::Accepted; // What on_image_group() returns.
+    std::vector<EngineImageGroup> offered; // An accepted group keeps its holds until stop() or release().
     std::vector<std::string> calls; // Lifecycle calls, in order.
     std::optional<ResolvedPoseSetup> initialized; // The setup initialize() received.
 };
+
+// Drops the group's holds, as an engine does after its last read.
+void release(EngineImageGroup& group)
+{
+    for (EngineImage& image : group.images)
+    {
+        std::get<HostImage>(image.storage).hold.reset();
+    }
+}
 
 class FakeEngine final : public IPoseEngine
 {
@@ -89,9 +104,15 @@ public:
         record("start");
     }
 
-    EnqueueResult on_image_group(EngineImageGroup) override
+    EnqueueResult on_image_group(EngineImageGroup group) override
     {
-        return EnqueueResult::RejectedNotRunning;
+        throw_if_scripted("on_image_group");
+        if (script_->admission != EnqueueResult::Accepted)
+        {
+            release(group);
+        }
+        script_->offered.push_back(std::move(group));
+        return script_->admission;
     }
 
     EnqueueResult on_imu(const EngineImuSample&) override
@@ -111,8 +132,8 @@ public:
         const bool drained = script_->drains && finish_called_;
         if (drained && script_->estimate_when_drained)
         {
-            script_->estimate_when_drained = false;
-            ++script_->estimates;
+            script_->estimates.push_back(*script_->estimate_when_drained);
+            script_->estimate_when_drained.reset();
         }
         return drained;
     }
@@ -120,14 +141,14 @@ public:
     bool try_get_next_pose(EnginePose& out) override
     {
         throw_if_scripted("try_get_next_pose");
-        if (script_->estimates <= 0)
+        if (script_->estimates.empty())
         {
             return false;
         }
-        --script_->estimates;
-        ++script_->estimates_taken;
         out = EnginePose{};
-        out.group_id = 7;
+        out.group_id = script_->estimates.front();
+        script_->estimates.pop_front();
+        ++script_->estimates_taken;
         return true;
     }
 
@@ -142,6 +163,10 @@ public:
 
     void stop() override
     {
+        for (EngineImageGroup& group : script_->offered)
+        {
+            release(group);
+        }
         record("stop");
     }
 
@@ -215,6 +240,77 @@ struct SetupRejection
     std::string reason;
 };
 
+// A change to the frame after fake_frame(1), or events queued before it, and the InputPreparation failure reason.
+struct FrameRejection
+{
+    std::function<void(FakeCameraSource&, FakeFrame&)> change;
+    std::string reason;
+    std::size_t offered = 1; // Groups offered before the failure.
+};
+
+// After the finish request, with an accepted group still in the engine: Draining ends the engine's input once the
+// camera input's last event is taken, then finishes cleanly when the engine drains.
+void check_clean_finish(PoseProvider& provider, Script& script)
+{
+    provider.update();
+    CHECK(provider.status().state == ProviderState::Draining);
+    CHECK_FALSE(provider.status().failed);
+    CHECK(script.calls.back() == "finish_input");
+    CHECK(provider.wait_fd() == -1);
+    script.drains = true;
+    provider.update();
+    CHECK(provider.finished());
+    CHECK_FALSE(provider.status().failed);
+}
+
+constexpr uint32_t kPaddedStride = 11;
+
+// 8x4 Gray8 rows kPaddedStride bytes apart at level base + 9 x + 20 y, with every padding byte at 255.
+std::vector<std::byte> padded_ramp(int base)
+{
+    std::vector<std::byte> bytes(kPaddedStride * 4, std::byte{ 255 });
+    for (uint32_t y = 0; y < 4; ++y)
+    {
+        for (uint32_t x = 0; x < 8; ++x)
+        {
+            bytes[y * kPaddedStride + x] = static_cast<std::byte>(base + 9 * x + 20 * y);
+        }
+    }
+    return bytes;
+}
+
+// fake_frame(sequence) with padded ramps that differ per frame, and right-eye times 5 ns after the left eye's.
+FakeFrame padded_frame(uint64_t sequence)
+{
+    FakeFrame frame = fake_frame(sequence);
+    frame.left.layout.stride_bytes = kPaddedStride;
+    frame.right.layout.stride_bytes = kPaddedStride;
+    frame.left_bytes = padded_ramp(10 + static_cast<int>(sequence));
+    frame.right_bytes = padded_ramp(100 + static_cast<int>(sequence));
+    *frame.right.local_common_clock_ns += 5;
+    *frame.right.raw_device_clock_ns += 5;
+    return frame;
+}
+
+std::vector<int> levels(const std::byte* data, std::size_t size)
+{
+    std::vector<int> out;
+    for (std::size_t i = 0; i < size; ++i)
+    {
+        out.push_back(std::to_integer<int>(data[i]));
+    }
+    return out;
+}
+
+// The prepared image of @p stream in @p group.
+const HostImage& image_of(const EngineImageGroup& group, StreamId stream)
+{
+    const auto image = std::find_if(group.images.begin(), group.images.end(),
+                                    [&](const EngineImage& candidate) { return candidate.stream == stream; });
+    REQUIRE(image != group.images.end());
+    return std::get<HostImage>(image->storage);
+}
+
 } // namespace
 
 TEST_CASE("PoseProvider runs the stub engine through a live run", "[unit][pose_provider]")
@@ -245,12 +341,20 @@ TEST_CASE("PoseProvider runs the stub engine through a live run", "[unit][pose_p
         CHECK(provider.status().state == ProviderState::Running);
     }
 
-    provider.request_finish();
-    provider.request_finish();
+    // The stub checks each group against the setup and returns one estimate per group, in order.
+    for (uint64_t sequence = 1; sequence <= 3; ++sequence)
+    {
+        camera->push(fake_frame(sequence));
+    }
     provider.update();
+    provider.request_finish();
+    provider.request_finish();
+    CHECK(update_until_finished(provider));
     const ProviderStatus status = provider.status();
     CHECK(status.state == ProviderState::Finished);
     CHECK_FALSE(status.failed);
+    CHECK(status.engine_health.dropped_image_groups == 0);
+    CHECK(status.frames_dropped == 0);
     CHECK(status.failure_reason.empty());
     CHECK_FALSE(status.failed_component.has_value());
     CHECK_FALSE(status.engine_health.fatal_error);
@@ -606,10 +710,14 @@ TEST_CASE("A last camera event fails the run only before a finish request", "[un
     provider.request_start();
     provider.update();
     REQUIRE(provider.status().state == ProviderState::Running);
+    // The engine holds an accepted group and has not drained.
+    camera->push(fake_frame(1));
+    provider.update();
+    REQUIRE(script->offered.size() == 1);
+    camera->push(fake_frame(2));
 
     SECTION("the source ends while Running")
     {
-        camera->push(fake_frame(1));
         camera->push_end();
         provider.update();
         const ProviderStatus status = provider.status();
@@ -617,21 +725,22 @@ TEST_CASE("A last camera event fails the run only before a finish request", "[un
         CHECK(status.failed_component == ProviderComponent::CameraInput);
         CHECK(status.failure_reason == "the camera input ended");
         CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
+        CHECK(script->offered.size() == 2);
     }
+    // Frame 2 follows the finish request in these sections, so it is released without being offered.
     SECTION("the input fails after the finish request")
     {
-        provider.request_finish();
-        provider.update();
-        REQUIRE(provider.status().state == ProviderState::Draining);
-        camera->push(fake_frame(1));
         camera->push(InputFailed{ "transport lost" });
-        provider.update();
-        CHECK(provider.status().state == ProviderState::Draining);
-        CHECK_FALSE(provider.status().failed);
-        script->drains = true;
-        provider.update();
-        CHECK(provider.finished());
-        CHECK_FALSE(provider.status().failed);
+        provider.request_finish();
+        check_clean_finish(provider, *script);
+        CHECK(script->offered.size() == 1);
+    }
+    SECTION("the source ends after the finish request")
+    {
+        camera->push_end();
+        provider.request_finish();
+        check_clean_finish(provider, *script);
+        CHECK(script->offered.size() == 1);
     }
     CHECK(camera->input_destroyed());
     CHECK(camera->frames_released() == camera->frames_delivered());
@@ -678,10 +787,8 @@ TEST_CASE("update() takes every waiting camera event, and the wait timeout follo
     CHECK(camera->frames_delivered() == 4);
     CHECK(camera->frames_released() == 4);
 
-    provider.request_finish();
-    provider.update();
     camera->push(fake_frame(6));
-    camera->push_end();
+    provider.request_finish();
     provider.update();
     CHECK(provider.status().state == ProviderState::Draining);
     CHECK_FALSE(readable(fd));
@@ -734,6 +841,20 @@ TEST_CASE("Failures after startup keep the first reason and stop the engine once
         provider->update();
         reason = "tracker diverged";
     }
+    SECTION("fatal error while the camera input drains")
+    {
+        start_provider();
+        provider->request_start();
+        provider->update();
+        camera->withhold_end(true);
+        provider->request_finish();
+        provider->update();
+        REQUIRE(provider->status().state == ProviderState::Draining);
+        script->fatal_reason = "tracker diverged";
+        provider->update();
+        CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
+        reason = "tracker diverged";
+    }
     SECTION("finish_input() throws")
     {
         start_provider();
@@ -760,9 +881,49 @@ TEST_CASE("Failures after startup keep the first reason and stop the engine once
         start_provider();
         provider->request_start();
         provider->update();
-        script->estimates = 1;
+        script->estimates = { 7 };
         provider->update();
-        reason = "never accepted";
+        reason = "image group 7, which is not an accepted group";
+    }
+    SECTION("the engine rejects an image group as invalid input")
+    {
+        start_provider();
+        script->admission = EnqueueResult::RejectedInvalidInput;
+        provider->request_start();
+        provider->update();
+        camera->push(fake_frame(1));
+        provider->update();
+        reason = "rejected image group 1 as invalid input";
+    }
+    SECTION("the engine rejects an image group as not running")
+    {
+        start_provider();
+        script->admission = EnqueueResult::RejectedNotRunning;
+        provider->request_start();
+        provider->update();
+        camera->push(fake_frame(1));
+        provider->update();
+        reason = "rejected image group 1 as not running";
+    }
+    SECTION("the engine returns an unknown admission result")
+    {
+        start_provider();
+        script->admission = static_cast<EnqueueResult>(99);
+        provider->request_start();
+        provider->update();
+        camera->push(fake_frame(1));
+        provider->update();
+        reason = "rejected image group 1 with an unknown result";
+    }
+    SECTION("on_image_group() throws")
+    {
+        start_provider();
+        script->throwing.insert("on_image_group");
+        provider->request_start();
+        provider->update();
+        camera->push(fake_frame(1));
+        provider->update();
+        reason = "on_image_group: on_image_group failed";
     }
     SECTION("not drained within the drain timeout")
     {
@@ -814,21 +975,21 @@ TEST_CASE("Failures after startup keep the first reason and stop the engine once
 TEST_CASE("Draining takes an estimate queued as the engine reports drained", "[unit][pose_provider]")
 {
     auto script = std::make_shared<Script>();
-    script->estimate_when_drained = true;
+    script->estimate_when_drained = 1;
     auto camera = std::make_shared<FakeCameraSource>();
     PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
     provider.request_start();
+    provider.update();
+    camera->push(fake_frame(1));
     provider.update();
     REQUIRE(provider.status().state == ProviderState::Running);
     provider.request_finish();
     provider.update();
 
     CHECK(provider.finished());
-    // A provider that polled before reading input_drained() would finish cleanly with no estimate taken.
+    // A provider that polled before reading input_drained() would finish with the estimate still queued.
     CHECK(script->estimates_taken == 1);
-    CHECK(provider.status().failed);
-    CHECK(provider.status().failed_component == ProviderComponent::Engine);
-    CHECK(provider.status().failure_reason.find("never accepted") != std::string::npos);
+    CHECK_FALSE(provider.status().failed);
 }
 
 TEST_CASE("The constructor rejects a null engine and timeouts out of range", "[unit][pose_provider]")
@@ -847,4 +1008,375 @@ TEST_CASE("The constructor rejects a null engine and timeouts out of range", "[u
     config = ProviderConfig{};
     config.startup_timeout = kMaxProviderTimeout + 1ms;
     CHECK_THROWS_AS(PoseProvider(config, fake_engine(script)), std::invalid_argument);
+}
+
+TEST_CASE("Running undistorts each frame into packed storage and offers it with the anchor's times",
+          "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    SourceDescription description = fake_stereo_description();
+    // Wide enough that its map moves samples by a visible fraction of a pixel at 8x4.
+    description.right.intrinsics =
+        Intrinsics{ 6.0, 6.06, 3.25, 1.75, DistortionModel::RadTan5, { -0.3, 0.05, 1e-3, -1e-3, 0.01 } };
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera, description));
+    provider.request_start();
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Running);
+    const std::array<FakeFrame, 2> frames{ padded_frame(1), padded_frame(2) };
+    for (const FakeFrame& frame : frames)
+    {
+        camera->push(frame);
+    }
+    provider.update();
+
+    // Both leases end in the update that took them, while the engine still holds the prepared storage.
+    CHECK(camera->frames_released() == 2);
+    REQUIRE(script->offered.size() == 2);
+    CHECK(script->offered[0].group_id != 0);
+    CHECK(script->offered[1].group_id > script->offered[0].group_id);
+
+    // Each group keeps its own frame's pixels while the engine holds both.
+    const std::array<Intrinsics, 2> lenses{ *description.left.intrinsics, *description.right.intrinsics };
+    for (std::size_t g = 0; g < frames.size(); ++g)
+    {
+        CAPTURE(g);
+        const EngineImageGroup& group = script->offered[g];
+        const FakeFrame& frame = frames[g];
+        CHECK(group.anchor.local_common_clock_ns == *frame.left.local_common_clock_ns);
+        CHECK(group.anchor.raw_device_clock_ns == *frame.left.raw_device_clock_ns);
+        CHECK(group.fusion_time_ns == *frame.left.local_common_clock_ns);
+        CHECK(group.images.size() == 2);
+        const std::array<const std::vector<std::byte>*, 2> delivered{ &frame.left_bytes, &frame.right_bytes };
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            CAPTURE(i);
+            const HostImage& image = image_of(group, StreamId{ i });
+            CHECK(image.layout == ImageLayout{ 8, 4, PixelFormat::Gray8, 8 });
+            CHECK(image.size_bytes == 32);
+            const Intrinsics& lens = lenses[i];
+            const UndistortMap map = make_undistort_map(
+                CameraCalibration{ lens.fx, lens.fy, lens.cx, lens.cy, lens.distortion, lens.coefficients, {} },
+                script->initialized->streams[i].calibration, 8, 4);
+            std::vector<std::byte> expected(32);
+            remap_gray8(map, delivered[i]->data(), kPaddedStride, expected.data());
+            CHECK(levels(image.data, 32) == levels(expected.data(), 32));
+        }
+    }
+    // The right lens has distortion, so its prepared pixels are not a copy of the delivered ones.
+    CHECK(levels(image_of(script->offered[0], StreamId{ 1 }).data, 8) != levels(frames[0].right_bytes.data(), 8));
+}
+
+TEST_CASE("Only the left stream's times are checked", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+    provider.request_start();
+    provider.update();
+    // The first frame's device time is 0. The right stream's times go back, then are absent and negative.
+    std::array<FakeFrame, 3> frames{ fake_frame(0), fake_frame(1), fake_frame(2) };
+    frames[1].right.local_common_clock_ns = 5;
+    frames[1].right.raw_device_clock_ns = 5;
+    frames[2].right.local_common_clock_ns.reset();
+    frames[2].right.raw_device_clock_ns = -1;
+    for (const FakeFrame& frame : frames)
+    {
+        camera->push(frame);
+    }
+    provider.update();
+
+    CHECK_FALSE(provider.status().failed);
+    REQUIRE(script->offered.size() == 3);
+    for (std::size_t i = 0; i < frames.size(); ++i)
+    {
+        CHECK(script->offered[i].anchor.local_common_clock_ns == *frames[i].left.local_common_clock_ns);
+        CHECK(script->offered[i].anchor.raw_device_clock_ns == *frames[i].left.raw_device_clock_ns);
+    }
+}
+
+TEST_CASE("A hold keeps its prepared storage after the provider is destroyed", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    std::optional<HostImage> kept;
+    std::vector<int> prepared;
+    {
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+        provider.request_start();
+        provider.update();
+        camera->push(fake_frame(1));
+        provider.update();
+        REQUIRE(script->offered.size() == 1);
+        kept = std::get<HostImage>(script->offered[0].images[0].storage);
+        prepared = levels(kept->data, kept->size_bytes);
+    }
+    // A hold that does not own its storage reads freed memory here.
+    CHECK(levels(kept->data, kept->size_bytes) == prepared);
+    kept.reset();
+}
+
+TEST_CASE("A frame that cannot be prepared fails the run with InputPreparation, naming the stream",
+          "[unit][pose_provider]")
+{
+    const FrameRejection rows[] = {
+        { [](FakeCameraSource&, FakeFrame& f) { f.left.layout.format = PixelFormat::RGBA8; },
+          "left eye 'fake/left': frame is not Gray8" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.left.layout.width = 4; },
+          "left eye 'fake/left': frame is 4x4 with stride 8, not 8x4 with stride at least 8" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.right.layout.height = 3; },
+          "right eye 'fake/right': frame is 8x3 with stride 8, not 8x4 with stride at least 8" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.left.layout.stride_bytes = 7; },
+          "left eye 'fake/left': frame is 8x4 with stride 7, not 8x4 with stride at least 8" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.right_bytes.resize(31); },
+          "right eye 'fake/right': frame has 31 readable bytes; its layout needs 32" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.left.local_common_clock_ns.reset(); },
+          "left eye 'fake/left': frame lacks a common-clock or device-clock time" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.left.raw_device_clock_ns.reset(); },
+          "left eye 'fake/left': frame lacks a common-clock or device-clock time" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.left.raw_device_clock_ns = -1; },
+          "left eye 'fake/left': device-clock time -1 ns is negative" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.left.local_common_clock_ns = 1'033'333'333; },
+          "left eye 'fake/left': frame times (common 1033333333 ns, device 66666666 ns) do not both follow the "
+          "previous frame's (1033333333 ns, 33333333 ns)" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.left.raw_device_clock_ns = 33'333'333; },
+          "left eye 'fake/left': frame times (common 1066666666 ns, device 33333333 ns) do not both follow the "
+          "previous frame's (1033333333 ns, 33333333 ns)" },
+        { [](FakeCameraSource& c, FakeFrame& f)
+          {
+              c.push(fake_frame(2));
+              f.sequence = 3;
+          },
+          "left eye 'fake/left': frame times (common 1066666666 ns, device 66666666 ns) do not both follow the "
+          "previous frame's (1066666666 ns, 66666666 ns)",
+          2 },
+        { [](FakeCameraSource&, FakeFrame& f) { f.sequence = 1; },
+          "frame at capture number 1 does not follow the previous capture: expected 2 or later" },
+        { [](FakeCameraSource&, FakeFrame& f) { f.sequence = 0; },
+          "frame at capture number 0 does not follow the previous capture: expected 2 or later" },
+        { [](FakeCameraSource& c, FakeFrame&) {
+             c.push(FrameLoss{ 1, 2 });
+         },
+          "loss report at capture number 1 does not follow the previous capture: expected 2 or later" },
+    };
+    for (const FrameRejection& row : rows)
+    {
+        INFO(row.reason);
+        auto script = std::make_shared<Script>();
+        auto camera = std::make_shared<FakeCameraSource>();
+        PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+        provider.request_start();
+        provider.update();
+        camera->push(fake_frame(1));
+        FakeFrame second = fake_frame(2);
+        row.change(*camera, second);
+        camera->push(std::move(second));
+        provider.update();
+        const ProviderStatus status = provider.status();
+        CHECK(status.state == ProviderState::Finished);
+        CHECK(status.failed_component == ProviderComponent::InputPreparation);
+        CHECK(status.failure_reason == row.reason);
+        CHECK(script->offered.size() == row.offered);
+        CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
+        CHECK(camera->frames_released() == camera->frames_delivered());
+    }
+}
+
+TEST_CASE("Lost captures count from the first frame taken while Running, reported or not", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+    // Before admission opens.
+    camera->push(FrameLoss{ 1, 2 });
+    camera->push(fake_frame(3));
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Ready);
+    provider.request_start();
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Running);
+
+    // Skipped while the engine was initializing, so reported before the first frame taken while Running.
+    camera->push(FrameLoss{ 4, 5 });
+    camera->push(fake_frame(9));
+    camera->push(FrameLoss{ 11, 1 }); // 10 is lost without a report.
+    camera->push(fake_frame(12));
+    camera->push(fake_frame(14)); // 13 is lost without a report.
+    camera->push(FrameLoss{ 15, 1 });
+    provider.update();
+    CHECK(provider.status().state == ProviderState::Running);
+    CHECK(provider.status().frames_lost == 4);
+    CHECK(script->offered.size() == 3);
+
+    // After the finish request, neither a loss nor a gap counts.
+    camera->push(FrameLoss{ 16, 3 });
+    camera->push(fake_frame(20));
+    provider.request_finish();
+    provider.update();
+    const ProviderStatus status = provider.status();
+    CHECK(status.state == ProviderState::Finished);
+    CHECK_FALSE(status.failed);
+    CHECK(status.frames_lost == 4);
+    CHECK(script->offered.size() == 3);
+}
+
+TEST_CASE("Full prepared storage drops whole frames until the engine releases a group", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+    const std::size_t capacity = provider.status().prepared_image_groups;
+    REQUIRE(capacity > 0);
+    provider.request_start();
+    provider.update();
+    uint64_t sequence = 0;
+
+    // A group the engine drops returns its storage when the call returns.
+    script->admission = EnqueueResult::DroppedBackpressure;
+    for (std::size_t i = 0; i <= capacity; ++i)
+    {
+        camera->push(fake_frame(++sequence));
+    }
+    provider.update();
+    CHECK(script->offered.size() == capacity + 1);
+    CHECK(provider.status().frames_dropped == 0);
+
+    // The scripted engine holds accepted storage until it is released.
+    script->admission = EnqueueResult::Accepted;
+    for (std::size_t i = 0; i <= capacity; ++i)
+    {
+        camera->push(fake_frame(++sequence));
+    }
+    provider.update();
+    CHECK(script->offered.size() == 2 * capacity + 1);
+    CHECK(provider.status().frames_dropped == 1);
+    std::set<const std::byte*> held;
+    for (std::size_t i = capacity + 1; i < script->offered.size(); ++i)
+    {
+        for (const EngineImage& image : script->offered[i].images)
+        {
+            held.insert(std::get<HostImage>(image.storage).data);
+        }
+    }
+    CHECK(held.size() == 2 * capacity);
+
+    release(script->offered[capacity + 1]);
+    camera->push(fake_frame(++sequence));
+    provider.update();
+    CHECK(script->offered.size() == 2 * capacity + 2);
+    CHECK(provider.status().frames_dropped == 1);
+    CHECK(provider.status().frames_lost == 0);
+    CHECK_FALSE(provider.status().failed);
+    CHECK(camera->frames_released() == camera->frames_delivered());
+}
+
+TEST_CASE("Estimates follow accepted-group order, at most one per accepted group", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+    provider.request_start();
+    provider.update();
+    // The first and last groups are accepted; the engine drops the middle one.
+    for (const EnqueueResult admission :
+         { EnqueueResult::Accepted, EnqueueResult::DroppedBackpressure, EnqueueResult::Accepted })
+    {
+        script->admission = admission;
+        camera->push(fake_frame(script->offered.size() + 1));
+        provider.update();
+    }
+    REQUIRE(script->offered.size() == 3);
+    const uint64_t first = script->offered[0].group_id;
+    const uint64_t dropped = script->offered[1].group_id;
+    const uint64_t last = script->offered[2].group_id;
+    std::optional<uint64_t> breaks; // The group whose estimate breaks the order.
+
+    SECTION("an estimate for each accepted group")
+    {
+        script->estimates = { first, last };
+    }
+    SECTION("an accepted group without an estimate")
+    {
+        script->estimates = { last };
+    }
+    SECTION("the dropped group")
+    {
+        script->estimates = { dropped };
+        breaks = dropped;
+    }
+    SECTION("a repeated group")
+    {
+        script->estimates = { first, first };
+        breaks = first;
+    }
+    SECTION("an earlier group after a later one")
+    {
+        script->estimates = { last, first };
+        breaks = first;
+    }
+    provider.update();
+
+    const ProviderStatus status = provider.status();
+    CHECK(script->estimates.empty());
+    CHECK(status.failed == breaks.has_value());
+    if (breaks)
+    {
+        CHECK(status.failed_component == ProviderComponent::Engine);
+        CHECK(status.failure_reason == "estimate for image group " + std::to_string(*breaks) +
+                                           ", which is not an accepted group awaiting its estimate");
+    }
+}
+
+TEST_CASE("Draining admits nothing after the finish request and ends engine input after the camera input's end",
+          "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+    provider.request_start();
+    provider.update();
+    camera->push(fake_frame(1));
+    provider.update();
+    REQUIRE(script->offered.size() == 1);
+    camera->withhold_end(true);
+    camera->push(fake_frame(2));
+    provider.request_finish();
+    provider.update();
+
+    CHECK(provider.status().state == ProviderState::Draining);
+    CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start" });
+    CHECK(script->offered.size() == 1);
+    CHECK(camera->frames_released() == 2);
+    // Estimates are still taken while the camera input drains.
+    script->estimates = { script->offered[0].group_id };
+    provider.update();
+    CHECK(script->estimates_taken == 1);
+    CHECK(provider.status().state == ProviderState::Draining);
+    CHECK_FALSE(provider.status().failed);
+
+    camera->withhold_end(false);
+    provider.update();
+    CHECK(provider.finished());
+    CHECK_FALSE(provider.status().failed);
+    CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "finish_input", "stop" });
+    CHECK(camera->detach_calls() == 1);
+}
+
+TEST_CASE("A camera input that does not end within the drain timeout fails the run", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    ProviderConfig config;
+    config.drain_timeout = kShortTimeout;
+    PoseProvider provider(config, fake_engine(script), ready_input(camera));
+    provider.request_start();
+    provider.update();
+    camera->withhold_end(true);
+    provider.request_finish();
+    CHECK(update_until_finished(provider));
+
+    const ProviderStatus status = provider.status();
+    CHECK(status.failed_component == ProviderComponent::CameraInput);
+    CHECK(status.failure_reason == "the camera input did not end within the drain timeout (50 ms)");
+    CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
 }

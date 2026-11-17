@@ -8,14 +8,19 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <memory>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace pose_provider
 {
@@ -35,6 +40,10 @@ constexpr const char* kBodyFrame = "left_optical";
 // Accepts float-rounded rotations, which are renormalized; anything further off is not a rotation.
 constexpr double kUnitTolerance = 1e-3;
 
+// Applied as ProviderStatus::prepared_image_groups. More than an engine's usual admission queue, so its backpressure,
+// not this pool, normally drops a group.
+constexpr std::size_t kPreparedGroups = 8;
+
 const char* component_name(ProviderComponent component)
 {
     switch (component)
@@ -47,8 +56,27 @@ const char* component_name(ProviderComponent component)
         return "Engine";
     case ProviderComponent::CameraInput:
         return "CameraInput";
+    case ProviderComponent::InputPreparation:
+        return "InputPreparation";
     }
     return "unknown";
+}
+
+// How the engine rejected an offered image group, or null when it accepted the group or dropped it, which its health
+// counts.
+const char* rejection_text(EnqueueResult result)
+{
+    switch (result)
+    {
+    case EnqueueResult::Accepted:
+    case EnqueueResult::DroppedBackpressure:
+        return nullptr;
+    case EnqueueResult::RejectedInvalidInput:
+        return "as invalid input";
+    case EnqueueResult::RejectedNotRunning:
+        return "as not running";
+    }
+    return "with an unknown result";
 }
 
 std::string ms_text(std::chrono::milliseconds duration)
@@ -130,10 +158,16 @@ std::optional<Transform> rigid(const Transform& pose)
     return unit;
 }
 
+// "<role> eye '<stream_id>'", which starts every reason about the stream.
+std::string stream_name(const char* role, const StreamDescription& stream)
+{
+    return std::string(role) + " eye '" + stream.stream_id + "'";
+}
+
 // A stream that meets the profile's per-stream rules, with its pose in the rig renormalized.
 struct CheckedStream
 {
-    std::string name; // "<role> eye '<stream_id>'", which starts every reason about the stream.
+    std::string name; // As stream_name() gives it.
     const StreamDescription& description;
     Transform T_rig_camera;
 };
@@ -141,7 +175,7 @@ struct CheckedStream
 // Throws std::invalid_argument naming the stream when it breaks one of the profile's per-stream rules.
 CheckedStream check_stream(const char* role, const StreamDescription& stream)
 {
-    const std::string name = std::string(role) + " eye '" + stream.stream_id + "'";
+    const std::string name = stream_name(role, stream);
     const auto reject = [&](const char* what) { return std::invalid_argument(name + " " + what); };
     if (stream.format != PixelFormat::Gray8)
     {
@@ -190,7 +224,234 @@ double field_of_view_deg(double principal_point, double focal_length, uint32_t s
            180.0 / std::numbers::pi;
 }
 
+// One stream's preparation: the setup its frames must match and the map that undistorts them.
+struct PreparedStream
+{
+    std::string name; // As stream_name() gives it.
+    StreamId id;
+    ImageLayout layout; // Prepared and packed, at the delivered size.
+    UndistortMap map;
+    std::size_t offset = 0; // Of the stream's pixels within a slot.
+};
+
+// Prepared storage for one image group, every stream packed. Held from preparation until the last copy of its hold
+// goes, which the engine may release on any thread; the hold co-owns the slot.
+struct Slot
+{
+    std::vector<std::byte> pixels;
+    std::atomic<bool> held{ false };
+};
+
+using Slots = std::array<std::shared_ptr<Slot>, kPreparedGroups>;
+
+// A slot with no hold, or null. The acquire load orders the engine's last reads of it before the next writes.
+std::shared_ptr<Slot> free_slot(const Slots& slots)
+{
+    for (const std::shared_ptr<Slot>& slot : slots)
+    {
+        if (!slot->held.load(std::memory_order_acquire))
+        {
+            return slot;
+        }
+    }
+    return nullptr;
+}
+
+// Captures missing before @p first when @p next is the next expected one, or 0 before the first frame. Throws
+// std::invalid_argument when @p first goes back.
+uint64_t missing_before(const std::optional<uint64_t>& next, uint64_t first, const char* what)
+{
+    if (!next)
+    {
+        return 0;
+    }
+    if (first < *next)
+    {
+        throw std::invalid_argument(std::string(what) + " at capture number " + std::to_string(first) +
+                                    " does not follow the previous capture: expected " + std::to_string(*next) +
+                                    " or later");
+    }
+    return first - *next;
+}
+
+// Throws std::invalid_argument naming the stream when @p image cannot be read as one of @p stream's frames.
+void check_image(const PreparedStream& stream, const StreamImage& image)
+{
+    const ImageLayout& layout = image.layout;
+    if (layout.format != PixelFormat::Gray8)
+    {
+        throw std::invalid_argument(stream.name + ": frame is not Gray8");
+    }
+    const std::optional<std::size_t> needed = canonical_size_bytes(layout);
+    if (!needed || layout.width != stream.layout.width || layout.height != stream.layout.height)
+    {
+        throw std::invalid_argument(
+            stream.name + ": frame is " + std::to_string(layout.width) + "x" + std::to_string(layout.height) +
+            " with stride " + std::to_string(layout.stride_bytes) + ", not " + std::to_string(stream.layout.width) +
+            "x" + std::to_string(stream.layout.height) + " with stride at least " + std::to_string(stream.layout.width));
+    }
+    const std::size_t readable = image.data != nullptr ? image.size_bytes : 0;
+    if (readable < *needed)
+    {
+        throw std::invalid_argument(stream.name + ": frame has " + std::to_string(readable) +
+                                    " readable bytes; its layout needs " + std::to_string(*needed));
+    }
+}
+
+// The anchor stream's times. Throws std::invalid_argument naming the stream unless both are present, the device time
+// is not negative, and both follow @p last.
+AnchorTimes check_anchor(const std::string& name, const StreamImage& image, const std::optional<AnchorTimes>& last)
+{
+    if (!image.local_common_clock_ns || !image.raw_device_clock_ns)
+    {
+        throw std::invalid_argument(name + ": frame lacks a common-clock or device-clock time");
+    }
+    const AnchorTimes times{ *image.local_common_clock_ns, *image.raw_device_clock_ns };
+    if (times.raw_device_clock_ns < 0)
+    {
+        throw std::invalid_argument(name + ": device-clock time " + std::to_string(times.raw_device_clock_ns) +
+                                    " ns is negative");
+    }
+    if (last && (times.local_common_clock_ns <= last->local_common_clock_ns ||
+                 times.raw_device_clock_ns <= last->raw_device_clock_ns))
+    {
+        throw std::invalid_argument(
+            name + ": frame times (common " + std::to_string(times.local_common_clock_ns) + " ns, device " +
+            std::to_string(times.raw_device_clock_ns) + " ns) do not both follow the previous frame's (" +
+            std::to_string(last->local_common_clock_ns) + " ns, " + std::to_string(last->raw_device_clock_ns) + " ns)");
+    }
+    return times;
+}
+
 } // namespace
+
+// Prepares camera frames as engine image groups: checks each stream against the setup, undistorts it into
+// provider-owned packed storage and releases the frame, and counts the captures lost on the way. The control thread
+// makes every call. It shares lens() and stream_name() with setup resolution, which is why it is in this file; to move
+// it to its own, pass each stream's name and delivered lens in instead.
+class PoseInputAdapter
+{
+public:
+    // Builds each stream's map from its delivered lens to its applied calibration, and the storage.
+    PoseInputAdapter(const SourceDescription& source, const ResolvedPoseSetup& setup);
+
+    // The frame as the next image group, or nullopt when the engine holds every slot, which counts a dropped frame.
+    // Captures missing before it count as lost. The frame is released on every path. Throws std::invalid_argument as
+    // check_image(), missing_before() and check_anchor() do.
+    std::optional<EngineImageGroup> prepare(StereoFrame frame, ProviderStatus& status);
+
+    // Counts the reported captures, and any missing before them, as lost. A loss before the first frame is not counted:
+    // it may cover captures from before admission opened. Throws std::invalid_argument when it goes back.
+    void lose(const FrameLoss& loss, ProviderStatus& status);
+
+    // Every capture from this capture number on comes after the frames prepared so far; absent before the first frame.
+    std::optional<uint64_t> next_sequence() const
+    {
+        return next_sequence_;
+    }
+
+private:
+    std::array<PreparedStream, 2> streams_; // Left, the anchor, then right, as resolve_pose_setup() lists them.
+    Slots slots_;
+    uint64_t next_group_id_ = 1; // 0 is never used, so an estimate left at the default group_id breaks the order.
+    std::optional<uint64_t> next_sequence_;
+    std::optional<AnchorTimes> last_anchor_;
+};
+
+PoseInputAdapter::PoseInputAdapter(const SourceDescription& source, const ResolvedPoseSetup& setup)
+{
+    const std::array<const StreamDescription*, 2> delivered{ &source.left, &source.right };
+    const std::array<const char*, 2> roles{ "left", "right" };
+    std::size_t offset = 0;
+    for (std::size_t i = 0; i < streams_.size(); ++i)
+    {
+        const StreamSetup& applied = setup.streams.at(i);
+        PreparedStream& stream = streams_[i];
+        stream.name = stream_name(roles[i], *delivered[i]);
+        stream.id = applied.id;
+        stream.layout = applied.layout;
+        stream.map = make_undistort_map(lens(*delivered[i]->intrinsics, applied.calibration.T_body_camera),
+                                        applied.calibration, applied.layout.width, applied.layout.height);
+        stream.offset = offset;
+        offset += stream.map.x.size();
+    }
+    for (std::shared_ptr<Slot>& slot : slots_)
+    {
+        slot = std::make_shared<Slot>();
+        slot->pixels.resize(offset);
+    }
+}
+
+std::optional<EngineImageGroup> PoseInputAdapter::prepare(StereoFrame frame, ProviderStatus& status)
+{
+    const std::array<const StreamImage*, 2> images{ &frame.left(), &frame.right() };
+    for (std::size_t i = 0; i < streams_.size(); ++i)
+    {
+        check_image(streams_[i], *images[i]);
+    }
+    const uint64_t lost = missing_before(next_sequence_, frame.sequence(), "frame");
+    const AnchorTimes anchor = check_anchor(streams_[0].name, frame.left(), last_anchor_);
+    status.frames_lost += lost;
+    next_sequence_ = frame.sequence() + 1;
+    last_anchor_ = anchor;
+
+    const std::shared_ptr<Slot> slot = free_slot(slots_);
+    if (!slot)
+    {
+        ++status.frames_dropped;
+        return std::nullopt;
+    }
+    for (std::size_t i = 0; i < streams_.size(); ++i)
+    {
+        remap_gray8(
+            streams_[i].map, images[i]->data, images[i]->layout.stride_bytes, slot->pixels.data() + streams_[i].offset);
+    }
+    frame.release();
+    slot->held.store(true, std::memory_order_relaxed);
+    const std::shared_ptr<const void> hold(
+        slot->pixels.data(), [slot](const void*) { slot->held.store(false, std::memory_order_release); });
+
+    EngineImageGroup group;
+    group.group_id = next_group_id_++;
+    group.fusion_time_ns = anchor.local_common_clock_ns;
+    group.anchor = anchor;
+    group.images.reserve(streams_.size());
+    for (const PreparedStream& stream : streams_)
+    {
+        group.images.push_back(EngineImage{
+            stream.id, HostImage{ stream.layout, slot->pixels.data() + stream.offset, stream.map.x.size(), hold } });
+    }
+    return group;
+}
+
+void PoseInputAdapter::lose(const FrameLoss& loss, ProviderStatus& status)
+{
+    if (!next_sequence_)
+    {
+        return;
+    }
+    status.frames_lost += missing_before(next_sequence_, loss.first_sequence, "loss report") + loss.count;
+    next_sequence_ = loss.first_sequence + loss.count;
+}
+
+template <typename Work>
+bool PoseProvider::call_engine(const char* call, Work&& work)
+{
+    try
+    {
+        work();
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        fail(ProviderComponent::Engine, std::string(call) + ": " + e.what());
+    }
+    catch (...)
+    {
+        fail(ProviderComponent::Engine, std::string(call) + ": unknown exception");
+    }
+    return false;
+}
 
 PoseProvider::PoseProvider(ProviderConfig config,
                            std::unique_ptr<IPoseEngine> engine,
@@ -206,6 +467,7 @@ PoseProvider::PoseProvider(ProviderConfig config,
     startup_deadline_ = Clock::now() + config_.startup_timeout;
     status_.startup_timeout = config_.startup_timeout;
     status_.drain_timeout = config_.drain_timeout;
+    status_.prepared_image_groups = kPreparedGroups;
 }
 
 PoseProvider::~PoseProvider()
@@ -274,7 +536,7 @@ ProviderStatus PoseProvider::status() const
 
 int PoseProvider::wait_fd() const
 {
-    return camera_ ? camera_->wait_fd() : -1;
+    return camera_ && !camera_ended_ ? camera_->wait_fd() : -1;
 }
 
 std::chrono::milliseconds PoseProvider::wait_timeout() const
@@ -420,6 +682,7 @@ void PoseProvider::prepare()
         return;
     }
     setup_ = std::move(setup);
+    input_ = std::make_unique<PoseInputAdapter>(*source_, *setup_);
     enter(ProviderState::Ready);
 }
 
@@ -472,18 +735,35 @@ void PoseProvider::run()
 
 void PoseProvider::drain()
 {
+    // Each frame taken while Running is offered or dropped in the update that takes it, so no group is pending at the
+    // cutoff. A camera input that ends after the deadline fails without finish_input().
+    const bool late = Clock::now() >= drain_deadline_;
     if (!input_finished_)
     {
-        if (!call_engine("finish_input", [&] { engine_->finish_input(); }))
+        if (!detached_)
         {
-            return;
+            camera_->detach();
+            detached_ = true;
         }
-        input_finished_ = true;
+        take_camera_events(); // A finish is requested, so no camera event fails the run here.
+        if (camera_ended_ && !late)
+        {
+            const std::optional<uint64_t> next = input_->next_sequence();
+            const std::string cutoff = next ? "capture number " + std::to_string(*next) : std::string("the first frame");
+            isaaccapture::Logger::get(kLoggerName)
+                ->info("Camera input ended; cutoff before {}; {} later frames released unread", cutoff,
+                       frames_after_cutoff_);
+            if (!call_engine("finish_input", [&] { engine_->finish_input(); }))
+            {
+                return;
+            }
+            input_finished_ = true;
+        }
     }
 
     // Read before polling, so that no estimate can appear after a drained result.
     bool drained = false;
-    if (!call_engine("input_drained", [&] { drained = engine_->input_drained(); }))
+    if (input_finished_ && !call_engine("input_drained", [&] { drained = engine_->input_drained(); }))
     {
         return;
     }
@@ -496,11 +776,17 @@ void PoseProvider::drain()
         finish_run();
         return;
     }
-    take_camera_events(); // A finish is requested, so no camera event fails the run here.
-    if (Clock::now() >= drain_deadline_)
+    if (late)
     {
-        fail(ProviderComponent::Engine,
-             "the engine did not drain within the drain timeout (" + ms_text(config_.drain_timeout) + ")");
+        const std::string limit = " within the drain timeout (" + ms_text(config_.drain_timeout) + ")";
+        if (input_finished_)
+        {
+            fail(ProviderComponent::Engine, "the engine did not drain" + limit);
+        }
+        else
+        {
+            fail(ProviderComponent::CameraInput, "the camera input did not end" + limit);
+        }
     }
 }
 
@@ -534,7 +820,8 @@ void PoseProvider::enter(ProviderState state)
         logger->info("Running");
         break;
     case ProviderState::Draining:
-        logger->info("Draining: finishing input, then waiting up to {} for the engine", ms_text(config_.drain_timeout));
+        logger->info(
+            "Draining: up to {} for the camera input to end and the engine to drain", ms_text(config_.drain_timeout));
         break;
     case ProviderState::Preparing:
     case ProviderState::Finished:
@@ -556,8 +843,25 @@ bool PoseProvider::take_camera_events()
         {
             source_ = std::move(*description);
         }
-        else if (std::holds_alternative<InputFailed>(event) || std::holds_alternative<InputEnded>(event))
+        else if (std::holds_alternative<StereoFrame>(event) || std::holds_alternative<FrameLoss>(event))
         {
+            // Admission is open only while Running. Elsewhere a frame is released unread as `event` goes out of scope,
+            // and a loss costs no admitted frame.
+            if (status_.state == ProviderState::Running)
+            {
+                if (!admit(event))
+                {
+                    return false;
+                }
+            }
+            else if (status_.state == ProviderState::Draining && std::holds_alternative<StereoFrame>(event))
+            {
+                ++frames_after_cutoff_;
+            }
+        }
+        else
+        {
+            camera_ended_ = true;
             const auto* failure = std::get_if<InputFailed>(&event);
             const std::string reason = failure ? "the camera input failed: " + failure->reason : "the camera input ended";
             // A source stopped by the same signal as this run must not fail the finish under way.
@@ -566,10 +870,53 @@ bool PoseProvider::take_camera_events()
                 fail(ProviderComponent::CameraInput, reason);
                 return false;
             }
-            isaaccapture::Logger::get(kLoggerName)->info("After the finish request, {}", reason);
+            if (failure || !std::get<InputEnded>(event).requested)
+            {
+                isaaccapture::Logger::get(kLoggerName)->info("After the finish request, {}", reason);
+            }
         }
-        // Nothing admits frames: a StereoFrame is released unread as `event` goes out of scope.
     }
+}
+
+bool PoseProvider::admit(CameraEvent& event)
+{
+    std::optional<EngineImageGroup> group;
+    try
+    {
+        if (auto* frame = std::get_if<StereoFrame>(&event))
+        {
+            group = input_->prepare(std::move(*frame), status_);
+        }
+        else
+        {
+            input_->lose(std::get<FrameLoss>(event), status_);
+        }
+    }
+    catch (const std::invalid_argument& e)
+    {
+        fail(ProviderComponent::InputPreparation, e.what());
+        return false;
+    }
+    if (!group)
+    {
+        return true;
+    }
+    const uint64_t group_id = group->group_id;
+    EnqueueResult result = EnqueueResult::Accepted;
+    if (!call_engine("on_image_group", [&] { result = engine_->on_image_group(std::move(*group)); }))
+    {
+        return false;
+    }
+    if (const char* how = rejection_text(result))
+    {
+        fail(ProviderComponent::Engine, "the engine rejected image group " + std::to_string(group_id) + " " + how);
+        return false;
+    }
+    if (result == EnqueueResult::Accepted)
+    {
+        accepted_groups_.push_back(group_id);
+    }
+    return true;
 }
 
 bool PoseProvider::take_estimates()
@@ -586,10 +933,15 @@ bool PoseProvider::take_estimates()
         {
             return true;
         }
-        // No image group is admitted yet, so every estimate breaks the accepted-group order.
-        fail(ProviderComponent::Engine,
-             "estimate for image group " + std::to_string(pose.group_id) + ", which was never accepted");
-        return false;
+        // Accepted groups may go without an estimate, but an estimate never repeats a group or goes back.
+        const auto next = std::lower_bound(accepted_groups_.begin(), accepted_groups_.end(), pose.group_id);
+        if (next == accepted_groups_.end() || *next != pose.group_id)
+        {
+            fail(ProviderComponent::Engine, "estimate for image group " + std::to_string(pose.group_id) +
+                                                ", which is not an accepted group awaiting its estimate");
+            return false;
+        }
+        accepted_groups_.erase(accepted_groups_.begin(), next + 1);
     }
 }
 
@@ -607,24 +959,6 @@ bool PoseProvider::check_health()
         return false;
     }
     return true;
-}
-
-bool PoseProvider::call_engine(const char* call, const std::function<void()>& work)
-{
-    try
-    {
-        work();
-        return true;
-    }
-    catch (const std::exception& e)
-    {
-        fail(ProviderComponent::Engine, std::string(call) + ": " + e.what());
-    }
-    catch (...)
-    {
-        fail(ProviderComponent::Engine, std::string(call) + ": unknown exception");
-    }
-    return false;
 }
 
 void PoseProvider::fail(ProviderComponent component, std::string reason)
@@ -704,12 +1038,14 @@ void PoseProvider::finish_run()
     auto logger = isaaccapture::Logger::get(kLoggerName);
     if (status_.failed)
     {
-        logger->error("Finished: failed ({}): {}; {}", component_name(*status_.failed_component),
-                      status_.failure_reason, health_text(status_.engine_health));
+        logger->error("Finished: failed ({}): {}; frames lost {}, frames dropped {}; {}",
+                      component_name(*status_.failed_component), status_.failure_reason, status_.frames_lost,
+                      status_.frames_dropped, health_text(status_.engine_health));
     }
     else
     {
-        logger->info("Finished; {}", health_text(status_.engine_health));
+        logger->info("Finished; frames lost {}, frames dropped {}; {}", status_.frames_lost, status_.frames_dropped,
+                     health_text(status_.engine_health));
     }
 }
 

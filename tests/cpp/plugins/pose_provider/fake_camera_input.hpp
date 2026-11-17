@@ -86,6 +86,13 @@ public:
         enqueue(InputEnded{ false });
     }
 
+    /** @brief While set, the InputEnded that detach() makes pending is withheld, as by a source slow to drain. */
+    void withhold_end(bool withhold)
+    {
+        withhold_end_ = withhold;
+        sync_fd();
+    }
+
     uint64_t frames_delivered() const
     {
         return delivered_;
@@ -153,10 +160,10 @@ private:
         sync_fd();
     }
 
-    // An event is waiting: a queued step, or the InputEnded that detach() makes pending.
+    // An event is waiting: a queued step, or the InputEnded that detach() makes pending and withhold_end() allows.
     bool ready() const
     {
-        return !finished_ && (!queue_.empty() || detached_);
+        return !finished_ && (!queue_.empty() || (detached_ && !withhold_end_));
     }
 
     // Readable exactly while ready().
@@ -232,6 +239,7 @@ private:
     bool closed_ = false; // A last event is queued.
     bool finished_ = false; // The last event was taken.
     bool detached_ = false;
+    bool withhold_end_ = false;
     bool signaled_ = false;
     bool input_destroyed_ = false;
     int detach_calls_ = 0;
