@@ -51,6 +51,9 @@ OFFSETS_KEPT = 64
 # A change of the Thor's wall clock against its monotonic clock above this,
 # between two ROBOT_STATEs, counts as a step of the wall clock.
 CLOCK_STEP_S = 0.02
+# How long a STOP this link sent waits to be shown in a ROBOT_STATE before a
+# later STOP is timed in its place, in s of the link's monotonic clock.
+STOP_SHOWN_WAIT_S = 5.0
 # The robot app cuts a reason and a sender to these lengths; so does the link.
 MAX_REASON_CHARS = 256
 MAX_SENDER_CHARS = 64
@@ -81,6 +84,30 @@ class Pinned:
     session_id: str
     owner_number: int
     stop_number: int
+
+
+@dataclass(frozen=True)
+class Arrival:
+    """When a ROBOT_STATE arrived, and what the link's clock samples say then.
+
+    A clock sample is a ROBOT_STATE's arrival on the link's monotonic clock
+    less its clock_mono_s: the offset between the two machines' monotonic
+    clocks plus that state's transit over the robot connection.
+    """
+
+    at_s: float  # the arrival, on the link's monotonic clock
+    sample_s: float  # this state's clock sample
+    offset_s: float  # the smallest sample kept: the offset thor_now() uses
+    spread_s: float  # the largest sample kept less the smallest
+    samples: int  # how many are kept, OFFSETS_KEPT at most
+    # Set on the first ROBOT_STATE with a higher stop number than the one
+    # shown when this link sent a STOP: the time from that STOP to this arrival.
+    stop_shown_s: float | None = None
+
+    @property
+    def transit_above_shortest_s(self) -> float:
+        """This state's transit less the shortest among the samples kept."""
+        return self.sample_s - self.offset_s
 
 
 class _Kept:
@@ -130,7 +157,11 @@ class AgentLink:
         self._pinned: Pinned | None = None
         self._pin_lost = ""  # why, once a RESULT said the robot connection is lost
         self._listeners: tuple[Callable[[RobotState], None], ...] = ()
+        self._arrival_listeners: tuple[Callable[[RobotState, Arrival], None], ...] = ()
         self._welcome_listeners: tuple[Callable[[Welcome], None], ...] = ()
+        # (when this link sent a STOP, the stop number shown then), until a
+        # ROBOT_STATE shows a higher stop number.
+        self._stop_mark: tuple[float, int] | None = None
         self._client = WorkstationClient(
             carrier,
             types.SimpleNamespace(monotonic=monotonic),
@@ -257,6 +288,16 @@ class AgentLink:
         """
         with self._cond:
             self._listeners = (*self._listeners, fn)
+
+    def add_arrival_listener(self, fn: Callable[[RobotState, Arrival], None]) -> None:
+        """Call fn(state, arrival) for every ROBOT_STATE from now on.
+
+        For measuring: arrival says when the state arrived and what the clock
+        samples were then. fn runs on the receive thread, after the state
+        listeners, and must not block.
+        """
+        with self._cond:
+            self._arrival_listeners = (*self._arrival_listeners, fn)
 
     def add_welcome_listener(self, fn: Callable[[Welcome], None]) -> None:
         """Call fn(welcome) for every WELCOME from now on.
@@ -499,10 +540,17 @@ class AgentLink:
             _log.warning("PERMIT for %s not sent: %s", move_id, error)
 
     def gripper(
-        self, opening: float, max_effort: float, mode: str, timeout_s: float
+        self,
+        opening: float,
+        max_effort: float,
+        mode: str,
+        timeout_s: float,
+        scout_opening: float | None = None,
     ) -> Result:
         """GRIPPER with the pinned numbers; blocks until its final RESULT.
 
+        scout_opening is the scout stage of the driver's two-stage close: the
+        opening the jaws close to first, before `opening`; None is one close.
         It expires timeout_s from now on the Thor's monotonic clock, so the
         robot app starts nothing of it once this wait has ended. RuntimeError
         without a pin; LinkLost; CommandTimeout; StaleState before the first
@@ -519,6 +567,7 @@ class AgentLink:
                 max_effort=float(max_effort),
                 mode=mode,
                 expires_mono_s=mono + float(timeout_s),
+                scout_opening=None if scout_opening is None else float(scout_opening),
             )
         )
         return self._take_final(command_id, timeout_s)
@@ -542,6 +591,17 @@ class AgentLink:
             )
         except Exception:
             _log.exception("STOP could not be sent")
+            return
+        # After the STOP has left: from when its showing in ROBOT_STATE is timed.
+        try:
+            sent = self._monotonic()
+            with self._cond:
+                mark = self._stop_mark
+                waiting = mark is not None and sent - mark[0] <= STOP_SHOWN_WAIT_S
+                if self._state is not None and not waiting:
+                    self._stop_mark = (sent, self._state.stop_number)
+        except Exception:
+            _log.debug("the STOP's time was not noted", exc_info=True)
 
     def wait_first(self, command_id: str, timeout_s: float) -> Result:
         """The first RESULT of this command, "accepted" or final.
@@ -689,17 +749,45 @@ class AgentLink:
                         "monotonic clock",
                         now - was,
                     )
-            self._offsets.append(arrived - state.clock_mono_s)
+            sample = arrived - state.clock_mono_s
+            self._offsets.append(sample)
             self._state, self._state_at = state, arrived
             self._states += 1
             self._changes += 1
             listeners = self._listeners
+            measuring = self._arrival_listeners
+            arrival = None
+            if measuring:
+                arrival = self._arrival(state, arrived, sample)
             self._cond.notify_all()
         for listener in listeners:
             try:
                 listener(state)
             except Exception:
                 _log.exception("a state listener failed")
+        for listener in measuring:
+            try:
+                listener(state, arrival)
+            except Exception:
+                _log.exception("an arrival listener failed")
+
+    def _arrival(self, state: RobotState, arrived: float, sample: float) -> Arrival:
+        """The Arrival of the ROBOT_STATE just taken in (lock held)."""
+        shown = None
+        mark = self._stop_mark
+        if mark is not None and state.stop_number > mark[1]:
+            self._stop_mark = None
+            if arrived - mark[0] <= STOP_SHOWN_WAIT_S:
+                shown = arrived - mark[0]
+        offset = min(self._offsets)
+        return Arrival(
+            at_s=arrived,
+            sample_s=sample,
+            offset_s=offset,
+            spread_s=max(self._offsets) - offset,
+            samples=len(self._offsets),
+            stop_shown_s=shown,
+        )
 
     def _take_result(self, result: Result) -> None:
         with self._cond:

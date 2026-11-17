@@ -4,12 +4,22 @@
 """How a task takes the arm, keeps it and gives it back.
 
 TaskGate wraps APAI's AgentOrchestrator.run_task and SkillRuntime.execute.
-Thinking and looking never take the arm. At the first motion skill of a task
-the gate reads ROBOT_STATE, asks the typed "yes" at the terminal the task was
-typed at, and asks the robot app for control ownership. When the task ends
-while the agent owns the arm, the gate gives the arm back (success) or sends
-a help request (anything else but a cancel), waits for the RESULT, and only
-then closes the task on the arm adapter.
+It decides as the functional launcher's admission does (Admission in the
+experiment's thor_runtime.py, the program that ran the agent on the robot's
+own computer): a tool that is neither read-only nor a motion skill is not
+admitted, and one typed "yes" covers a task's motion tools. With the full
+stack the launcher puts that Admission's own execute() around this gate.
+What two machines add: thinking and looking
+never take the arm; at the first motion skill of a task the gate reads
+ROBOT_STATE, asks the typed "yes" at the terminal the task was typed at, and
+asks the robot app for control ownership. When the task ends while the agent
+owns the arm, the gate gives the arm back, or sends a help request when the
+task got stuck, was blocked, ran out of steps or raised; it waits for the
+RESULT and only then closes the task on the arm adapter.
+
+The rest tool (move_to_rest) is APAI's own. It ends with the motors off, in
+standby. The next motion skill asks the functional launcher's question
+before the robot app is asked to switch the motors on again.
 
 A skill stop of APAI latches the workstation checker. The next task clears
 that latch at its first motion skill, after the typed "yes" and the Thor's
@@ -33,6 +43,8 @@ from contextvars import ContextVar
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
+from ..protocol.confirm import PATH_IS_CLEAR, confirms
+from ..protocol.messages import REQUEST_MOTORS_ON, REQUEST_PARK
 from ..robot_app.text import MAX_REASON_CHARS, printable
 from .link_client import CommandTimeout, LinkLost, Pinned, StaleState
 
@@ -65,12 +77,43 @@ READ_ONLY_TOOLS = frozenset(
         "emergency_stop",
     }
 )
-# The return to rest is the robot app's, never a skill of the agent.
+# APAI's rest tool: up to the ready pose, the fold onto the rest pose, the
+# proof of rest by measurement, the jaws closed, the motors off.
 REST_SKILL = "move_to_rest"
-REST_REFUSAL = (
-    "the return to rest belongs to the robot app: type rest at the Thor "
-    "terminal or run the console command rest"
+# Texts of the functional launcher (Admission in thor_runtime.py), copied
+# because this module also runs without the experiment's folder;
+# test_tools_conform.py compares each with its source. What a tool gets that
+# is not admitted:
+NOT_ADMITTED = "{name} not admitted in this session; no command sent"
+# Its question before the motors are connected, asked here before the robot
+# app is asked to switch them on again:
+CONNECT_QUESTION = (
+    "Connect the powered ReBot on can4? Stay beside the e-stop. "
+    "On exit, return to rest through the safety checks, then release torque."
 )
+CONNECT_DECLINED = "Operator declined arm connection"
+# What its question about a task says the typed yes covers:
+TASK_COVERS = (
+    "This includes subsequent motion tools, retries and return-to-rest "
+    "within this task, without another tool prompt."
+)
+MOTORS_OFF_NOTE = "The robot app reports the motors off at rest."
+# The end of a session: the functional launcher returns the arm to rest and
+# switches the motors off by itself. Here the operator is asked first.
+END_QUESTION = (
+    "End of the session: return the arm to rest and switch the motors off? "
+    "The arm moves by itself; keep the return path clear. Type "
+    f'"{PATH_IS_CLEAR}" to start; anything else leaves the arm holding with '
+    "the motors on: "
+)
+END_HOLDS = (
+    "the arm holds with the motors on: type rest at the Thor terminal or run "
+    "the console command rest"
+)
+# How long the robot app has for the return to rest of END_QUESTION, and to
+# switch the motors on again, in s.
+PARK_WAIT_S = 240.0
+MOTORS_ON_WAIT_S = 60.0
 RESTART = (
     "a skill stop latched the workstation checker: restart the agent program; "
     "it takes no new task"
@@ -92,14 +135,21 @@ NO_TASK = "motion needs a task typed at the agent terminal"
 # gives the arm back at rest, also while a STOP has made nobody the owner.
 # No task takes the arm then.
 TAKEOVER_OPEN = "takeover not finished: give the arm back with right A at rest"
+# Why a motion tool was not let through. CONSENT and OWNERSHIP leave the task
+# to go on, as a tool that is not admitted does in the functional launcher.
+# BLOCKED ends it: the robot's own state needs the operator first.
 CONSENT = "consent"
 OWNERSHIP = "ownership"
-_COUNT_WORDS = {1: "one step", 2: "two steps", 3: "three steps"}
+BLOCKED = "blocked"
+NOT_A_TOOL = "neither a read-only tool nor a motion tool of this session"
 
 # What to do about a refusal of the robot app, by a piece of its reason.
 _REMEDIES = (
     ("session id does not match", "the robot app was restarted: restart the agent"),
-    ("the motors are off", "restart the robot app at the Thor terminal"),
+    (
+        "the motors are off",
+        "type on at the Thor terminal or run the console command on",
+    ),
     ("stop number", "the robot's state changed meanwhile: type the task again"),
     ("owner number", "the robot's state changed meanwhile: type the task again"),
     (
@@ -125,7 +175,6 @@ class _Task:
         self.text = text
         self.owner = False  # the agent became control owner in this task
         self.refusal: tuple[str, str] | None = None  # (reason, kind) of the start
-        self.failed = 0  # results with ok false in a row, while owner
         self.last: Any = None  # the last tool result
 
 
@@ -159,13 +208,15 @@ class TaskGate:
         self._harness = harness
         task = getattr(settings, "task", settings)
         self._timed_return = bool(getattr(task, "timed_return", False))
-        self._failed_limit = int(getattr(task, "failed_steps_limit", 3))
         self._speed = float(getattr(task, "max_joint_speed", 0.1))
         self._end_wait_s = float(getattr(task, "end_wait_s", 5.0))
         self._owner_wait_s = float(getattr(task, "owner_wait_s", 2.0))
         self._clear = bool(getattr(task, "clear_skill_stop", True))
         self._ask, self._say = ask, say
-        self._motion = frozenset(motion_skills) - frozenset(read_only_tools)
+        self._read_only = frozenset(read_only_tools)
+        self._motion = frozenset(motion_skills) - self._read_only
+        # Some task of this gate owned the arm: the session's end is offered.
+        self.arm_used = False
         self._current: ContextVar[_Task | None] = ContextVar(
             "agentic_remote_task", default=None
         )
@@ -261,21 +312,32 @@ class TaskGate:
     def execute(
         self, original: Callable[[str, dict], dict], name: str, args: dict
     ) -> dict:
-        """SkillRuntime.execute: the first motion skill of a task takes the arm."""
-        if name == REST_SKILL:
-            self._say(f"{name} refused: {REST_REFUSAL}")
-            return _refusal(REST_REFUSAL, OWNERSHIP)
+        """SkillRuntime.execute, admitted as the functional launcher admits.
+
+        A read-only tool runs. The first motion skill of a task takes the
+        arm; one that finds the motors off in standby switches them on again
+        first, after the operator's yes. Any other tool is not admitted.
+        """
         task = self._current.get()
+        refusal: tuple[str, str] | None = None
         if name in self._motion:
             if task is None:
-                return _refusal(NO_TASK, CONSENT)
-            if task.refusal is None and not task.owner:
-                task.refusal = self._start(task, name, args)
-            if task.refusal is not None:
-                return _refusal(*task.refusal)
-        result = self._run(original, name, args)
+                refusal = (NO_TASK, CONSENT)
+            else:
+                if task.refusal is None and not task.owner:
+                    task.refusal = self._start(task, name, args)
+                refusal = task.refusal
+                if refusal is None and self._asleep(name, args):
+                    reason = self._wake()
+                    if reason is not None:
+                        refusal = self._refused(reason, CONSENT)
+        elif name not in self._read_only:
+            refusal = (NOT_A_TOOL, CONSENT)
+        if refusal is not None:
+            result: Any = _refusal(name, *refusal)
+        else:
+            result = self._run(original, name, args)
         if task is not None:
-            result = self._count(task, result)
             task.last = result
         return result
 
@@ -286,25 +348,73 @@ class TaskGate:
         with scope():
             return original(name, args)
 
-    def _count(self, task: _Task, result: Any) -> Any:
-        """The three-failures rule, from the moment the agent owns the arm."""
-        if not task.owner or not isinstance(result, dict):
-            return result
-        if result.get("ok") is True:
-            task.failed = 0
-        elif result.get("ok") is False:
-            task.failed += 1
-            stuck = result.get("outcome") == "stuck" or result.get("motion_blocked")
-            if task.failed >= self._failed_limit and not stuck:
-                count = _COUNT_WORDS.get(self._failed_limit, f"{task.failed} steps")
-                last = result.get("error") or "no reason given"
-                result = {
-                    **result,
-                    "ok": False,
-                    "outcome": "stuck",
-                    "ask": f"{count} failed in a row: {last}",
-                }
-        return result
+    # Standby: the motors are off at rest until the next motion skill
+
+    def _asleep(self, name: str, args: Any) -> bool:
+        """Whether this motion skill finds the motors off and needs them on.
+
+        The rest tool answers in standby without touching the motors, unless
+        it is asked to keep them on.
+        """
+        if getattr(self._adapter, "connected", True) is not False:
+            return False
+        keeps = isinstance(args, dict) and args.get("keep_torque") in (True, "true")
+        return name != REST_SKILL or keeps
+
+    def _wake(self) -> str | None:
+        """Switch the motors on again; why they stay off, or None once on.
+
+        The functional launcher's question comes first. The robot app
+        connects the arm as at its start: only an arm that lies at rest.
+        """
+        link = self._link
+        try:
+            state = link.state(1.0)
+            if not state.torque_on:
+                answer = self._ask(
+                    f"{MOTORS_OFF_NOTE} {CONNECT_QUESTION} Type yes to proceed: "
+                )
+                if str(answer).strip().lower() != "yes":
+                    return CONNECT_DECLINED
+                quote = link.pinned or Pinned(
+                    state.session_id, state.owner_number, state.stop_number
+                )
+                result = link.request_owner(
+                    REQUEST_MOTORS_ON,
+                    reason="the operator typed yes at the agent terminal",
+                    quote=quote,
+                    timeout_s=MOTORS_ON_WAIT_S,
+                )
+                self.requests.append((REQUEST_MOTORS_ON, result.status, result.reason))
+                if result.status != "completed":
+                    return f"the motors were not switched on: {result.reason}"
+                self._await_torque()
+                self._say("the motors are on again")
+        except (LinkLost, StaleState) as error:
+            return f"robot connection lost: {error}"
+        except CommandTimeout as error:
+            return f"the robot did not answer: {error}"
+        except Exception as error:
+            return f"no typed yes: {error}"
+        note = getattr(self._adapter, "motors_on", None)
+        if callable(note):
+            note()
+        return None
+
+    def _await_torque(self) -> None:
+        """Wait for a ROBOT_STATE that shows the motors on."""
+        link = self._link
+        end = time.monotonic() + self._owner_wait_s
+        while True:
+            try:
+                if link.state().torque_on:
+                    return
+            except (LinkLost, StaleState):
+                return
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            link.wait_change(min(left, 0.05))
 
     # The start of a task
 
@@ -313,13 +423,13 @@ class TaskGate:
         link = self._link
         if self.restart_needed:
             self.restart_told = True
-            return self._refused(RESTART, OWNERSHIP)
+            return self._refused(RESTART, BLOCKED)
         if self._adapter is None:
             return self._refused("no arm is built yet", OWNERSHIP)
         self.return_late_ownership(self._owner_wait_s)
         if self.restart_needed:  # latched since the check above
             self.restart_told = True
-            return self._refused(RESTART, OWNERSHIP)
+            return self._refused(RESTART, BLOCKED)
         if self._ended_number is not None:
             # The ROBOT_STATE that shows the last task's ownership as ended
             # can still be on its way when the next task is typed at once.
@@ -330,23 +440,22 @@ class TaskGate:
             return self._refused(f"robot connection lost: {error}", OWNERSHIP)
         if reason is not None:
             self.wrong_robot_app = printable(reason, MAX_REASON_CHARS)
-            return self._refused(reason, OWNERSHIP)
+            return self._refused(reason, BLOCKED)
         self._say(_status_line(state))
         reason = _not_startable(state)
         if reason is not None:
             if state.owner == "agent" and self.end_unanswered:
                 reason += f" ({UNANSWERED_REMEDY})"
-            return self._refused(reason, OWNERSHIP)
+            return self._refused(reason, BLOCKED)
         # The typed yes covers the latch the question names, and no later stop.
         told, mark = self.skill_stop, _stop_count(self._harness)
         if told and not self._clear:  # latched since the check above
             self._restart = self.restart_told = True
-            return self._refused(RESTART, OWNERSHIP)
+            return self._refused(RESTART, BLOCKED)
         prompt = (
             (f"Note: {SKILL_STOP_NOTE}. " if told else "")
             + f"Authorize motion for this task: {json.dumps(task.text)}. "
-            f"First tool {name}: {_short(args)}. This covers the later motion "
-            "tools and retries of this task, without another prompt. Joint "
+            f"First tool {name}: {_short(args)}. {TASK_COVERS} Joint "
             f"speed at most {self._speed:g} rad/s. The checks of the robot app "
             "and of the workstation stay active. Keep the workspace clear; "
             "Ctrl+C at this terminal is STOP. Type yes to proceed: "
@@ -359,7 +468,12 @@ class TaskGate:
             return self._refused("the operator did not type yes", CONSENT)
         if self.restart_needed:  # latched while the question stood
             self.restart_told = True
-            return self._refused(RESTART, OWNERSHIP)
+            return self._refused(RESTART, BLOCKED)
+        if not state.torque_on:
+            # Standby: the robot app takes a task only with the motors on.
+            reason = self._wake()
+            if reason is not None:
+                return self._refused(reason, CONSENT)
         quote = Pinned(state.session_id, state.owner_number, state.stop_number)
         try:
             result = link.request_owner(
@@ -396,7 +510,7 @@ class TaskGate:
             reason = self._clear_skill_stop(pinned, told, mark)
             if reason is not None:
                 self._give_back(pinned, reason)
-                return self._refused(reason, OWNERSHIP)
+                return self._refused(reason, _kind(reason))
         link.pin(pinned)
         self._adapter.open_task(pinned)
         if self.skill_stop:  # stopped since the gate's last look at the checker
@@ -409,8 +523,8 @@ class TaskGate:
             )
             self._adapter.close_task()
             self._give_back(pinned, reason)
-            return self._refused(reason, OWNERSHIP)
-        task.owner = self._owning = True
+            return self._refused(reason, _kind(reason))
+        task.owner = self._owning = self.arm_used = True
         if cleared:
             self._say("the skill stop of the last task is cleared")
         self._say(f"the agent owns the arm (owner number {pinned.owner_number})")
@@ -700,10 +814,71 @@ class TaskGate:
                 f"HELP NEEDED: {reason}. The arm holds and nobody owns it"
                 + (f"; assistance wait {wait:g} s" if _is_number(wait) else "")
             )
+        elif getattr(self._adapter, "connected", True) is False:
+            self._say(
+                f"{reason}: the arm lies at rest with the motors off and nobody owns it"
+            )
         else:
             self._say(
-                "task completed: the arm holds where it is and nobody owns it; "
+                f"{reason}: the arm holds where it is and nobody owns it; "
                 "type rest at the Thor terminal or run the console command rest"
+            )
+
+    # The end of the session
+
+    def end_session(self) -> None:
+        """Offer the functional end of a session; says how the arm is left.
+
+        The functional launcher ends with the arm at rest, the jaws closed and
+        the motors off. Here the arm was stopped or holds, so the operator is
+        asked first; on the typed phrase the robot app runs its typed rest.
+        Nothing is asked when no task of this gate owned the arm, or when the
+        arm is not nobody's, has a fault-stop, or lies at rest with the motors
+        off. A robot app this program must not drive gets no owner request
+        here either.
+        """
+        if not self.arm_used:
+            return
+        if self.wrong_robot_app:
+            self._say(END_HOLDS)
+            return
+        link = self._link
+        try:
+            state = link.state(1.0)
+        except (LinkLost, StaleState):
+            return
+        if not state.torque_on:
+            self._say("the arm lies at rest with the motors off")
+            return
+        if _not_startable(state) is not None:
+            self._say(END_HOLDS)
+            return
+        try:
+            answer = self._ask(END_QUESTION)
+        except Exception as error:
+            _log.debug("the end of the session was not asked: %s", error)
+            answer = ""
+        if not confirms(answer, PATH_IS_CLEAR):
+            self._say(END_HOLDS)
+            return
+        quote = Pinned(state.session_id, state.owner_number, state.stop_number)
+        try:
+            result = link.request_owner(
+                REQUEST_PARK,
+                reason="the agent program ends",
+                quote=quote,
+                timeout_s=PARK_WAIT_S,
+            )
+        except (LinkLost, StaleState, CommandTimeout) as error:
+            self._say(f"the return to rest was not answered: {error}; {END_HOLDS}")
+            return
+        self.requests.append((REQUEST_PARK, result.status, result.reason))
+        if result.status == "completed":
+            self._say("the arm lies at rest: the jaws are closed, the motors are off")
+        else:
+            self._say(
+                f"the return to rest ended {result.status}: {result.reason}; "
+                f"{END_HOLDS}"
             )
 
 
@@ -730,11 +905,18 @@ def _ending(
     summary = str(getattr(report, "summary", ""))
     if summary.startswith("step budget exhausted"):
         return "help_needed", "step budget ran out"
-    return "help_needed", f"task ended without success: {summary}"
+    # The model reports that it could not do it: as in the functional
+    # launcher the report is printed and the next task is asked for. The arm
+    # is given back and no help request is made.
+    return "nobody", f"task ended without success: {summary}"
 
 
 def _not_startable(state: RobotState) -> str | None:
-    """Why no task can take the arm in this state, without asking anybody."""
+    """Why no task can take the arm in this state, without asking anybody.
+
+    Motors that are off at rest are no such reason: the task's first motion
+    skill switches them on again after the operator's yes.
+    """
     if state.owner == "human" or _takeover_open(state):
         return TAKEOVER_OPEN
     if state.owner != "nobody":
@@ -742,9 +924,12 @@ def _not_startable(state: RobotState) -> str | None:
     if state.stop_level == "fault":
         why = f" ({state.fault_reason})" if state.fault_reason else ""
         return f"fault-stop{why}: run the console command reset"
-    if not state.torque_on:
-        return "the motors are off; restart the robot app"
     return None
+
+
+def _kind(reason: str) -> str:
+    """BLOCKED for a refusal only a restart ends, else OWNERSHIP."""
+    return BLOCKED if reason == RESTART else OWNERSHIP
 
 
 def _takeover_open(state: RobotState) -> bool:
@@ -776,15 +961,21 @@ def _remedy(reason: str) -> str:
     return ""
 
 
-def _refusal(reason: str, kind: str) -> dict[str, Any]:
-    """What APAI gets for a motion skill the gate did not let through."""
-    return {
+def _refusal(name: str, reason: str, kind: str) -> dict[str, Any]:
+    """What APAI gets for a tool the gate did not let through.
+
+    The functional launcher's text, then the split's reason. Only a BLOCKED
+    refusal carries motion_blocked, which ends the task at once.
+    """
+    result: dict[str, Any] = {
         "ok": False,
-        "error": f"{reason}; no command sent",
+        "error": f"{NOT_ADMITTED.format(name=name)}: {reason}",
         "refused": kind,
-        "motion_blocked": True,
-        "motion_block_reason": reason,
+        "reason": reason,
     }
+    if kind == BLOCKED:
+        result.update(motion_blocked=True, motion_block_reason=reason)
+    return result
 
 
 def _refused_report(task: str, reason: str) -> Any:

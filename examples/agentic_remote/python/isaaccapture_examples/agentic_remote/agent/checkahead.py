@@ -32,6 +32,7 @@ FRAME_TIMES_KEPT = 256
 # How often vet_whole starts when the grid changes under it.
 WHOLE_TRIES = 3
 _FRESH_POLL_S = 0.01
+_MARGIN_EPS = 1e-9  # rad; the checker's own slack at its joint margin
 
 _refused_lock = threading.Lock()
 _refused_type: type | None = None
@@ -130,6 +131,43 @@ class FrameTimes:
 
 def _pose(q: Sequence[float]) -> np.ndarray:
     return np.asarray(q, dtype=float)
+
+
+def fold_margin(harness: Any, q_prev: np.ndarray, q_next: np.ndarray) -> float | None:
+    """The joint margin a step onto the rest pose is vetted with, else None.
+
+    The joint margin is the band the checker keeps clear of each joint stop.
+    The rest pose (the checker's park_q) lies on joint stops, and the last
+    fold step of APAI's rest tool is streamed with the margin at 0. 0.0 for
+    a step that enters the margin only at joints whose rest value lies in it,
+    goes no further than that value and moves no joint away from the rest
+    pose. None, the checker's own margin, for every other step. The checker
+    callback of the move still decides whether the move may use it; the
+    Thor's agent checker has the same rule (apai_backend.ApaiChecker).
+    """
+    park = getattr(harness, "park_q", None)
+    kin = getattr(harness, "kin", None)
+    if park is None or kin is None:
+        return None
+    try:
+        rest = np.asarray(park, dtype=float).reshape(-1)
+        low, high = (np.asarray(side, dtype=float) for side in kin.joint_limits)
+        margin = float(harness.limits.joint_margin)
+    except (TypeError, ValueError, AttributeError):
+        return None  # no rest pose or no joint limits to read: the own margin
+    if not (rest.shape == low.shape == high.shape == q_prev.shape == q_next.shape):
+        return None
+    under = q_next < low + margin - _MARGIN_EPS
+    over = q_next > high - margin + _MARGIN_EPS
+    if not (under.any() or over.any()):
+        return None
+    onto = np.where(
+        under,
+        (rest < low + margin) & (q_next >= rest - _MARGIN_EPS),
+        (rest > high - margin) & (q_next <= rest + _MARGIN_EPS),
+    )
+    nearer = np.abs(q_next - rest) <= np.abs(q_prev - rest) + _MARGIN_EPS
+    return 0.0 if onto[under | over].all() and nearer.all() else None
 
 
 class CheckAhead:
@@ -262,7 +300,7 @@ class CheckAhead:
             prev = _pose(start_q if first == 0 else setpoints[first - 1])
             for index in range(first, last + 1):
                 target = _pose(setpoints[index])
-                reason = self._harness.vet_step(prev, target, self.period_s)
+                reason = self._vet_step(prev, target)
                 if reason is not None:
                     raise self._refused(index, reason, count)
                 prev = target
@@ -271,6 +309,13 @@ class CheckAhead:
             return Evidence(wall_s=wall_s, grid_stamp=stamp)
         finally:
             self._lock.release()
+
+    def _vet_step(self, prev: np.ndarray, target: np.ndarray) -> str | None:
+        """The checker's vet of one setpoint; a step onto the rest pose: fold_margin."""
+        margin = fold_margin(self._harness, prev, target)
+        if margin is None:
+            return self._harness.vet_step(prev, target, self.period_s)
+        return self._harness.vet_step(prev, target, self.period_s, joint_margin=margin)
 
     def _grid_now(self) -> tuple[tuple[int, int], float | None]:
         """The grid's stamp and its camera frame's capture time (lock held)."""
@@ -336,9 +381,7 @@ class MoveCheck:
 
     def _vet(self, index: int) -> bool:
         check = self._check
-        reason = check._harness.vet_step(
-            self._prev(index), self._q[index], check.period_s
-        )
+        reason = check._vet_step(self._prev(index), self._q[index])
         if reason is not None:
             self.refusal = check._refused(index, reason, self.count)
         return reason is None

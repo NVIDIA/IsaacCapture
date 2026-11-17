@@ -5,9 +5,16 @@
 
 load_settings() reads and checks the file. build_apai_config() writes an arm
 profile and a camera profile into the run folder and loads them with APAI's
-own loader; the arm's type is robot_link, the obstacle grid is required and
-the joint speed is the task's. APAI and the experiment are imported inside
-functions, so the module imports without them.
+own loader; the arm's type is robot_link and the obstacle grid is required.
+
+The experiment is the folder of the rig's single-machine program; its launcher
+is thor_runtime.py. With the full stack the configuration is the one that
+launcher builds from the experiment's files: its arm profile, its speed
+profile, its mounting record (the accepted fit of the camera's place beside
+the arm, with the hash of its hand-eye file) and its camera numbers. Only what
+a second machine changes differs: the arm's and the camera's type, and where
+files lie. APAI and the experiment are imported inside functions, so the
+module imports without them.
 """
 
 from __future__ import annotations
@@ -17,8 +24,9 @@ import json
 import math
 import os
 import re
-from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+import sys
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +34,7 @@ import yaml
 
 from ..protocol.messages import SIMULATED_DRIVERS
 from .arm_adapter import ARM_TYPE, ArmSettings
-from .self_mask import EXPERIMENT_DIR_ENV
+from .self_mask import EXPERIMENT_DIR_ENV, experiment_module
 
 STACK_MINIMAL = "minimal"
 STACK_FULL = "full"
@@ -44,6 +52,10 @@ APPROVAL_TOOL = "tool"
 APPROVALS = (APPROVAL_TASK, APPROVAL_TOOL)
 # The debug recording's size on disk without --debug-max-gib, in GiB.
 DEBUG_MAX_GIB = 16.0
+# APAI's configuration of a run, in its run folder under the name the
+# experiment's launcher gives it. The experiment's viewer (thor_viewer.py, the
+# browser view of a run's debug recording) lists a run only with this file.
+RESOLVED_CONFIG = "resolved-config.yaml"
 LOG_LEVELS = ("debug", "info", "warning", "error")
 # The camera a run uses: the camera connection, APAI's mock camera, or a
 # folder of recorded stereo pairs ("recorded:<folder>").
@@ -68,9 +80,51 @@ APAI_ENV_PREFIX = "APAI_"
 # change what APAI builds behind the launcher's back, and is refused.
 ALLOWED_ENV = (
     *(name for name, _ in APAI_STORES),
-    "APAI_REQUIRE_CUDA",  # run_agent.sh sets it
+    # The operator's own. run_agent.sh leaves it as it is, as the experiment's
+    # launcher does: with 1 APAI's grasp code gets CUDA tensors and fails.
+    "APAI_REQUIRE_CUDA",
     "APAI_ASPIRE_LIBRARY",  # where the learned-notes library is read from
     "APAI_GRASPGENX_PORT",  # the port a grasp server on this machine is asked at
+)
+# --speed-profile, as the experiment's launcher names it: "reference" reads the
+# joint speed cap of the experiment's configs/rebot_workstation.yaml, bounded
+# by the cap of APAI's rebot_rs profile; "conservative" is CONSERVATIVE_SPEED.
+SPEED_REFERENCE = "reference"
+SPEED_CONSERVATIVE = "conservative"
+SPEED_PROFILES = (SPEED_CONSERVATIVE, SPEED_REFERENCE)
+# The experiment launcher's speed of "conservative", in rad/s.
+CONSERVATIVE_SPEED = 0.1
+# The experiment's files the full stack reads, from the experiment folder.
+LAUNCHER_SETTINGS = "configs/thor_runtime.yaml"  # names the arm profile
+SPEED_SOURCE = "configs/rebot_workstation"  # an APAI arm profile
+CAMERA_SOURCE = "configs/sensing_thor"  # an APAI camera profile
+MOUNTING_DIR = ".state/thor/mounting"
+# The mounting record the experiment's launcher reads, and the copy of a
+# record that the Thor's export of an accepted fit holds beside its hand-eye
+# file.
+MOUNTING_LATEST = "latest.json"
+MOUNTING_EXPORTED = "summary-thor.json"
+# Where the experiment's launcher keeps APAI's proven plans.
+EXPERIENCE_SOURCE = ".state/thor/runtime/experience.json"
+# Keys of the experiment's arm profiles that name the Thor's motor bus; the
+# robot link arm has none.
+MOTOR_KEYS = ("hw_yaml", "channel")
+# What the link's stereo camera takes of the experiment's camera profile.
+CAMERA_KEYS = (
+    "width",
+    "height",
+    "fps",
+    "frame_timeout_s",
+    "max_frame_age_s",
+    "min_depth_m",
+    "max_depth_m",
+)
+# APAI's learned stores of a task: the name in the store folder, and where the
+# experiment's launcher keeps the store ("~" is the home folder).
+LEARNED_STORES = (
+    ("envelope.json", "~/.apai/envelope.json"),
+    ("grasp_memory.json", "~/.apai/grasp_memory.json"),
+    ("experience.json", EXPERIENCE_SOURCE),
 )
 # The variables a path of the file may name as ${NAME}, and no other; a "$"
 # that is not part of such a ${NAME} is refused.
@@ -146,10 +200,12 @@ class LinkSettings:
 
 @dataclass(frozen=True)
 class ThorSettings:
-    """Copies of the Thor's settings that are not in the WELCOME."""
+    """Copies of the Thor's settings."""
 
     first_wait_s: float = 0.5
     settle_timeout_s: float = 2.0
+    # The WELCOME names the Thor's own; the lower of the two counts
+    # (agree_joint_speed).
     agent_max_joint_speed: float = 0.4
 
 
@@ -157,6 +213,8 @@ class ThorSettings:
 class MoveSettings:
     start_tol_rad: float = 0.02
     fresh_wait_s: float = 0.6
+    # Read by the minimal stack. The full stack takes both from the
+    # experiment's own route check (arm_settings).
     start_grid_age_s: float = 1.0
     start_grid_wait_s: float = 3.0
     expires_in_s: float = 2.0
@@ -179,7 +237,11 @@ class JawSettings:
 @dataclass(frozen=True)
 class TaskSettings:
     timed_return: bool = False
+    # Read by no program: no count of failed steps ends a task, as in the
+    # experiment's launcher.
     failed_steps_limit: int = 3
+    # The minimal stack's joint speed. The full stack's is its speed
+    # profile's (joint_speed, task_settings).
     max_joint_speed: float = 0.1
     # How long the end of a task waits for the RESULT of its owner request.
     end_wait_s: float = 5.0
@@ -200,8 +262,12 @@ class CameraSettings:
     receiver_socket: str = "/tmp/camera_receiver_avs1_cuda_ipc.sock"
     streams: tuple[str, str] = ("head.left", "head.right")
     calibration_dir: str = ""
+    # "" with the full stack: the hand-eye file of the experiment's mounting
+    # record (resolve_mounting). A path here is used in its place.
     hand_eye_json: str = ""
     max_skew_ms: float = 5.0
+    # Both are read by the minimal stack; the full stack takes the stereo
+    # matcher and the rate of the experiment's camera profile.
     depth_backend: str = "ffs"
     fps: float = 7.0
     # true lets the program run on a camera whose capture times are made up
@@ -247,7 +313,11 @@ class RunOptions:
 
 @dataclass(frozen=True)
 class RigSettings:
-    """Values of the rig's arm profile on the Thor, copied (see agent.yaml)."""
+    """Values of the arm profile this file sets itself; none by default.
+
+    The full stack reads the experiment's own arm profile; a value here is
+    used in its place. The minimal stack has only these.
+    """
 
     home_q: tuple[float, ...] | None = None
     park_q: tuple[float, ...] | None = None
@@ -461,7 +531,8 @@ def _check(settings: AgentSettings) -> None:
             "bridge of the minimal stack only"
         )
     speed, limit = settings.task.max_joint_speed, settings.thor.agent_max_joint_speed
-    if speed > limit:
+    # The full stack does not read task.max_joint_speed (joint_speed).
+    if settings.experiment.stack == STACK_MINIMAL and speed > limit:
         raise ConfigError(
             f"task.max_joint_speed is {speed:g} rad/s, above the Thor's agent "
             f"limit thor.agent_max_joint_speed of {limit:g} rad/s"
@@ -555,17 +626,60 @@ def run_options(
     )
 
 
-def check_joint_count(settings: AgentSettings, joints: int) -> None:
-    """ConfigError when a per-joint list of the rig is not of the arm's joints."""
-    for name, count in _joint_counts(settings.rig).items():
+def check_joint_count(settings: AgentSettings, joints: int, cfg: Any = None) -> None:
+    """ConfigError when a per-joint list is not of the arm's joints.
+
+    The lists are the rig block's and, with cfg (APAI's configuration), those
+    of its arm profile, which the full stack reads from the experiment.
+    """
+    counts = _joint_counts(settings.rig)
+    arm = _plain(cfg.arm) if cfg is not None else {}
+    for name in ("home_q", "park_q"):
+        if isinstance(arm.get(name), list):
+            counts[f"the arm profile's {name}"] = len(arm[name])
+    center = (arm.get("motion_bounds") or {}).get("joint_center_rad")
+    if isinstance(center, list):
+        counts["the arm profile's motion_bounds.joint_center_rad"] = len(center)
+    for name, count in counts.items():
         if count != joints:
             raise ConfigError(f"{name} has {count} values; the arm has {joints} joints")
 
 
-def arm_settings(settings: AgentSettings, calibration_id: str = "") -> ArmSettings:
-    """What the arm adapter takes of the settings."""
+def task_settings(settings: AgentSettings, cfg: Any) -> TaskSettings:
+    """The task block as the task gate takes it.
+
+    With the full stack the joint speed is the configuration's, and no count
+    of failed steps ends a task: the experiment's launcher has no such rule,
+    APAI ends a task at its step limit.
+    """
+    if settings.minimal:
+        return settings.task
+    return replace(
+        settings.task,
+        max_joint_speed=float(cfg.safety.max_joint_vel),
+        failed_steps_limit=sys.maxsize,
+    )
+
+
+def grid_waits(settings: AgentSettings, cfg: Any = None) -> tuple[float, float]:
+    """(the oldest obstacle grid a move starts on, the longest wait for one), in s.
+
+    With the full stack they are those of the experiment's route check: a
+    third of the grid's age limit, and its plan budget (thor_motion.py).
+    """
+    if settings.minimal or getattr(cfg, "occupancy", None) is None:
+        return settings.move.start_grid_age_s, settings.move.start_grid_wait_s
+    plan_s, _ = experiment_module("thor_motion").timing_settings(cfg)
+    return float(cfg.occupancy.max_age_s) / 3, float(plan_s)
+
+
+def arm_settings(
+    settings: AgentSettings, calibration_id: str = "", cfg: Any = None
+) -> ArmSettings:
+    """What the arm adapter takes of the settings, and of APAI's configuration."""
     link, thor, move = settings.link, settings.thor, settings.move
     permits, jaws = settings.permits, settings.jaws
+    grid_age_s, grid_wait_s = grid_waits(settings, cfg)
     return ArmSettings(
         expected_profile_id=link.expected_profile_id,
         calibration_id=calibration_id,
@@ -578,8 +692,8 @@ def arm_settings(settings: AgentSettings, calibration_id: str = "") -> ArmSettin
         agent_max_joint_speed=thor.agent_max_joint_speed,
         start_tol_rad=move.start_tol_rad,
         fresh_wait_s=move.fresh_wait_s,
-        start_grid_age_s=move.start_grid_age_s,
-        start_grid_wait_s=move.start_grid_wait_s,
+        start_grid_age_s=grid_age_s,
+        start_grid_wait_s=grid_wait_s,
         expires_in_s=move.expires_in_s,
         cancel_wait_s=move.cancel_wait_s,
         reach_setpoints=permits.reach_setpoints,
@@ -630,6 +744,53 @@ def redirect_apai_stores(
         if not str(env.get(name, "")).strip():
             env[name] = str(folder / leaf)
     return folder
+
+
+def learned_store_sources() -> dict[str, Path]:
+    """{name in the store folder: where the experiment's launcher keeps it}.
+
+    The operating envelope and the grasp memory are APAI's defaults in the
+    home folder; the proven plans lie in the experiment folder.
+    """
+    sources: dict[str, Path] = {}
+    for leaf, place in LEARNED_STORES:
+        if place.startswith("~"):
+            sources[leaf] = user_path(leaf, place)
+        else:
+            sources[leaf] = experiment_dir() / place
+    return sources
+
+
+def seed_learned_stores(
+    settings: AgentSettings, environ: Mapping[str, str] | None = None
+) -> list[str]:
+    """Start each learned store that is not there yet from the experiment's.
+
+    Called after redirect_apai_stores(). A store stays where that put it: this
+    program writes neither into the experiment folder nor into APAI's
+    defaults. A store that exists is left as it is. Returns one line per
+    store, for the start of the program; nothing for the minimal stack.
+    """
+    if settings.minimal:
+        return []
+    env = os.environ if environ is None else environ
+    places = {leaf: env.get(name, "") for name, leaf in APAI_STORES}
+    lines = []
+    for leaf, source in learned_store_sources().items():
+        target = Path(places.get(leaf) or store_folder(settings) / leaf)
+        if target.exists():
+            lines.append(f"learned store {leaf}: {target}")
+        elif source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(source.read_bytes())
+            lines.append(f"learned store {leaf}: started from {source}")
+        else:
+            lines.append(
+                f"learned store {leaf}: starts empty: the experiment's own is "
+                f"not on this machine ({source}). To start from the Thor's "
+                f"record, copy its file to {target} while no agent program runs"
+            )
+    return lines
 
 
 def experiment_caches(
@@ -730,28 +891,270 @@ def camera_kind(camera: str) -> tuple[str, str]:
     )
 
 
-def calibration_id(settings: AgentSettings, camera: str = CAMERA_LINK) -> str:
+@dataclass(frozen=True)
+class Mounting:
+    """The hand-eye file a run uses, and the mounting record that names it."""
+
+    hand_eye_json: str
+    sha256: str
+    # The record's file; "" when camera.hand_eye_json names the hand-eye file.
+    record: str = ""
+
+
+def _sha256(path: Path, what: str) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as problem:
+        raise ConfigError(f"cannot read {what} {path}: {problem}") from None
+
+
+def _local_copy(named: str, bases: Sequence[Path]) -> Path | None:
+    """The file a path of the Thor names, on this machine; None without one.
+
+    The experiment's records hold paths of the Thor. The path itself when it
+    is a file here; else the longest tail of it that is a file under one of
+    `bases`. A name without ".yaml" also finds the file with it.
+    """
+    for name in (named, f"{named}.yaml"):
+        path = Path(name)
+        if path.is_file():
+            return path
+        parts = path.parts
+        for start in range(1, len(parts)):
+            for base in bases:
+                candidate = base.joinpath(*parts[start:])
+                if candidate.is_file():
+                    return candidate
+    return None
+
+
+def _record(path: Path) -> dict[str, Any]:
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as problem:
+        raise ConfigError(
+            f"cannot read the mounting record {path}: {problem}"
+        ) from None
+    if not isinstance(record, dict):
+        raise ConfigError(f"the mounting record {path} must hold a mapping")
+    return record
+
+
+def mounting_record(root: Path) -> Path:
+    """The newest mounting record of the experiment folder `root`.
+
+    The experiment's launcher reads MOUNTING_LATEST. The Thor's export of an
+    accepted fit brings its record as <fit>/MOUNTING_EXPORTED: the record that
+    was checked last counts, so a new fit is in use once its export is
+    unpacked here. ConfigError without any record.
+    """
+    folder = root / MOUNTING_DIR
+    found = [folder / MOUNTING_LATEST, *sorted(folder.glob(f"*/{MOUNTING_EXPORTED}"))]
+    dated = [
+        (str(_record(path).get("checked_at_utc", "")), index, path)
+        for index, path in enumerate(found)
+        if path.is_file()
+    ]
+    if not dated:
+        raise ConfigError(
+            f"no mounting record in {folder} ({MOUNTING_LATEST}, or "
+            f"<fit>/{MOUNTING_EXPORTED} of the Thor's export): unpack the Thor's "
+            "export of the accepted fit there, or name the hand-eye file in "
+            "camera.hand_eye_json"
+        )
+    return max(dated)[2]
+
+
+def resolve_mounting(
+    settings: AgentSettings, mounting: str | os.PathLike[str] | None = None
+) -> Mounting:
+    """The hand-eye file of this run; ConfigError when none can be used.
+
+    In this order: the record --mounting names; camera.hand_eye_json; with the
+    full stack the experiment's newest mounting record. A record counts as the
+    experiment's launcher takes it: its fit is accepted and its hand-eye file
+    has the hash the record holds.
+    """
+    named = settings.camera.hand_eye_json
+    if mounting is None and named:
+        path = Path(named)
+        return Mounting(str(path), _sha256(path, "the hand-eye file"))
+    if mounting is not None:
+        file = user_path("--mounting", os.fspath(mounting)).resolve()
+        bases = [file.parent, file.parent.parent]
+    elif settings.minimal:
+        raise ConfigError(
+            "camera.calibration_dir and camera.hand_eye_json are needed for the "
+            "stereo camera"
+        )
+    else:
+        root = experiment_dir()
+        file = mounting_record(root)
+        bases = [root, file.parent, file.parent.parent]
+    record = _record(file)
+    hand_eye = _local_copy(str(record.get("handeye_file", "")), bases)
+    if hand_eye is None:
+        raise ConfigError(
+            f"the mounting record {file} names the hand-eye file "
+            f"{record.get('handeye_file')!r}, which is not on this machine"
+        )
+    digest = _sha256(hand_eye, "the hand-eye file")
+    if record.get("accepted_fit") is not True or digest != record.get("sha256"):
+        raise ConfigError(
+            f"the mounting record {file} is not accepted or its hand-eye file "
+            f"{hand_eye} changed"
+        )
+    return Mounting(str(hand_eye), digest, str(file))
+
+
+def calibration_id(
+    settings: AgentSettings,
+    camera: str = CAMERA_LINK,
+    mounting: str | os.PathLike[str] | None = None,
+) -> str:
     """The name of the camera calibration this program uses.
 
     link.calibration_id when it is set; else, for a stereo camera, the hashes
-    of the calibration manifest and the hand-eye file; "" for the mock camera.
+    of the calibration manifest and the hand-eye file of resolve_mounting();
+    "" for the mock camera.
     """
     if settings.link.calibration_id:
         return settings.link.calibration_id
     if camera_kind(camera)[0] == CAMERA_MOCK:
         return ""
     block = settings.camera
-    if not block.calibration_dir or not block.hand_eye_json:
+    if not block.calibration_dir:
         raise ConfigError(
             "camera.calibration_dir and camera.hand_eye_json are needed for the "
             "stereo camera"
         )
     from .camera import stereo_camera
 
+    hand_eye = _hand_eye(settings, mounting)
     try:
-        return stereo_camera.calibration_id(block.calibration_dir, block.hand_eye_json)
+        return stereo_camera.calibration_id(block.calibration_dir, hand_eye)
     except Exception as problem:  # CameraError: APAI's class or a RuntimeError
         raise ConfigError(str(problem)) from None
+
+
+def _hand_eye(
+    settings: AgentSettings, mounting: str | os.PathLike[str] | None = None
+) -> str:
+    """The hand-eye file's path; a file the settings name is not opened here."""
+    if mounting is None and settings.camera.hand_eye_json:
+        return settings.camera.hand_eye_json
+    return resolve_mounting(settings, mounting).hand_eye_json
+
+
+def functional_joint_speed(speed_profile: str = SPEED_REFERENCE) -> float:
+    """The joint speed cap of a speed profile, as the experiment's launcher reads it.
+
+    "reference" is overrides.safety.max_joint_vel of the experiment's
+    SPEED_SOURCE profile; "conservative" is CONSERVATIVE_SPEED. Either is at
+    most the cap of APAI's rebot_rs profile. In rad/s; ConfigError otherwise.
+    """
+    if speed_profile not in SPEED_PROFILES:
+        raise ConfigError(
+            f"--speed-profile must be one of {', '.join(SPEED_PROFILES)}, not "
+            f"{speed_profile!r}"
+        )
+    from apai.config import load_profile
+
+    source = experiment_dir() / SPEED_SOURCE
+    try:
+        ceiling = float(load_profile("arms", "rebot_rs").overrides.safety.max_joint_vel)
+        raw = CONSERVATIVE_SPEED
+        if speed_profile == SPEED_REFERENCE:
+            raw = load_profile("arms", str(source)).overrides.safety.max_joint_vel
+    except Exception as problem:
+        raise ConfigError(
+            f"the joint speed of --speed-profile {speed_profile} cannot be read "
+            f"({source}.yaml): {type(problem).__name__}: {problem}"
+        ) from None
+    if not _is_number(ceiling) or ceiling <= 0:
+        raise ConfigError("APAI's rebot_rs profile holds no joint speed cap")
+    if not _is_number(raw) or not 0 < raw <= ceiling:
+        raise ConfigError(
+            f"the joint speed cap must be a finite number above 0 and at most "
+            f"{ceiling:g} rad/s (APAI's rebot_rs profile), not {raw!r}: edit "
+            f"overrides.safety.max_joint_vel of {source}.yaml, or use "
+            f"--speed-profile {SPEED_CONSERVATIVE}"
+        )
+    return float(raw)
+
+
+def joint_speed(settings: AgentSettings, speed_profile: str | None = None) -> float:
+    """APAI's joint speed cap for this run, in rad/s; ConfigError when refused.
+
+    The minimal stack: task.max_joint_speed. The full stack: the speed of the
+    experiment launcher's speed profile ("reference" when none is named), and
+    at most the Thor's agent limit, above which the robot app refuses a MOVE.
+    """
+    if settings.minimal:
+        if speed_profile is not None:
+            raise ConfigError(
+                f"--speed-profile needs experiment.stack {STACK_FULL} (it is "
+                f"{STACK_MINIMAL}): the minimal stack takes task.max_joint_speed"
+            )
+        return settings.task.max_joint_speed
+    speed = functional_joint_speed(speed_profile or SPEED_REFERENCE)
+    return min(speed, settings.thor.agent_max_joint_speed)
+
+
+def thor_agent_limit(welcome: Any) -> float | None:
+    """The Thor's own agent speed limit as its WELCOME names it, in rad/s.
+
+    None for a robot app that names none: one from before the WELCOME
+    carried it.
+    """
+    limit = getattr(welcome, "agent_max_joint_speed", None)
+    return float(limit) if _is_number(limit) and limit > 0 else None
+
+
+def agree_joint_speed(
+    settings: AgentSettings,
+    cfg: Any,
+    thor_limit: float | None,
+    speed_profile: str | None = None,
+) -> tuple[AgentSettings, Any, str]:
+    """(settings, APAI's configuration, one line): the speed the agent plans at.
+
+    The lowest of three: the speed of the experiment launcher's speed profile
+    (the minimal stack: task.max_joint_speed), thor.agent_max_joint_speed,
+    and thor_limit, the Thor's own agent speed limit as its WELCOME names it
+    (thor_agent_limit()). With None the key stands for the Thor's limit. The
+    settings returned carry that speed as the Thor's agent limit and, for the
+    minimal stack, as the task's; the configuration returned is capped at it.
+    The line says the speed and where each of the three came from.
+    """
+    key = settings.thor.agent_max_joint_speed
+    if settings.minimal:
+        named, source = settings.task.max_joint_speed, "task.max_joint_speed"
+    else:
+        profile = speed_profile or SPEED_REFERENCE
+        named, source = functional_joint_speed(profile), f"--speed-profile {profile}"
+    speed = min(named, key, key if thor_limit is None else thor_limit)
+    data = cfg.as_dict()
+    arms = data.get("arms") or ()
+    for view in (data, *(arm["resolved"] for arm in arms if "resolved" in arm)):
+        view["safety"]["max_joint_vel"] = min(view["safety"]["max_joint_vel"], speed)
+    agreed = replace(settings, thor=replace(settings.thor, agent_max_joint_speed=speed))
+    if settings.minimal:
+        agreed = replace(agreed, task=replace(agreed.task, max_joint_speed=speed))
+    if thor_limit is None:
+        thors = (
+            "the robot app's WELCOME names no agent speed limit: that key stands for it"
+        )
+    else:
+        thors = (
+            f"the Thor's own agent speed limit is {thor_limit:g} "
+            "(limits.agent.max_joint_speed, from the robot app's WELCOME)"
+        )
+    line = (
+        f"joint speed: the agent plans at {speed:g} rad/s, the lowest of "
+        f"{named:g} ({source}) and {key:g} (thor.agent_max_joint_speed); {thors}"
+    )
+    return agreed, type(cfg)(data), line
 
 
 def experiment_dir() -> Path:
@@ -772,12 +1175,18 @@ def build_apai_config(
     camera: str = CAMERA_LINK,
     environ: Mapping[str, str] | None = None,
     batch_milestones: bool = False,
+    speed_profile: str | None = None,
+    depth_backend: str | None = None,
+    mounting: str | os.PathLike[str] | None = None,
 ) -> Any:
     """APAI's configuration (a Cfg) for this run; ConfigError when refused.
 
     Writes arm_profile.yaml and, for a stereo camera, camera_profile.yaml into
     the run folder. Nothing is connected or started. batch_milestones sets
     the experiment's key thor_batch_milestones, which the launcher reads.
+    speed_profile, depth_backend and mounting are the experiment launcher's
+    arguments of these names: joint_speed(), the stereo matcher of this run
+    in place of the camera profile's, and resolve_mounting().
     """
     refused_environment(environ)
     kind, recorded = camera_kind(camera)
@@ -785,6 +1194,7 @@ def build_apai_config(
         from apai.config import Cfg, load_demo_config
     except ImportError as missing:
         raise ConfigError(f"APAI cannot be imported: {missing}") from None
+    speed = joint_speed(settings, speed_profile)
     folder = Path(run_dir)
     folder.mkdir(parents=True, exist_ok=True)
     arm_file = folder / "arm_profile.yaml"
@@ -792,7 +1202,11 @@ def build_apai_config(
     camera_name = CAMERA_MOCK
     if kind != CAMERA_MOCK:
         camera_file = folder / "camera_profile.yaml"
-        profile = _camera_profile(settings, folder, recorded)
+        profile = _camera_profile(
+            settings, folder, recorded, _hand_eye(settings, mounting)
+        )
+        if depth_backend:
+            profile["depth_backend"] = depth_backend
         camera_file.write_text(yaml.safe_dump(profile, sort_keys=False))
         camera_name = str(camera_file.with_suffix(""))
     llm = settings.experiment.llm if settings.minimal else "codex_astra"
@@ -802,12 +1216,12 @@ def build_apai_config(
         ).as_dict()
         views = [data, *(arm["resolved"] for arm in data["arms"] if "resolved" in arm)]
         if not settings.minimal:
-            _merge_experiment(data, views, kind, settings)
+            _merge_experiment(data, views, kind, settings, depth_backend)
         for view in views:
             if settings.minimal:
                 view["occupancy"]["enabled"] = True
                 view["occupancy"]["required"] = True
-            view["safety"]["max_joint_vel"] = settings.task.max_joint_speed
+            view["safety"]["max_joint_vel"] = speed
             view["memory"]["experience_path"] = str(
                 store_folder(settings) / "experience.json"
             )
@@ -823,28 +1237,92 @@ def build_apai_config(
     return Cfg(data)
 
 
+def _yaml_mapping(path: Path) -> dict[str, Any]:
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as problem:
+        raise ConfigError(f"cannot read the experiment's {path}: {problem}") from None
+    if not isinstance(data, dict):
+        raise ConfigError(f"the experiment's {path} must hold a mapping")
+    return data
+
+
+def _merged(base: dict[str, Any], over: Mapping[str, Any]) -> dict[str, Any]:
+    """`over` laid on `base`, mapping by mapping; `base` is changed and returned."""
+    for key, value in over.items():
+        if isinstance(value, Mapping) and isinstance(base.get(key), dict):
+            _merged(base[key], value)
+        else:
+            base[key] = _plain(value)
+    return base
+
+
+def experiment_arm_profile(root: Path) -> dict[str, Any]:
+    """The arm profile the experiment's launcher loads, for the robot link arm.
+
+    That profile (the `arm_profile` of LAUNCHER_SETTINGS) and each profile it
+    extends that lies in the experiment's .state folder exist for the Thor
+    alone: their values are laid on one another here, without MOTOR_KEYS. The
+    result extends the first profile of the chain outside .state, which APAI
+    loads from its own place. The chain's paths are the Thor's; each file is
+    read from its copy in `root`.
+    """
+    named = _yaml_mapping(root / LAUNCHER_SETTINGS).get("arm_profile")
+    if not isinstance(named, str) or not named:
+        raise ConfigError(f"the experiment's {LAUNCHER_SETTINGS} names no arm_profile")
+    file = root / named
+    state = (root / ".state").resolve()
+    layers: list[dict[str, Any]] = []
+    while True:
+        layer = _yaml_mapping(file)
+        parent = str(layer.pop("extends", ""))
+        layers.append(layer)
+        if not os.path.isabs(parent):
+            break  # a profile of APAI's own
+        found = _local_copy(parent, [root])
+        if found is None:
+            raise ConfigError(
+                f"the experiment's {file} extends {parent}, which is not in "
+                f"this machine's copy of the experiment folder ({root})"
+            )
+        if state not in found.resolve().parents:
+            parent = str(found.with_suffix(""))
+            break
+        file = found
+    profile: dict[str, Any] = {}
+    for layer in reversed(layers):
+        _merged(profile, layer)
+    for key in MOTOR_KEYS:
+        profile.pop(key, None)
+    if not parent:
+        raise ConfigError(f"the experiment's {named} extends no arm profile")
+    return {"extends": parent, **profile}
+
+
 def _arm_profile(settings: AgentSettings) -> dict[str, Any]:
     rig = settings.rig
     if settings.minimal:
-        parent = settings.experiment.arm_profile
+        profile: dict[str, Any] = {"extends": settings.experiment.arm_profile}
     else:
-        parent = str(experiment_dir() / "configs" / "rebot_workstation")
-    profile: dict[str, Any] = {"extends": parent, "type": ARM_TYPE}
+        profile = experiment_arm_profile(experiment_dir())
+    profile["type"] = ARM_TYPE
     for name in ("home_q", "park_q"):
         if getattr(rig, name) is not None:
             profile[name] = list(getattr(rig, name))
     if rig.body_mask_dilate_px is not None:
-        profile["body_mask"] = {"dilate_px": rig.body_mask_dilate_px}
+        _merged(profile, {"body_mask": {"dilate_px": rig.body_mask_dilate_px}})
     if rig.motion_bounds is not None:
         profile["motion_bounds"] = _plain(rig.motion_bounds)
     return profile
 
 
 def _camera_profile(
-    settings: AgentSettings, run_dir: Path, recorded: str
+    settings: AgentSettings, run_dir: Path, recorded: str, hand_eye: str = ""
 ) -> dict[str, Any]:
+    """The link's stereo camera profile; hand_eye is resolve_mounting()'s file."""
     block = settings.camera
-    if not block.calibration_dir or not block.hand_eye_json:
+    hand_eye = hand_eye or block.hand_eye_json
+    if not block.calibration_dir or not hand_eye:
         raise ConfigError(
             "camera.calibration_dir and camera.hand_eye_json are needed for the "
             "stereo camera"
@@ -856,14 +1334,16 @@ def _camera_profile(
         "height": 992,
         "fps": block.fps,
         "calibration_dir": block.calibration_dir,
-        "extrinsics": {"hand_eye_json": block.hand_eye_json},
+        "extrinsics": {"hand_eye_json": hand_eye},
         "depth_backend": block.depth_backend,
         "frame_timeout_s": 10,
         "max_frame_age_s": 3,
-        "map_depth": True,
         "fuse_beliefs": False,
     }
     if settings.minimal:
+        # The full stack sets it where the experiment's launcher does
+        # (_merge_experiment).
+        profile["map_depth"] = True
         # APAI's default detector asks a model server; the mock one asks nothing.
         profile["detector"] = {"type": "mock"}
     if recorded:
@@ -904,13 +1384,20 @@ def _merge_experiment(
     views: list[dict[str, Any]],
     camera: str,
     settings: AgentSettings,
+    depth_backend: str | None = None,
 ) -> None:
-    """The experiment's own files over APAI's, read from its folder."""
+    """The experiment's own files over APAI's, read from its folder.
+
+    As its launcher's load_config: the overrides of LAUNCHER_SETTINGS, the
+    model of thor_cloud.yaml and, for the link's stereo camera, the numbers
+    and the stereo matcher of CAMERA_SOURCE; depth_backend names another
+    matcher for this run.
+    """
     from apai.config import _deep_merge, _resolve_paths, load_profile
 
     root = experiment_dir()
     configs = root / "configs"
-    runtime = yaml.safe_load((configs / "thor_runtime.yaml").read_text())
+    runtime = yaml.safe_load((root / LAUNCHER_SETTINGS).read_text())
     cloud = yaml.safe_load((configs / "thor_cloud.yaml").read_text())
     # An absolute path: the experiment's own client joins it to its folder.
     cloud["llm"]["codex_bin"] = _codex_bin(settings, root / cloud["llm"]["codex_bin"])
@@ -919,19 +1406,41 @@ def _merge_experiment(
         _deep_merge(view, overlay)
         view["llm"] = cloud["llm"]
         view["memory"].update(persist_beliefs=False, persist_episodic=False)
-    depth = load_profile("cameras", str(configs / "sensing_thor")).as_dict()
+    depth = load_profile("cameras", str(root / CAMERA_SOURCE)).as_dict()
+    selected = depth_backend or depth["depth_backend"]
+    matchers = tuple(experiment_module("thor_stereo").BACKENDS)
+    if selected not in matchers:
+        raise ConfigError(
+            f"the stereo matcher {selected!r} is not one of the experiment's "
+            f"({', '.join(matchers)})"
+        )
     for view in views:
         for profile in [view.get("camera", {}), *view.get("cameras", [])]:
             if profile.get("type") != LINK_STEREO:
                 continue
-            if camera == CAMERA_LINK:
-                profile["depth_backend"] = depth["depth_backend"]
+            if camera == CAMERA_LINK or depth_backend:
+                profile["depth_backend"] = selected
             profile["ffs"] = depth.get("ffs", {})
+            profile.update({key: depth[key] for key in CAMERA_KEYS if key in depth})
+            # The camera's place beside the arm, which APAI names to the model.
+            mode = _hand_eye_mode(profile.get("extrinsics") or {})
+            if mode:
+                profile["extrinsics"]["mode"] = mode
     for profile in data["cameras"]:
         profile["map_depth"] = True
         profile["fuse_beliefs"] = False
         profile["detector"] = data["detector"]
     data["camera"] = data["cameras"][0]
+
+
+def _hand_eye_mode(extrinsics: Mapping[str, Any]) -> str:
+    """The mode a hand-eye file names for itself; "" when it cannot be read."""
+    try:
+        text = Path(str(extrinsics.get("hand_eye_json", ""))).read_text("utf-8")
+        mode = json.loads(text).get("mode")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return mode if isinstance(mode, str) else ""
 
 
 def _refuse(
@@ -945,6 +1454,21 @@ def _refuse(
         raise ConfigError("the agent program drives one arm and no base")
     if data["arm"].get("type") != ARM_TYPE:
         raise ConfigError(f"the arm profile's type must be {ARM_TYPE}")
+    if not settings.minimal:
+        # As the experiment's launcher: no run without the arm's motion bounds
+        # or with times its route check refuses.
+        bounds = data["arm"].get("motion_bounds")
+        if not bounds:
+            raise ConfigError("the arm profile needs motion_bounds")
+        joints = int(data["arm"].get("n_joints", 6))
+        try:
+            experiment_module("thor_calibration_rig").validate_motion_bounds(
+                bounds, joints
+            )
+            for view in views:
+                experiment_module("thor_motion").timing_settings(Cfg(view))
+        except ValueError as problem:
+            raise ConfigError(f"the experiment's check: {problem}") from None
     limit = settings.thor.agent_max_joint_speed
     for view in views:
         if not view["occupancy"].get("enabled") or not view["occupancy"]["required"]:
@@ -963,17 +1487,33 @@ def _refuse(
         )
 
 
-def summary(settings: AgentSettings, cfg: Any, camera: str) -> dict[str, Any]:
+def summary(
+    settings: AgentSettings,
+    cfg: Any,
+    camera: str,
+    *,
+    speed_profile: str | None = None,
+    mounting: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
     """What --check prints: the resolved values and the calibration id."""
+    stereo = camera_kind(camera)[0] != CAMERA_MOCK
+    profile = None if settings.minimal else speed_profile or SPEED_REFERENCE
     return {
         "configuration": "valid",
         "settings": settings.as_dict(),
-        "calibration_id": calibration_id(settings, camera),
+        "calibration_id": calibration_id(settings, camera, mounting),
         "camera": camera,
         "invented_times": camera_kind(camera)[0] != CAMERA_LINK,
         "arm_type": cfg.arm.type,
+        "arm_name": cfg.arm.get("name"),
         "camera_type": cfg.camera.type,
+        "depth_backend": cfg.camera.get("depth_backend"),
+        "mounting": asdict(resolve_mounting(settings, mounting)) if stereo else None,
         "llm_type": cfg.llm.get("type"),
+        # The experiment launcher's speed profile and its speed; the run's
+        # speed below is at most the Thor's agent limit.
+        "speed_profile": profile,
+        "speed_profile_rad_s": profile and functional_joint_speed(profile),
         "max_joint_vel_rad_s": cfg.safety.max_joint_vel,
         "obstacle_grid": {
             "required": cfg.occupancy.required,
@@ -1005,6 +1545,21 @@ def file_hashes(folder: Path, modules: Mapping[str, Any]) -> dict[str, str]:
 
 def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
+
+
+def write_resolved_config(run_dir: Path, cfg: Any) -> None:
+    """Write RESOLVED_CONFIG into the run folder, as the experiment's launcher does.
+
+    ConfigError for a value YAML cannot hold; OSError when the file cannot be
+    written.
+    """
+    try:
+        text = yaml.safe_dump(cfg.as_dict(), sort_keys=False)
+    except yaml.YAMLError as problem:
+        raise ConfigError(
+            f"APAI's configuration cannot be written as YAML: {problem}"
+        ) from None
+    (Path(run_dir) / RESOLVED_CONFIG).write_text(text, encoding="utf-8")
 
 
 def _path(where: str, text: str, folder: Path) -> str:

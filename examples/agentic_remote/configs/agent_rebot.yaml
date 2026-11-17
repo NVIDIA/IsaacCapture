@@ -41,12 +41,20 @@ link:
   # The rig's robot app always names its camera calibration.
   allow_unnamed_calibration: false
 
-# Copies of the Thor's settings that WELCOME does not carry, equal to
-# configs/robot_app_rebot.yaml.
+# Copies of the Thor's settings, equal to configs/robot_app_rebot.yaml.
 thor:
   first_wait_s: 0.5  # permits.first_wait_s; at most 5 s
   settle_timeout_s: 2.0  # executor.settle_timeout_s; at most 30 s
-  agent_max_joint_speed: 0.1  # limits.agent.max_joint_speed; at most 3 rad/s
+  # limits.agent.max_joint_speed; at most 3 rad/s. The owner's value of
+  # 2026-11-16: 0.2. The agent plans at the lowest of three speeds: the one the
+  # experiment's launcher takes (--speed-profile: reference, the default, is
+  # overrides.safety.max_joint_vel of the experiment's
+  # configs/rebot_workstation.yaml; conservative is 0.1), this key, and the
+  # Thor's own agent speed limit as the robot app's WELCOME names it (a robot
+  # app that names none: this key stands for it). The program says the speed
+  # and where it came from in one line at its start. The start tolerance a MOVE
+  # quotes follows from it (move.start_tol_rad).
+  agent_max_joint_speed: 0.2
 
 move:
   # A MOVE quotes the smaller of this and half a period's travel at the Thor's
@@ -54,8 +62,13 @@ move:
   start_tol_rad: 0.02
   # Longest wait for joint readings taken after the call began. At most 5 s.
   fresh_wait_s: 0.6
-  start_grid_age_s: 1.0  # the oldest obstacle grid a move starts on; at most 5 s
-  start_grid_wait_s: 3.0  # longest wait for such a grid; at most 30 s
+  # The oldest obstacle grid a move starts on (at most 5 s) and the longest wait
+  # for such a grid (at most 30 s). Read by the minimal stack only: the full
+  # stack takes both from the experiment's route check, a third of
+  # occupancy.max_age_s and thor_motion.route_preflight_s of its
+  # configs/thor_runtime.yaml.
+  start_grid_age_s: 1.0
+  start_grid_wait_s: 3.0
   expires_in_s: 2.0  # how long a MOVE stays valid on the Thor; at most 10 s
   cancel_wait_s: 2.0  # longest wait for the RESULT after a cancel; at most 30 s
 
@@ -74,9 +87,12 @@ task:
   # false: the timed return moves the arm by itself, and its bench tests on this
   # arm come first. configs/robot_app_rebot.yaml has rest.auto_return false too.
   timed_return: false
-  # This many failed steps in a row end the task with a help request. At most 100.
+  # Read by no program (at most 100): no count of failed steps ends a task, as
+  # in the experiment's launcher; APAI ends a task at --max-steps.
   failed_steps_limit: 3
-  # APAI's joint speed cap for the task; at most thor.agent_max_joint_speed.
+  # The minimal stack's joint speed cap for a task; at most
+  # thor.agent_max_joint_speed. The full stack does not read it: its speed is
+  # described at that key.
   max_joint_speed: 0.1
   # Longest wait for the RESULT of the task's own owner request. At most 60 s.
   end_wait_s: 5.0
@@ -100,9 +116,11 @@ camera:
   receiver_socket: /tmp/camera_receiver_avs1_cuda_ipc.sock
   streams: [head.left, head.right]  # two different names
   # The workstation's copy of the stereo calibration folder and of the hand-eye
-  # file in use on the Thor (camera mounting 20261107T005443Z).
+  # file in use on the Thor: the fit of 2026-11-16 (run 20261116T235557Z), made
+  # after the camera was moved; result.json beside it says accepted_fit true.
+  # The robot app must name the same file (stereo-c50bf5b2b899+mount-fa6cfe676036).
   calibration_dir: ${AGENTIC_REMOTE_EXPERIMENT_DIR}/.state/thor/calibration
-  hand_eye_json: ${AGENTIC_REMOTE_EXPERIMENT_DIR}/.state/thor/mounting/20261107T005443Z/handeye.json
+  hand_eye_json: ${AGENTIC_REMOTE_EXPERIMENT_DIR}/.state/thor/handeye/20261116T235557Z-live-629d_gvb/handeye.json
   # The two eyes of a stereo pair lie at most this far apart. At most 50 ms.
   max_skew_ms: 5.0
   depth_backend: ffs
@@ -133,17 +151,13 @@ experiment:
   timing: true
   model_trace: true
 
-# Four values of the rig's arm profile, copied on 2026-11-15 from the experiment's
-# configs/thor_operation.yaml (lines 6 to 18); that file extends a path that
-# exists only on the Thor. home_q, park_q and joint_center_rad have one value per
-# joint of the arm. motion_bounds takes these four keys and no other; its two
-# max_ values are above 0. body_mask_dilate_px is at most 100.
-rig:
-  home_q: [-0.01966477744281292, 0.025, 0.025, 0.007842481136322021, -0.05901991203427315, 0.05646965652704239]
-  park_q: [0, 0, 0, 0, 0, 0]
-  body_mask_dilate_px: 6
-  motion_bounds:
-    joint_center_rad: [0, 0, 0, 0, 0, 0]
-    max_joint_deviation_rad: 2.0943951023931953  # 120 degrees; the model's limits still apply
-    tcp_center_m: [0.3008347961169637, -0.006035469615884467, 0.2226888836227443]
-    max_tcp_distance_m: 0.25
+# The arm profile is the one the experiment's launcher loads: the arm_profile of
+# the experiment's configs/thor_runtime.yaml (configs/thor_operation.yaml: home
+# pose, park pose, the arm mask's margin, the motion bounds) over the arm file of
+# its .state folder (the arm's name), without the motor bus. A block
+#   rig:
+#     home_q, park_q: one value per joint
+#     body_mask_dilate_px: at most 100
+#     motion_bounds: joint_center_rad, max_joint_deviation_rad, tcp_center_m and
+#       max_tcp_distance_m, these four keys and no other
+# puts a value in the place of the experiment's. This file names none.

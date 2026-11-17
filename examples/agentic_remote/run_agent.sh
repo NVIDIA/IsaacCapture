@@ -123,9 +123,10 @@ done
 # receiver and the camera frame bridge must sit on the same card.
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=0
-# A missing GPU is an error, not a silent fall back to the CPU. A dry run on the
-# mock scene may set APAI_REQUIRE_CUDA=0 before it calls this script.
-export APAI_REQUIRE_CUDA="${APAI_REQUIRE_CUDA:-1}"
+# APAI_REQUIRE_CUDA (APAI's strict CUDA mode) is not set here, as the
+# experiment's own launcher (thor_runtime.sh) never sets it: with 1 APAI keeps
+# an object's points as CUDA tensors and its grasp code fails on them. Depth,
+# the segmenter and the obstacle grid run on the GPU either way.
 # Nothing is written into APAI's checkout or the experiment folder.
 export PYTHONDONTWRITEBYTECODE=1
 # A git status the experiment runs on its tools must not rewrite their index.

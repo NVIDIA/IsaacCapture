@@ -240,9 +240,11 @@ def mask_pose(feed: JointFeed | None, get_state: Callable[[], Any]) -> Any:
 
     stamp = capture.get("capture_thor_mono_s")
     if type(stamp) not in (int, float) or not math.isfinite(stamp):
+        # The camera says why it could not date the capture (time_problem).
+        why = capture.get("time_problem")
         raise BodyMaskUnavailable(
             f"the {LINK_STEREO} camera frame has no usable capture_thor_mono_s: "
-            f"{stamp!r}"
+            f"{stamp!r}" + (f" ({why})" if why else "")
         )
     if feed is None:
         raise BodyMaskUnavailable(

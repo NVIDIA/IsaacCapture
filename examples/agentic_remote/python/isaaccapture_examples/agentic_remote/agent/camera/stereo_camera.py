@@ -4,10 +4,18 @@
 """The camera APAI gets on the workstation: stereo pairs from the camera connection.
 
 LinkStereoCamera turns each stereo pair of a PairSource into one camera frame
-with depth, dated at its capture: Frame.t is the capture time on this machine's
-monotonic clock, so the age APAI's obstacle grid measures counts encoding, the
-network, decoding and depth. The capture time on the Thor's wall clock, the
-evidence time, is noted in FrameTimes for the permits.
+with depth, as the experiment's camera (thor_camera.ThorStereoCamera) does on
+the Thor: the same depth class, the same Frame fields, and no refusal but its
+own (an arrival stamp that is no past time, a time that does not grow, a pair
+older than max_frame_age_s after depth, no pair within frame_timeout_s).
+
+Frame.t is a time of this machine's monotonic clock, which every age check of
+APAI reads. While the robot link can date the pair, it is the capture time (the
+start of exposure), so those ages count encoding, the network, decoding and
+depth; the capture time on the Thor's wall clock, the evidence time, is then
+noted in FrameTimes for the permits. While the link cannot, Frame.t is the
+pair's arrival, as on the Thor, and the camera frame carries no evidence time:
+it is seen, and neither a PERMIT nor the self mask can rest on it.
 
 LinkStereoCamera subclasses APAI's CameraBase, so the class is made on first
 use: read it as `stereo_camera.LinkStereoCamera`, or import it inside a function.
@@ -25,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..link_client import StaleState
+from ..link_client import LinkLost, StaleState
 from ..self_mask import LINK_STEREO, experiment_module
 from .frame_source import BridgeSource, CameraError, RecordedPairSource
 
@@ -38,15 +46,16 @@ _log = logging.getLogger("isaaccapture.examples.agentic_remote.stereo_camera")
 
 # The camera profile type the factory answers with this camera.
 CAMERA_TYPE = "link_stereo"
-# A camera frame is refused when the newest ROBOT_STATE is older than this: its
-# clock pair is what dates the camera frame.
+# The three rules below decide whether a camera frame gets an evidence time (its
+# capture time on the Thor's wall clock, which a PERMIT quotes) and a mask time.
+# None of them refuses the camera frame.
+# The newest ROBOT_STATE is at most this old: its clock pair dates the capture.
 STATE_MAX_AGE_S = 1.0
-# A capture time this far ahead of the estimate of the Thor's wall clock is
-# refused; so is one this far, plus the link's clock margin, after the arrival.
+# The capture time lies at most this far ahead of the estimate of the Thor's
+# wall clock, and at most this far, plus the link's clock margin, after the
+# arrival.
 FUTURE_LIMIT_S = 0.05
-# A capture time this far before the pair's arrival on this machine is refused.
-BEFORE_ARRIVAL_LIMIT_S = 1.0
-# After a step of the Thor's wall clock camera frames are refused for this long.
+# The Thor's wall clock did not step within this long.
 CLOCK_STEP_QUIET_S = 3.0
 _NONE_PAUSE_S = 0.01
 
@@ -55,12 +64,20 @@ DepthFactory = Callable[[Path, str, Any], Any]
 
 @dataclass(frozen=True)
 class FrameStamp:
-    """The times of one camera frame."""
+    """The times of one camera frame.
 
-    evidence_wall_s: float  # capture time, the Thor's wall clock; a PERMIT quotes it
-    capture_thor_mono_s: float  # the same on the Thor's monotonic clock
-    t: float  # the same on this machine's monotonic clock: Frame.t
-    raw_age_s: float  # the Thor's wall clock now minus the capture time, no margin
+    Dated (problem is empty): t is the capture time. Undated: problem says why
+    the link could not date the capture, the two Thor times are None and t is
+    the pair's arrival.
+    """
+
+    # Capture time, the Thor's wall clock; a PERMIT quotes it.
+    evidence_wall_s: float | None
+    capture_thor_mono_s: float | None  # the same on the Thor's monotonic clock
+    t: float  # Frame.t, this machine's monotonic clock
+    # The Thor's wall clock now minus the capture time, no margin.
+    raw_age_s: float | None
+    problem: str = ""
 
 
 def stamp_pair(
@@ -68,58 +85,62 @@ def stamp_pair(
     pair: StereoPair,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> FrameStamp:
-    """Date a stereo pair on three clocks; CameraError when that cannot be trusted.
+    """The times of a stereo pair, dated when the link's clocks allow it.
 
-    `monotonic` must be the clock the link was built with and the clock of the
-    pair's arrival stamp.
+    CameraError only by the rule of the experiment's camera: an arrival stamp
+    that is no past time of this machine's clock. `monotonic` must be the clock
+    the link was built with and the clock of the pair's arrival stamp.
     """
     evidence = min(pair.sof_wall_ns) / 1e9
     arrival = float(pair.receiver_rx_mono_s)
+    raw_age: float | None = None
+
+    def undated(problem: str) -> FrameStamp:
+        return FrameStamp(None, None, arrival, raw_age, problem)
+
     try:
-        state_at = link.state_arrived_s()
+        state_at: float | None = link.state_arrived_s()
         step_at = link.clock_step_at_s()
-        now = monotonic()
-        thor_wall = link.thor_now()[1]
-        raw_age = thor_wall - evidence
-        margin = link.wall_age_s(evidence) - raw_age
-        converted = now - raw_age - margin
-        thor_mono = link.wall_to_thor_mono(evidence)
-    except StaleState:
-        raise CameraError(
-            "no time for the camera frame: no ROBOT_STATE has arrived yet"
-        ) from None
-    state_age = now - state_at
-    if state_age > STATE_MAX_AGE_S:
-        raise CameraError(
-            f"no time for the camera frame: the newest ROBOT_STATE is "
-            f"{state_age:.2f} s old, over {STATE_MAX_AGE_S:g} s"
-        )
-    if step_at is not None and now - step_at < CLOCK_STEP_QUIET_S:
-        raise CameraError(
-            f"the Thor's wall clock stepped {now - step_at:.2f} s ago; camera "
-            f"frames are refused for {CLOCK_STEP_QUIET_S:g} s after a step"
-        )
+        missing = ""
+    except (StaleState, LinkLost) as problem:
+        state_at, step_at, missing = None, None, str(problem)
+    now = monotonic()
     if not math.isfinite(arrival) or arrival > now:
         raise CameraError(
             f"the stereo pair's arrival stamp ({arrival!r}) is not a past time of "
             "this machine's monotonic clock"
         )
+    if state_at is None:
+        return undated(missing)
+    try:
+        raw_age = float(link.thor_now()[1] - evidence)
+        margin = link.wall_age_s(evidence) - raw_age
+        thor_mono = link.wall_to_thor_mono(evidence)
+    except (StaleState, LinkLost) as problem:
+        return undated(str(problem))
+    converted = now - raw_age - margin
+    state_age = now - state_at
+    if state_age > STATE_MAX_AGE_S:
+        return undated(
+            f"the newest ROBOT_STATE is {state_age:.2f} s old, over "
+            f"{STATE_MAX_AGE_S:g} s"
+        )
+    if step_at is not None and now - step_at < CLOCK_STEP_QUIET_S:
+        return undated(
+            f"the Thor's wall clock stepped {now - step_at:.2f} s ago, within "
+            f"{CLOCK_STEP_QUIET_S:g} s"
+        )
     if not raw_age >= -FUTURE_LIMIT_S:
-        raise CameraError(
-            f"the camera frame's capture time lies {-raw_age:.3f} s in the future "
-            f"of the Thor's wall clock, over {FUTURE_LIMIT_S:g} s"
+        return undated(
+            f"the capture time lies {-raw_age:.3f} s in the future of the Thor's "
+            f"wall clock, over {FUTURE_LIMIT_S:g} s"
         )
     # The capture time minus the arrival, both on the Thor's wall clock.
     lead = (now - arrival) - raw_age
     if lead > FUTURE_LIMIT_S + margin:
-        raise CameraError(
-            f"the camera frame's capture time lies {lead:.3f} s after its "
-            f"arrival, over {FUTURE_LIMIT_S + margin:g} s"
-        )
-    if arrival - converted > BEFORE_ARRIVAL_LIMIT_S:
-        raise CameraError(
-            f"the camera frame's capture time is {arrival - converted:.2f} s "
-            f"before its arrival, over {BEFORE_ARRIVAL_LIMIT_S:g} s"
+        return undated(
+            f"the capture time lies {lead:.3f} s after the arrival, over "
+            f"{FUTURE_LIMIT_S + margin:g} s"
         )
     # The evidence is never newer than the arrival.
     late = max(0.0, lead)
@@ -127,7 +148,7 @@ def stamp_pair(
         evidence_wall_s=evidence - late,
         capture_thor_mono_s=float(thor_mono) - late,
         t=float(min(converted, arrival)),
-        raw_age_s=float(raw_age),
+        raw_age_s=raw_age,
     )
 
 
@@ -183,9 +204,12 @@ class _LinkStereoInput:
         self.depth: Any = None
         self.calibration_id = ""
         self._last_pair: tuple[int, int] | None = None
-        self._last_evidence = -math.inf
+        # (camera session, capture time in ns) of the last dated camera frame.
+        self._last_dated: tuple[int, int] | None = None
+        self._undated_now = False  # the last camera frame had no evidence time
         self._last_t = -math.inf
         self.delivered = 0  # camera frames handed to APAI
+        self.undated = 0  # of those, the ones without an evidence time
         self.dropped_old = 0  # stereo pairs older than max_frame_age_s after depth
 
     @property
@@ -213,8 +237,9 @@ class _LinkStereoInput:
             depth.close()
             raise
         self._source, self.depth = source, depth
-        self._last_pair = None
-        self._last_evidence = self._last_t = -math.inf
+        self._last_pair = self._last_dated = None
+        self._undated_now = False
+        self._last_t = -math.inf
         _log.info(
             "stereo camera open: calibration %s, depth by %s",
             self.calibration_id,
@@ -256,16 +281,15 @@ class _LinkStereoInput:
                 time.sleep(min(_NONE_PAUSE_S, max(0.0, deadline - time.monotonic())))
                 continue
             self._check_pair(pair, depth)
-            stamp_pair(self._link, pair, self._monotonic)  # refuse before the work
-            # Only a pair with a believable time moves the mark the next is held to.
+            # Before the work: an arrival stamp that is no past time is refused.
+            stamp_pair(self._link, pair, self._monotonic)
             self._last_pair = (pair.session_id, pair.seq)
-            self._last_evidence = min(pair.sof_wall_ns)
             images = [
                 cv2.cvtColor(eye, cv2.COLOR_YUV2BGR_NV12)
                 for eye in (pair.left, pair.right)
             ]
             bgr, depth_m = depth.compute(images)
-            stamp = stamp_pair(self._link, pair, self._monotonic)
+            stamp = self._stamp(pair)
             if self._monotonic() - stamp.t > max_age_s:
                 self.dropped_old += 1
                 continue
@@ -282,6 +306,8 @@ class _LinkStereoInput:
                 "seq": pair.seq,
                 "evidence_wall_s": stamp.evidence_wall_s,
                 "capture_thor_mono_s": stamp.capture_thor_mono_s,
+                # Why the two times above are None; None when they are there.
+                "time_problem": stamp.problem or None,
                 "receipt_monotonic_s": float(pair.receiver_rx_mono_s),
                 "clock_raw_age_s": stamp.raw_age_s,
                 "sensor_ids": list(pair.device_index),
@@ -299,31 +325,57 @@ class _LinkStereoInput:
             }
             self._last_t = stamp.t
             self.delivered += 1
-            # Before the camera frame can reach the grid: a permit looks the
-            # evidence time up by exactly this float.
-            self._frame_times.note(stamp.t, stamp.evidence_wall_s)
+            if stamp.evidence_wall_s is None:
+                if not self._undated_now:
+                    _log.warning(
+                        "camera frames carry no evidence time: %s; no PERMIT and "
+                        "no self mask can rest on them",
+                        stamp.problem,
+                    )
+                self._undated_now = True
+                self.undated += 1
+            else:
+                if self._undated_now:
+                    _log.info("camera frames carry an evidence time again")
+                self._undated_now = False
+                self._last_dated = (pair.session_id, min(pair.sof_wall_ns))
+                # Before the camera frame can reach the grid: a permit looks
+                # the evidence time up by exactly this float.
+                self._frame_times.note(stamp.t, stamp.evidence_wall_s)
             return Frame(
                 rgb=bgr,
                 depth_m=depth_m,
-                K=np.array(depth.K, dtype=np.float64),
+                K=np.array(depth.K),
                 t=stamp.t,
                 observed_t=stamp.t,
                 depth_source="sensor",
                 capture=capture,
             )
 
+    def _stamp(self, pair: StereoPair) -> FrameStamp:
+        """stamp_pair(); undated too when the capture time went back."""
+        stamp = stamp_pair(self._link, pair, self._monotonic)
+        last = self._last_dated
+        evidence = min(pair.sof_wall_ns)
+        if (
+            stamp.evidence_wall_s is not None
+            and last is not None
+            and last[0] == pair.session_id
+            and not evidence > last[1]
+        ):
+            return FrameStamp(
+                None,
+                None,
+                float(pair.receiver_rx_mono_s),
+                stamp.raw_age_s,
+                f"the capture time did not grow: {evidence} ns after {last[1]} ns",
+            )
+        return stamp
+
     def _check_pair(self, pair: StereoPair, depth: Any) -> None:
         key = (pair.session_id, pair.seq)
-        evidence = min(pair.sof_wall_ns)
-        last = self._last_pair
-        if last is not None and last[0] == key[0]:
-            if key[1] == last[1]:
-                raise CameraError(f"the source gave stereo pair {key} twice")
-            if not evidence > self._last_evidence:
-                raise CameraError(
-                    f"the capture time of stereo pair {key} did not grow: "
-                    f"{evidence} ns after {self._last_evidence} ns"
-                )
+        if key == self._last_pair:
+            raise CameraError(f"the source gave stereo pair {key} twice")
         manifest = getattr(depth, "manifest", None) or {}
         order = manifest.get("camera_order")
         if order:

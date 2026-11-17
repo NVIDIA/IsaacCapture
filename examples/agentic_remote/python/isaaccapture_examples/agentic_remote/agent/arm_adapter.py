@@ -8,13 +8,15 @@ robot app on the Thor paces the setpoints and sends each one only while a
 permit covers it. A permit covers a setpoint only after APAI's checker callback
 cleared it on the obstacle grid whose camera-frame time the permit quotes (the
 check ahead). The adapter sends MOVE, PERMIT, GRIPPER, CHECKER_STATE and STOP,
-and nothing that releases the motors.
+and, where APAI's rest tool ends, the OWNER_REQUEST motors_off: the robot app
+switches the motors off for it only with the arm measured at rest.
 
 APAI is imported inside functions, so the module imports without it.
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
 import math
 import re
@@ -28,9 +30,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..protocol.messages import (
+    JAW_CLOSE_TORQUE,
+    JAW_CLOSE_UNTIL_CONTACT,
+    JAW_OPEN,
+    JAW_PLAIN,
     MOVE_ARMED,
     MOVE_SENDING,
     PROTOCOL_VERSION,
+    REQUEST_MOTORS_OFF,
     GraspRegion,
     ProtocolError,
 )
@@ -63,14 +70,29 @@ CONTACT_TEXT = re.compile(
 # Jaw refusals that are the jaws' own fault, not a refusal of the command.
 _JAWS_UNREFERENCED = "the jaws are not referenced"
 _JAWS_UNREAD = "the jaws could not be read, so no jaw command was sent"
+# A RESULT's detail "outcome" when the Thor's driver ended a jaw command with a
+# fault of the jaws that leaves the arm usable; the RESULT's reason is the
+# driver's own text (GRIPPER_FAULT in robot_app/gripper.py).
+_GRIPPER_FAULT = "gripper_fault"
 # How long the end of a move waits for a ROBOT_STATE that shows it, in s.
 _REFLECT_S = 0.3
 # The longest one wait for fresh joint readings sleeps, in s.
 _FRESH_LOOK_S = 0.05
+# How the robot app begins its refusal of a MOVE whose start pose the arm has
+# left (executor.py, _read_start).
+START_POSE = "start pose: "
+# How long the permit loop waits for a RESULT beyond the Thor's own waits, in s.
+_RESULT_MARGIN_S = 3.0
+# How soon the pause of the permit loop sees a halt of the checker, in s.
+_HALT_LOOK_S = 0.005
 
 
 class RobotLinkError(RuntimeError):
     """A fault of the robot connection or of the robot app, not a refusal."""
+
+
+class _NotYet(RuntimeError):
+    """The newest ROBOT_STATE gives no usable pose; a newer one may."""
 
 
 @dataclass(frozen=True)
@@ -108,12 +130,17 @@ class ArmSettings:
     # jaws
     fresh_s: float = 1.0
     result_timeout_s: float = 12.0
+    # rest: how long the robot app has to switch the motors off at rest
+    motors_off_timeout_s: float = 30.0
 
     def start_tol(self, period_s: float) -> float:
         """The start tolerance a MOVE quotes.
 
-        The Thor checks the first setpoint from the pose it measured, so the
-        tolerance leaves half of one period's travel at its speed limit.
+        Half of one period's travel at the Thor's agent speed limit: the arm
+        may lie that far from the pose the move was sampled from, and the
+        first setpoint's real step still stays inside the speed limit. The
+        Thor checks the first setpoint from the move's start pose only for a
+        tolerance this small (executor.py, _PLANNED_START_TOL_RAD).
         """
         return min(self.start_tol_rad, 0.5 * self.agent_max_joint_speed * period_s)
 
@@ -128,20 +155,62 @@ _arm_type_lock = threading.Lock()
 _arm_type: type | None = None
 
 
+# What RobotLinkArm keeps of APAI's LazyArm: its type, and the answers about
+# a connect made on an operator's confirmation, which is never made here.
+# Every other name of LazyArm is RobotLinkArm's own or ArmBase's.
+LAZY_KEPT = frozenset(
+    {
+        "PASSES_WHILE_HOLDING",
+        "holding_on_confirmation",
+        "holding_untold",
+        "told_to_let_go",
+        "next_call",
+        "let_go",
+        "profile_type",
+    }
+)
+
+
 def _arm_type_on_apai() -> type:
-    """RobotLinkArm as a subclass of APAI's ArmBase; made on first use."""
+    """RobotLinkArm as a subclass of APAI's LazyArm; made on first use.
+
+    A LazyArm is APAI's arm whose motors may be off between uses (standby):
+    APAI's rest tool switches only such an arm's motors off, and its next
+    motion switches them on again. Here the motors are the Thor's.
+    """
     global _arm_type
     with _arm_type_lock:
         if _arm_type is None:
             from apai.control.arm_base import ArmBase
+            from apai.control.lazy_arm import LazyArm
 
-            class _OnArmBase(RobotLinkArm, ArmBase):
+            class _OnArmBase(RobotLinkArm, LazyArm):
                 __doc__ = RobotLinkArm.__doc__
 
+            # LazyArm passes its calls on to a backend it makes. There is no
+            # such backend: where RobotLinkArm has no method of its own,
+            # ArmBase's is used.
+            for name, value in vars(LazyArm).items():
+                if name.startswith("__") or name in LAZY_KEPT:
+                    continue
+                if name in vars(RobotLinkArm):
+                    continue
+                if not (callable(value) or isinstance(value, property)):
+                    continue
+                if not hasattr(ArmBase, name):
+                    raise RuntimeError(
+                        f"APAI's LazyArm has {name}, which the robot link arm "
+                        "does not know"
+                    )
+                setattr(_OnArmBase, name, getattr(ArmBase, name))
             _OnArmBase.__name__ = _OnArmBase.__qualname__ = "RobotLinkArm"
             _OnArmBase.__module__ = __name__
             _arm_type = _OnArmBase
         return _arm_type
+
+
+# The setpoints of a motion from a start pose to a goal: sample(start, goal).
+_Sample = Callable[[np.ndarray, np.ndarray], list[np.ndarray]]
 
 
 class _FreshReader:
@@ -149,6 +218,34 @@ class _FreshReader:
 
     def __init__(self, read: Callable[[], Any]) -> None:
         self.get_state = read
+
+
+# What the adapter hands to the launcher's measurements: measure(kind, facts).
+# The kinds: MEASURED_MOVE with a move's stretches when stream_to() ends,
+# MEASURED_JAW_BEGIN when a GRIPPER is about to be sent and MEASURED_JAW when
+# its wait has ended. The times in the facts are of this machine's monotonic
+# clock, in s. It is called on the skill thread and must only queue.
+Measure = Callable[[str, dict[str, Any]], None]
+MEASURED_MOVE = "move"
+MEASURED_JAW_BEGIN = "jaw_begin"
+MEASURED_JAW = "jaw"
+# The points of a move's permit loop that RobotLinkArm._mark() is called at:
+# the first PERMIT has left, the Thor reports the first setpoint as sent, the
+# Thor reports the last one as sent (what follows is the settling).
+MARK_FIRST_PERMIT = "first_permit"
+MARK_FIRST_SETPOINT = "first_setpoint"
+MARK_ALL_SENT = "all_sent"
+MARKS = (MARK_FIRST_PERMIT, MARK_FIRST_SETPOINT, MARK_ALL_SENT)
+
+
+@contextmanager
+def _timed(stats: dict[str, Any], name: str) -> Iterator[None]:
+    """Add the seconds the block takes to stats[name], also when it raises."""
+    began = time.monotonic()
+    try:
+        yield
+    finally:
+        stats[name] = stats.get(name, 0.0) + time.monotonic() - began
 
 
 class RobotLinkArm:
@@ -161,9 +258,12 @@ class RobotLinkArm:
 
     n_joints = 6
     motion_rate_hz = 50.0
-    # Teardown: APAI neither parks this arm nor cuts its torque.
+    settle_tol = 0.03  # ArmBase's; the Thor settles its own moves
+    # Teardown: APAI neither parks this arm nor cuts its torque. Only its
+    # rest tool, inside a task, ends in disconnect() with the motors to go off.
     shutdown_park_required = False
-    disconnect_preserves_drive_state = True
+    disconnect_preserves_drive_state = False
+    disconnect_cuts_torque = False
     hold_key = None
     connect_cuts_torque = False
     connected_on_confirmation = False
@@ -180,12 +280,15 @@ class RobotLinkArm:
         link: AgentLink,
         settings: ArmSettings | None = None,
         joint_feed: Any = None,
+        measure: Measure | None = None,
     ) -> None:
         self._cfg = cfg
         self.kin = kinematics
         self._link = link
         self._settings = settings or ArmSettings()
         self._joint_feed = joint_feed
+        self._measure = measure
+        self._measure_failed = False
         n_joints = _cfg_get(cfg, "n_joints")
         self.n_joints = 6 if n_joints is None else int(n_joints)
         jaws = _cfg_get(cfg, "gripper") or {}
@@ -193,17 +296,28 @@ class RobotLinkArm:
         self._grip_closed = float(_cfg_get(jaws, "closed_pos", 1.0))
         if self._grip_open == self._grip_closed:
             raise ValueError("the arm profile's jaws have no travel")
-        self.connected = False
-        self._stopped = False
-        self.close_stages_skipped = 0
+        # What APAI's LazyArm keeps, for the code of APAI that reads it.
+        self._lock = threading.Lock()
+        self._holding: str | None = None
+        self._profile_type = ARM_TYPE
+        self._hold_key = None
+        self._attached = False  # connect() found a robot app this arm fits
+        self._standby = False  # the robot app switched the motors off for us
+        self._latched = False
+        # How many stages the Thor's driver skipped in the last two-stage
+        # close; None before the first one and when the driver gave no count.
+        self.close_stages_skipped: int | None = None
         self._check: CheckAhead | None = None
         self._task = False
         self._skill = threading.local()
         self._grasp_sent = False  # a MOVE of this task carried a grasp region
         self._checker_ids: list[tuple[str, str]] = []  # (action, command id)
         self._ids_lock = threading.Lock()
-        # What the last move's permit loop did; for tests and the bench.
+        # What the last move measured: its stretches and what its permit loop
+        # did. The same facts go to `measure` when stream_to() ends.
         self.last_move: dict[str, Any] = {}
+        # The same of the last jaw command.
+        self.last_jaw: dict[str, Any] = {}
 
     # What the launcher calls
 
@@ -229,7 +343,7 @@ class RobotLinkArm:
         if pinned is not None and self._link.pinned != pinned:
             self._link.pin(pinned)
         self._grasp_sent = False
-        self._stopped = False
+        self._latched = False
         self._task = True
 
     def close_task(self) -> None:
@@ -259,35 +373,147 @@ class RobotLinkArm:
         except (LinkLost, StaleState, TimeoutError) as error:
             raise RobotLinkError(f"the robot app is not ready: {error}") from error
         problem = self.check_welcome(welcome)
-        if problem is None and not state.torque_on:
-            problem = "the robot app reports the motors off; restart the robot app"
         if problem is not None:
             raise RobotLinkError(problem)
         self._warn_joint_range(welcome)
-        self.connected = True
+        self._attached = True
+        self._standby = not state.torque_on
 
     def disconnect(self) -> None:
-        """Nothing is sent: the robot app keeps holding the arm."""
-        self.connected = False
+        """Where APAI's rest tool ends: the robot app is asked for the motors off.
+
+        Inside a task with the motors on, the robot app is asked to switch
+        them off; it does so only with the arm measured at rest. RobotLinkError,
+        with the motors left on, when it refuses or does not answer. Anywhere
+        else, as when the program ends, nothing is sent: the robot app keeps
+        holding the arm.
+        """
+        if not (self._task and self.connected):
+            return
+        timeout_s = self._settings.motors_off_timeout_s
+        try:
+            result = self._link.request_owner(
+                REQUEST_MOTORS_OFF,
+                reason="the agent's rest tool has folded the arm",
+                quote=self._link.pinned,
+                timeout_s=timeout_s,
+            )
+        except (LinkLost, StaleState, CommandTimeout) as error:
+            raise RobotLinkError(
+                f"the robot app did not answer the request for the motors off "
+                f"({error}); the motors stay on unless the Thor terminal says "
+                "otherwise"
+            ) from error
+        if result.status != "completed":
+            raise RobotLinkError(f"the robot app kept the motors on: {result.reason}")
+        self._standby = True
+
+    @property
+    def connected(self) -> bool:
+        """Whether the Thor's motors are on for this arm; False in standby.
+
+        Standby is APAI's word for an arm whose motors are off until its next
+        motion. Without a ROBOT_STATE to say, the motors count as on.
+        """
+        if not self._attached or self._standby:
+            return False
+        try:
+            return bool(self._link.state().torque_on)
+        except (LinkLost, StaleState):
+            return True
+
+    @connected.setter
+    def connected(self, value: bool) -> None:
+        self._attached = bool(value)
+        self._standby = False
+
+    def motors_on(self) -> None:
+        """The robot app switched the motors on again: standby has ended.
+
+        In standby the obstacle grid has no arm pose to mask the arm out of
+        the camera's depth with, so its refreshes fail and it refuses every
+        check. As APAI's own arm when it wakes, this waits for the grid's
+        next refresh with a pose, with APAI's routine and its bound
+        (occupancy.ready_timeout_s): the first motion is neither refused for
+        the standby nor left unchecked.
+        """
+        self._standby = False
+        grid = getattr(getattr(self._check, "harness", None), "occupancy", None)
+        if callable(getattr(grid, "wait_until_usable", None)):
+            from apai.apps.demo import _await_occupancy_after_wake
+
+            _await_occupancy_after_wake(grid, self._cfg)
+
+    # APAI's LazyArm has a backend of its own behind these; this arm is its own.
+
+    @property
+    def _arm(self) -> Any:
+        return self if self.connected else None
+
+    def _ensure(self) -> Any:
+        return self
+
+    def _command(self) -> Any:
+        return self
+
+    def _woke(self, arm: Any) -> None:
+        return None
+
+    def __getattr__(self, name: str) -> Any:
+        raise AttributeError(name)
 
     def get_state(self) -> Any:
-        """The newest published pose; never blocks. RuntimeError when it is unusable."""
+        """The newest published pose; RuntimeError when none is usable.
+
+        APAI's own driver reads the motors anew at each call and goes on over
+        a missed answer. The readings here are the Thor's: a pose that is not
+        usable yet is waited for, at most fresh_wait_s. A lost link is not
+        waited for.
+        """
+        end = time.monotonic() + self._settings.fresh_wait_s
+        while True:
+            try:
+                return self._state_now()
+            except _NotYet:
+                left = end - time.monotonic()
+                if left <= 0:
+                    raise
+            self._link.wait_change(min(left, _FRESH_LOOK_S))
+
+    def _state_now(self) -> Any:
+        """The newest published pose; never blocks.
+
+        Its time t is that of its oldest joint reading, and it is at most
+        state_max_age_s before now. _NotYet when a newer ROBOT_STATE can
+        mend it, RuntimeError for a lost link.
+        """
         settings = self._settings
+        limit = settings.state_max_age_s
         try:
-            state, arrived = self._link.state_and_arrival(settings.state_max_age_s)
-        except (LinkLost, StaleState) as error:
+            state, arrived = self._link.state_and_arrival(limit)
+        except StaleState as error:
+            raise _NotYet(f"robot link feedback lost: {error}") from error
+        except LinkLost as error:
             raise RuntimeError(f"robot link feedback lost: {error}") from error
         q = _pose(state.joints, self.n_joints)
         if q is None:
-            raise RuntimeError(
+            raise _NotYet(
                 "robot link feedback lost: a joint has no valid reading in the "
                 "newest ROBOT_STATE"
             )
         age = state.health.get("reading_age_s")
-        if not _is_number(age) or age > settings.state_max_age_s:
-            raise RuntimeError(
+        if not _is_number(age) or age > limit:
+            raise _NotYet(
                 f"robot link feedback lost: the joint readings are {age!r} s old, "
-                f"over {settings.state_max_age_s:g} s"
+                f"over {limit:g} s"
+            )
+        since = time.monotonic() - arrived
+        if since + age > limit:
+            # What reads the pose's time takes it for a reading made just now.
+            raise _NotYet(
+                f"robot link feedback lost: the joint readings are {age:.2f} s old "
+                f"and their ROBOT_STATE arrived {since:.2f} s ago, over {limit:g} s "
+                "in all"
             )
         position, valid = self._jaw_reading(state)
         return _types().RobotState(
@@ -302,15 +528,70 @@ class RobotLinkArm:
             "the robot link takes whole moves, not single setpoints; nothing sent"
         )
 
+    def stream_profile(self, *args: Any, **kwargs: Any) -> bool:
+        """A motion planner's profile; APAI's reBot driver has no such motion.
+
+        APAI calls it only on an arm with a motion planner bound, which the
+        experiment's arm is not: there the call ends in an AttributeError of
+        the driver, and here too.
+        """
+        raise AttributeError(
+            "the robot link arm streams no planner profile, as APAI's reBot "
+            "driver; nothing sent"
+        )
+
     def set_gripper(self, pos: float, effort: float = 1.0) -> None:
-        """One plain GRIPPER; blocks until its final RESULT."""
+        """APAI's set_gripper on the Thor: one plain GRIPPER.
+
+        pos is a jaw position in the arm profile's units. As on APAI's driver
+        an opening blocks until its guarded ramp has ended, and a close or a
+        hold returns once it is sent, with the jaws still moving. GripperFault
+        with the driver's own text when the driver refused the command or
+        found the jaws blocked while they opened.
+        """
         self._refuse_unless_task("jaw command")
-        opening = self._opening(pos)
+        self._opened(self._opening(pos), effort, JAW_PLAIN)
+
+    def open_gripper(self) -> None:
+        """APAI's open_gripper on the Thor: the driver's own opening and effort."""
+        self._refuse_unless_task("jaw command")
+        self._opened(1.0, 1.0, JAW_OPEN)
+
+    def _opened(self, opening: float, effort: float, mode: str) -> None:
+        """One GRIPPER that may open the jaws; GripperFault when they were blocked."""
         before = self._jaw_before()
-        result = self._jaw(opening, effort, "plain")
+        result = self._jaw(opening, effort, mode)
         if self._jaw_ending(result) == "short":
             if before is None or opening > before + 1e-9:
                 raise _types().GripperFault("the jaws were blocked while opening")
+
+    def close_gripper_torque(
+        self,
+        effort: float = 0.6,
+        stall_rad: float = 0.03,
+        settle_tol: float = 0.1,
+        timeout_s: float = 3.0,
+        hold_kp: float | None = None,
+    ) -> bool:
+        """APAI's close_gripper_torque on the Thor; what the driver returned.
+
+        The jaws close to their stop and are left in the light hold where
+        they met it or what they hold. The Thor's driver runs it with its own
+        stall_rad, settle_tol, timeout_s and hold_kp: other values than the
+        driver's own are refused.
+        """
+        self._refuse_unless_task("jaw command")
+        self._only_defaults(
+            "close_gripper_torque",
+            stall_rad=stall_rad,
+            settle_tol=settle_tol,
+            timeout_s=timeout_s,
+            hold_kp=hold_kp,
+        )
+        result = self._jaw(0.0, effort, JAW_CLOSE_TORQUE)
+        self._jaw_ending(result)
+        detail = result.detail or {}
+        return bool(detail.get("closed", detail.get("outcome") != "timeout"))
 
     def stop(self) -> None:
         """Latch the adapter's stop and end a running move; never raises.
@@ -319,7 +600,7 @@ class RobotLinkArm:
         the arm. Anywhere else it is a person's STOP.
         """
         try:
-            self._stopped = True
+            self._latched = True
             if getattr(self._skill, "depth", 0) > 0:
                 return
             self._link.stop("stop at the agent program", AGENT_TERMINAL)
@@ -340,7 +621,8 @@ class RobotLinkArm:
         from .self_mask import mask_pose
 
         try:
-            return mask_pose(self._joint_feed, self.get_state)
+            # Not waited for: a camera frame without a pose is left out.
+            return mask_pose(self._joint_feed, self._state_now)
         except BodyMaskUnavailable:
             raise
         except RuntimeError as error:
@@ -361,8 +643,42 @@ class RobotLinkArm:
         before_stream: Any = None,
         contact_monitor: Any = None,
     ) -> bool:
-        raise _types().SafetyViolation(
-            "joint paths are not supported over the robot link; no motion sent"
+        """A dense joint path as one MOVE, as APAI's own driver streams one.
+
+        The setpoints are those of APAI's path_ticks along the waypoints from
+        a fresh start pose; the arm does not stop at a waypoint. The rest is
+        stream_to()'s.
+        """
+        violation = _types().SafetyViolation
+        try:
+            points = [np.asarray(w, dtype=float).reshape(-1) for w in waypoints]
+        except (TypeError, ValueError):
+            raise violation("a joint path needs joint poses; no motion sent") from None
+        if not points:
+            raise violation("empty joint path; no motion sent")
+        for point in points:
+            if point.shape != (self.n_joints,) or not np.isfinite(point).all():
+                raise violation(
+                    f"every pose of a joint path needs {self.n_joints} finite "
+                    "joint values; no motion sent"
+                )
+
+        def sample(start: np.ndarray, goal: np.ndarray) -> list[np.ndarray]:
+            from apai.control.arm_base import path_ticks
+
+            return path_ticks(start, points, duration_s, rate_hz)[0]
+
+        return self._stream(
+            points[-1],
+            sample,
+            duration_s,
+            rate_hz,
+            approve,
+            settle_tol,
+            settle_timeout_s,
+            preflight,
+            before_stream,
+            contact_monitor,
         )
 
     def close_gripper_two_stage(
@@ -373,24 +689,28 @@ class RobotLinkArm:
         stall_vel: float = 0.05,
         timeout_s: float = 3.0,
     ) -> float | None:
-        """The grasp close: one GRIPPER that closes until the jaws stall.
+        """APAI's close_gripper_two_stage on the Thor: one GRIPPER for both stages.
 
-        Returns the measured end position in profile units, or None. A close
-        never opens: a target that is not more closed than the last one sends
-        nothing.
+        The Thor's driver runs the scout stage and the seat stage, decides
+        when each has ended and which it skips, and leaves the jaws pushing at
+        the seat stage. Returns the jaw position it ended at in the arm
+        profile's units, None when the driver could not read it;
+        close_stages_skipped is the driver's count, None when it gave none.
+        The driver runs it with its own stall_vel and timeout_s: other values
+        than the driver's own are refused.
         """
         self._refuse_unless_task("jaw command")
-        opening = min(1.0, max(0.0, 1.0 - float(width_frac_stage2)))
-        last = self._last_jaw_target()
-        if last is not None and opening >= last - 1e-9:
-            self.close_stages_skipped = 2
-            return None
-        result = self._jaw(opening, effort, "close_until_contact")
-        if self._jaw_ending(result) == "short":
-            # A stall is "completed" in this mode; what is left is a timeout.
-            raise _types().GripperFault(result.reason or "the jaw close timed out")
-        self.close_stages_skipped = 0
-        measured = result.detail.get("opening")
+        self._only_defaults(
+            "close_gripper_two_stage", stall_vel=stall_vel, timeout_s=timeout_s
+        )
+        seat = min(1.0, max(0.0, 1.0 - float(width_frac_stage2)))
+        scout = min(1.0, max(0.0, 1.0 - float(width_frac_stage1)))
+        result = self._jaw(seat, effort, JAW_CLOSE_UNTIL_CONTACT, scout)
+        self._jaw_ending(result)
+        detail = result.detail or {}
+        skipped = detail.get("close_stages_skipped")
+        self.close_stages_skipped = skipped if type(skipped) is int else None
+        measured = detail.get("opening")
         return self._position(measured) if _is_number(measured) else None
 
     def stream_to(
@@ -409,7 +729,57 @@ class RobotLinkArm:
 
         True when the arm settled at the goal, False when it did not. A
         refusal before the robot app armed the move has called the checker
-        callback for no setpoint.
+        callback for no setpoint. When the robot app finds the arm away from
+        the start pose the move was sampled from, the move is sampled again
+        from a new reading, as APAI's prepare_stream does for a route.
+        """
+
+        def sample(start: np.ndarray, goal: np.ndarray) -> list[np.ndarray]:
+            from apai.control.motion_profile import min_jerk
+
+            return sample_move(start, goal, duration_s, rate_hz, min_jerk)
+
+        return self._stream(
+            q_target,
+            sample,
+            duration_s,
+            rate_hz,
+            approve,
+            settle_tol,
+            settle_timeout_s,
+            preflight,
+            before_stream,
+            contact_monitor,
+        )
+
+    def _stream(self, goal: Any, sample: _Sample, *args: Any) -> bool:
+        """One streamed motion; what it measured goes to `measure` at its end."""
+        stats: dict[str, Any] = {}  # what this move measures
+        try:
+            settled = self._stream_checked(stats, goal, sample, *args)
+        except BaseException as error:
+            self._note_move(stats, type(error).__name__)
+            raise
+        self._note_move(stats, "completed" if settled else "not_settled")
+        return settled
+
+    def _stream_checked(
+        self,
+        stats: dict[str, Any],
+        q_target: Any,
+        sample: _Sample,
+        duration_s: float,
+        rate_hz: float,
+        approve: Any,
+        settle_tol: float | None,
+        settle_timeout_s: float | None,
+        preflight: Any,
+        before_stream: Any,
+        contact_monitor: Any,
+    ) -> bool:
+        """_stream(); the stretches of the move go into stats as they end.
+
+        sample(start pose, goal) gives the setpoints of the motion.
         """
         violation = _types().SafetyViolation
         settings = self._settings
@@ -444,41 +814,83 @@ class RobotLinkArm:
         if check is None:
             raise violation("no check ahead is bound to the arm; no motion sent")
 
-        from apai.control.arm_base import prepare_stream
-        from apai.control.motion_profile import min_jerk
+        # Read where they stand at this call: the experiment's launcher gives
+        # the feedback budget its own length.
+        from apai.control import arm_base
 
-        start, target = prepare_stream(
-            _FreshReader(self._fresh_state),
-            target,
-            duration_s,
-            preflight,
-            before_stream,
-        )
-        q = sample_move(start, target, duration_s, rate_hz, min_jerk)
-        if len(q) > welcome.max_move_setpoints:
-            raise violation(
-                f"the move has {len(q)} setpoints, the robot app takes at most "
-                f"{welcome.max_move_setpoints}; no motion sent"
-            )
-        check.wait_fresh_grid(settings.start_grid_age_s, settings.start_grid_wait_s)
-        evidence = check.vet_whole(start, q)
+        def fresh() -> Any:
+            stats["fresh_reads"] = stats.get("fresh_reads", 0) + 1
+            with _timed(stats, "fresh_wait_s"):
+                return self._fresh_state()
+
         tol = settings.start_tol(period)
         room = settings.agent_max_joint_speed * period - tol
-        if largest_step(start, q[0]) > room:
-            raise violation(
-                f"the first setpoint is {largest_step(start, q[0]):.4f} rad from "
-                f"the start pose; the robot app's speed limit leaves {room:.4f} "
-                "rad for it; no motion sent"
+        tries = int(arm_base.PREFLIGHT_MAX_CHECKS)
+        give_up = time.monotonic() + float(arm_base.PREFLIGHT_REBIND_BUDGET_S)
+        for attempt in range(1, tries + 1):
+            start, target = arm_base.prepare_stream(
+                _FreshReader(fresh),
+                target,
+                duration_s,
+                preflight,
+                before_stream,
             )
-        if contact_monitor is not None:
-            # From here a TypeError must not make SafeArm send the move again.
-            contact_monitor.started = True
+            q = sample(start, target)
+            if len(q) > welcome.max_move_setpoints:
+                raise violation(
+                    f"the move has {len(q)} setpoints, the robot app takes at most "
+                    f"{welcome.max_move_setpoints}; no motion sent"
+                )
+            with _timed(stats, "grid_wait_s"):
+                check.wait_fresh_grid(
+                    settings.start_grid_age_s, settings.start_grid_wait_s
+                )
+            with _timed(stats, "whole_check_s"):
+                evidence = self._vet_start(check, start, q)
+            if largest_step(start, q[0]) > room:
+                raise violation(
+                    f"the first setpoint is {largest_step(start, q[0]):.4f} rad "
+                    f"from the start pose; the robot app's speed limit leaves "
+                    f"{room:.4f} rad for it; no motion sent"
+                )
+            if contact_monitor is not None:
+                # From here a TypeError must not make SafeArm send the move again.
+                contact_monitor.started = True
+            try:
+                return self._move(
+                    start, q, tol, evidence.wall_s, approve, contact_monitor, stats
+                )
+            except TypeError as error:
+                raise RobotLinkError(
+                    f"error in the arm adapter during a move: {error!r}"
+                ) from error
+            except violation as error:
+                # The arm moved between this program's reading and the Thor's:
+                # nothing was sent. APAI's prepare_stream takes a new reading
+                # in this case; so does this.
+                moved = getattr(error, "start_pose_moved", False)
+                if not moved or attempt == tries or time.monotonic() >= give_up:
+                    raise
+                stats["start_retries"] = attempt
+                _log.info("the move is sampled again from a new reading: %s", error)
+        raise AssertionError("unreachable")
+
+    def _vet_start(self, check: CheckAhead, start: np.ndarray, q: list[Any]) -> Any:
+        """The check before a MOVE is sent: the setpoints its first PERMIT covers.
+
+        APAI checks a plain move setpoint by setpoint as it sends it, and a
+        route or a joint path whole in the preflight that has run by now. So
+        only what the first PERMIT reaches is vetted here; each setpoint is
+        checked again before a PERMIT covers it. Returns the grid's evidence.
+        """
+        reach = max(1, min(len(q), self._settings.reach_setpoints))
         try:
-            return self._move(start, q, tol, evidence.wall_s, approve, contact_monitor)
-        except TypeError as error:
-            raise RobotLinkError(
-                f"error in the arm adapter during a move: {error!r}"
-            ) from error
+            return check.vet_whole(start, q[:reach])
+        except Exception as error:
+            if type(error).__name__ != "CheckRefused" or len(q) == reach:
+                raise
+            # Refused setpoints are named by their place in the whole move.
+            raise type(error)(error.index, error.reason, len(q)) from None
 
     # A move
 
@@ -490,13 +902,16 @@ class RobotLinkArm:
         evidence_wall_s: float,
         approve: Any,
         monitor: Any,
+        stats: dict[str, Any] | None = None,
     ) -> bool:
         link, settings = self._link, self._settings
         violation = _types().SafetyViolation
         move_id = link.new_id()
         region = self._grasp_region()
         began = time.monotonic()
-        self.last_move = {"move_id": move_id, "setpoints": len(q), "permits": 0}
+        stats = {} if stats is None else stats
+        stats.update(move_id=move_id, setpoints=len(q), permits=0)
+        self.last_move = stats
         # The numbers every PERMIT of this move quotes, also after close_task().
         pinned = link.pinned
         if pinned is None:
@@ -506,7 +921,7 @@ class RobotLinkArm:
                 move_id, start, tol, q, region, evidence_wall_s, settings.expires_in_s
             )
         except LinkLost as error:
-            self._stopped = True
+            self._latched = True
             raise RobotLinkError(str(error)) from error
         except (StaleState, ProtocolError, RuntimeError) as error:
             raise violation(
@@ -514,6 +929,7 @@ class RobotLinkArm:
             ) from None
         if region is not None:
             self._grasp_sent = True
+        begun = getattr(self._check.harness, "motions_begun", None)
         try:
             self._await_armed(move_id, began)
             result, cause = self._permit_loop(move_id, pinned, start, q, approve, began)
@@ -522,6 +938,15 @@ class RobotLinkArm:
             raise
         if result is not None:
             link.wait_reflected(move_id, _REFLECT_S)
+            detail = result.detail if isinstance(result.detail, dict) else {}
+            stats.update(
+                status=result.status,
+                outcome=detail.get("outcome"),
+                sent=detail.get("sent"),
+            )
+            approved = stats.get("approved", 0)
+            if result.status != "completed" and detail.get("sent") == 0 and approved:
+                self._uncount(approved, begun)
         link.forget(move_id)
         return self._move_ending(result, cause, len(q), monitor)
 
@@ -532,16 +957,8 @@ class RobotLinkArm:
         callback saw no setpoint.
         """
         link, settings = self._link, self._settings
-        try:
-            first = link.wait_first(move_id, settings.admit_wait_s)
-        except LinkLost as error:
-            self._stopped = True
-            raise RobotLinkError(str(error)) from error
-        except CommandTimeout:
-            raise RobotLinkError(
-                f"no RESULT for the MOVE within {settings.admit_wait_s:g} s; no "
-                "permit was sent"
-            ) from None
+        first = self._await_first(move_id)
+        self.last_move["first_result_after_s"] = time.monotonic() - began
         if first.status != "accepted":
             raise self._ended_unarmed(first)
         end = time.monotonic() + settings.arm_wait_s
@@ -552,7 +969,7 @@ class RobotLinkArm:
             try:
                 state = link.state()
             except LinkLost as error:
-                self._stopped = True
+                self._latched = True
                 raise RobotLinkError(str(error)) from error
             except StaleState:
                 state = None
@@ -565,17 +982,93 @@ class RobotLinkArm:
                 raise RobotLinkError("the robot app did not arm the move")
             link.wait_change(min(left, settings.renew_s))
 
+    def _await_first(self, move_id: str) -> Result:
+        """The first RESULT of a MOVE: its admission, or its end."""
+        settings = self._settings
+        try:
+            return self._link.wait_first(move_id, settings.admit_wait_s)
+        except LinkLost as error:
+            self._latched = True
+            raise RobotLinkError(str(error)) from error
+        except CommandTimeout:
+            raise RobotLinkError(
+                f"no RESULT for the MOVE within {settings.admit_wait_s:g} s; no "
+                "permit was sent"
+            ) from None
+
     def _ended_unarmed(self, result: Result) -> BaseException:
         """What a move's final RESULT means when it came before "armed"."""
         types = _types()
         reason = result.reason
+        self.last_move["status"] = result.status
         if reason.startswith(LOST):
-            self._stopped = True
+            self._latched = True
             return RobotLinkError(reason)
         if result.status == "cancelled":
             self._mirror()
             return types.MotionHalted(f"the robot app stopped the move: {reason}")
-        return types.SafetyViolation(f"robot app refused the move: {reason}")
+        refused = types.SafetyViolation(f"robot app refused the move: {reason}")
+        # The Thor read the arm away from the pose the move starts at and sent
+        # nothing: _stream_checked() samples the move again.
+        refused.start_pose_moved = result.status == "refused" and reason.startswith(
+            START_POSE
+        )
+        return refused
+
+    def _uncount(self, approved: int, begun: Any) -> None:
+        """Take a move the Thor sent nothing of out of the checker's counts.
+
+        APAI counts a command when its check cleared it, just before it is
+        sent: a move whose count did not rise was refused before any motion,
+        and the skill stops nothing. The check ahead clears setpoints before
+        the Thor sends one, so a move the Thor ended before its first
+        setpoint is taken out again: `approved` cleared commands, and its
+        place among the motions begun when that rose from `begun`.
+        """
+        harness = self._check.harness
+        try:
+            from apai.safety.harness import _APPROVED_LOCK
+
+            with _APPROVED_LOCK:
+                count = getattr(harness, "approved_commands", None)
+                if type(count) is int:
+                    harness.approved_commands = max(0, count - approved)
+            now = getattr(harness, "motions_begun", None)
+            if type(begun) is int and type(now) is int and now > begun:
+                harness.motions_begun = now - 1
+        except Exception:
+            _log.warning("the checker's counts were not put back", exc_info=True)
+
+    def _pause(self, move_id: str) -> None:
+        """The pause between two passes of the permit loop, at most renew_s.
+
+        It ends at the next ROBOT_STATE or RESULT, and within _HALT_LOOK_S of
+        a halt or a stop of the workstation checker: APAI's own stream sees
+        one at its next setpoint, so the cancel must not wait out the pause.
+        """
+        link = self._link
+        harness = self._check.harness
+        end = time.monotonic() + self._settings.renew_s
+        try:
+            seen: float | None = link.state_arrived_s()
+        except StaleState:
+            seen = None
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                return
+            link.wait_change(min(left, _HALT_LOOK_S))
+            if getattr(harness, "halted", None) is not None:
+                return
+            if getattr(harness, "estopped", False):
+                return
+            if link.final_result(move_id) is not None:
+                return
+            try:
+                if link.state_arrived_s() != seen:
+                    return
+            except StaleState:
+                continue
 
     def _permit_loop(
         self,
@@ -596,12 +1089,12 @@ class RobotLinkArm:
         stats = self.last_move
         count = len(q)
         reach = settings.reach_setpoints
-        deadline = time.monotonic() + (
-            settings.first_wait_s
-            + count * float(link.welcome.setpoint_period_s) * 1.1
-            + settings.settle_timeout_s
-            + 3.0
-        )
+        # APAI's stream has no time limit: a move lasts as long as its
+        # setpoints go out. The Thor ends a move whose first permit does not
+        # come and one that does not settle, so no RESULT is coming once no
+        # further setpoint was reported for longer than both and a margin.
+        quiet_s = settings.first_wait_s + settings.settle_timeout_s + _RESULT_MARGIN_S
+        progress_at = time.monotonic()
         move_check = self._check.begin(approve, start, q)
         last_evidence: float | None = None  # of the last PERMIT sent
         sent = 0
@@ -610,11 +1103,12 @@ class RobotLinkArm:
             while True:
                 result = link.final_result(move_id)
                 if result is not None:
+                    stats["result_after_s"] = time.monotonic() - began
                     stats["approved"] = move_check.approved_through + 1
                     stats["sent_seen"] = sent
                     return result, None
-                if time.monotonic() >= deadline:
-                    self._stopped = True
+                if time.monotonic() - progress_at >= quiet_s:
+                    self._latched = True
                     cause = RobotLinkError("no RESULT for the move")
                     break
                 cause = self._live_gate()
@@ -625,10 +1119,14 @@ class RobotLinkArm:
                 # runs out unless a newer state arrives.
                 fresh = time.monotonic() - arrived <= settings.state_renew_age_s
                 if state.move_id == move_id and fresh:
-                    sent = max(sent, int(state.move_index))
                     started = time.monotonic()
+                    if int(state.move_index) > sent:
+                        sent = int(state.move_index)
+                        progress_at = started
                     grant = move_check.step(sent, reach)
                     took = time.monotonic() - started
+                    stats["passes"] = stats.get("passes", 0) + 1
+                    stats["pass_total_s"] = stats.get("pass_total_s", 0.0) + took
                     stats["max_pass_s"] = max(stats.get("max_pass_s", 0.0), took)
                     if grant is None and move_check.refusal is not None:
                         cause = move_check.refusal
@@ -653,13 +1151,16 @@ class RobotLinkArm:
                         )
                         if last_evidence is None:
                             stats["first_permit_after_s"] = time.monotonic() - began
+                            self._point(MARK_FIRST_PERMIT)
                         last_evidence = grant.evidence_wall_s
                         stats["permits"] += 1
                         stats["through"] = grant.through_index
+                    # Behind the PERMIT of this pass: nothing here delays it.
+                    self._note_progress(stats, sent, count, started - began)
                 # A fresh state without the move: its RESULT is due.
-                link.wait_change(settings.renew_s)
+                self._pause(move_id)
         except (LinkLost, StaleState) as error:
-            self._stopped = True
+            self._latched = True
             cause = RobotLinkError(f"{error}; the permits were stopped")
         except BaseException as error:
             # APAI's SignalRequest (the first Ctrl+C) or an error of ours:
@@ -685,6 +1186,63 @@ class RobotLinkArm:
             result = None
         return result, cause
 
+    # What a move measures. None of it raises, waits or writes: the facts go
+    # to `measure` when stream_to() ends.
+
+    def _mark(self, name: str) -> None:
+        """A point of a move's permit loop, one of MARKS; nothing happens here.
+
+        The launcher's timing wraps this method and shows each call as a span.
+        """
+
+    def _point(self, name: str) -> None:
+        try:
+            self._mark(name)
+        except Exception:
+            self._measure_trouble()
+
+    def _note_progress(
+        self, stats: dict[str, Any], sent: int, count: int, after_s: float
+    ) -> None:
+        """Note when the count of setpoints the Thor reports as sent rose.
+
+        The first time it is 1 or more, the last time it rose, and the first
+        time it is the whole move: a move that settles at once ends before a
+        ROBOT_STATE shows that.
+        """
+        if sent > stats.get("sent_seen", 0):
+            stats["sent_seen"] = sent
+            stats["last_progress_after_s"] = after_s
+        if sent >= 1 and "first_sent_after_s" not in stats:
+            stats["first_sent_after_s"] = after_s
+            self._point(MARK_FIRST_SETPOINT)
+        if sent >= count and "all_sent_after_s" not in stats:
+            stats["all_sent_after_s"] = after_s
+            self._point(MARK_ALL_SENT)
+
+    def _note_move(self, stats: dict[str, Any], ended: str) -> None:
+        """Hand over what a move measured; nothing for a call that measured nothing."""
+        if stats:
+            stats["ended"] = ended
+            self._note(MEASURED_MOVE, stats)
+
+    def _note(self, kind: str, facts: dict[str, Any]) -> None:
+        """Call `measure`; a failure there is logged once and costs nothing else."""
+        if self._measure is None:
+            return
+        try:
+            self._measure(kind, facts)
+        except Exception:
+            self._measure_trouble()
+
+    def _measure_trouble(self) -> None:
+        if not self._measure_failed:
+            self._measure_failed = True
+            _log.warning(
+                "a measurement of the arm adapter failed; the run goes on without it",
+                exc_info=True,
+            )
+
     def _live_gate(self) -> BaseException | None:
         """Why the permits must stop now; None while they may go on."""
         types = _types()
@@ -694,12 +1252,12 @@ class RobotLinkArm:
         halted = getattr(harness, "halted", None)
         if halted is not None:
             return types.MotionHalted(f"halted: {halted}")
-        if self._stopped:
+        if self._latched:
             return types.SafetyViolation("arm stop latched")
         lost = self._link.lost_reason()
         if lost is None:
             return None
-        self._stopped = True
+        self._latched = True
         try:
             self._link.state()
         except (LinkLost, StaleState):
@@ -729,12 +1287,12 @@ class RobotLinkArm:
             if result.status != "completed" and outcome != "contact":
                 monitor.hold = "last command (stream aborted)"
         if reason.startswith(LOST):
-            self._stopped = True
+            self._latched = True
             raise RobotLinkError(reason)
         if result.status == "failed" and outcome == "contact":
             raise self._contact(result, monitor)
         if reason.startswith(("fault: ", "robot app error")):
-            self._stopped = True
+            self._latched = True
             raise RobotLinkError(reason)
         if result.status == "cancelled":
             self._mirror()
@@ -841,7 +1399,7 @@ class RobotLinkArm:
     def _refuse_unless_task(self, what: str) -> None:
         """The refusals before anything is read or sent."""
         violation = _types().SafetyViolation
-        if self._stopped:
+        if self._latched:
             raise violation(f"arm stop latched; no {what} sent")
         # APAI's jaw close does not pass its SafeArm, which looks at this latch.
         if self._check is not None and getattr(self._check.harness, "estopped", False):
@@ -853,13 +1411,13 @@ class RobotLinkArm:
             )
         lost = self._link.lost_reason()
         if lost is not None:
-            self._stopped = True
+            self._latched = True
             raise violation(f"the agent no longer owns the arm: {lost}; no {what} sent")
 
     def _mirror(self) -> None:
         """Latch the adapter's stop when the pinned ownership no longer stands."""
         if self._link.lost_reason() is not None:
-            self._stopped = True
+            self._latched = True
 
     # Jaws
 
@@ -899,38 +1457,95 @@ class RobotLinkArm:
             return float(jaws.opening)
         return float(jaws.last_target) if _is_number(jaws.last_target) else None
 
-    def _last_jaw_target(self) -> float | None:
-        try:
-            last = self._link.state().gripper.last_target
-        except (LinkLost, StaleState):
-            return None
-        return float(last) if _is_number(last) else None
+    def _only_defaults(self, routine: str, **given: Any) -> None:
+        """Refuse values the Thor's driver would not run this routine with.
 
-    def _jaw(self, opening: float, effort: float, mode: str) -> Result:
+        The GRIPPER carries the positions and the effort; the driver's other
+        parameters stay the driver's own, which are this method's defaults.
+        """
+        defaults = inspect.signature(getattr(RobotLinkArm, routine)).parameters
+        for name, value in given.items():
+            if value != defaults[name].default:
+                raise ValueError(
+                    f"{routine}: {name}={value!r} is not sent over the robot "
+                    f"link; the Thor's driver uses its own "
+                    f"({defaults[name].default!r}); no jaw command sent"
+                )
+
+    def _jaw(
+        self,
+        opening: float,
+        effort: float,
+        mode: str,
+        scout_opening: float | None = None,
+    ) -> Result:
         """Send one GRIPPER and wait for its final RESULT.
 
-        Without one in result_timeout_s the adapter gives up and sends a STOP,
-        also inside skill_scope(): the robot app then starts nothing of the
-        command, and holds the jaws lightly where a running one left them.
+        scout_opening is the scout stage of the driver's two-stage close.
+        Without a RESULT in result_timeout_s the adapter gives up and sends a
+        STOP, also inside skill_scope(): the robot app then starts nothing of
+        the command, and holds the jaws lightly where a running one left them.
+        No STOP is sent once a fresh ROBOT_STATE shows that the ownership has
+        ended: the robot app refuses the command by its numbers then, and a
+        STOP, which quotes none, would end a person's return to rest or drive.
         """
         timeout_s = self._settings.result_timeout_s
         effort = min(1.0, max(0.0, float(effort)))
+        facts: dict[str, Any] = {"mode": mode, "opening": opening, "effort": effort}
+        if scout_opening is not None:
+            facts["scout_opening"] = scout_opening
+        self.last_jaw = facts
+        self._note(MEASURED_JAW_BEGIN, facts)
+        began = time.monotonic()
         try:
-            result = self._link.gripper(opening, effort, mode, timeout_s)
+            result = self._link.gripper(opening, effort, mode, timeout_s, scout_opening)
+            facts["sent_to_result_s"] = time.monotonic() - began
+            detail = result.detail if isinstance(result.detail, dict) else {}
+            facts["status"] = result.status
+            facts["outcome"] = detail.get("outcome")
+            facts["result_opening"] = detail.get("opening")
             self._await_later_states()
             return result
         except LinkLost as error:
-            self._stopped = True
+            self._latched = True
+            facts["status"] = "link lost"
             raise RobotLinkError(str(error)) from error
         except CommandTimeout:
-            self._stopped = True
+            self._latched = True
+            facts["status"] = "no RESULT"
+            told = f"no RESULT for the jaw command within {timeout_s:g} s"
+            if self._ownership_ended():
+                raise RobotLinkError(
+                    f"{told}; the agent no longer owns the arm, so no STOP was sent"
+                ) from None
             self._link.stop(
                 f"the agent gave up on a jaw command: no RESULT within {timeout_s:g} s",
                 AGENT_SENDER,
             )
-            raise RobotLinkError(
-                f"no RESULT for the jaw command within {timeout_s:g} s; a STOP was sent"
-            ) from None
+            raise RobotLinkError(f"{told}; a STOP was sent") from None
+        finally:
+            facts["waited_s"] = time.monotonic() - began
+            self._note(MEASURED_JAW, facts)
+
+    def _ownership_ended(self) -> bool:
+        """Whether a fresh ROBOT_STATE shows that the pinned ownership has ended.
+
+        False when that cannot be told: without a pin, without a fresh state.
+        """
+        pinned = self._link.pinned
+        if pinned is None:
+            return False
+        try:
+            state = self._link.state(self._settings.state_max_age_s)
+        except (LinkLost, StaleState):
+            return False
+        shown = (state.session_id, state.owner, state.owner_number, state.stop_number)
+        return shown != (
+            pinned.session_id,
+            "agent",
+            pinned.owner_number,
+            pinned.stop_number,
+        )
 
     def _await_later_states(self) -> None:
         """Wait for two ROBOT_STATEs newer than now, at most 0.3 s.
@@ -956,13 +1571,19 @@ class RobotLinkArm:
             return
 
     def _jaw_ending(self, result: Result) -> str:
-        """ "done", or "short" for a stall or a timeout; raises for the rest."""
+        """ "done", or "short" for a stall or a timeout; raises for the rest.
+
+        GripperFault, as APAI's driver raises it and with the driver's own
+        text, for a fault of the jaws that leaves the arm usable. "short" is
+        what a driver that waits for the jaws itself reports, such as the
+        simulated one.
+        """
         types = _types()
         reason = result.reason
         if result.status == "completed":
             return "done"
         if reason.startswith((LOST, "fault: ")):
-            self._stopped = True
+            self._latched = True
             raise RobotLinkError(reason)
         if result.status == "cancelled":
             self._mirror()
@@ -971,10 +1592,13 @@ class RobotLinkArm:
             if reason == _JAWS_UNREFERENCED or reason.startswith(_JAWS_UNREAD):
                 raise types.GripperFault(reason)
             raise types.SafetyViolation(f"robot app refused the jaw command: {reason}")
-        if (result.detail or {}).get("outcome") in ("stalled", "timeout"):
+        outcome = (result.detail or {}).get("outcome")
+        if outcome == _GRIPPER_FAULT:
+            raise types.GripperFault(reason or "the driver reported a gripper fault")
+        if outcome in ("stalled", "timeout"):
             return "short"
         # A driver fault or an error of the jaw worker: the Thor has stopped.
-        self._stopped = True
+        self._latched = True
         raise RobotLinkError(f"the jaw command failed: {reason}")
 
     # CHECKER_STATE
@@ -1081,7 +1705,10 @@ class RobotLinkArm:
 
 
 def arm_factory(
-    link: AgentLink, settings: ArmSettings | None = None, joint_feed: Any = None
+    link: AgentLink,
+    settings: ArmSettings | None = None,
+    joint_feed: Any = None,
+    measure: Measure | None = None,
 ) -> Callable[..., Any]:
     """make_arm(cfg, kinematics=None) for APAI: RobotLinkArm for type robot_link.
 
@@ -1096,7 +1723,12 @@ def arm_factory(
 
             return apai_make_arm(cfg, kinematics)
         adapter = RobotLinkArm(
-            cfg, kinematics, link=link, settings=settings, joint_feed=joint_feed
+            cfg,
+            kinematics,
+            link=link,
+            settings=settings,
+            joint_feed=joint_feed,
+            measure=measure,
         )
         made.append(adapter)
         return adapter
