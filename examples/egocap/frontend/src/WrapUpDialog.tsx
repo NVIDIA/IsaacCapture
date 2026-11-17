@@ -248,7 +248,14 @@ export function WrapUpDialog({ open, onClose, controlToken, backend = REAL_WRAP_
                       // A draft stays with the station it was begun for, whatever report is read meanwhile.
                       station={notesDraft?.station ?? reply.station_in_use}
                       // Typing back to what is saved leaves nothing to keep.
-                      onNotes={(text) => setNotesDraft((draft) => (text === reply.uptime.notes ? null : { station: draft?.station ?? reply.station_in_use, text }))}
+                      // Only for the station on screen: a draft begun for another one is never dropped by matching this one's notes.
+                      onNotes={(text) =>
+                        setNotesDraft((draft) => {
+                          const station = draft?.station ?? reply.station_in_use;
+                          return text === reply.uptime.notes && station === reply.station_in_use ? null : { station, text };
+                        })
+                      }
+                      foreign={notesDraft !== null && notesDraft.station !== reply.station_in_use}
                       controlToken={controlToken}
                       saveNotes={backend.saveNotes}
                       onSaved={notesSaved}
@@ -302,6 +309,7 @@ function StationTime({
   hasTake,
   notes,
   station,
+  foreign,
   onNotes,
   controlToken,
   saveNotes,
@@ -317,6 +325,8 @@ function StationTime({
   notes: string;
   /** The station the notes are saved for. */
   station: string;
+  /** Whether the notes are a draft begun for another station than the one the report shows. */
+  foreign: boolean;
   onNotes: (notes: string) => void;
   controlToken: string;
   saveNotes: WrapUpBackend["saveNotes"];
@@ -328,7 +338,8 @@ function StationTime({
   onReload: () => void;
 }) {
   const [{ busy, failure }, run] = useAction();
-  const dirty = notes !== uptime.notes;
+  // A draft for another station is unsaved whatever this station's notes say.
+  const dirty = foreign || notes !== uptime.notes;
   /** Save the draft; a save already on its way is not sent twice. */
   const save = () => {
     if (busy) return;

@@ -313,6 +313,26 @@ describe("station time in the end-of-day dialog", () => {
     await waitFor(() => expect(backend.saveNotes).toHaveBeenCalledWith("tok", "Bench A", "left glove swapped"));
   });
 
+  it("keeps a draft with the station it was begun for when it is typed back to another station's saved notes", async () => {
+    const backend = fakeBackend();
+    renderDialog({}, backend);
+    const time = await region("Station time");
+    fireEvent.change(notesField(time), { target: { value: "left glove swapped" } });
+    // The report is read again and is Cart B's, whose notes are empty.
+    vi.mocked(backend.load).mockResolvedValue({ ...DAY_REPORT_FIXTURE, station_in_use: "Cart B", uptime: { ...UPTIME_FIXTURE, station: "Cart B", notes: "" } });
+    const sessions = screen.getByRole("region", { name: "Sessions" });
+    fireEvent.change(within(sessions).getByLabelText("Takes to correct"), { target: { value: "0" } });
+    fireEvent.change(within(sessions).getByLabelText("Correct task"), { target: { value: "Wash the cup." } });
+    fireEvent.click(within(sessions).getByRole("button", { name: "Correct" }));
+    await within(sessions).findByText(/^Corrected/);
+    // Emptying the field matches Cart B's notes, but the draft is Bench A's: it stays unsaved and stays Bench A's.
+    fireEvent.change(notesField(time), { target: { value: "" } });
+    expect((within(time).getByRole("button", { name: "Save notes" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.change(notesField(time), { target: { value: "x" } });
+    fireEvent.click(within(time).getByRole("button", { name: "Save notes" }));
+    await waitFor(() => expect(backend.saveNotes).toHaveBeenCalledWith("tok", "Bench A", "x"));
+  });
+
   it("says the station in use changed when the notes are refused for that, keeps them, and saves them after a reload", async () => {
     const backend = fakeBackend();
     const saveNotes = vi.mocked(backend.saveNotes);
@@ -427,6 +447,8 @@ describe("closing the end-of-day dialog over something unsaved", () => {
     fireEvent.change(within(sessions).getByLabelText("Correct task"), { target: { value: "Wash the cup." } });
     fireEvent.click(within(sessions).getByRole("button", { name: "Correct" }));
     await within(sessions).findByText(/^Corrected/);
+    // The form reports that it holds nothing typed in an effect, which may run after the text is on screen.
+    await act(async () => {});
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(props.onClose).toHaveBeenCalledTimes(2);
   });

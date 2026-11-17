@@ -171,6 +171,8 @@ class SetupService:
             if latest is not None and self._finished > asked and latest.key == self._key():
                 return latest
             roles = self._roles()
+            # Stamped when the facts are sampled, not when the files answer: a stalled disk must age the result.
+            sampled = self._monotonic()
             try:
                 # The capture facts are plain memory and belong to the event loop; only the files leave it.
                 facts = self._facts()
@@ -187,7 +189,7 @@ class SetupService:
                 if repr(exc) != self._last_failure:
                     self._last_failure = repr(exc)
                     logger.exception("The station checklist could not be evaluated")
-            self._latest = Evaluation(self._key_of(roles), facts, tuple(items), self._monotonic())
+            self._latest = Evaluation(self._key_of(roles), facts, tuple(items), sampled)
             self._finished += 1
             return self._latest
 

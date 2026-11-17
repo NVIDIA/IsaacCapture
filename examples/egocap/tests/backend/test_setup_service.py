@@ -240,6 +240,20 @@ async def test_a_stalled_disk_never_stalls_the_event_loop_or_the_gate(tmp_path):
     assert setup.block_reason() == "Free disk space: 1.0 GB free; 10 GB needed"
 
 
+async def test_a_result_is_as_old_as_its_facts_however_long_the_disk_took(tmp_path):
+    setup, _, world = await _with_station_in_use(tmp_path)
+    world.disk_gate = threading.Event()
+    world.disk_entered.clear()
+    evaluation = asyncio.create_task(setup.refresh())
+    while not world.disk_entered.is_set():
+        await asyncio.sleep(0.01)
+    # The facts were sampled before the stall, so a result that arrives this late is already too old to admit.
+    world.now += 11
+    world.disk_gate.set()
+    await evaluation
+    assert setup.block_reason() == CHECKS_PENDING
+
+
 async def test_a_take_is_held_until_the_station_in_use_has_been_evaluated(tmp_path):
     setup, stations, world = _service(tmp_path)
     bench = await stations.add(BENCH)

@@ -198,6 +198,44 @@ describe("Station tab", () => {
     expect((within(setup).getByRole("button", { name: "Save camera setup" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("holds the camera setup and a first station when the setup cannot be read again after the last station is deleted", async () => {
+    const backend = fakeBackend({ stations: BENCH_IN_USE, operator: { ...OPERATOR_SETTINGS_FIXTURE, camera_type: "sensing_gmsl" } });
+    renderPanel({ cameraSources: ["Ego"] }, backend);
+    const card = await stations();
+    vi.mocked(backend.loadStationSetup).mockRejectedValueOnce(new Error("offline"));
+    fireEvent.click(within(card).getByRole("button", { name: "Delete" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Delete Bench A" }));
+    // What is on screen is still the deleted station's setup, so it is neither shown as the site's nor inherited.
+    const retry = await screen.findByRole("button", { name: "Read again" });
+    expect(screen.queryByRole("region", { name: "Camera setup" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("New station name"), { target: { value: "Bench B" } });
+    expect((screen.getByRole("button", { name: "Add station" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(retry);
+    const setup = await screen.findByRole("region", { name: "Camera setup" });
+    expect((within(setup).getByLabelText("Camera type") as HTMLSelectElement).value).toBe("sensing_gmsl");
+    expect(screen.queryByRole("button", { name: "Read again" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Add station" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("does not add the first station while a camera setup save is still on its way", async () => {
+    const backend = fakeBackend();
+    const saved: Array<() => void> = [];
+    const realSave = backend.saveOperator;
+    backend.saveOperator = vi.fn((token: string, changes) => new Promise<OperatorSettings>((resolve) => saved.push(() => resolve(realSave(token, changes)))));
+    renderPanel({ cameraSources: ["Ego"] }, backend);
+    await stations();
+    const setup = screen.getByRole("region", { name: "Camera setup" });
+    fireEvent.change(screen.getByLabelText("New station name"), { target: { value: "Bench A" } });
+    const add = () => screen.getByRole("button", { name: "Add station" }) as HTMLButtonElement;
+    expect(add().disabled).toBe(false);
+    fireEvent.change(within(setup).getByLabelText("Ego (head)"), { target: { value: "Ego" } });
+    fireEvent.click(within(setup).getByRole("button", { name: "Save camera setup" }));
+    // The first station inherits the saved setup, so it waits for the save to answer.
+    await waitFor(() => expect(add().disabled).toBe(true));
+    await act(async () => saved[0]());
+    await waitFor(() => expect(add().disabled).toBe(false));
+  });
+
   it("does not let an older read of the station setup replace a newer change", async () => {
     const backend = fakeBackend({ stations: BENCH_IN_USE });
     renderPanel({ cameraSources: ["Ego", "Wrist A"] }, backend);

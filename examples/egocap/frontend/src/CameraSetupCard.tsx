@@ -38,15 +38,26 @@ export function CameraSetupCard({ operator, cameraSources, controlToken, save }:
   // showing that station's cameras as the site's. A draft the operator has changed is theirs and is kept.
   const savedSetup = JSON.stringify([operator.camera_type, operator.roles.map((role) => operator.camera_roles[role] ?? null)]);
   const [followed, setFollowed] = useState(savedSetup);
-  if (followed !== savedSetup) {
+  // A saved setup that arrived over a changed draft is still owed: it is taken once the draft is clean again.
+  const [owed, setOwed] = useState(false);
+  const clean = Object.keys(changes).length === 0;
+  if (followed !== savedSetup || (owed && clean)) {
     setFollowed(savedSetup);
-    if (Object.keys(changes).length === 0) {
+    setOwed(!clean);
+    if (clean) {
       setOriginal(operator);
       setDraft(cameraDraftOf(operator));
     }
   }
   /** Send what changed; once saved, the draft is what later changes are judged against. */
-  const saveChanges = () => run(() => save(changes).then(() => setOriginal({ camera_type: draft.cameraType, camera_roles: { ...draft.cameraRoles } })));
+  const saveChanges = () =>
+    run(() =>
+      save(changes).then(() => {
+        setOriginal({ camera_type: draft.cameraType, camera_roles: { ...draft.cameraRoles } });
+        // What was just saved is the newest setup; nothing older is owed.
+        setOwed(false);
+      }),
+    );
   const dirty = Object.keys(changes).length > 0;
   const canSave = controlToken !== null && dirty && !busy;
   return (

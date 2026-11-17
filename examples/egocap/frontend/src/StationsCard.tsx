@@ -45,6 +45,8 @@ export interface StationsCardProps {
   backend: StationsBackend;
   /** The camera setup saved before any station existed; the first station added takes it over. */
   inherited: StationChange;
+  /** Whether changes are held by something outside the card, such as a camera setup save the first station would inherit. */
+  held?: boolean;
   /** The cameras the current session offers, by name. */
   cameraSources: string[];
   /** Where the headset of the station in use connects, from the start-of-day flow; null while that is not known. */
@@ -54,7 +56,7 @@ export interface StationsCardProps {
 }
 
 /** List the stations, choose the one in use, and add, edit or delete them. */
-export function StationsCard({ listing, controlToken, backend, inherited, cameraSources, headset, onListing }: StationsCardProps) {
+export function StationsCard({ listing, controlToken, backend, inherited, held = false, cameraSources, headset, onListing }: StationsCardProps) {
   const [{ busy, failure }, run] = useAction();
   // At most one editor is open, so a draft is never left behind in a row the operator has moved on from.
   const [editing, setEditing] = useState<string | null>(null);
@@ -63,7 +65,7 @@ export function StationsCard({ listing, controlToken, backend, inherited, camera
   const locked = listing.locked_reason !== null;
   const idle = controlToken !== null && !busy;
   // Every change answers with a whole listing and the last answer wins, so only one may be in flight.
-  const canChange = idle && !saving;
+  const canChange = idle && !saving && !held;
   /** Run one registry change with the token and hand its listing to the dialog; resolves once it has ended either way. */
   const change = (work: (token: string) => Promise<StationListing>): Promise<void> => {
     if (controlToken === null) return Promise.resolve();

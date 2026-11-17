@@ -168,6 +168,8 @@ function StationTab({
   controlToken,
   backend,
   cameraSources,
+  setupUnread,
+  onReload,
   onStations,
   onSetup,
 }: {
@@ -176,11 +178,28 @@ function StationTab({
   controlToken: string | null;
   backend: SettingsBackend;
   cameraSources: string[];
+  /** Whether the station setup could not be read again after the registry changed, so the camera setup on screen may be a deleted station's. */
+  setupUnread: boolean;
+  onReload: () => void;
   onStations: (stations: StationListing) => void;
   onSetup: (update: (value: StationSetup) => StationSetup) => void;
 }) {
+  // A camera setup save in flight: the first station inherits the saved setup, so it must not be added over it.
+  const [savingCameras, setSavingCameras] = useState(false);
   if (stationSetup.kind !== "loaded") return <LoadState state={stationSetup} what="Station setup" />;
   const { operator, stations } = stationSetup.value;
+  const empty = stations.stations.length === 0;
+  // With no station the camera setup on screen is what the first one inherits, so it must be the saved one.
+  const unknownSetup = empty && setupUnread;
+  /** Save the camera setup, holding the first station's creation until the save has answered. */
+  const saveCameras = (changes: OperatorSettingsChange): Promise<void> => {
+    if (controlToken === null) return Promise.resolve();
+    setSavingCameras(true);
+    return backend
+      .saveOperator(controlToken, changes)
+      .then((saved) => onSetup((value) => ({ ...value, operator: saved })))
+      .finally(() => setSavingCameras(false));
+  };
   return (
     <>
       <StationsCard
@@ -189,18 +208,20 @@ function StationTab({
         backend={backend}
         // The first station takes over the camera setup saved before any station existed.
         inherited={{ camera_type: operator.camera_type, camera_roles: operator.camera_roles }}
+        held={savingCameras || unknownSetup}
         cameraSources={cameraSources}
         headset={setup?.headset ?? null}
         onListing={onStations}
       />
-      {stations.stations.length === 0 && (
-        <CameraSetupCard
-          operator={operator}
-          cameraSources={cameraSources}
-          controlToken={controlToken}
-          save={(changes) => (controlToken === null ? Promise.resolve() : backend.saveOperator(controlToken, changes).then((saved) => onSetup((value) => ({ ...value, operator: saved }))))}
-        />
+      {unknownSetup && (
+        <p className="settings-note tone-warning">
+          The camera setup could not be read again, so it cannot be edited or handed to a new station yet.{" "}
+          <button type="button" className="settings-quiet" onClick={onReload}>
+            Read again
+          </button>
+        </p>
       )}
+      {empty && !unknownSetup && <CameraSetupCard operator={operator} cameraSources={cameraSources} controlToken={controlToken} save={saveCameras} />}
     </>
   );
 }
@@ -553,6 +574,8 @@ export function SettingsPanel({
   // The newest read of the station setup asked for after a change, and whether it is still to answer. A read is
   // a picture of the backend from when it was sent, so only the newest may replace what the dialog shows.
   const reloads = useRef({ latest: 0, pending: false });
+  // Whether the newest of those reads failed, leaving the camera setup on screen older than the registry.
+  const [setupUnread, setSetupUnread] = useState(false);
 
   useEscapeToClose(open, onClose);
 
@@ -570,9 +593,14 @@ export function SettingsPanel({
     };
     loadStationSetup(new AbortController().signal).then(
       (fresh) => {
-        if (settled()) applyStationSetup(() => fresh);
+        if (!settled()) return;
+        applyStationSetup(() => fresh);
+        setSetupUnread(false);
       },
-      () => void settled(), // the change itself succeeded; the next open reloads everything
+      () => {
+        // The change itself succeeded; what could not be read is the setup that goes with it.
+        if (settled()) setSetupUnread(true);
+      },
     );
   };
   /** Apply a saved change to what the dialog shows. A read still on its way was sent before this change and
@@ -618,7 +646,7 @@ export function SettingsPanel({
           </header>
           <div className="settings-content-body">
             {stationSetup.kind === "loaded" && stationSetup.value.operator.warning && <p className="settings-note tone-warning">{stationSetup.value.operator.warning}</p>}
-            {tab === "station" && <StationTab stationSetup={stationSetup} setup={setup} controlToken={controlToken} backend={backend} cameraSources={cameraSources} onStations={setStations} onSetup={updateStationSetup} />}
+            {tab === "station" && <StationTab stationSetup={stationSetup} setup={setup} controlToken={controlToken} backend={backend} cameraSources={cameraSources} setupUnread={setupUnread} onReload={reloadStationSetup} onStations={setStations} onSetup={updateStationSetup} />}
             {tab === "devices" && <DevicesTab setup={setup} controlToken={controlToken} loadSetup={backend.loadSetup} stationSetup={stationSetup} saveRequireCalibration={saveRequireCalibration} />}
             {tab === "tasks" && <TasksTab stationSetup={stationSetup} controlToken={controlToken} backend={backend} onSetup={updateStationSetup} />}
             {tab === "display" && <DisplayTab sidebarWidth={sidebarWidth} sidebarDefault={sidebarDefault} onResetSidebar={onResetSidebar} />}
