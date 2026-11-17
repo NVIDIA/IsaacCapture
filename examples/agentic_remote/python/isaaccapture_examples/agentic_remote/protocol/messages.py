@@ -58,6 +58,29 @@ HUMAN_MOVE_ID = "human"
 # OWNER_REQUEST.request: a person takes the arm over, and gives it back at rest.
 REQUEST_HUMAN = "human"
 REQUEST_HANDBACK = "handback"
+# OWNER_REQUEST.request, about the motors. Motors off: the agent's rest tool
+# has folded the arm and asks for the motors off; the robot app switches them
+# off only at measured rest. Motors on: after such a switch-off, an operator
+# who was asked first wants them on again. Park: the agent program ends and
+# its operator typed that the path is clear; the robot app runs its typed rest.
+REQUEST_MOTORS_OFF = "motors_off"
+REQUEST_MOTORS_ON = "motors_on"
+REQUEST_PARK = "park"
+# GRIPPER.mode: which routine of the arm's motor driver runs. Plain: its jaw
+# command, which returns once a close or a hold is sent and after the whole
+# ramp of an opening. Close until contact: its two-stage close when the GRIPPER
+# carries a scout opening, else one close that ends when the jaws stop. Open:
+# its own opening. Close torque: its close to the closed stop, which ends in
+# the light hold.
+JAW_PLAIN = "plain"
+JAW_CLOSE_UNTIL_CONTACT = "close_until_contact"
+JAW_OPEN = "open"
+JAW_CLOSE_TORQUE = "close_torque"
+GRIPPER_MODES = (JAW_PLAIN, JAW_CLOSE_UNTIL_CONTACT, JAW_OPEN, JAW_CLOSE_TORQUE)
+# OPEN.action: the typed opening of the jaws, or the typed close.
+OPEN_JAWS = "open"
+CLOSE_JAWS = "close"
+OPEN_ACTIONS = (OPEN_JAWS, CLOSE_JAWS)
 
 
 class ProtocolError(ValueError):
@@ -149,6 +172,9 @@ class Welcome(Message):
     limit_set_versions: dict[str, str]
     camera_calibration_id: str = ""
     driver: str = ""  # DRIVER_SIM, DRIVER_APAI_MOCK, DRIVER_REAL or "" (not declared)
+    # The joint speed limit of the agent's limit set, rad/s: a setpoint of the
+    # agent that asks for more is refused. None: not declared.
+    agent_max_joint_speed: float | None = None
 
 
 @dataclass(frozen=True)
@@ -182,10 +208,14 @@ class Gripper(Message):
     stop_number: int
     opening: float  # 0 closed .. 1 open
     max_effort: float  # 0 .. 1
-    mode: str  # "plain" or "close_until_contact"
+    mode: str  # one of GRIPPER_MODES
     # Thor monotonic clock: nothing of the command starts at or after this
     # time. None, also when the field is absent: the command does not expire.
     expires_mono_s: float | None = None
+    # With "close_until_contact": the opening of the scout stage, the first of
+    # the driver's two-stage close; `opening` is its seat stage. None, also
+    # when the field is absent: one close to `opening`.
+    scout_opening: float | None = None
 
 
 @dataclass(frozen=True)
@@ -224,10 +254,14 @@ class OwnerRequest(Message):
     session_id: str
     owner_number: int
     stop_number: int
-    request: str  # "agent", "human", "handback", "rest", "nobody" or "help_needed"
+    # "agent", "human", "handback", "rest", "nobody", "help_needed", or one of
+    # REQUEST_MOTORS_OFF, REQUEST_MOTORS_ON and REQUEST_PARK.
+    request: str
     reason: str = ""
     timed_return: bool = True  # with "agent": this task may end in a timed return
     confirmed: bool = False  # with "rest": the operator typed that the path is clear
+    # With "rest" and "handback": the operator typed that the jaws are empty.
+    jaws_empty: bool = False
 
 
 @dataclass(frozen=True)
@@ -252,11 +286,12 @@ class Release(Message):
     session_id: str
     owner_number: int
     stop_number: int
+    jaws_empty: bool = False  # the operator typed that the jaws are empty
 
 
 @dataclass(frozen=True)
 class Open(Message):
-    """Console to Thor: open the jaws through the guarded opening."""
+    """Console to Thor: open the jaws, or close them, with the driver's routine."""
 
     TYPE: ClassVar[int] = 72
 
@@ -264,7 +299,10 @@ class Open(Message):
     session_id: str
     owner_number: int
     stop_number: int
+    # The operator typed "yes": always for an opening, and for a close while
+    # the jaws are not proven empty.
     confirmed: bool
+    action: str = OPEN_JAWS  # one of OPEN_ACTIONS
 
 
 @dataclass(frozen=True)
@@ -279,6 +317,7 @@ class Shutdown(Message):
     stop_number: int
     # The operator typed that the path is clear; needed when the arm has to move.
     confirmed: bool = False
+    jaws_empty: bool = False  # the operator typed that the jaws are empty
 
 
 @dataclass(frozen=True)

@@ -46,6 +46,9 @@ from ..protocol.messages import (
     PROTOCOL_VERSION,
     REQUEST_HANDBACK,
     REQUEST_HUMAN,
+    REQUEST_MOTORS_OFF,
+    REQUEST_MOTORS_ON,
+    REQUEST_PARK,
     CheckerState,
     Event,
     Gripper,
@@ -114,10 +117,22 @@ ROLE_TABLE: dict[str, frozenset[int]] = {
     ROLE_HUMAN: frozenset(cls.TYPE for cls in (HumanSetpoint, OwnerRequest, Stop)),
 }
 # Which OWNER_REQUESTs a role may send. "human" asks for a takeover: a person
-# becomes the control owner. "handback" ends the takeover at rest.
+# becomes the control owner. "handback" ends the takeover at rest. The agent's
+# rest tool asks for the motors off once it has folded the arm, the agent
+# program asks for them on again and, at its end, for the robot app's own
+# return to rest ("park"). The console's "on" asks for the motors on again.
 OWNER_REQUESTS: dict[str, frozenset[str]] = {
-    ROLE_AGENT: frozenset({"agent", "help_needed", "nobody"}),
-    ROLE_CONSOLE: frozenset({"rest", "nobody"}),
+    ROLE_AGENT: frozenset(
+        {
+            "agent",
+            "help_needed",
+            "nobody",
+            REQUEST_MOTORS_OFF,
+            REQUEST_MOTORS_ON,
+            REQUEST_PARK,
+        }
+    ),
+    ROLE_CONSOLE: frozenset({"rest", "nobody", REQUEST_MOTORS_ON}),
     ROLE_HUMAN: frozenset({REQUEST_HUMAN, REQUEST_HANDBACK}),
 }
 # The typed fallback: the OWNER_REQUESTs the console role may send as well
