@@ -15,9 +15,9 @@
 # none was measured on the arm or with a headset. Times are in s, lengths in m,
 # angles in rad unless a key says deg.
 #
-# It differs from configs/human.yaml in six keys: socket_path, teleop.endpoint,
-# teleop.attempts, retarget.max_linear_velocity, retarget.max_angular_velocity
-# and ik.apai_arm.
+# It differs from configs/human.yaml in seven keys: socket_path, teleop.endpoint,
+# teleop.attempts, retarget.max_linear_velocity, retarget.max_angular_velocity,
+# ik.apai_arm and ik.max_ahead_rad.
 #
 # The program refuses a key it does not know and a number outside the bound its
 # comment names; a number without a named bound must be above 0.
@@ -100,8 +100,12 @@ ik:
   # and ends the engagement, the stretch in which the arm follows the hand.
   max_jump_rad: 0.05
   # The farthest, on any joint, a solution may run ahead of the Thor's last joint
-  # target before the engagement ends.
-  max_ahead_rad: 0.08
+  # target before the engagement ends. The Thor refuses a target 0.05 rad from
+  # its own last joint target (limits.human.max_step_rad of the rig's robot
+  # file), which is never older than the one seen here: 0.005 below that covers
+  # two readings of the holding arm at a squeeze. A squeeze at rest begins 0.033
+  # ahead, so not lower.
+  max_ahead_rad: 0.045
   # The farthest the hand's target may run ahead of the rate-limited target.
   max_ahead_m: 0.05
   max_failures: 5  # failed solves in a row that end the engagement; a whole number

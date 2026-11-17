@@ -17,6 +17,7 @@
 #   joint, not -3.0 and 3.0: with human.enabled the human joint box must lie inside
 #   rest.region_*.
 # - limits.human.max_joint_speed is 0.8, not 1.5: the speed limit of the rig's file.
+# - limits.human.max_step_rad is 0.05, not 0.1: the step limit of the rig's file.
 
 robot_id: sim-arm
 profile_id: sim-6dof
@@ -44,7 +45,7 @@ limits:
     # farthest, on any joint, one may lie from the last joint target sent. One
     # beyond it is refused: the arm holds until the grip is squeezed again. The
     # speed is not refused but clamped, at 0.98 of max_joint_speed.
-    max_step_rad: 0.1
+    max_step_rad: 0.05
   recovery:
     version: sim-1
     joint_min: [-3.0, -3.0, -3.0, -3.0, -3.0, -3.0]

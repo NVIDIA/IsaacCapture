@@ -61,9 +61,13 @@ limits:
     # joint targets of a person's hand ask the joints to move.
     max_joint_speed: 0.8  # the owner's value of 2026-11-16
     # A human target is a joint target that follows a person's hand. This is
-    # the farthest, on any joint, one may lie from the last joint target sent;
-    # one beyond it is refused and the arm holds. First value.
-    max_step_rad: 0.1
+    # the farthest, on any joint, one may lie from the arm at a squeeze and
+    # from the last joint target sent after it; one beyond it is refused and
+    # the arm holds. So the largest jump at a squeeze is 2.9 degrees a joint:
+    # 7.3 cm at the gripper tip in the ready pose, up to 9 cm with the arm
+    # reaching out, taken in 0.08 s. First value.
+    # ik.max_ahead_rad of configs/human_rebot.yaml stays below it.
+    max_step_rad: 0.05
   recovery:
     version: rebot-p4-1
     joint_min: [-2.8, -0.05, -0.05, -1.69, -1.57, -3.14]

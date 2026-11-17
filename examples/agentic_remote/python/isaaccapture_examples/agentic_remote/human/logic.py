@@ -862,10 +862,11 @@ def _reference(
 ) -> tuple[float, ...]:
     """What a solution may not run ahead of.
 
-    The robot app's last joint target while it drives for the person, else the
-    measured pose.
+    The robot app's last joint target once its drive for the person has sent a
+    setpoint, else the measured pose: before that the target is the last
+    owner's, which the arm may hold short of.
     """
-    if human.get("driving") and state.target_q is not None:
+    if human.get("driving") and state.move_index > 0 and state.target_q is not None:
         target = _joints(state.target_q, len(measured))
         if target is not None:
             return target
