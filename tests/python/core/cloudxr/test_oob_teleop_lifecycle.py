@@ -2219,12 +2219,21 @@ async def test_cancellation_mid_rebuild_rolls_back_owned_rules():
 async def test_episode_timeout_bounds_preparation_and_cleans_owned_forward():
     hub = FakeHub()
     ready = AdbDevices((("original", "device"),))
+    preparing = asyncio.Event()
+    preparation_timeout = asyncio.timeout(None)
+
+    def timeout_after_preparation_starts(delay):
+        assert delay == 0.1
+        return preparation_timeout
+
     lifecycle = OobLifecycle(
         hub=hub,
         resolved_port=48322,
         usb_local=False,
         host_client=False,
         config=RecoveryConfig(0.1, 5),
+        # Scheduler delays must not expire the episode before preparation starts.
+        clock=lambda: 0.0,
         sleep=lambda _: asyncio.sleep(0),
     )
     lifecycle.selected = "original"
@@ -2234,7 +2243,8 @@ async def test_episode_timeout_bounds_preparation_and_cleans_owned_forward():
     calls = []
 
     async def slow_prepare():
-        await asyncio.sleep(1)
+        preparing.set()
+        await asyncio.Future()
 
     async def stop_after_timeout(_):
         raise asyncio.CancelledError
@@ -2258,9 +2268,21 @@ async def test_episode_timeout_bounds_preparation_and_cleans_owned_forward():
             "isaaccapture.cloudxr.oob_teleop_lifecycle.adb._adb_run", side_effect=run
         ),
         patch.object(lifecycle, "_prepare_device", new=slow_prepare),
+        patch(
+            "isaaccapture.cloudxr.oob_teleop_lifecycle.asyncio.timeout",
+            side_effect=timeout_after_preparation_starts,
+        ),
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await lifecycle.run()
+        task = asyncio.create_task(lifecycle.run())
+        try:
+            await asyncio.wait_for(preparing.wait(), timeout=5)
+            preparation_timeout.reschedule(asyncio.get_running_loop().time())
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=5)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert preparation_timeout.expired()
     assert any(
         "Recovery attempt timed out" in status["reason"] for status in hub.statuses
     )
