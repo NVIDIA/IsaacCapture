@@ -2,7 +2,7 @@
 
 > Shared capture infrastructure for teleoperation and egocentric data. Isaac Teleop is the robot-in-the-loop component: teleoperation sessions for controlling robots and collecting demonstrations. The Ego Pipeline captures and post-processes egocentric human data. Both build on a shared core of device plugins, retargeters, and data utilities for recording, replaying, and converting data.
 
-Isaac Capture installs as the `isaaccapture` Python package from PyPI. Skill links are relative to this file. Docs links point at the Markdown copy of each page of the `main` documentation.
+Isaac Capture installs as the `isaaccapture` Python package from PyPI. Skill links are relative to this file. Docs links point at the Markdown copy of each page of the `main` documentation, which can describe classes and extras newer than the latest stable release on PyPI; the install skill covers installing a pre-release.
 
 ## Install
 
