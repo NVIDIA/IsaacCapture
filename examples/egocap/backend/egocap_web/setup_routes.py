@@ -71,14 +71,14 @@ async def read_setup(request: Request) -> JSONResponse:
         return _reply({"detail": "setup is not available yet"}, 503)
     setup, stations, uptime, context, settings = state
     for _ in range(_ATTEMPTS):
-        in_use = (stations.registry.selected_id, stations.label())
+        generation, label = stations.registry, stations.label()
         # The checklist reads the disk, so it is judged in a worker thread; the reply below reads that result.
         await setup.refresh()
         headset = await headset_address(setup, stations, settings.capture.capture_server_url)
         # Both read the day's files, so they stay off the event loop.
-        took_today, report_saved = await asyncio.to_thread(_day_so_far, uptime, in_use[1])
-        # Everything gathered must describe one station: a change during the awaits starts the read over.
-        if in_use == (stations.registry.selected_id, stations.label()):
+        took_today, report_saved = await asyncio.to_thread(_day_so_far, uptime, label)
+        # Registry identity catches edits and switches away and back, even with the same final ID and label.
+        if generation is stations.registry:
             break
     else:
         # Never answered with one station's day under another's name; the page reads again shortly.

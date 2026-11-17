@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -197,6 +198,54 @@ def test_a_read_during_which_the_station_in_use_changed_starts_over_for_the_new_
     assert calls == [2] and steps["station"] == ("done", "Cart 1")
     assert (steps["record"], steps["wrap_up"]) == (("todo", None), ("todo", None))
     assert body["headset"]["saved"] is None and body["blocked_reason"] is None
+
+
+@pytest.mark.parametrize("change", ["edit", "switch_back"])
+@pytest.mark.parametrize("phase", ["refresh", "headset", "day"])
+def test_a_read_retries_when_the_generation_changes_with_the_same_id_and_label(
+    tmp_path, monkeypatch, change, phase
+):
+    _host(monkeypatch, "10.0.0.42")
+    client = _client(tmp_path)
+    bench = _use_bench(client, headset_address="10.0.0.7")
+    stations = client.app.state.station_service
+    setup = client.app.state.setup_service
+    calls = 0
+
+    async def gather_and_change(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        result = await original(*args, **kwargs)
+        if calls == 1:
+            if change == "edit":
+                await stations.update(bench, {"headset_address": "10.0.0.42"})
+            else:
+                await stations.select(None)
+                await stations.select(bench)
+        return result
+
+    if phase == "refresh":
+        original = setup.refresh
+        monkeypatch.setattr(setup, "refresh", gather_and_change)
+    elif phase == "headset":
+        original = setup_routes.headset_address
+        monkeypatch.setattr(setup_routes, "headset_address", gather_and_change)
+    else:
+        original = setup_routes.asyncio.to_thread
+
+        async def thread_call(function, *args, **kwargs):
+            if function is setup_routes._day_so_far:
+                return await gather_and_change(function, *args, **kwargs)
+            return await original(function, *args, **kwargs)
+
+        monkeypatch.setattr(setup_routes.asyncio, "to_thread", thread_call)
+
+    response = client.get("/api/setup", headers=AUTH)
+    assert response.status_code == 200 and calls == 2
+    body = response.json()
+    assert _steps(body)["station"] == ("done", "Bench A")
+    assert (_steps(body)["record"], _steps(body)["wrap_up"]) == (("todo", None), ("todo", None))
+    assert body["headset"]["saved"] == ("10.0.0.42" if change == "edit" else "10.0.0.7")
 
 
 def test_a_read_that_never_sees_one_station_throughout_is_refused_rather_than_mixed(tmp_path, monkeypatch):
