@@ -75,6 +75,8 @@ MOCK_TIMESTAMP_BASIS = "monotonic_us"
 # The bridge shrinks the picture by this integer factor before encoding, so the descriptor declares the shrunken
 # size: the recorder refuses a take whose frames differ from the declared one.
 BRIDGE_DOWNSCALE = 2
+DEFAULT_SENSOR_WIDTH = 2560
+DEFAULT_SENSOR_HEIGHT = 1984
 # The backend serves the page from this build output and mounts nothing if it is missing.
 FRONTEND_INDEX = EGOCAP_ROOT / "frontend" / "dist" / "index.html"
 
@@ -169,6 +171,9 @@ class SenderSettings:
     stream_id: str
     full_range: bool
     sipl: bool
+    # The profile's output size; None leaves the sensor mode's native size, which --width and --height describe.
+    width: int | None = None
+    height: int | None = None
 
 
 def _section(parent: dict, key: str, path: Path) -> dict:
@@ -201,6 +206,9 @@ def load_sender_config(
     stream = config["streams"][0]
     if not isinstance(stream, dict):
         raise StartupError(f"{path}: streams[0] must be a mapping")
+    # The receiver stream the launcher writes is mono, so another type would deploy a sender it cannot receive.
+    if stream.get("type") != "mono":
+        raise StartupError(f"{path}: the launcher supports only a mono stream, got type {stream.get('type')!r}")
     network = _section(config, "network", path)
     output = _section(stream, "output", path)
     # An override replaces the profile's value; the profile stays the source of everything else.
@@ -237,7 +245,43 @@ def sender_settings(config: dict) -> SenderSettings:
         # SIPL produces full-range pictures; the bridge must say so or the encoded stream signals limited range.
         full_range=config["capture_backend"] == "sipl",
         sipl=config["capture_backend"] == "sipl",
+        width=_output_dimension(output, "width"),
+        height=_output_dimension(output, "height"),
     )
+
+
+def _output_dimension(output: dict, key: str) -> int | None:
+    value = output.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise StartupError(
+            f"the sender config's streams[0].output.{key} must be a positive integer, got {value!r}"
+        )
+    return value
+
+
+def frame_size(settings: SenderSettings, width: int | None, height: int | None) -> tuple[int, int]:
+    """The picture size the sender delivers: the profile's output size when it sets one, else the sensor's.
+
+    The receiver, the bridge and the descriptor all follow this, so a profile that resizes its output cannot
+    disagree with them. A --width or --height that contradicts the profile is refused.
+    """
+    for name, flag in (("--width", width), ("--height", height)):
+        if flag is not None and flag <= 0:
+            raise StartupError(f"{name} must be positive, got {flag}")
+    if (settings.width is None) != (settings.height is None):
+        raise StartupError("the sender config must set both streams[0].output.width and height, or neither")
+    if settings.width is not None:
+        for name, flag, value in (("--width", width, settings.width), ("--height", height, settings.height)):
+            if flag is not None and flag != value:
+                raise StartupError(f"{name} {flag} contradicts the sender config's output size {value}")
+        size = (settings.width, settings.height)
+    else:
+        size = (width or DEFAULT_SENSOR_WIDTH, height or DEFAULT_SENSOR_HEIGHT)
+    if size[0] % (2 * BRIDGE_DOWNSCALE) or size[1] % (2 * BRIDGE_DOWNSCALE):
+        raise StartupError(f"the picture size {size[0]}x{size[1]} must divide by {2 * BRIDGE_DOWNSCALE}")
+    return size
 
 
 def mock_sender_command(python: str, script: Path, settings: SenderSettings, width: int, height: int) -> list[str]:
@@ -345,6 +389,23 @@ def raise_if_a_child_exited(stack: "Stack") -> None:
         if child.name == "sender" and child.process.returncode == 0:
             continue
         raise StartupError(f"{child.name} exited with {child.process.returncode}; see {child.log}")
+
+
+def run_supervised(stack: "Stack", command: list[str]) -> int:
+    """Run a helper to completion while checking the stack's children once a second.
+
+    A required child that dies meanwhile stops the helper and raises, instead of going unnoticed until it returns.
+    """
+    process = subprocess.Popen(command)
+    try:
+        while process.poll() is None:
+            raise_if_a_child_exited(stack)
+            time.sleep(1)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    return process.returncode
 
 
 def watch(stack: "Stack") -> Managed:
@@ -582,14 +643,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--width",
         type=int,
-        default=2560,
-        help="sensor width; the receiver expects it and the descriptor declares it divided by the bridge shrink",
+        help="sensor width when the profile sets no output size (default 2560); the receiver expects it and the "
+        "descriptor declares it divided by the bridge shrink",
     )
     parser.add_argument(
         "--height",
         type=int,
-        default=1984,
-        help="sensor height; the receiver expects it and the descriptor declares it divided by the bridge shrink",
+        help="sensor height when the profile sets no output size (default 1984); the receiver expects it and the "
+        "descriptor declares it divided by the bridge shrink",
     )
     parser.add_argument("--fps", type=int, help="override the profile's output.fps")
     parser.add_argument("--bitrate-mbps", type=int, help="override the profile's HEVC bitrate")
@@ -678,6 +739,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
         sender_config = load_sender_config(args.sender_config, args.fps, args.bitrate_mbps, args.sender_port)
         sender = sender_settings(sender_config)
+        width, height = frame_size(sender, args.width, args.height)
         # The bridge identifies the Orin's chrony by the reference id of its IPv4 address.
         if args.orin:
             try:
@@ -691,17 +753,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 room,
                 publisher,
                 track,
-                args.width // BRIDGE_DOWNSCALE,
-                args.height // BRIDGE_DOWNSCALE,
+                width // BRIDGE_DOWNSCALE,
+                height // BRIDGE_DOWNSCALE,
                 sender.fps,
                 basis,
                 sender.stream_id,
             )
         )
         (workdir / "receiver.yaml").write_text(
-            receiver_yaml(
-                orin_host or "127.0.0.1", sender.port, ipc_socket, args.width, args.height, sender.stream_id
-            )
+            receiver_yaml(orin_host or "127.0.0.1", sender.port, ipc_socket, width, height, sender.stream_id)
         )
         if args.mock:
             print(f"mock sender: {sender.fps} fps stream {sender.stream_id!r}, timestamps are frame-ready time")
@@ -771,7 +831,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         mock_sender = None
         if chain and args.mock:
             mock_sender = stack.start(
-                "mock-sender", mock_sender_command(python, args.mock_sender, sender, args.width, args.height)
+                "mock-sender", mock_sender_command(python, args.mock_sender, sender, width, height)
             )
         # 2. LiveKit carries the video from the bridge to the browser and the recorder.
         if args.livekit_server:
@@ -923,7 +983,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise_if_a_child_exited(stack)
                 settled = (
                     configured
-                    and subprocess.run(
+                    and run_supervised(
+                        stack,
                         [
                             python,
                             str(args.timesync_tool),
@@ -935,8 +996,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "--wait",
                             str(args.chrony_wait),
                         ],
-                        check=False,
-                    ).returncode
+                    )
                     == 0
                 )
             if not settled:

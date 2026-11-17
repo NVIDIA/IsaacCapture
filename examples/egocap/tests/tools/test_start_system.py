@@ -529,6 +529,8 @@ def recorded_main(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         ss.subprocess, "run", lambda command, **_: deploys.append(list(command)) or SimpleNamespace(returncode=0)
     )
+    # The supervised helper (time-sync status) is recorded like the other commands.
+    monkeypatch.setattr(ss, "run_supervised", lambda _stack, command: deploys.append(list(command)) or 0)
     monkeypatch.setattr(
         ss,
         "load_timesync_tool",
@@ -1025,3 +1027,89 @@ def test_explicit_receiver_is_passed_through_without_setup(monkeypatch, tmp_path
     )
     assert code == 0
     assert started["receiver"][:2] == ["custom-python", "recv.py"]
+
+
+def _stereo_profile(config: dict) -> None:
+    config["streams"][0]["type"] = "stereo"
+
+
+def _sized(width, height):
+    def mutate(config: dict) -> None:
+        output = config["streams"][0].setdefault("output", {})
+        output["width"], output["height"] = width, height
+
+    return mutate
+
+
+def test_load_sender_config_refuses_a_stream_that_is_not_mono(tmp_path: Path):
+    with pytest.raises(ss.StartupError, match="mono"):
+        ss.load_sender_config(_profile_with(tmp_path, _stereo_profile))
+
+
+def test_frame_size_defaults_to_the_sensor_size_and_follows_the_flags():
+    settings = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
+    assert ss.frame_size(settings, None, None) == (2560, 1984)
+    assert ss.frame_size(settings, 640, 480) == (640, 480)
+    with pytest.raises(ss.StartupError, match="divide"):
+        ss.frame_size(settings, 641, 480)
+
+
+def test_frame_size_follows_the_profile_and_refuses_contradicting_flags(tmp_path: Path):
+    config = yaml.safe_load(_profile_with(tmp_path, _sized(1280, 960)).read_text())
+    settings = ss.sender_settings(config)
+    assert ss.frame_size(settings, None, None) == (1280, 960)
+    assert ss.frame_size(settings, 1280, 960) == (1280, 960)
+    with pytest.raises(ss.StartupError, match="--width 2560 contradicts"):
+        ss.frame_size(settings, 2560, None)
+    with pytest.raises(ss.StartupError, match="--height"):
+        ss.frame_size(settings, None, 1984)
+
+
+def test_frame_size_refuses_a_profile_that_sets_only_one_dimension(tmp_path: Path):
+    config = ss.load_sender_config(_profile_with(tmp_path, _sized(1280, None)))
+    with pytest.raises(ss.StartupError, match="both"):
+        ss.frame_size(ss.sender_settings(config), None, None)
+
+
+def test_main_writes_the_profile_output_size_into_the_receiver_and_the_descriptor(recorded_main, tmp_path: Path):
+    profile = _profile_with(tmp_path, _sized(1280, 960))
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(profile)]) == 0
+    declared = yaml.safe_load((recorded_main.workdir / "streams.yaml").read_text())["livekit"]["streams"][0]
+    received = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (received["width"], received["height"]) == (1280, 960)
+    assert (declared["width"], declared["height"]) == (1280 // ss.BRIDGE_DOWNSCALE, 960 // ss.BRIDGE_DOWNSCALE)
+
+
+def test_main_refuses_a_width_that_contradicts_the_profile(recorded_main, capsys, tmp_path: Path):
+    profile = _profile_with(tmp_path, _sized(1280, 960))
+    argv = [*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(profile), "--width", "2560"]
+    assert ss.main(argv) == 1
+    assert "contradicts" in capsys.readouterr().err
+
+
+def _stack_with_child_polling(tmp_path: Path, code):
+    stack = ss.Stack(tmp_path)
+    stack.children.append(
+        ss.Managed("bridge", SimpleNamespace(poll=lambda: code, returncode=code, pid=0), tmp_path / "bridge.log")
+    )
+    return stack
+
+
+def test_run_supervised_returns_the_helpers_exit_code(tmp_path: Path):
+    stack = _stack_with_child_polling(tmp_path, None)
+    assert ss.run_supervised(stack, [sys.executable, "-c", "raise SystemExit(3)"]) == 3
+
+
+def test_run_supervised_kills_the_helper_when_a_required_child_exits(monkeypatch, tmp_path: Path):
+    stack = _stack_with_child_polling(tmp_path, 1)
+    helpers = []
+    real_popen = ss.subprocess.Popen
+
+    def popen(command, **kwargs):
+        helpers.append(real_popen(command, **kwargs))
+        return helpers[-1]
+
+    monkeypatch.setattr(ss.subprocess, "Popen", popen)
+    with pytest.raises(ss.StartupError, match="bridge exited with 1"):
+        ss.run_supervised(stack, ["sleep", "30"])
+    assert helpers[0].poll() is not None
