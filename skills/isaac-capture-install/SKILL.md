@@ -109,6 +109,9 @@ environment's `site-packages`. Anything else is a failed install:
 the legacy one, so leave it installed; old `isaacteleop` imports are served from the
 `isaaccapture` package.
 
+Newer releases ship `llms.txt` and these skills inside the package. The
+`llms.txt` beside the `__init__.py` printed above indexes the rest.
+
 ## References
 
 - [Quick Start](https://nvidia.github.io/IsaacCapture/main/teleop/quick_start.md)
