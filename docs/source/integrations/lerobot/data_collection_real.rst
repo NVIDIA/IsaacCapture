@@ -46,7 +46,7 @@ Follow the necessary one-time steps to set up your environment and hardware:
       source .venv/bin/activate
       uv pip install -e ".[feetech,kinematics,dataset]" "huggingface_hub>=1.5"
       uv pip install "isaaccapture[cloudxr,retargeters-lite]\ |pip_version_pin|\ " "scipy>=1.14" \\
-            --extra-index-url https://pypi.nvidia.com --prerelease=allow
+            --extra-index-url https://pypi.nvidia.com
 
    The upstream ``isaac_teleop_to_so101`` scripts still import ``isaacteleop``.
    Installing ``isaaccapture`` includes that compatibility alias automatically

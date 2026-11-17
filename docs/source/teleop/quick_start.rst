@@ -66,12 +66,13 @@ Install the latest stable release from PyPI:
    uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
 
 Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
-and an opt-in to pre-release versions:
+and a version specifier that names a pre-release, which opts in ``isaaccapture`` alone rather
+than every dependency:
 
 .. code-block:: bash
 
-   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0' \
-         --extra-index-url https://pypi.nvidia.com --prerelease=allow
+   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0a0' \
+         --extra-index-url https://pypi.nvidia.com
 
 The two commands above track the newest 1.x release. To follow this version of the documentation
 (|version|) exactly, pin to the series it describes instead:
@@ -79,7 +80,7 @@ The two commands above track the newest 1.x release. To follow this version of t
 .. parsed-literal::
 
    uv pip install 'isaaccapture[cloudxr,retargeters]\ |pip_version_pin|\ ' \\
-         --extra-index-url https://pypi.nvidia.com --prerelease=allow
+         --extra-index-url https://pypi.nvidia.com
 
 Instead of installing the package from PyPI, you can build from source and install the local wheel.
 See :doc:`../development/build_from_source/index` for more details.

@@ -59,11 +59,13 @@ The latest stable 1.x release:
 uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
 ```
 
-Pre-releases are published on the NVIDIA index and need an opt-in:
+Pre-releases are published on the NVIDIA index. The `a0` in the specifier opts in
+`isaaccapture` alone; do not add `--prerelease=allow`, which also takes pre-releases
+of every dependency:
 
 ```bash
-uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0' \
-      --extra-index-url https://pypi.nvidia.com --prerelease=allow
+uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0a0' \
+      --extra-index-url https://pypi.nvidia.com
 ```
 
 To match one version of the documentation exactly, use the pin its Quick Start shows.

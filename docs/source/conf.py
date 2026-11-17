@@ -44,17 +44,19 @@ else:
 
 
 def _pip_pin(ref_name, fallback):
-    """Install specifier for the series a build describes: ``1.5.x`` -> ``~=1.5.0``.
+    """Install specifier for the series a build describes: ``1.5.x`` -> ``~=1.5.0a0``.
 
     Release refs name their own series (``release/1.4.x``, ``v1.4.7``); ``main``
-    and plain ``sphinx-build`` fall back to the checked-out ``VERSION``.
+    and plain ``sphinx-build`` fall back to the checked-out ``VERSION``. Naming a
+    pre-release lets pip and uv pick one for isaaccapture alone, where
+    ``--prerelease=allow`` would extend that to every dependency.
     """
     tail = ref_name.rsplit("/", 1)[-1].removeprefix("v")
     major, _, rest = (tail if tail[:1].isdigit() else fallback).partition(".")
     minor = rest.partition(".")[0]
     if not (major.isdigit() and minor.isdigit()) or major == "0":
-        return "~=1.0"
-    return f"~={major}.{minor}.0"
+        return "~=1.0a0"
+    return f"~={major}.{minor}.0a0"
 
 
 _pip_version_pin = _pip_pin(_smv_ref_name(), version)
