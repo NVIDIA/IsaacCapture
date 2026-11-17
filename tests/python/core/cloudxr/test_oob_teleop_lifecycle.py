@@ -2273,12 +2273,22 @@ async def test_episode_timeout_bounds_preparation_and_cleans_owned_forward():
             side_effect=timeout_after_preparation_starts,
         ),
     ):
+        # Readiness and completion share one watchdog deadline, not a fixed sleep.
+        deadline = asyncio.get_running_loop().time() + 2.5
         task = asyncio.create_task(lifecycle.run())
         try:
-            await asyncio.wait_for(preparing.wait(), timeout=5)
+            # Wait for preparation's signal before expiring its timeout; awaiting
+            # the lifecycle task afterwards waits for cancellation and cleanup.
+            await asyncio.wait_for(
+                preparing.wait(),
+                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+            )
             preparation_timeout.reschedule(asyncio.get_running_loop().time())
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(task, timeout=5)
+                await asyncio.wait_for(
+                    task,
+                    timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+                )
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
