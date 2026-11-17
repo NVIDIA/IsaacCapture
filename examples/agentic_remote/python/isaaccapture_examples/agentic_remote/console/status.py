@@ -49,6 +49,9 @@ TAKEOVER_POSSIBLE = (
 )
 NO_HUMAN_PROGRAM = "no human program is attached: start run_human.sh"
 NOT_REPORTED = "this robot app does not report it"
+# The status line's part about the live view where the robot app's file asks
+# for none and none reports.
+VIEW_NOT_REQUIRED = "live view not required"
 ROBOT_LOST = "the robot connection is lost"
 OPEN_FAULT = "a fault-stop is latched: type reset first"
 OPEN_AT_REST = "at rest: hold right A for 1 s to give the arm back"
@@ -192,6 +195,19 @@ def motors_text(state: RobotState) -> str:
     return torque_text(state.torque_on, hold, state.motion == _RELEASE_FAILED)
 
 
+def _view_part(state: RobotState, health: dict[str, Any]) -> str:
+    """The status line's part about the live view: the view age.
+
+    Without a view age it is VIEW_NOT_REQUIRED where the robot app says that
+    a person drives without a live view (health["human"]["live_view_required"]
+    False), else "view none".
+    """
+    unasked = _human(health).get("live_view_required") is False
+    if state.view_age_s is None and unasked:
+        return VIEW_NOT_REQUIRED
+    return f"view {_seconds(state.view_age_s, 1, unknown='none')}"
+
+
 def _missed_deadlines(health: dict[str, Any]) -> int | None:
     """health["missed_deadlines"] as a count of 0 or more; None without one.
 
@@ -317,7 +333,7 @@ def status_line(
     missed = _missed_deadlines(health)
     if missed:
         parts.append(f"missed deadlines {missed}")
-    parts.append(f"view {_seconds(state.view_age_s, 1, unknown='none')}")
+    parts.append(_view_part(state, health))
     parts.extend(_human_parts(state, status, health))
     parts.append(f"state {_seconds(state_age_s, 2, unknown='age unknown')}")
     return _SEP.join(parts)
@@ -359,6 +375,7 @@ def status_key(state: RobotState | None, status: LocalStatus | None) -> Hashable
         str(health.get("permit_refusal") or ""),
         bool(_missed_deadlines(health)),
         state.view_age_s is None,
+        human.get("live_view_required") is False,
         state.teleop_stage,
         bool(health.get("contact_hold")),
         bool(human.get("enabled")),

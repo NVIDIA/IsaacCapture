@@ -1226,6 +1226,40 @@ def test_the_status_line_shows_the_headset_the_controller_age_and_the_note() -> 
     )
 
 
+def test_no_missing_live_view_is_shown_where_the_robot_app_asks_for_none() -> None:
+    def state(required: Any, view_age_s: float | None = None) -> RobotState:
+        """A ROBOT_STATE that says whether the live view is required; None: not."""
+        shown = with_human()
+        human = dict(shown.health["human"])
+        if required is not None:
+            human["live_view_required"] = required
+        health = {**shown.health, "human": human}
+        return dataclasses.replace(shown, view_age_s=view_age_s, health=health)
+
+    def line(required: Any, view_age_s: float | None = None) -> str:
+        return status_line(None, state(required, view_age_s), WITH_PROGRAM, 0.04)
+
+    # The rig: the person at the controller sees the arm and no view runs.
+    assert line(False).endswith(
+        " | permit none | live view not required | headset ready | "
+        "controller 0.03 s | state 0.04 s"
+    )
+    assert "view none" not in line(False)
+    assert takeover_text(state(False), WITH_PROGRAM) == POSSIBLE
+    # A view that runs all the same shows its age.
+    assert " | permit none | view 0.3 s | headset ready | " in line(False, 0.31)
+    # Required, or a robot app that does not say: the missing view shows.
+    for required in (True, None, "false", 0):
+        assert " | permit none | view none | headset ready | " in line(required)
+    # A change of the setting, as after a robot app's restart, prints a line.
+    assert status_key(state(False), WITH_PROGRAM) != status_key(
+        state(True), WITH_PROGRAM
+    )
+    assert status_key(state(None), WITH_PROGRAM) == status_key(
+        state(True), WITH_PROGRAM
+    )
+
+
 def test_a_human_drive_shows_as_moving_and_human_driving() -> None:
     driven = dataclasses.replace(
         robot_state(owner="human", owner_number=6),

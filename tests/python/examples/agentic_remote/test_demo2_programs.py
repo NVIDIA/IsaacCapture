@@ -85,9 +85,6 @@ from isaaccapture_examples.agentic_remote.protocol.confirm import (  # noqa: E40
     YES,
 )
 from isaaccapture_examples.agentic_remote.protocol.messages import (  # noqa: E402
-    DRIVER_APAI_MOCK,
-    DRIVER_REAL,
-    DRIVER_SIM,
     REQUEST_HUMAN,
     HumanSetpoint,
     Message,
@@ -1710,6 +1707,7 @@ DIFFERS: dict[Path, dict[str, Any]] = {
     },
     ROBOT_HUMAN_CHECK: {
         "human.enabled": True,
+        "human.require_live_view": False,
         "limits.human.max_joint_speed": 0.8,
         "limits.human.max_step_rad": 0.05,
         **INSIDE_REGION,
@@ -1763,17 +1761,13 @@ def test_the_demo_2_robot_files_differ_from_the_shipped_one_only_where_listed(
         ):
             load_config(wide)
 
-    # Without a live view only on a simulated driver; the file of the headset
-    # checks keeps the live view, so the driver does not matter to it.
+    # Neither asks for a live view: the recipe's view is never live, and at
+    # the headset checks the person stands at the arm, as on the rig. Every
+    # driver takes such a file and the robot app says so at its start.
     demo, check = load_config(ROBOT_DEMO2), load_config(ROBOT_HUMAN_CHECK)
-    assert demo.human.require_live_view is False
-    assert app_module.live_view_problem(demo, DRIVER_SIM) is None
-    assert app_module.live_view_problem(demo, DRIVER_APAI_MOCK) is None
-    for driver in (DRIVER_REAL, ""):
-        refused = app_module.live_view_problem(demo, driver)
-        assert refused is not None and "only with a simulated driver" in refused
-        assert app_module.live_view_problem(check, driver) is None
-    assert check.human.require_live_view is True
+    for file in (demo, check):
+        assert file.human.require_live_view is False
+        assert app_module.no_live_view_notice(file) == app_module.NO_LIVE_VIEW
     # The speed of the headset checks is the rig's, and so is the farthest a
     # human target may lie from the last joint target sent: the checks run
     # with the rig's human file, whose own limit lies below that one.
@@ -1934,7 +1928,7 @@ def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
         programs.append(desk)
         assert ", driver sim, " in desk.wait("WELCOME: ")
         console_shows(desk, " | driver sim | ", " | owner nobody #0 | ")
-        console_shows(desk, " | view none | ", " | no human program | ")
+        console_shows(desk, " | live view not required | ", " | no human program | ")
         desk.type("state")
         desk.wait(f"takeover: not possible: {NO_HUMAN_PROGRAM}")
         # 4. The live view, without a camera; this robot app does not need it.
@@ -1947,7 +1941,7 @@ def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
         finally:
             browser.close()
         assert page["picture"]["overlay"] == NO_PICTURE
-        console_shows(desk, " 1 viewer | ", " | view none | ")
+        console_shows(desk, " 1 viewer | ", " | live view not required | ")
         watcher = Watcher(path)
         programs.append(watcher)
         rest = watcher.pose()

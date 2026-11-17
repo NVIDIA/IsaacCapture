@@ -141,6 +141,7 @@ rest:
 #                  0.4 rad of the profile's jaw travel, 0.065 of the rig's 6.2
 #                  rad. Measured on the rig, a full open reads 0.963.
 gripper:
+  # Jaws told to close that read at or below it count as closed on nothing.
   closed_frac: 0.04
   target_tol: 0.03
   # Only the jaws under a person's trigger: a step has reached its opening
@@ -171,8 +172,9 @@ state:
 # moves the arm.
 human:
   enabled: false  # whether a person may take the arm over and drive it
-  require_live_view: true  # false is accepted only with a simulated driver
-  view_age_limit_s: 0.5  # first value; measure in the hardware session
+  # false: the person at the controller stands at the arm and sees it (the owner's decision of 2026-11-17); true asks for a fresh live view (run_workstation.sh --live-view).
+  require_live_view: false
+  view_age_limit_s: 0.5  # first value; read only with require_live_view true
   sample_age_limit_s: 0.25  # first value; measure in the hardware session
   # How long ROBOT_STATE shows the stage of the human program after its last
   # link message. The human program is the workstation program that turns

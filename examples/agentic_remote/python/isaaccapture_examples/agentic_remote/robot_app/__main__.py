@@ -39,7 +39,7 @@ from ..protocol.confirm import PATH_IS_CLEAR, YES, agent_environment, confirms
 from ..protocol.link_carrier import LinkCarrier
 from ..protocol.local_messages import ROLE_AGENT, ROLE_CONSOLE
 from ..protocol.messages import DRIVER_APAI_MOCK, DRIVER_REAL, DRIVER_SIM
-from .app import TORQUE_UNKNOWN, RobotApp, live_view_problem
+from .app import TORQUE_UNKNOWN, RobotApp, no_live_view_notice
 from .clock import SystemClock
 from .config import ConfigError, load_config
 from .connection import RobotDialer
@@ -513,8 +513,8 @@ def run_connected(
     that closes ends neither the start nor the program: its SIGHUP is ignored
     and the lines it does not take are lost. signals are the caller's, noted
     since before this call; None notes them from here on. driver is what
-    WELCOME declares. A configuration this driver may not run with gives one
-    line and EXIT_NOT_RUN, with nothing connected. human_socket is the path of
+    WELCOME declares. A file that lets a person drive without a live view gives
+    one line once the app has started (NO_LIVE_VIEW). human_socket is the path of
     a Unix socket to serve for a human program on this machine, the program
     through which a person drives the arm with the headset's right controller;
     one that begins with ~ is taken from the home folder; None serves none. A
@@ -535,25 +535,17 @@ def run_connected(
             _complain(f"--human-socket {human_socket} cannot be served: {error}")
             _end_input(lines)
             return EXIT_NOT_RUN
-    try:
-        app = RobotApp(
-            config,
-            arm,
-            checkers,
-            None,
-            clock,
-            driver=driver,
-            allow_reference=config.jaws.allow_reference,
-            rest_route=rest_route,
-            rebuild_arm=rebuild_arm,
-        )
-    except ConfigError as error:
-        # A setting this driver may not run with: nothing was connected.
-        if human is not None:
-            human.close()
-        _complain(f"the configuration cannot be used: {error}")
-        _end_input(lines)
-        return EXIT_NOT_RUN
+    app = RobotApp(
+        config,
+        arm,
+        checkers,
+        None,
+        clock,
+        driver=driver,
+        allow_reference=config.jaws.allow_reference,
+        rest_route=rest_route,
+        rebuild_arm=rebuild_arm,
+    )
     if human is not None:
         app.attach_local(human.carrier, human.attached)
     terminal = ThorTerminal(app, lines, say)
@@ -581,6 +573,9 @@ def run_connected(
             return EXIT_FAILED
         if driver == DRIVER_REAL:
             tell(_connected_line(app, arm))
+        notice = no_live_view_notice(config)
+        if notice is not None:
+            tell(f"robot app: {notice}")
         if on_main:
             terminal.install_signal_handlers()
             if signals.interrupts:  # Ctrl+C while the app started
@@ -927,11 +922,6 @@ def _real_driver(
     answers and then the Thor terminal's lines; None reads the standard input,
     which must be a terminal.
     """
-    problem = live_view_problem(config, DRIVER_REAL)
-    if problem is not None:
-        # Said before any check or question, as every configuration error.
-        _complain(f"the configuration cannot be used: {problem}")
-        return EXIT_NOT_RUN
     name = args.apai_profile
     try:
         profile = apai_backend.load_apai_profile(name)

@@ -207,11 +207,12 @@ class HumanDrive:
     """Runs one human drive at a time, toward the newest human target.
 
     Once per period it asks the stop conditions, the newest target's numbers,
-    stage and age and the live view's age, moves one speed-limited step toward
-    the target, has the human checker check it and sends it. While the measured
-    gripper tip is low, a target that would bring it under its floor ends the
-    drive, refused; where the arm itself settled under the floor, the drive
-    sends nothing until the target is back at the floor.
+    stage and age and, where the file requires it, the live view's age, moves
+    one speed-limited step toward the target, has the human checker check it
+    and sends it. While the measured gripper tip is low, a target that would
+    bring it under its floor ends the drive, refused; where the arm itself
+    settled under the floor, the drive sends nothing until the target is back
+    at the floor.
     Every end leaves the last setpoint sent standing, which is a hold with the
     motors on; a contact holds at the measured pose. It never changes the
     control owner, raises no stop, cuts no torque and leaves the jaws alone.
@@ -478,7 +479,7 @@ class HumanDrive:
 
         It must quote the admitted numbers, be engaged with one finite value
         per joint and be fresh (stage "ready", a sample age within the limit),
-        and the live view must be fresh.
+        and with human.require_live_view the live view must be fresh.
         """
         human = self._config.human
         target = self._human_input.newest()

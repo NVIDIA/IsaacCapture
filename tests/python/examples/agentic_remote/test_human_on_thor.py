@@ -1318,33 +1318,52 @@ def test_the_human_program_on_the_thor_runs_as_processes(
             program.close()
 
 
+NO_LIVE_VIEW_LINE = (
+    "robot app: human driving needs no live view: the person at the controller "
+    "must see the arm itself"
+)
+
+
 @link
 @apai
+@pytest.mark.parametrize("live_view", [False, True], ids=["no view", "view required"])
 def test_right_b_reaches_the_robot_app_process_with_the_robot_connection_down(
-    tmp_path_factory: pytest.TempPathFactory,
+    tmp_path_factory: pytest.TempPathFactory, live_view: bool
 ) -> None:
     """The robot app and the human program alone: nobody listens for the app.
 
-    The robot app runs on configs/robot_app_human_check.yaml, which keeps the
-    live view as the rig's file does: the STOP of right B arrives, and the
-    takeover that right B asks for a second later is refused.
+    The STOP of right B arrives. On configs/robot_app_human_check.yaml, which
+    asks for no live view as the rig's file does, the takeover that right B
+    asks for a second later is taken, the squeeze moves the arm, and a rest
+    typed at the Thor terminal and right A end the takeover. With that file
+    changed to require the live view the takeover is refused: VIEW_STATUS
+    comes over the robot connection.
     """
     demo2 = pytest.importorskip("test_demo2_programs")
+    from isaaccapture_examples.agentic_remote.protocol.confirm import PATH_IS_CLEAR
     from link_stack import Program
+    from test_demo1_recipe import fitted
 
     folder = tmp_path_factory.mktemp("th")
-    _, thor_socket, _, human_file = thor_files(folder, demo2.ROBOT_HUMAN_CHECK)
+    robot = demo2.ROBOT_HUMAN_CHECK
+    if live_view:
+        asked = {"\n  require_live_view: false\n": "\n  require_live_view: true\n"}
+        robot = fitted(robot, folder, asked)
+    _, thor_socket, _, human_file = thor_files(folder, robot)
     # A port this process holds and never listens on: every dial is refused.
     held = socket.socket()
     held.bind(("127.0.0.1", 0))
     programs: list[Any] = []
     try:
         app = Program(
-            ROBOT_MODULE, "--config", str(demo2.ROBOT_HUMAN_CHECK), "--arm", "sim",
+            ROBOT_MODULE, "--config", str(robot), "--arm", "sim",
             "--connect", f"127.0.0.1:{held.getsockname()[1]}",
             "--human-socket", thor_socket,
         )  # fmt: skip
         programs.append(app)
+        if not live_view:
+            # Said before the session's line: nothing checks what the person sees.
+            assert app.wait_line("live view") == NO_LIVE_VIEW_LINE
         app.wait_line(f"robot app: the human program's socket is {thor_socket}")
         app.wait_line("robot app: no robot connection: ")
         person = demo2.human_script(human_file, "--controller", "synthetic:lift")
@@ -1353,8 +1372,30 @@ def test_right_b_reaches_the_robot_app_process_with_the_robot_connection_down(
         started = person.wait_line('human program: synthetic controller "lift"')
         assert started == demo2.LIFT_START.format(driver="sim")
         assert app.wait_line(STOP_LINE, 2 * WAIT_S).endswith(f"{STOP_LINE}1")
-        refused = app.wait_line("[refused] owner request 'human' refused: ")
-        assert "the live view is not fresh: no VIEW_STATUS has arrived" in refused
+        if live_view:
+            refused = app.wait_line("[refused] owner request 'human' refused: ")
+            assert "the live view is not fresh: no VIEW_STATUS has arrived" in refused
+        else:
+            # The takeover, the squeeze and the lift, with no VIEW_STATUS at all.
+            app.wait_line(f"[owner] {TAKEN_OVER.format(number=2)}")
+            person.wait_line("human program: grip up", 2 * WAIT_S)
+            # The drive ends a pass after the grip's release: a rest typed
+            # before that is refused as busy and is typed again.
+            busy = "rest: refused: busy: human driving is running"
+            answer = busy
+            for _ in range(20):
+                app.type("rest")
+                app.wait_line("Return to rest: is the path to the rest pose clear?")
+                app.type(PATH_IS_CLEAR)
+                answer = ""
+                while not answer.startswith("rest: "):
+                    answer = app.wait_line("rest: ", REST_WAIT_S)
+                if answer != busy:
+                    break
+                time.sleep(0.1)
+            assert answer == "rest: completed"
+            # The script's right A at rest gives the arm back.
+            app.wait_line(f"[owner] {HANDED_BACK}", 2 * WAIT_S)
         # quit at the Thor terminal: the arm lies at rest, the app closes, and
         # the human program ends when its socket does.
         app.type("quit")
@@ -1367,6 +1408,10 @@ def test_right_b_reaches_the_robot_app_process_with_the_robot_connection_down(
             for line in person.lines
         )
         assert "Traceback" not in "\n".join(person.lines + app.lines)
+        # Only a file that requires the live view names it to the operator.
+        named = [line for line in app.lines if "live view" in line]
+        assert (NO_LIVE_VIEW_LINE in named) == (not live_view)
+        assert any("is not fresh" in line for line in named) == live_view
         for name, lines in (
             ("Thor terminal", app.lines),
             ("human program", person.lines),

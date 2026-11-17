@@ -121,7 +121,7 @@ state:
 # A person driving the arm with the headset's controller.
 human:
   enabled: true  # a person may take the arm over and drive it
-  # false: a takeover needs no live view. Accepted only with a simulated driver.
+  # false: a takeover and a human drive need no live view.
   require_live_view: false
   view_age_limit_s: 0.5  # read only where the live view is required
   # The oldest controller data that count as fresh; older ones end a drive in a hold.

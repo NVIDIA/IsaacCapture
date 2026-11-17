@@ -514,7 +514,9 @@ class HumanConfig:
     """A person driving the arm: the switch for it and the ages it is held to."""
 
     enabled: bool = False  # whether a person may take the arm over and drive it
-    require_live_view: bool = True  # False is accepted only with a simulated driver
+    # Whether a takeover and a human drive need a fresh live view. False: the
+    # person at the controller must see the arm itself.
+    require_live_view: bool = True
     view_age_limit_s: float = 0.5  # oldest live view a person may drive with
     sample_age_limit_s: float = 0.25  # oldest controller sample that counts as fresh
     # How long ROBOT_STATE shows the stage of the human program after its last

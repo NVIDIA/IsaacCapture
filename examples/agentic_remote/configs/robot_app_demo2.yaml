@@ -11,8 +11,7 @@
 # This file differs from configs/robot_app.yaml in exactly these keys:
 # - human.enabled is true: a person may take the arm over and drive it.
 # - human.require_live_view is false: the recipe runs the live view without a
-#   camera, so no view is ever live. The robot app takes this only with a simulated
-#   driver.
+#   camera, so no view is ever live.
 # - limits.human.joint_min and limits.human.joint_max are -2.5 and 2.5 on every
 #   joint, not -3.0 and 3.0: with human.enabled the human joint box must lie inside
 #   rest.region_*.
@@ -121,7 +120,7 @@ state:
 # controller of the one-machine recipe.
 human:
   enabled: true  # whether a person may take the arm over and drive it
-  require_live_view: false  # false is accepted only with a simulated driver
+  require_live_view: false  # false: a takeover and a human drive need no live view
   # The oldest live view a person may take the arm over and drive with. Not asked
   # while require_live_view is false.
   view_age_limit_s: 0.5

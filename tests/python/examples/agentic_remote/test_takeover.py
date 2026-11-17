@@ -574,14 +574,128 @@ def test_a_takeover_is_refused_with_a_view_that_is_not_live(human_app):
     assert_no_takeover(h, before)
 
 
+@pytest.mark.parametrize("driver", ["sim", "apai-mock", "real", ""])
 def test_no_view_is_asked_for_a_takeover_when_the_setting_says_so(
+    make_robot_app, config, driver
+):
+    # Whatever the driver: the person at the controller may stand at the arm.
+    unseen = human_config(config, require_live_view=False)
+    h = make_robot_app(config=unseen, driver=driver)
+    feed(h, view=False)
+    facts = human_facts(h)
+    assert (facts["takeover"], facts["live_view_required"]) == ("", False)
+    assert ask_takeover(h).status == "completed"
+    assert h.app._view is None  # no VIEW_STATUS ever arrived
+
+
+def test_the_same_takeover_is_refused_on_the_real_driver_where_the_view_is_required(
     make_robot_app, config
 ):
-    unseen = human_config(config, require_live_view=False)
-    h = make_robot_app(config=unseen, driver="sim")
+    assert config.human.require_live_view is True
+    h = make_robot_app(driver="real")
+    before = h.app.snapshot()
     feed(h, view=False)
-    assert human_facts(h)["takeover"] == ""
+    none = f"the live view is not fresh: no VIEW_STATUS has arrived{OPEN_THE_VIEW}"
+    facts = human_facts(h)
+    assert (facts["takeover"], facts["live_view_required"]) == (none, True)
+    assert_refused(h, ask_takeover(h), none)
+    assert_no_takeover(h, before)
+    # With a fresh view the same request is taken.
+    assert take_over(h).status == "completed"
+
+
+def test_without_the_live_view_setting_every_other_check_stands_on_the_real_driver(
+    make_robot_app, config
+):
+    """human.require_live_view false on the real driver, no VIEW_STATUS ever sent.
+
+    A takeover and each human target are held to what they are held to with
+    the view: fresh controller data from the headset, the released grip, the
+    numbers, the step and speed limits, and a STOP wins.
+    """
+    unseen = human_config(config, require_live_view=False)
+    h = make_robot_app(config=unseen, driver="real")
+    before = h.app.snapshot()
+    # A takeover: no controller data, then a synthetic controller's.
+    none = "no fresh controller data: no HUMAN_SETPOINT has arrived"
+    assert_refused(h, ask_takeover(h), none)
+    feed(h, setpoint(h, source=HUMAN_SOURCE_SYNTHETIC), view=False)
+    synthetic = (
+        "a synthetic controller may drive only a simulated arm; this robot app "
+        "declares driver real"
+    )
+    assert_refused(h, ask_takeover(h), synthetic)
+    assert_no_takeover(h, before)
+    # The headset's, with the grip squeezed: taken, and nothing moves until
+    # the grip was released.
+    feed(h, setpoint(h, grip_released=False), view=False)
     assert ask_takeover(h).status == "completed"
+    h.client.wait_state(lambda s: s.owner == "human")
+    hand = Hand(h)
+    keep_human_fed(h, hand, view=False)
+    ended = drives(h)
+
+    def squeeze(goal: Sequence[float], sends: int | None = None) -> None:
+        hand.goal = [float(value) for value in goal]
+        hand.release_at = None if sends is None else len(h.arm.sent) + sends
+        feed(h, hand(), view=False)
+
+    squeeze(moved(REST))
+    h.idle()
+    assert ended == [] and h.arm.sent == []
+    assert human_facts(h)["refusal"] == NEEDS_RELEASE
+    hand.release()
+    feed(h, hand(), view=False)
+    assert human_facts(h)["needs_release"] is False
+    # A drive: one speed-limited step per period, ended by the released grip.
+    goal = moved(REST)
+    squeeze(goal, sends=6)
+    h.idle()
+    assert [(end.status, end.sent) for end in ended] == [("released", 6)]
+    sent = h.sent()
+    assert sent[-1] == goal
+    human = h.config.limits.human
+    most = SPEED_MARGIN * human.max_joint_speed * h.config.executor.period_s
+    steps = [abs(b[0] - a[0]) for a, b in zip([REST, *sent], sent)]
+    assert steps[0] == pytest.approx(most) and max(steps) <= most + 1e-12
+    # A target beyond the step limit is refused, not clipped: the arm holds.
+    far = moved(goal, human.max_step_rad + 0.01)
+    squeeze(far)
+    h.idle()
+    assert [end.status for end in ended] == ["released", "refused"]
+    assert ended[-1].sent == 0 and h.sent() == sent
+    assert "rad from the arm on joint index 0, the limit is" in ended[-1].reason
+    # Controller data older than the limit start nothing.
+    hand.release()
+    feed(h, hand(), view=False)
+    hand.silent = True
+    feed(h, setpoint(h, moved(goal, 0.02), sample_age_s=0.3), view=False)
+    h.idle()
+    assert h.sent() == sent
+    assert human_facts(h)["refusal"].startswith("no fresh controller data: 0.3")
+    hand.silent = False
+    feed(h, hand(), view=False)
+    # A STOP on right B during a drive wins: nobody owns the arm, which holds.
+    reached, release = h.hold_move_after(len(sent) + 2)
+    squeeze(moved(goal, 0.04))
+    assert reached.wait(WAIT_S)
+    h.client.stop("right B", sender="controller")
+    h.client.wait_state(lambda s: s.stop_number == 1)
+    release.set()
+    h.idle()
+    assert (ended[-1].status, ended[-1].reason, ended[-1].sent) == (
+        "stopped",
+        "STOP from controller: right B",
+        2,
+    )
+    assert h.app.snapshot().owner is Owner.NOBODY and h.app.takeover_open
+    assert h.app.motion_state is MotionState.HOLD and h.arm.torque_on()
+    assert h.arm.released_at == []
+    # No VIEW_STATUS ever arrived, and nothing above named the live view.
+    state = state_now(h)
+    assert h.app._view is None and state.view_age_s is None
+    told = " ".join(text for _, text, _ in h.heard("refused") + h.heard("human"))
+    assert "view" not in told and "VIEW_STATUS" not in told
 
 
 @pytest.mark.parametrize("source", [HUMAN_SOURCE_SYNTHETIC, "", "script", "Teleop"])

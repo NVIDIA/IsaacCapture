@@ -889,51 +889,61 @@ def test_a_tilde_in_human_socket_is_taken_from_the_home_folder(
     assert left_threads() == []
 
 
-def test_no_live_view_needs_a_simulated_driver(monkeypatch, capsys):
-    # A file that lets a person drive without a live view runs on a simulated
-    # arm only: with any other driver nothing is built, connected or dialed.
-    unseen = human_config(RobotAppConfig.default(), require_live_view=False)
+NO_LIVE_VIEW_LINE = (
+    "robot app: human driving needs no live view: the person at the controller "
+    "must see the arm itself"
+)
+
+
+def run_to_quit(config: RobotAppConfig, driver: str, capsys) -> list[str]:
+    """run_connected() on the simulated arm until a typed quit; what it printed."""
     clock = SystemClock()
-    monkeypatch.setattr(robot_main, "LinkCarrier", None)  # no dial is made
-    for driver, declared in (("real", "driver real"), ("", "no driver")):
-        arm = SimArm(n_joints=6, clock=clock, q0=list(unseen.rest.rest_q))
-        typed = types.SimpleNamespace(ended=False)
-        typed.end = lambda typed=typed: setattr(typed, "ended", True)
-        code = robot_main.run_connected(
-            unseen,
-            arm,
-            robot_main.sim_checkers(unseen, clock),
-            clock,
-            "h:1",
-            typed=typed,
-            driver=driver,
-        )
-        assert code == 2
-        captured = capsys.readouterr()
-        assert captured.out == ""
-        assert captured.err == (
-            "robot app: the configuration cannot be used: human.require_live_view "
-            "false is accepted only with a simulated driver; this robot app "
-            f"declares {declared}\n"
-        )
-        assert not arm.torque_on()  # the arm was never connected
-        assert typed.ended  # the typed input was ended: no thread waits on it
-    # A simulated driver gets as far as the arm's connect.
+    arm = SimArm(n_joints=6, clock=clock, q0=list(config.rest.rest_q))
     code = robot_main.run_connected(
-        unseen,
-        unconnected_arm(unseen, clock),
-        robot_main.sim_checkers(unseen, clock),
+        config,
+        arm,
+        robot_main.sim_checkers(config, clock),
         clock,
-        "h:1",
-        typed=iter(()),
-        driver="sim",
+        "robot-link.invalid:1",  # never dialed: Dialed stands in
+        typed=iter(["quit"]),
+        driver=driver,
     )
-    assert code == 1
-    assert "the robot app did not start" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert (code, captured.err) == (0, "")
+    return captured.out.splitlines()
+
+
+@pytest.mark.parametrize("driver", ["real", "", "sim", "apai-mock"])
+def test_a_file_without_a_live_view_runs_on_every_driver_and_says_so(
+    monkeypatch, capsys, caplog, driver
+):
+    # A file that lets a person drive without a live view is taken with any
+    # driver, the real one included. The program says once, at the Thor
+    # terminal and in the log, that the person must see the arm.
+    monkeypatch.setattr(robot_main, "LinkCarrier", Dialed())
+    unseen = human_config(RobotAppConfig.default(), require_live_view=False)
+    with caplog.at_level("INFO", logger=LOGGER):
+        said = run_to_quit(unseen, driver, capsys)
+    assert said.count(NO_LIVE_VIEW_LINE) == 1
+    # After the line on the real driver's connect, before the session's.
+    order = [line for line in said if line.startswith("robot app: ")]
+    at = order.index(NO_LIVE_VIEW_LINE)
+    assert order[at + 1].startswith("robot app: session ")
+    assert (at == 1) == (driver == "real")
+    assert ("the real driver is connected" in order[0]) == (driver == "real")
+    logged = [record.getMessage() for record in caplog.records]
+    assert logged.count(NO_LIVE_VIEW_LINE.removeprefix("robot app: ")) == 1
+    # Nothing is said where the view is required or human driving is off.
+    caplog.clear()
+    switched_off = human_config(unseen, enabled=False)
+    with caplog.at_level("INFO", logger=LOGGER):
+        for quiet in (human_config(RobotAppConfig.default()), switched_off):
+            assert "live view" not in " ".join(run_to_quit(quiet, driver, capsys))
+    assert "live view" not in " ".join(r.getMessage() for r in caplog.records)
     assert left_threads() == []
 
 
-def test_no_live_view_with_the_real_driver_is_refused_before_any_question(
+def test_no_live_view_with_the_real_driver_gets_as_far_as_the_arm_profile(
     tmp_path, capsys, monkeypatch
 ):
     rest = yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8"))["rest"]
@@ -947,8 +957,17 @@ def test_no_live_view_with_the_real_driver_is_refused_before_any_question(
             "camera_calibration_id": "bench-7",
         },
     )
-    # Stands in for the APAI backend module: nothing may be asked of it.
-    monkeypatch.setitem(sys.modules, BACKEND, types.ModuleType(BACKEND))
+    # Stands in for the APAI backend module: the file is taken, and the first
+    # of the real driver's own checks, the arm profile, is the one that ends it.
+    asked: list[str] = []
+
+    def no_profile(name: str) -> None:
+        asked.append(name)
+        raise RuntimeError("no such profile")
+
+    backend = types.ModuleType(BACKEND)
+    backend.load_apai_profile = no_profile
+    monkeypatch.setitem(sys.modules, BACKEND, backend)
     monkeypatch.setattr(robot_main, "typed_lines", None)  # no question is asked
     monkeypatch.setattr(robot_main, "RobotApp", None)  # no app is built
     argv = [
@@ -958,11 +977,9 @@ def test_no_live_view_with_the_real_driver_is_refused_before_any_question(
     ]
     assert robot_main.main(argv) == 2
     captured = capsys.readouterr()
-    assert captured.out == ""
+    assert captured.out == "" and asked == ["rebot_rs"]
     assert captured.err == (
-        "robot app: the configuration cannot be used: human.require_live_view "
-        "false is accepted only with a simulated driver; this robot app "
-        "declares driver real\n"
+        "robot app: APAI arm profile 'rebot_rs' cannot be used: no such profile\n"
     )
     assert left_threads() == []
 

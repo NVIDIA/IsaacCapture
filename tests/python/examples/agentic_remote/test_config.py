@@ -193,7 +193,7 @@ def test_human_defaults():
 
 
 def test_the_human_settings_ship_in_the_safe_position():
-    # Human driving off, and no person driving without a live view.
+    # Human driving off, and the live view required: the shipped default.
     data = yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8"))["human"]
     assert data["enabled"] is False and data["require_live_view"] is True
     shipped = load_config(CONFIG_YAML).human
@@ -413,9 +413,11 @@ def test_load_config_accepts_a_string_path():
         ),
         (
             "robot_app_human_check.yaml",
-            # The speed limit and the step limit of the rig's file for a person.
+            # The speed limit and the step limit of the rig's file for a person,
+            # who stands at the arm as on the rig: no live view is asked for.
             {
                 "human.enabled": True,
+                "human.require_live_view": False,
                 "limits.human.max_joint_speed": 0.8,
                 "limits.human.max_step_rad": 0.05,
             },

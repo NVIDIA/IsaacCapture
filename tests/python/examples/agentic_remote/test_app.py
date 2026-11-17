@@ -37,6 +37,7 @@ from isaaccapture_examples.agentic_remote.robot_app.app import (
     DRIVERS,
     LINK_LOST,
     MOTORS_OFF,
+    NO_LIVE_VIEW,
     NOT_RUNNING,
     PATH_CLEAR_PROMPT,
     RESULT_IDS_KEPT,
@@ -53,7 +54,7 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     StopLevel,
 )
 
-from test_takeover import human_config
+from test_takeover import human_config, human_facts
 
 WAIT_S = 5.0  # real seconds a test gives another thread before it fails
 BLOCKED_S = 0.05  # real seconds after which a thread counts as kept waiting
@@ -2991,26 +2992,46 @@ def test_the_app_refuses_a_driver_name_it_does_not_know(
     assert not sim_arm.torque_on()
 
 
-def test_no_live_view_needs_a_simulated_driver(config, sim_arm, checkers, clock):
-    # A person may drive without a live view only where no arm can be hurt.
+def test_a_file_without_a_live_view_is_taken_with_every_driver(
+    config, sim_arm, checkers, clock
+):
+    # The person at the controller may stand at the arm and see it: nothing
+    # shows the robot app whether they do, so every driver takes the file.
     unseen = human_config(config, require_live_view=False)
-    for driver, declared in (("", "no driver"), ("real", "driver real")):
-        with pytest.raises(ValueError) as refused:
-            RobotApp(unseen, sim_arm, checkers, None, clock, driver=driver)
-        assert str(refused.value) == (
-            "human.require_live_view false is accepted only with a simulated "
-            f"driver; this robot app declares {declared}"
-        )
-    assert not sim_arm.torque_on()
-    # Taken: a simulated driver; the view required; human driving switched off.
+    assert NO_LIVE_VIEW == (
+        "human driving needs no live view: the person at the controller must "
+        "see the arm itself"
+    )
+    assert app_module.no_live_view_notice(unseen) == NO_LIVE_VIEW
+    for driver in DRIVERS:
+        RobotApp(unseen, sim_arm, checkers, None, clock, driver=driver).close()
+    assert "real" in DRIVERS and not sim_arm.torque_on()
+    # Nothing is said where the view is required or human driving is off.
     switched_off = human_config(config, enabled=False, require_live_view=False)
-    for taken, driver in (
-        (unseen, "sim"),
-        (unseen, "apai-mock"),
-        (human_config(config), "real"),
-        (switched_off, "real"),
-    ):
-        RobotApp(taken, sim_arm, checkers, None, clock, driver=driver).close()
+    for quiet in (human_config(config), switched_off, config):
+        assert app_module.no_live_view_notice(quiet) is None
+
+
+@pytest.mark.parametrize(
+    ("fields", "said"),
+    [
+        ({"require_live_view": False}, [NO_LIVE_VIEW]),
+        # The view required; human driving off: nobody drives without a view.
+        ({}, []),
+        ({"enabled": False, "require_live_view": False}, []),
+    ],
+)
+@pytest.mark.parametrize("driver", ["real", "sim"])
+def test_the_start_logs_that_a_person_drives_without_a_live_view(
+    make_robot_app, config, caplog, driver, fields, said
+):
+    with caplog.at_level("INFO", logger=APP_LOGGER):
+        h = make_robot_app(config=human_config(config, **fields), driver=driver)
+    logged = [record.getMessage() for record in caplog.records]
+    assert [line for line in logged if "live view" in line] == said
+    # ROBOT_STATE says whether the view is required, for the console's line.
+    required = fields.get("require_live_view", True)
+    assert human_facts(h)["live_view_required"] is required
 
 
 # The live view's age in ROBOT_STATE: the reported age plus the time since

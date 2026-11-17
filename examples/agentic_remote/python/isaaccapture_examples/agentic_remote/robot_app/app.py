@@ -58,7 +58,6 @@ from ..protocol.messages import (
 )
 from . import rest as rest_module
 from .authority import Authority
-from .config import ConfigError
 from .executor import HOLD_FAILED, MoveExecutor
 from .gripper import (
     ALREADY_REFERENCED,
@@ -222,6 +221,12 @@ NO_TAKEOVER = "no takeover is open"
 NO_CONTROLLER_DATA = "no fresh controller data: "
 VIEW_NOT_FRESH = "the live view is not fresh: "
 OPEN_THE_VIEW = "; open the live view page in a visible browser tab"
+# Said at the start of a robot app whose file lets a person drive without a
+# live view (human.enabled true, human.require_live_view false).
+NO_LIVE_VIEW = (
+    "human driving needs no live view: the person at the controller must see "
+    "the arm itself"
+)
 OUTSIDE_HUMAN_LIMITS = "the arm is outside the human limits: "
 # Added to a takeover's refusal when the controller data or the live view were
 # fresh before the takeover read the joints and are not after it.
@@ -614,20 +619,15 @@ def _age_on_arrival(
     return None if on_the_way is None else age + on_the_way
 
 
-def live_view_problem(config: RobotAppConfig, driver: str) -> str | None:
-    """Why this driver may not run the configuration's human settings, else None.
+def no_live_view_notice(config: RobotAppConfig) -> str | None:
+    """NO_LIVE_VIEW when the file lets a person drive without a live view, else None.
 
-    driver is what WELCOME declares. A person drives without a live view only
-    on a simulated driver.
+    Any driver takes such a file, the real one included: nothing then shows
+    the robot app that the person sees the arm.
     """
     human = config.human
     unseen = human.enabled and not human.require_live_view
-    if not unseen or driver in SIMULATED_DRIVERS:
-        return None
-    return (
-        "human.require_live_view false is accepted only with a simulated "
-        f"driver; this robot app declares {_declared(driver)}"
-    )
+    return NO_LIVE_VIEW if unseen else None
 
 
 def human_target(m: HumanSetpoint, arrived_mono: float) -> HumanTarget:
@@ -701,16 +701,11 @@ class RobotApp:
         serves the Thor terminal until attach_carrier() gives it one. driver
         is what WELCOME declares the arm to be: one of DRIVERS (ValueError
         otherwise). allow_reference is the setting jaws.allow_reference: False
-        refuses request_reference(). A configuration that lets a person drive
-        without a live view is refused (ConfigError, a ValueError) unless the
-        driver is a simulated one.
+        refuses request_reference().
         """
         if driver not in DRIVERS:
             names = ", ".join(repr(name) for name in DRIVERS)
             raise ValueError(f"driver must be one of {names}, got {driver!r}")
-        problem = live_view_problem(config, driver)
-        if problem is not None:
-            raise ConfigError(problem)
         self._driver = driver
         self._allow_reference = bool(allow_reference)
         if arm.n_joints != config.n_joints:
@@ -1052,6 +1047,9 @@ class RobotApp:
             self._authority.session_id,
             state,
         )
+        notice = no_live_view_notice(self._config)
+        if notice is not None:
+            _log.info(notice)
 
     def _after_connect(self, when: str) -> MotionState:
         """What follows the arm's connect, at start and when the motors are
@@ -1444,10 +1442,11 @@ class RobotApp:
         Under the app's lock, with human.trigger_jaws. not_owner is why the
         target is not a person's who owns the arm now. The jaws follow the
         trigger of a target that passes the checks of an engaged one, the grip
-        squeezed or not; a close also needs the live view fresh. A target that
-        fails them ends the jaw motion in a light hold, and so does one whose
-        opening is no number from 0 to 1. Why the trigger moves nothing shows
-        in ROBOT_STATE, in health["human"]["jaws"]["refusal"].
+        squeezed or not; a close also needs the live view fresh where the file
+        requires it. A target that fails them ends the jaw motion in a light
+        hold, and so does one whose opening is no number from 0 to 1. Why the
+        trigger moves nothing shows in ROBOT_STATE, in
+        health["human"]["jaws"]["refusal"].
         """
         if not self._config.human.trigger_jaws:
             return
@@ -3005,7 +3004,10 @@ class RobotApp:
         )
 
     def _view_problem(self, now: float) -> str | None:
-        """Why the live view is not fresh enough for a person to drive, else None."""
+        """Why the live view is not fresh enough for a person to drive, else None.
+
+        None also where the file does not require it (human.require_live_view).
+        """
         human = self._config.human
         if not human.require_live_view:
             return None
@@ -3051,6 +3053,8 @@ class RobotApp:
             return {
                 **jaws,
                 "enabled": self._config.human.enabled,
+                # Whether a takeover and a human drive need a fresh live view.
+                "live_view_required": self._config.human.require_live_view,
                 "takeover_open": self._takeover_open,
                 "driving": self._human_drive.progress() is not None,
                 "needs_release": unseen or away,
