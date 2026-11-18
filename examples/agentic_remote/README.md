@@ -894,7 +894,9 @@ as it stands:
   `--debug-max-gib 64` about two hours. `--debug-map-hz 0` stores every one, as the
   experiment's launcher does: about 9 min. The 30 min and the two hours are computed,
   not measured: of the events of that session's recording the rate of 2 would have
-  stored 5.3 GB of the 17 GB. No session on the rig has run with the rate yet. The
+  stored 5.3 GB of the 17 GB. The rig's second session of 2026-11-17 ran with the rate
+  and stayed under the limit: its run `20261118T022210Z-3147525` stored 1528 map
+  pictures in 13 minutes, in a recording of 8.1 GB. The
   line `debug recording:` at the start names that time and what happens when the limit
   is reached. The rate decides only
   what is written: the map takes every camera frame at every rate. The map the viewer
@@ -2824,17 +2826,16 @@ Smaller departures: the design clamps a far target, here it ends the engagement 
 drive; the design's wait for READY has no time limit, here the attempts are counted
 (`teleop.attempts`); the design has typed fallbacks for `rest`, `open` and `reset` only,
 here `takeover` and `handback` exist, switched off; the design refuses a return to rest
-from a contact hold, here it is taken while a takeover is open; a takeover is also
+from a contact hold, here it is taken while a takeover is open; and a takeover is also
 refused while the human checker refuses the measured pose for anything but a low
-gripper tip, which the design does not ask; and the design leaves the trigger out of its
-first build (its section 20), where this folder builds its rule for the trigger and the
-jaws (step 5 of its section 12).
+gripper tip, which the design does not ask. The rule for the trigger and the jaws is
+built as the design states it (step 5 of its section 12).
 
 ### A takeover, step by step
 
 | # | What happens | Link messages | Typed or pressed | What the operator sees |
 |---|---|---|---|---|
-| 1 | The agent fails while it owns the arm | OWNER_REQUEST "help_needed" from the agent program, or from the service with `agent program gone`; EVENT `help_needed` | - | Console: the help block with the reason, the jaws, the time left and the takeover line, `takeover: possible now ...` or `takeover: not possible: <why>`. The view's page shows the EVENT |
+| 1 | The agent fails while it owns the arm | OWNER_REQUEST "help_needed" from the agent program, or from the service with `agent program gone`; EVENT `help_needed` | - | Console: the help block with the reason, the jaws, the time left and the takeover line, `takeover: possible now ...` or `takeover: not possible: <why>`. The viewer's page draws no EVENT: while it draws the live arm, the line of readings under its 3D view then reads `owner nobody` |
 | 2 | The assistance wait counts down | ROBOT_STATE `assistance_wait_s`; EVENTs with bells | - | Console: `wait N s`, bells, `ARM WILL MOVE TO REST`; where the timed return is off, as on the rig, `ARM WILL KEEP HOLDING` |
 | 3 | The person gets ready | HUMAN_SETPOINT, as a status | Puts the headset on, picks up the right controller, stands behind the arm, recentres the headset view with the grip released | Status line: `headset ready`, `controller 0.0x s` and the human program's note, `note: hold right B for 1 s with the grip released to take over` |
 | 4 | Right B is pressed | STOP with the reason `right B` and the sender `controller` | **Right B** | Console: `[stop] STOP from controller: right B; the arm holds, stop number N; the assistance wait is cancelled`. Nobody owns the arm |
@@ -3435,9 +3436,12 @@ light hold.
 ### The settings that ship off
 
 Each of these settings ships in its safe position, with two exceptions. `human.trigger_jaws`
-ships on, and acts only where `human.enabled` is true. `human.require_live_view` ships
-`false` in the rig's files, by the owner's decision, and also acts only where
-`human.enabled` is true. The table says what the shipped
+ships on, and acts only where `human.enabled` is true. `retarget.max_linear_velocity`
+and `retarget.max_angular_velocity` in `configs/human_rebot.yaml`, the bounds of the
+gripper tip's target, are the second: their row says why.
+`human.require_live_view` ships `true`, its safe position, in `configs/robot_app.yaml`
+and in the rig's files, and `false` only in the files of the one-machine recipes; it
+also acts only where `human.enabled` is true. The table says what the shipped
 value means, where it is switched and what a change waits for.
 
 | Setting and shipped value | What the shipped value means | What it waits for |
@@ -4746,9 +4750,13 @@ On the human path:
 - **No person looked at the viewer's page in a browser window.** Its script ran under
   node, on stand-ins for the page and over HTTP against the viewer, and in headless
   Chrome on the launcher's real page (see [The live view](#the-live-view)).
-- **The live view says that a tab shows the picture, not that a person looks at it**,
-  and on a network address without a token any browser that loads the viewer's page
-  becomes the page that counts (see [The live view](#the-live-view)).
+- **The live view says that a tab shows the picture, not that a person looks at it.**
+  Only a browser on the workstation gets a view token, also where the viewer listens
+  on a network address without its access token: a page loaded from another machine is
+  a watch-only page and never becomes the page that counts. A browser on another
+  machine whose connection a program on the workstation passes on (an SSH port
+  forward, a proxy) counts as one on the workstation (see
+  [The live view](#the-live-view)).
 - **After a robot link service that was down for long, the viewer attaches up to a
   minute late.** Its tries are 5, 10, 20, 40 and then 60 s apart. A takeover is refused
   meanwhile with `no VIEW_STATUS has arrived`.
