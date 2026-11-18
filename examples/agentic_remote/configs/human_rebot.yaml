@@ -112,18 +112,22 @@ ik:
   # since. 0.005 below the 0.05 rad at which the Thor refuses a target
   # (limits.human.max_step_rad of the rig's robot file): that covers two
   # readings of the holding arm at a squeeze. A squeeze at rest begins 0.033
-  # from the arm, so not lower.
+  # from the arm, so not lower. While the Thor's drive waits for a low gripper
+  # to be lifted, the joint target stays 0.005 inside this bound from the arm.
   max_ahead_rad: 0.045
-  # The farthest the hand may be ahead of the arm's gripper tip. Up to it the
-  # arm catches up with the hand and stops where the hand stopped; a hand
-  # further ahead is not believed, and the engagement ends. The Thor names in
+  # The farthest the hand may be from the arm's gripper tip, in all. Up to it
+  # the arm catches up with the hand and stops where the hand stopped; a hand
+  # further away is not believed, and the engagement ends. The Thor names in
   # WELCOME the box its checker holds the gripper tip in; the tip stops 1 cm
-  # inside a wall of it and slides along the wall while the hand goes on.
-  # There the distance is measured in two parts, each held to this bound: from
-  # the tip to the nearest point of the box to the hand, and from that point
-  # on to the hand, beyond the wall.
+  # inside a wall of it and slides along the wall while the hand goes on. It
+  # names the height under which the tip is low, 2 cm above the table plane,
+  # as well: the tip stops 1 cm above that, and a tip under it only rises. And
+  # it names the joint box for a person: a joint stops 0.01 rad inside it.
   max_ahead_m: 0.5
-  max_failures: 5  # failed solves in a row that end the engagement; a whole number
+  # Failed solves in a row from which the note says "out of reach". While the
+  # hand's pose has no solution the arm stands at its last joint target and
+  # the engagement goes on. A whole number.
+  max_failures: 5
 
 buttons:
   # How long right B is held for the takeover and right A for the hand-back.

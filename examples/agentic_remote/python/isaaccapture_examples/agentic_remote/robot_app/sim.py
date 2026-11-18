@@ -724,6 +724,15 @@ class BasicChecker:
     def tip_box(self) -> None:
         return None  # no kinematics: the tip is held to no box
 
+    def tip_floor(self) -> None:
+        return None  # this checker knows no table
+
+    def joint_box(self) -> tuple[list[float], list[float]]:
+        # The corners _check_boxes() compares a setpoint with.
+        low = [float(value) for value in self._joint_min]
+        high = [float(value) for value in self._joint_max]
+        return low, high
+
     def contact_watch(
         self, arm: ArmPort, q_start: Sequence[float], history: JointHistory | None
     ) -> BasicContactWatch:

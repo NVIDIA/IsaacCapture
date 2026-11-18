@@ -32,6 +32,14 @@ AHEAD_NOTE_CM = 5
 NOTE_AT_LIMIT = "at the workspace limit: {walls}"
 # The walls by the robot's base axes, x forward, y left, z up: (low, high).
 WALL_NAMES = (("back", "front"), ("right", "left"), ("bottom", "top"))
+# The lowest wall where it is the height above the table that the robot app
+# names for a low gripper tip, not the bottom of its box.
+WALL_TABLE = "table"
+# What they say while the joint target stands with the hand going on: the
+# pose solved for has no solution, or the joint target is at the joint box
+# the robot app names for a person; joint counts from 1, as its checker does.
+NOTE_OUT_OF_REACH = "out of reach"
+NOTE_AT_JOINT_LIMIT = "at a joint limit: joint {joint}"
 # What they say while the joint target is held back for a robot app whose own
 # joint target comes on slower than its speed clamp allows.
 NOTE_THOR_BEHIND = "the robot app is behind: the arm follows slower"

@@ -796,6 +796,9 @@ class RobotApp:
         self._fault_while_latched = ""
         self._errors: dict[str, tuple[str, int]] = {}
         self._published: tuple[Any, ...] | None = None
+        # App-clock time of the newest ROBOT_STATE sent behind a setpoint of a
+        # human drive; the timed ROBOT_STATE waits one period behind it.
+        self._setpoint_state_at = -math.inf
 
         self._connect_called = False
         self._connect_ended = False  # the arm's connect() has returned
@@ -840,6 +843,7 @@ class RobotApp:
             note_clamped=lambda: self._publisher.note_clamped(),
             reads_paused=lambda: self._idle.paused(),
             last_grasp_region=lambda: self._grasp_region,
+            after_setpoint=self._publish_setpoint,
         )
         self._jaw_state = JawState(config.gripper, clock)
         self._worker = GripperWorker(arm, self._jaw_state, self._authority, clock)
@@ -2214,10 +2218,45 @@ class RobotApp:
                 # also with the robot connection down.
                 carrier = _Both(carrier, self._local)
         if not carrier.alive or (key == self._published and not forced):
-            self._publisher.maybe_publish(carrier, now)
+            # A human drive sends one behind each of its setpoints: the timed
+            # one comes again a period after the last of those.
+            period = self._config.state.publish_period_s
+            if now - self._setpoint_state_at >= period:
+                self._publisher.maybe_publish(carrier, now)
             return
         self._published = key
         self._send(self._publisher.build(now), via=carrier)
+
+    def _publish_setpoint(self) -> None:
+        """Send a ROBOT_STATE behind a setpoint of a human drive; never raises.
+
+        It runs on the drive's thread, after the setpoint went out: the human
+        program reads from it how far the drive's joint target has come. The
+        drive never waits for the app's lock: while another thread has it,
+        none is sent, and the timed ROBOT_STATE comes as without this.
+        """
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            now = self._clock.monotonic()
+            carrier = self._carrier
+            if self._local is not None:
+                carrier = _Both(carrier, self._local)
+            state = self._publisher.build(now) if carrier.alive else None
+        except Exception as error:
+            state = None
+            line = f"no ROBOT_STATE behind a human setpoint: {error!r}"
+            self._note(logging.ERROR, line, kind="no state behind a human setpoint")
+        finally:
+            self._lock.release()
+        if state is None:
+            return
+        try:
+            self._setpoint_state_at = now
+            self._send(state, via=carrier)
+        except Exception as error:
+            line = f"no ROBOT_STATE behind a human setpoint: {error!r}"
+            self._note(logging.ERROR, line, kind="no state behind a human setpoint")
 
     def _fault(self, reason: str) -> None:
         """Raise a fault-stop, unless one is latched already."""
@@ -3149,8 +3188,9 @@ class RobotApp:
     def _welcome(self) -> Welcome:
         config = self._config
         limits = config.limits
-        # Announced only: the human checker holds every setpoint to it.
-        box = self._checkers.human.tip_box()
+        # Announced only: the human checker holds every setpoint to them.
+        human = self._checkers.human
+        box, joints = human.tip_box(), human.joint_box()
         return Welcome(
             session_id=self._authority.session_id,
             robot_id=config.robot_id,
@@ -3171,6 +3211,8 @@ class RobotApp:
             agent_max_joint_speed=limits.agent.max_joint_speed,
             human_max_joint_speed=limits.human.max_joint_speed,
             human_tip_box=None if box is None else [list(box[0]), list(box[1])],
+            human_tip_floor=human.tip_floor(),
+            human_joint_box=[list(joints[0]), list(joints[1])],
         )
 
     # The motion worker

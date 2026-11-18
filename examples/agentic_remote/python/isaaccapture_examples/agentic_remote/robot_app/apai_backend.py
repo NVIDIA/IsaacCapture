@@ -980,6 +980,18 @@ class ApaiChecker:
         high = [float(value) for value in limits.workspace_max]
         return low, high
 
+    def tip_floor(self) -> float:
+        # The height tip_state() compares the arm model's FK with.
+        limits = self._harness.limits
+        clearance = max(self._table_clearance_m, float(limits.table_clearance))
+        return float(limits.table_z) + clearance
+
+    def joint_box(self) -> tuple[list[float], list[float]]:
+        # The corners _box_problem() compares a setpoint with.
+        low = [float(value) for value in self._low]
+        high = [float(value) for value in self._high]
+        return low, high
+
     def contact_watch(
         self, arm: ArmPort, q_start: Sequence[float], history: JointHistory | None
     ) -> ApaiContactWatch:

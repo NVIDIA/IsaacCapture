@@ -79,6 +79,9 @@ SIGNATURES = {
         "clear_contact_spots": [],
         "tip_blocked": ["q", "region"],
         "tip_state": ["q", "region"],
+        "tip_box": [],
+        "tip_floor": [],
+        "joint_box": [],
         "contact_watch": ["arm", "q_start", "history"],
     },
 }

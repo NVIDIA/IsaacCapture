@@ -16,6 +16,7 @@ import itertools
 import math
 import re
 import sys
+import time
 import types
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
@@ -1436,10 +1437,15 @@ def test_a_joint_that_is_blocked_ends_the_drive_as_a_contact_within_a_fifth_of_a
 # 55 cm above it. The robot app names that box in WELCOME; the human program
 # keeps the tip of the pose it solves for 1 cm inside its walls, so the tip
 # stops at a wall and slides along it, where the checker's refusal used to
-# end the drive.
+# end the drive. It names two more of that checker's bounds there: the height
+# under which a person's gripper tip is low, 2 cm above the table plane, which
+# the human program takes for the lowest wall, and the human joint box, which
+# its joint target stops 0.01 rad inside.
 
 RIG_TIP_BOX = ([0.1, -0.3, -0.01], [0.5, 0.3, 0.55])
 TIP_MARGIN_M = 0.01  # human/logic.py, TIP_BOX_MARGIN_M
+RIG_TIP_FLOOR = 0.02  # the table plane at 0 and the two table clearances, m
+JOINT_MARGIN_RAD = 0.01  # human/logic.py, JOINT_BOX_MARGIN_RAD
 # Hand moves in the stage space that push the gripper tip through each wall,
 # with the base axis the tip moves along and the side of the box it meets.
 WALLS = {
@@ -1455,31 +1461,26 @@ TURNED = [0.5, 1.3, 1.0, 0.0, 0.2, 0.0]
 WALL_POSES = {"ready": READY, "stretched": STRETCHED, "turned": TURNED}
 # What a hand pushed 30 cm toward each wall from each pose meets first, at 20
 # and at 50 cm a second alike. "wall": the tip stops at the wall. "": the
-# hand's 30 cm end before the wall. The others end the drive as they did:
-# "reach" is the human program's own end at the end of the arm's reach,
-# "joint" and "table" are refusals of the human checker that are not the
-# tip box, for the human joint box and for APAI's table clearance.
+# hand's 30 cm end before the wall. In the others the arm stands and the
+# engagement goes on, where the drive used to end: "reach" at the end of the
+# arm's reach, "joint N" with joint N at the human joint box, and "table" at
+# the height above the table, which the STRETCHED pose's tip is under.
 MET = {
     "ready": {"front": "wall", "left": "wall", "right": "wall", "top": "wall"},
     "stretched": {
         "front": "wall",
         "left": "wall",
         "back": "reach",
-        "right": "joint",
+        "right": "joint 2",
         "bottom": "table",
     },
     "turned": {
         "front": "wall",
         "right": "wall",
         "back": "reach",
-        "top": "joint",
-        "bottom": "joint",
+        "top": "joint 3",
+        "bottom": "joint 2",
     },
-}
-OTHER_ENDS = {
-    "reach": ("disengaged", r"release the grip and squeeze again: no IK solution "),
-    "joint": ("refused", r"joint \d target \d\.\d+ rad is outside the human joint "),
-    "table": ("refused", r"TCP z=0\.019 below table clearance 0\.020 "),
 }
 
 
@@ -1514,17 +1515,28 @@ def test_the_solvers_gripper_tip_is_the_tcp_of_the_rig_checker(
     print(f"\nthe solver's tip and the checker's TCP: at most {apart:g} m apart")
 
 
-def test_the_rig_robot_app_names_the_tip_box_of_its_human_checker(person_rig):
+def test_the_rig_robot_app_names_the_bounds_of_its_human_checker(person_rig):
     h = person_rig.h
-    named = h.client.welcome.human_tip_box
-    box = h.checkers.human.tip_box()
+    welcome, human = h.client.welcome, h.checkers.human
+    named = welcome.human_tip_box
+    box = human.tip_box()
     if box is None:
-        # The simulated arm's checkers know no kinematics: no box.
+        # The simulated arm's checkers know no kinematics: no box, no table.
         assert named is None
+        assert human.tip_floor() is None and welcome.human_tip_floor is None
     else:
         assert named == [list(RIG_TIP_BOX[0]), list(RIG_TIP_BOX[1])]
         assert named == [list(box[0]), list(box[1])]
-    assert h.client.welcome.human_max_joint_speed == HUMAN_SPEED
+        # The height under which tip_state() gives the tip as low: the table
+        # plane and the higher of the file's and the harness's clearance.
+        limits = human.harness.limits
+        clearance = max(h.config.rest.table_clearance_m, limits.table_clearance)
+        assert human.tip_floor() == limits.table_z + clearance == RIG_TIP_FLOOR
+        assert welcome.human_tip_floor == RIG_TIP_FLOOR
+    # Both checkers hold a person's joint target in the file's human joint box.
+    assert welcome.human_joint_box == [list(HUMAN_LOW), list(HUMAN_HIGH)]
+    assert human.joint_box() == (list(HUMAN_LOW), list(HUMAN_HIGH))
+    assert welcome.human_max_joint_speed == HUMAN_SPEED
 
 
 @pytest.mark.parametrize(
@@ -1533,7 +1545,7 @@ def test_the_rig_robot_app_names_the_tip_box_of_its_human_checker(person_rig):
 @pytest.mark.parametrize("speed", [0.2, 0.5])
 @pytest.mark.parametrize("wall", list(WALLS))
 @pytest.mark.parametrize("pose", list(WALL_POSES))
-def test_a_hand_pushed_through_a_wall_of_the_tip_box_ends_no_drive_for_the_workspace(
+def test_a_hand_pushed_through_a_wall_of_the_tip_box_ends_no_drive(
     person_rig, pose, wall, speed
 ):
     h, _, sent = person_rig
@@ -1549,22 +1561,22 @@ def test_a_hand_pushed_through_a_wall_of_the_tip_box_ends_no_drive_for_the_works
     solver = hand.solver
     tips = np.array([solver.fk(q)[:3, 3] for q in targets])
     low, high = (np.array(corner) for corner in RIG_TIP_BOX)
-    # No setpoint's tip left the box, and no drive ended for the workspace.
+    # No setpoint's tip left the box, and no joint the human joint box.
     assert np.all(tips >= low) and np.all(tips <= high)
-    assert len(ended) == 1 and "outside workspace" not in ended[0].reason
-    assert not any("outside workspace" in event[1] for event in h.heard("human"))
+    assert np.all(targets >= np.array(HUMAN_LOW))
+    assert np.all(targets <= np.array(HUMAN_HIGH))
+    # Every drive went on until the grip was released: the Thor refused
+    # nothing and the human program ended nothing.
+    assert [(end.status, end.sent) for end in ended] == [("released", len(targets))]
+    assert hand.ended() == {} and h.heard("human") == []
     met = MET[pose].get(wall, "")
     first = solver.fk(solver.inside(start))[:3, 3]
     bound = RIG_TIP_BOX[side][axis] + (TIP_MARGIN_M if side == 0 else -TIP_MARGIN_M)
     notes = {made.note for made in hand.sent}
     at_wall = f"at the workspace limit: {wall}"
-    if met in ("wall", ""):
-        # The drive went on until the grip was released.
-        assert [(end.status, end.sent) for end in ended] == [("released", len(targets))]
-        assert hand.ended() == {} and h.heard("human") == []
-        moved = tips[-1] - first
-        off_axis = np.delete(moved, axis)
-        assert np.abs(off_axis).max() < 1e-3  # straight toward the wall
+    moved = tips[-1] - first
+    off_axis = np.delete(moved, axis)
+    assert np.abs(off_axis).max() < 3e-3  # straight toward the wall
     if met == "wall":
         # The tip stands 1 cm inside the wall, within what a solve leaves.
         assert tips[-1][axis] == pytest.approx(bound, abs=2e-4)
@@ -1578,27 +1590,49 @@ def test_a_hand_pushed_through_a_wall_of_the_tip_box_ends_no_drive_for_the_works
     elif met == "":
         assert abs(moved[axis]) == pytest.approx(0.30, abs=0.011)
         assert not any("workspace" in note for note in notes)
+    elif met == "reach":
+        # The arm stands at its last joint target that solved, short of the
+        # hand, and the note says why.
+        assert 0.15 < abs(moved[axis]) < 0.29
+        assert np.abs(np.diff(targets[-20:], axis=0)).max() == 0.0
+        assert any(human_logic.NOTE_OUT_OF_REACH in note for note in notes)
+    elif met == "table":
+        # STRETCHED has the tip 2.7 cm above the table plane, under the 3 cm
+        # it is held above: it may rise and goes no lower.
+        assert first[2] < RIG_TIP_FLOOR + TIP_MARGIN_M
+        assert tips[:, 2].min() > first[2] - 2e-4
+        assert "at the workspace limit: table" in notes
     else:
-        status, reason = OTHER_ENDS[met]
-        assert ended[0].status == status and re.match(reason, ended[0].reason)
-        assert not any("workspace" in note for note in notes)
+        # The joint stands 0.01 rad inside the human joint box.
+        joint = int(met.removeprefix("joint ")) - 1
+        stop = HUMAN_HIGH[joint] - JOINT_MARGIN_RAD
+        assert targets[-1][joint] == pytest.approx(stop, abs=1e-9)
+        assert targets[:, joint].max() <= stop + 1e-9
+        assert abs(moved[axis]) < 0.29
+        assert any(f"at a joint limit: {met}" in note for note in notes)
     assert h.arm.torque_on() and h.app.snapshot().owner is Owner.HUMAN
     print(f"\n{pose}, {wall}, {speed} m/s: {met or 'the hand stopped first'}")
 
 
-def test_what_else_a_person_meets_at_the_walls_of_the_tip_box_is_counted():
+def test_what_a_person_meets_at_the_walls_of_the_tip_box_is_counted():
     # Of the 36 pushes above, 3 poses by 6 walls by 2 speeds: 16 stop at a
-    # wall, 8 end before one, and 12 end the drive for something that is not
-    # the tip box: the end of the reach 4 times, the human joint box 6 times
-    # and APAI's table clearance twice. None ends for the workspace.
+    # wall, 8 end before one, and in 12 the arm stands for something that is
+    # not the tip box: at the end of the reach 4 times, at the human joint box
+    # 6 times and at the height above the table twice. None ends a drive.
     met = [MET[pose].get(wall, "") for pose in WALL_POSES for wall in WALLS]
-    counts = {kind: 2 * met.count(kind) for kind in ("wall", "", *OTHER_ENDS)}
-    assert counts == {"wall": 16, "": 8, "reach": 4, "joint": 6, "table": 2}
-    # The bottom wall is never met: APAI's table clearance, 2 cm above the
-    # table plane, ends a drive 3 cm above it.
-    assert RIG_TIP_BOX[0][2] < 0.02 and not any(
-        MET[pose].get("bottom") == "wall" for pose in WALL_POSES
-    )
+    kinds = ("wall", "", "reach", "joint 2", "joint 3", "table")
+    counts = {kind: 2 * met.count(kind) for kind in kinds}
+    assert counts == {
+        "wall": 16,
+        "": 8,
+        "reach": 4,
+        "joint 2": 4,
+        "joint 3": 2,
+        "table": 2,
+    }
+    assert sum(counts.values()) == 36
+    # The lowest wall is the height above the table, not the box's bottom.
+    assert RIG_TIP_BOX[0][2] < RIG_TIP_FLOOR
 
 
 @pytest.mark.parametrize(
@@ -1644,6 +1678,268 @@ def test_the_tip_slides_along_a_wall_of_the_tip_box_while_the_hand_goes_on(perso
         "at the workspace limit: front",
         human_logic.NOTE_TRIGGER_PULL,
     }
+
+
+def hand_for(tip_offset: Sequence[float]) -> list[float]:
+    """Where the hand is, in the stage space, for a tip this far from the squeeze's."""
+    dx, dy, dz = tip_offset
+    return [HAND_AT[0] - dy, HAND_AT[1] + dz, HAND_AT[2] - dx]
+
+
+def turned(axis: Sequence[float], angle: float) -> list[float]:
+    """The quaternion x, y, z, w of a turn by angle about an axis."""
+    unit = np.array(axis, dtype=float) / np.linalg.norm(axis)
+    return [*(math.sin(0.5 * angle) * unit), math.cos(0.5 * angle)]
+
+
+# A path gives, for a time since the squeeze, where the tip is asked to be
+# from its place at the squeeze, m, and the hand's turn: its axis and angle.
+Path_ = Callable[[float], tuple[Sequence[float], Sequence[float], float]]
+
+
+def path_rows(path: Path_, seconds: float) -> list[dict[str, Any]]:
+    """A script: a squeeze, the hand on this path, one row a pass, a release."""
+    rows: list[dict[str, Any]] = [
+        {"t": 0.0, "pos": list(HAND_AT), "quat": [0, 0, 0, 1]},
+        {"t": 0.04, "squeeze": 1.0},
+    ]
+    for index in range(1, round(seconds / 0.02)):
+        offset, axis, angle = path(index * 0.02)
+        row = {"t": 0.06 + index * 0.02, "pos": hand_for(offset)}
+        rows.append({**row, "quat": turned(axis, angle)})
+    rows.append({"t": rows[-1]["t"] + 0.5, "squeeze": 0.0})
+    return rows
+
+
+def run_through(hand: ProgramHand, limit_s: float = 300.0) -> None:
+    """ProgramHand.run() for a drive that lasts longer than the harness waits."""
+    for _ in range(200):
+        hand._pass()
+        if hand.sent[-1].engaged:
+            break
+    assert hand.sent[-1].engaged, hand.sent[-1].note
+    deadline = time.monotonic() + limit_s
+    while not hand.h.app.wait_motion_idle(5.0):
+        assert time.monotonic() < deadline, "the human drive did not end"
+    for _ in range(3):
+        hand._pass()
+
+
+def into(t: float, over: float = 1.0) -> float:
+    """From 0 to 1 over the first `over` seconds."""
+    return min(1.0, t / over)
+
+
+def turning_beyond(t: float) -> tuple[Sequence[float], Sequence[float], float]:
+    # The hand stands 15 cm beyond the front wall and turns 34 degrees to and
+    # fro every 1.7 s, about an axis that wanders.
+    axis = (math.cos(0.7 * t), math.sin(0.7 * t), 0.5)
+    return (0.15 * into(t), 0.0, 0.0), axis, 0.6 * math.sin(2 * math.pi * t / 1.7)
+
+
+def sliding_and_turning(t: float) -> tuple[Sequence[float], Sequence[float], float]:
+    # 20 cm through the front wall, then 25 cm to each side every 5 s, while
+    # the hand turns 23 degrees to and fro every 3 s.
+    y = 0.25 * math.sin(2 * math.pi * max(0.0, t - 1.0) / 5.0)
+    turn = 0.4 * math.sin(2 * math.pi * t / 3.0)
+    return (0.20 * into(t), y, 0.0), (1.0, 1.0, 0.0), turn
+
+
+def sliding_fast(t: float) -> tuple[Sequence[float], Sequence[float], float]:
+    # The same slide every 1.6 s, with no turn: the arm is behind the hand.
+    y = 0.25 * math.sin(2 * math.pi * max(0.0, t - 1.0) / 1.6)
+    return (0.20 * into(t), y, 0.0), (0.0, 1.0, 0.0), 0.0
+
+
+def trembling(t: float) -> tuple[Sequence[float], Sequence[float], float]:
+    # 15 cm beyond the front wall with a tremor: 1 degree and 2 mm at 4 Hz.
+    shake = 0.002 * math.sin(2 * math.pi * 4.0 * t)
+    turn = 0.0175 * math.sin(2 * math.pi * 4.0 * t + 1.0)
+    return (0.15 * into(t), shake, -shake), (1.0, 0.0, 1.0), turn
+
+
+AT_THE_WALL = {
+    "turning 34 degrees to and fro every 1.7 s": (turning_beyond, 60.0),
+    "sliding every 5 s with a turning hand": (sliding_and_turning, 60.0),
+    "sliding 25 cm to each side every 1.6 s": (sliding_fast, 120.0),
+    "a tremor of 1 degree and 2 mm at 4 Hz": (trembling, 120.0),
+}
+# How far past the line 1 cm inside a wall the tip may stand, m: what a
+# solve leaves of its pose and how far a joint target on its way to the
+# solution lies off the straight way of the tip.
+PAST_THE_LINE_M = 0.003
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+@pytest.mark.parametrize("how", list(AT_THE_WALL))
+def test_the_tip_does_not_creep_through_the_margin_at_a_wall(person_rig, how):
+    # The room of the pose solved for is opened once, at the squeeze, and
+    # then only narrowed: what a solve leaves outward is not kept, so a hand
+    # that turns, slides or trembles beyond a wall for a minute or two does
+    # not walk the tip to the Thor's wall.
+    h, _, sent = person_rig
+    person_rig.place(READY)
+    take_over(h)
+    ended = drives(h)
+    path, seconds = AT_THE_WALL[how]
+    hand = ProgramHand(h, path_rows(path, seconds))
+    run_through(hand)
+    targets = np.array(sent())
+    assert len(targets) > (seconds - 1.0) / 0.02
+    assert [(end.status, end.sent) for end in ended] == [("released", len(targets))]
+    assert hand.ended() == {} and h.heard("human") == []
+    x = np.array([hand.solver.fk(q)[0, 3] for q in targets])
+    line = RIG_TIP_BOX[1][0] - TIP_MARGIN_M
+    past = float(x.max() - line)
+    assert -PAST_THE_LINE_M < past <= PAST_THE_LINE_M
+    # The last ten seconds are no further out than the first ten.
+    late, early = x[-500:].max(), x[100:600].max()
+    assert late <= early + 5e-4
+    print(f"\n{how}, {seconds:g} s: the tip up to {1000 * past:+.2f} mm past the line")
+
+
+# Poses with the gripper tip 12 to 18 cm above the table plane, inside every
+# limit of the rig's human checker.
+ABOVE_TABLE = {
+    "left": [-0.2113, 1.4471, 1.2153, -0.6294, 0.1652, -0.1673],
+    "middle": [0.4824, 1.2995, 0.9759, -0.7678, 0.5672, 0.4455],
+    "near": [0.2548, 1.2735, 0.853, -0.5611, 0.4508, 0.2212],
+}
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+@pytest.mark.parametrize("speed", [0.2, 0.5])
+@pytest.mark.parametrize("pose", list(ABOVE_TABLE))
+def test_a_hand_pushed_down_through_the_table_stops_the_tip_above_it(
+    person_rig, pose, speed
+):
+    # The Thor counts a person's gripper tip as low under 2 cm above the
+    # table plane: there it may only rise, and its checker refuses a target
+    # under that height. The human program holds the tip 1 cm above it.
+    h, _, sent = person_rig
+    start = ABOVE_TABLE[pose]
+    person_rig.place(start)
+    take_over(h)
+    ended = drives(h)
+    # 20 cm down, 2 s there, then 10 cm to the left with the hand still down.
+    down = 0.10 + 0.20 / speed
+    rows = [
+        {"t": 0.0, "pos": list(HAND_AT), "quat": [0, 0, 0, 1]},
+        {"t": 0.04, "squeeze": 1.0},
+        {"t": 0.10},
+        {"t": down, "pos": hand_for((0.0, 0.0, -0.20))},
+        {"t": down + 2.0},
+        {"t": down + 3.0, "pos": hand_for((0.0, 0.10, -0.20))},
+        {"t": down + 5.0, "squeeze": 0.0},
+    ]
+    hand = ProgramHand(h, rows)
+    hand.run()
+    targets = np.array(sent())
+    assert [(end.status, end.sent) for end in ended] == [("released", len(targets))]
+    assert hand.ended() == {} and h.heard("human") == []
+    tips = np.array([hand.solver.fk(q)[:3, 3] for q in targets])
+    first = hand.solver.fk(hand.solver.inside(start))[:3, 3]
+    stop = RIG_TIP_FLOOR + TIP_MARGIN_M
+    assert first[2] - 0.20 < 0.0 < RIG_TIP_FLOOR  # the hand went under the table
+    # The tip went down to 3 cm above the table plane and no lower.
+    assert tips[:, 2].min() == pytest.approx(stop, abs=PAST_THE_LINE_M)
+    assert tips[:, 2].min() > RIG_TIP_FLOOR + 0.005
+    # Then it slid along that height with the hand: 10 cm to the left.
+    at_table = np.abs(tips[:, 2] - stop) < PAST_THE_LINE_M
+    slid = tips[at_table]
+    assert slid[-1][1] - slid[0][1] == pytest.approx(0.10, abs=5e-3)
+    assert tips[-1][2] == pytest.approx(stop, abs=PAST_THE_LINE_M)
+    notes = [made.note for made in hand.sent if made.engaged]
+    assert notes[-1] == "at the workspace limit: table"
+    assert not any("bottom" in note for note in notes)
+    print(
+        f"\n{pose}, {speed} m/s: the tip stopped at z {tips[:, 2].min():.4f} m and "
+        f"slid {slid[-1][1] - slid[0][1]:.3f} m along it"
+    )
+
+
+# Pushes of the hand to where the arm cannot follow, and back to the squeeze's
+# place: the pose, the tip's way out in the base axes, m, and what the arm
+# stands for meanwhile.
+BEYOND = {
+    "toward the base from STRETCHED": (STRETCHED, (-0.30, 0.0, 0.0), "out of reach"),
+    "toward the base from TURNED": (TURNED, (-0.30, 0.0, 0.0), "out of reach"),
+    "toward the base and down from READY": (READY, (-0.30, 0.0, -0.20), "out of reach"),
+    # The arm stretches until its third joint is at the human joint box.
+    "to full stretch from READY": (
+        READY,
+        (0.03, 0.28, 0.10),
+        "at a joint limit: joint 3",
+    ),
+    "to full stretch from TURNED": (
+        TURNED,
+        (0.05, -0.10, 0.25),
+        "at a joint limit: joint 3",
+    ),
+    "to the right from STRETCHED": (
+        STRETCHED,
+        (0.0, -0.30, 0.0),
+        "at a joint limit: joint 2",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+@pytest.mark.parametrize("speed", [0.2, 0.5])
+@pytest.mark.parametrize("push", list(BEYOND))
+def test_the_arm_stands_out_of_reach_and_at_a_joint_limit_and_follows_again(
+    person_rig, push, speed
+):
+    h, _, sent = person_rig
+    start, out, why = BEYOND[push]
+    person_rig.place(start)
+    take_over(h)
+    ended = drives(h)
+    way_s = float(np.linalg.norm(out)) / speed
+    there = 0.10 + way_s
+    rows = [
+        {"t": 0.0, "pos": list(HAND_AT), "quat": [0, 0, 0, 1]},
+        {"t": 0.04, "squeeze": 1.0},
+        {"t": 0.10},
+        {"t": there, "pos": hand_for(out)},
+        {"t": there + 3.0},
+        {"t": there + 3.0 + way_s, "pos": list(HAND_AT)},
+        {"t": there + 7.0 + way_s, "squeeze": 0.0},
+    ]
+    hand = ProgramHand(h, rows)
+    hand.run()
+    targets = np.array(sent())
+    # One engagement, ended by the released grip: nothing the Thor refused,
+    # nothing the human program ended.
+    assert [(end.status, end.sent) for end in ended] == [("released", len(targets))]
+    assert hand.ended() == {} and h.heard("human") == []
+    assert hand.logic.counts()["engagements"] == 1
+    assert np.all(targets >= np.array(HUMAN_LOW))
+    assert np.all(targets <= np.array(HUMAN_HIGH))
+    made = [sent_ for sent_ in hand.sent if sent_.engaged]
+    stood = [index for index, sent_ in enumerate(made) if why in sent_.note]
+    assert stood, {sent_.note for sent_ in made}
+    # While the note said so the joint target stood, short of the hand.
+    held = np.array([made[index].q for index in stood[5:]])
+    assert np.abs(held - held[0]).max() < 1e-9
+    tips = np.array([hand.solver.fk(q)[:3, 3] for q in targets])
+    first = hand.solver.fk(hand.solver.inside(start))[:3, 3]
+    asked = first + np.array(out)
+    short = float(np.linalg.norm(asked - hand.solver.fk(held[0])[:3, 3]))
+    assert short > 0.01
+    # The hand came back: the arm followed again, with no new squeeze, and
+    # stands where the squeeze began. A tip that began under the 3 cm above
+    # the table has risen to them.
+    assert why not in made[-1].note
+    back = tips[-1] - first
+    assert np.linalg.norm(back[:2]) < 2e-3 and -2e-3 < back[2] < 4e-3
+    print(f"\n{push}, {speed} m/s: stood {100 * short:.1f} cm short ({why}), came back")
 
 
 OUTSIDE = {
@@ -1701,8 +1997,10 @@ def test_a_tip_outside_the_tip_box_at_a_squeeze_only_comes_toward_it(
         last = q
     tips = np.array([rig.tip(q) for q in targets])
     outside = np.maximum(np.maximum(low - tips, 0.0), tips - high)
-    # How far the tip is outside never grew, on any axis.
-    assert np.diff(outside, axis=0).max() <= 1e-4
+    # How far the tip is outside grew by no more, over the whole run, than
+    # what a solve leaves of its pose: not on any axis, not in all.
+    assert (outside - np.minimum.accumulate(outside, axis=0)).max() <= 2e-4
+    assert grown(outside) <= 2e-4
     assert outside[0].max() > 0.03 and outside[-1].max() == 0.0
     # While the hand went out the tip stood and the note named the wall;
     # then it came into the box with the hand, and stopped 1 cm inside the
@@ -1714,6 +2012,66 @@ def test_a_tip_outside_the_tip_box_at_a_squeeze_only_comes_toward_it(
     bound = (high if side else low)[axis] + (-TIP_MARGIN_M if side else TIP_MARGIN_M)
     assert tips[-1][axis] == pytest.approx(bound, abs=2e-4)
     assert notes[-1] == f"at the workspace limit: {wall}"
+
+
+def grown(outside: np.ndarray) -> float:
+    """How far the tip's distance to the box grew over its smallest so far, m.
+
+    outside holds, per joint target, how far its tip is outside on each axis.
+    """
+    distance = np.linalg.norm(outside, axis=1)
+    return float((distance - np.minimum.accumulate(distance)).max())
+
+
+@apai
+@pytest.mark.parametrize("wall", list(OUTSIDE))
+def test_a_tip_outside_the_tip_box_goes_no_further_out_under_a_turning_hand(
+    robot_rig, clock, tmp_path, wall
+):
+    # The hand goes 10 cm further out and 15 cm along the wall to and fro
+    # every 3 s while it turns 17 degrees to and fro every 2.2 s, for 14 s;
+    # then it comes 30 cm inward. The distance of the tip to the box grows by
+    # no more than 1.5 mm in all: the room is not opened again to what a
+    # solve left outward.
+    hp = pytest.importorskip("test_human_program")
+    pose, _ = OUTSIDE[wall]
+    _, axis, side = WALLS[wall]
+    sign = 1.0 if side else -1.0
+    profile = rig_profile(tmp_path)
+    config = rs.apai_backend.config_for_profile(robot_rig, profile)
+    human = rs.apai_backend.build_apai_checkers(config, profile, clock).human
+    low, high = (np.array(corner) for corner in human.tip_box())
+
+    def path(t: float) -> tuple[Sequence[float], Sequence[float], float]:
+        offset = np.zeros(3)
+        back = 0.40 * into(t - 14.0, 3.0) if t > 14.0 else 0.0
+        offset[axis] = sign * (0.10 * into(t) - back)
+        offset[(axis + 1) % 3] = 0.15 * math.sin(2 * math.pi * t / 3.0)
+        return offset, (0.0, 1.0, 1.0), 0.3 * math.sin(2 * math.pi * t / 2.2)
+
+    rows = [hp.BASE, {"t": 0.2, "squeeze": 1.0}]
+    for index in range(1, round(20.0 / hp.PASS_S)):
+        offset, turn_axis, angle = path(index * hp.PASS_S)
+        dx, dy, dz = offset
+        at = hp.HAND + np.array([-dy, dz, -dx])
+        row = {"t": 0.4 + index * hp.PASS_S, "pos": list(at)}
+        rows.append({**row, "quat": turned(turn_axis, angle)})
+    thor = hp.RigThor(pose, owner="human", start_passes=hp.START_READ)
+    thor.box = [list(low), list(high)]
+    rig = hp.Rig(rows, thor, hp.rig_settings())
+    made = [m for m in rig.run(21.0) if isinstance(m, HumanSetpoint)]
+    targets = [m.q for m in made if m.engaged]
+    assert not any(rig.ended().values()) and thor.refused == []
+    # APAI's human checker takes every step of the joint target.
+    last = list(pose)
+    for q in targets:
+        human.check_path(last, [q], hp.PASS_S)
+        last = q
+    tips = np.array([rig.tip(q) for q in targets])
+    outside = np.maximum(np.maximum(low - tips, 0.0), tips - high)
+    assert outside[0].max() > 0.03 and outside[-1].max() == 0.0
+    assert grown(outside) <= 0.0015
+    print(f"\n{wall}: the distance to the box grew by {1000 * grown(outside):.2f} mm")
 
 
 @apai

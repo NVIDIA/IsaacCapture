@@ -809,6 +809,77 @@ def test_the_tip_box_is_the_box_the_harness_holds_a_persons_tip_in(
     refusal_of(lambda: human.check_path(outside, [further], 10.0), r"outside workspace")
 
 
+@pytest.mark.parametrize("mounted", [False, True], ids=["no base_pose", "base_pose"])
+def test_the_tip_floor_is_the_height_under_which_a_persons_tip_may_only_rise(
+    config: RobotAppConfig,
+    profile: apai_backend.ApaiProfile,
+    clock: FakeClock,
+    mounted: bool,
+) -> None:
+    # What WELCOME announces as human_tip_floor: the height tip_state()
+    # compares the arm model's FK with, in the arm's base frame whatever the
+    # base_pose. The table plane and the higher of the two table clearances.
+    arm_cfg = profile.arm_cfg.as_dict()
+    if mounted:
+        arm_cfg["base_pose"] = [0.2, -0.1, 0.0, 0.0, 0.0, 0.0]
+    stood = dataclasses.replace(profile, arm_cfg=arm_cfg)
+    human = apai_backend.build_apai_checkers(config, stood, clock).human
+    limits = human.harness.limits
+    floor = human.tip_floor()
+    clearance = max(config.rest.table_clearance_m, float(limits.table_clearance))
+    assert floor == limits.table_z + clearance == 0.02 and type(floor) is float
+
+    def height(q: Sequence[float]) -> float:
+        return float(profile.kinematics.fk(np.array(q, dtype=float))[2, 3])
+
+    lower = moved(BELOW, 1, 1.69)
+    assert height(lower) < height(BELOW) < floor < height(ABOVE)
+    # Under it the tip is low; at 3 cm it is not.
+    assert human.tip_state(BELOW, None).low is not None
+    assert human.tip_state(ABOVE, None).low is None
+    # The harness refuses a step that ends under it, and from under it takes
+    # only one that lifts the tip.
+    refusal_of(lambda: human.check_path(ABOVE, [BELOW], 10.0), r"below table clearance")
+    human.check_path(lower, [BELOW], 10.0)
+    human.check_path(BELOW, [ABOVE], 10.0)
+    refusal_of(lambda: human.check_path(BELOW, [lower], 10.0), r"below table clearance")
+    # A person's drive opens no grasp exemption on this harness: the height
+    # holds wherever the tip is.
+    assert human.harness._grasp_exempt is None
+    # With the file's clearance the higher of the two, it is that one.
+    rest = dataclasses.replace(config.rest, table_clearance_m=0.035)
+    raised = dataclasses.replace(config, rest=rest)
+    again = apai_backend.build_apai_checkers(raised, stood, clock).human
+    assert again.tip_floor() == pytest.approx(limits.table_z + 0.035)
+    assert again.tip_state(ABOVE, None).low is not None
+
+
+def test_the_joint_box_is_the_box_each_checker_holds_a_setpoint_in(
+    checkers: CheckerSet, config: RobotAppConfig
+) -> None:
+    # What WELCOME announces as human_joint_box: read off the checker that
+    # enforces it.
+    for checker in checkers.all():
+        limit_set = getattr(config.limits, checker.name)
+        low, high = checker.joint_box()
+        assert low == [float(value) for value in limit_set.joint_min]
+        assert high == [float(value) for value in limit_set.joint_max]
+        assert all(type(value) is float for value in (*low, *high))
+    # The first joint's upper bound, 2.0 rad, is the only one inside the arm
+    # model's. A setpoint a thousandth of a rad inside it passes the joint
+    # box (the tip is beside the workspace there, which is refused next);
+    # one a thousandth outside is refused for the joint box.
+    human = checkers.human
+    low, high = human.joint_box()
+    start, inside = moved(HOME, 0, high[0] - 0.02), moved(HOME, 0, high[0] - 0.001)
+    outside = moved(HOME, 0, high[0] + 0.001)
+    refusal_of(lambda: human.check_path(start, [inside], 10.0), r"outside workspace")
+    refusal_of(
+        lambda: human.check_path(start, [outside], 10.0),
+        r"joint 1 target 2\.001 rad is outside the human joint limits",
+    )
+
+
 def test_recovery_path_reaches_the_rest_pose_on_the_joint_stops(
     checkers: CheckerSet,
 ) -> None:

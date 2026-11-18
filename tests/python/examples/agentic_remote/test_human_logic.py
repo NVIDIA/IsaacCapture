@@ -32,12 +32,17 @@ from isaaccapture_examples.agentic_remote.human.logic import (
     MAX_AHEAD_TURN_RAD,
     NO_FOLLOW_S,
     NOT_FOLLOWED,
+    NOTE_AT_JOINT_LIMIT,
     NOTE_AT_LIMIT,
     NOTE_AT_REST,
     NOTE_AT_REST_JAWS,
     NOTE_CATCHING_UP,
     NOTE_CUT,
+    NOTE_DRIVE_ON,
     NOTE_MAX_CHARS,
+    NOTE_OUT_OF_REACH,
+    NOTE_RAISE,
+    NOTE_RAISE_TABLE,
     NOTE_RELEASE_A,
     NOTE_RELEASE_B,
     NOTE_RELEASE_FIRST,
@@ -328,6 +333,15 @@ def robot_state(
     )
 
 
+def read_at(state: RobotState, began: float) -> RobotState:
+    """state with every joint's reading taken anew, begun at this time."""
+    joints = [
+        dataclasses.replace(sample, t_start=began, t_end=began + 0.005)
+        for sample in state.joints
+    ]
+    return dataclasses.replace(state, joints=joints)
+
+
 def following(state: RobotState | None = None, sent: int = 1) -> RobotState:
     """state as the robot app gives it once its human drive has sent setpoints.
 
@@ -396,6 +410,15 @@ class Bench:
         self.state_age_s: float | None = 0.01
         self.hand = np.array([0.0, 1.2, -0.3])
         self.passes = 0
+        # Whether each pass's ROBOT_STATE carries new readings of every
+        # joint, as from a robot app that reads them between two passes.
+        self.reads = True
+
+    def seen(self) -> RobotState | None:
+        """The ROBOT_STATE this pass's logic gets: self.state, as read just now."""
+        if self.state is None or not self.reads:
+            return self.state
+        return read_at(self.state, 400.0 + self.passes * PASS_S)
 
     def step(
         self,
@@ -430,7 +453,7 @@ class Bench:
             T0 + self.passes * PASS_S,
             FeedStep(produced, age, stage, note),
             self.welcome,
-            self.state,
+            self.seen(),
             self.state_age_s,
             results,
         )
@@ -466,13 +489,15 @@ class Bench:
 
         With follow the ROBOT_STATE of the passes after it shows the Thor's
         drive following: the joint target leaves the squeeze's first one.
-        After an engagement the release takes a second pass: the squeeze
-        counts on a ROBOT_STATE that shows no drive and came after the first.
+        After an engagement the release takes up to three passes: the squeeze
+        counts once a ROBOT_STATE has shown no drive and two have shown the
+        same pose in new readings.
         """
         self.halted()
         self.step()
-        if not self.logic.armed:
-            self.step()
+        for _ in range(2):
+            if not self.logic.armed:
+                self.step()
         sent = setpoint(self.step(squeeze=1.0))
         assert sent.engaged, sent.note
         if follow:
@@ -1121,9 +1146,10 @@ def test_no_engage_without_ownership(state):
     owned.step()
     assert owned.logic.armed and setpoint(owned.step(squeeze=1.0)).engaged
 
-    # Armed under the person: without the ownership that is gone. The pass
-    # after the release sees a ROBOT_STATE that arrived after it.
-    owned.run(2)
+    # Armed under the person: without the ownership that is gone. The passes
+    # after the release see a ROBOT_STATE that arrived after it, and then one
+    # whose new readings show the same pose: the arm is at rest.
+    owned.run(3)
     assert owned.logic.armed
     owned.state = state
     owned.step()
@@ -1239,7 +1265,7 @@ def test_the_first_seed_of_an_engagement_is_the_inside_pose():
     moved = (0.5, 0.2, 0.3, 0.1, 0.0, 0.0)
     bench.step()
     bench.state = robot_state(q=moved)
-    bench.step()
+    bench.run(2)  # two readings of each joint that agree: the arm is at rest
     again = setpoint(bench.step(squeeze=1.0))
     assert bench.solver.solves[-1][1] == moved
     assert again.q == pytest.approx(list(moved))
@@ -1432,7 +1458,7 @@ def test_a_jump_ends_the_engagement_and_needs_a_new_squeeze():
     assert bench.logic.counts()["jump"] == 1
 
 
-def test_five_failed_solves_end_the_engagement():
+def test_while_the_solves_fail_the_last_joint_target_stands_and_the_engagement_goes_on():
     problem = "no IK solution (error 0.0063 after 50 iterations)"
 
     def failed(target: np.ndarray, seed: tuple[float, ...]) -> IkStep:
@@ -1440,30 +1466,47 @@ def test_five_failed_solves_end_the_engagement():
 
     bench = Bench()
     first = bench.engage()
+    start = bench.hand.copy()
+    bench.hand = start + np.array([0.0, 0.0, 0.1])
     bench.solver.answer = failed
     for _ in range(4):
         again = setpoint(bench.step(squeeze=1.0))
         assert again.engaged and again.q == first.q  # the last joint values
+        assert NOTE_OUT_OF_REACH not in again.note and bench.logic.stand == ""
     bench.solver.answer = None
-    assert setpoint(bench.step(squeeze=1.0)).engaged  # the count starts again
+    moved = setpoint(bench.step(squeeze=1.0))  # the count starts again
+    assert moved.engaged and moved.q != first.q
     bench.solver.answer = failed
     assert all_engaged(bench.run(4, squeeze=1.0))
-    assert bench.logic.armed
-    ended = setpoint(bench.step(squeeze=1.0))  # the fifth in a row
-    assert (ended.engaged, ended.q) == (False, None)
-    assert ended.note == AGAIN + problem
-    assert not bench.logic.armed
-    assert bench.logic.counts()["no_solution"] == 1
+    # From the fifth in a row the note says why the arm stands. However long
+    # the solves fail, no joint target but the last good one goes out, and
+    # nothing ends the engagement.
+    held = bench.run(100, squeeze=1.0)
+    assert all_engaged(held) and bench.logic.armed
+    assert {tuple(sent.q) for sent in of(held, HumanSetpoint)} == {tuple(moved.q)}
+    assert all(NOTE_OUT_OF_REACH in sent.note for sent in of(held, HumanSetpoint))
+    assert bench.logic.stand == NOTE_OUT_OF_REACH == "out of reach"
+    assert bench.logic.counts()["no_solution"] == 0
+    # The pose solves again: the arm follows again at once, under the speed
+    # limit, and the note is gone.
+    bench.solver.answer = None
+    on = setpoint(bench.step(squeeze=1.0))
+    assert on.engaged and NOTE_OUT_OF_REACH not in on.note
+    step = max(abs(a - b) for a, b in zip(on.q, moved.q))
+    assert step == pytest.approx(0.01)  # one pass at the hand speed limit
+    # A released grip ends it as any engagement.
+    assert none_engaged(bench.run(1))
 
-    # Each engagement has its own count.
+    # The hand's own bounds still end it: the hand further from the tip than
+    # is believed.
     bench = Bench()
     bench.engage()
     bench.solver.answer = failed
-    assert all_engaged(bench.run(3, squeeze=1.0))
-    bench.halted()
-    bench.run(2)
-    assert all_engaged(bench.run(4, squeeze=1.0))
-    assert bench.logic.armed
+    assert all_engaged(bench.run(10, squeeze=1.0))
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.51])
+    ended = setpoint(bench.step(squeeze=1.0))
+    assert (ended.engaged, ended.q) == (False, None)
+    assert ended.note.startswith(AGAIN + "the hand is 51 cm from the gripper tip")
 
 
 @pytest.mark.parametrize(
@@ -1481,14 +1524,13 @@ def test_joint_values_that_are_not_six_finite_numbers_count_as_a_failed_solve(q)
     bench = Bench()
     first = bench.engage()
     bench.solver.answer = lambda target, seed: IkStep(q, "")
-    for _ in range(4):
+    for _ in range(20):
         again = setpoint(bench.step(squeeze=1.0))
         assert again.engaged and again.q == first.q  # the last joint values
-    ended = setpoint(bench.step(squeeze=1.0))
-    assert (ended.engaged, ended.q) == (False, None)
-    assert ended.note == AGAIN + "no IK solution (no usable joint values)"
-    assert not bench.logic.armed
-    assert bench.logic.counts()["no_solution"] == 1
+    # No value of such a solution reaches the arm, and the note says why
+    # the arm stands.
+    assert again.note == NOTE_OUT_OF_REACH and bench.logic.armed
+    assert bench.logic.counts()["no_solution"] == 0
 
 
 @pytest.mark.parametrize("field", ["ee_target", "commanded_target"])
@@ -1547,7 +1589,7 @@ def test_a_hand_further_ahead_of_the_arm_than_is_followed_ends_the_engagement():
     bench.hand = start + np.array([0.0, 0.0, 0.062])
     ended = setpoint(bench.step(squeeze=1.0))
     assert (ended.engaged, ended.q) == (False, None)
-    why = "the hand is 6 cm ahead of the arm, over the 5 cm followed"
+    why = "the hand is 6 cm from the gripper tip, over the 5 cm believed"
     assert ended.note == AGAIN + why
     assert not bench.logic.armed and len(bench.solver.solves) == solves
     assert bench.logic.ahead_m is None
@@ -1920,9 +1962,12 @@ def test_a_new_squeeze_waits_for_the_robot_state_that_shows_the_last_drive_ended
     waits(late)
     # Made after that pass, with the drive not ended yet.
     waits(following(robot_state(q=at, target_q=at, seq=end), sent=6))
-    # The state that shows it: the squeeze counts from here on, and the home
-    # is the arm's pose of this state.
-    bench.state = robot_state(q=at, target_q=at, seq=end + 3)
+    # The state that shows the drive as ended: its readings are the first
+    # since, and the arm may still move.
+    waits(robot_state(q=at, target_q=at, seq=end + 3))
+    # New readings of every joint that agree with those: the arm is at rest.
+    # The squeeze counts from here on, and the home is the arm's pose of
+    # this state.
     shown = setpoint(bench.step(squeeze=1.0))
     assert bench.logic.armed and not shown.engaged and shown.note == NOTE_STOPPING
     assert len(bench.graph.homes) == homes + 1
@@ -1943,8 +1988,10 @@ def test_a_robot_app_that_names_no_seq_is_taken_at_a_state_that_arrived_after_th
     bench.halted()
     bench.state_age_s = 0.05
     assert not setpoint(bench.step(squeeze=1.0)).engaged and not bench.logic.armed
-    # It arrived after that pass.
+    # It arrived after that pass: the drive has ended. The next one shows the
+    # arm at rest.
     bench.state_age_s = 0.03
+    assert not setpoint(bench.step(squeeze=1.0)).engaged and not bench.logic.armed
     assert not setpoint(bench.step(squeeze=1.0)).engaged and bench.logic.armed
     assert setpoint(bench.step(squeeze=1.0)).engaged
 
@@ -2089,10 +2136,24 @@ def test_a_joint_target_that_is_held_back_for_a_second_ends_the_engagement():
     target = list(one.q)
     for index in range(150):
         if index % 40 == 39:
-            target[2] += 0.001
+            target[2] += 0.002
             bench.state = following(robot_state(q=target, target_q=target))
         assert setpoint(bench.step(squeeze=1.0)).engaged
     assert bench.logic.behind
+
+    # One that only wobbles, by less than a twentieth of a Thor step, is no
+    # new one: the engagement ends as with a target that stands.
+    assert logic_module.NEW_TARGET_SHARE == 0.05
+    bench, one = held_drive()
+    ended_at = None
+    for index in range(round(NO_FOLLOW_S / PASS_S) + 5):
+        wobble = list(one.q)
+        wobble[2] += 0.9 * logic_module.NEW_TARGET_SHARE * THOR_STEP * (index % 2)
+        bench.state = following(robot_state(q=wobble, target_q=wobble))
+        if not setpoint(bench.step(squeeze=1.0)).engaged:
+            ended_at = index
+            break
+    assert ended_at == 2 + round(NO_FOLLOW_S / PASS_S) + 1
 
     # Nor does a hand that stands: its joint target is not held back.
     bench = Bench(retarget=FAST)
@@ -2186,36 +2247,38 @@ def test_the_tip_stops_at_a_wall_of_the_tip_box_and_slides_along_it():
     assert not any(bench.logic.counts()[key] for key in ended)
 
 
-def test_a_hand_beyond_a_wall_is_believed_up_to_the_bound_and_no_further():
-    # Two distances, each held to ik.max_ahead_m: from the tip to the hand's
-    # point held inside the box, and from that point on to the hand.
+def test_a_hand_beyond_a_wall_is_believed_up_to_the_bound_from_the_tip_and_no_further():
+    # The hand is believed up to ik.max_ahead_m from the gripper tip, in all,
+    # beyond a wall as inside the box. "Ahead" is the way from the tip to the
+    # hand's point held inside the box, which is never longer than that.
     bench = boxed()
     bench.engage()
     assert bench.settings.ik.max_ahead_m == 0.5
     top = TIP_BOX[1][2] - TIP_BOX_MARGIN_M
-    # 45 cm to the side and 49 cm beyond the top wall: 68 cm from the tip.
-    bench.hand = bench.hand + np.array([0.0, 0.25, 0.04 + 0.49])
+    # 25 cm to the side and 38 cm beyond the top wall: 49 cm from the tip.
+    bench.hand = bench.hand + np.array([0.0, 0.25, 0.04 + 0.38])
     [sent] = bench.drive(1)
     assert sent.engaged and bench.logic.ahead_m == pytest.approx(
         float(np.hypot(0.25, 0.04)), abs=1e-3
     )
-    bench.hand = bench.hand + np.array([0.0, 0.0, 0.03])
+    # 4 cm further beyond the wall: 52 cm from the tip, of which only 25 cm
+    # are ahead of the arm.
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.04])
     ended = setpoint(bench.step(squeeze=1.0))
     assert (ended.engaged, ended.q) == (False, None)
-    why = "the hand is 52 cm past the workspace limit (50 are believed)"
+    why = "the hand is 52 cm from the gripper tip, over the 50 cm believed"
     assert ended.note == AGAIN + why and len(AGAIN + why) <= NOTE_MAX_CHARS
     assert bench.logic.counts()["hand_ahead"] == 1
     assert tip(bench, sent)[2] < top
 
-    # Inside the box the first distance is the whole of it, as without a box.
-    bench = boxed([[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]])
-    bench.engage()
-    bench.hand = bench.hand + np.array([0.0, 0.49, 0.0])
-    assert setpoint(bench.step(squeeze=1.0)).engaged
-    bench.hand = bench.hand + np.array([0.0, 0.03, 0.0])
-    ended = setpoint(bench.step(squeeze=1.0))
-    why = "the hand is 52 cm ahead of the arm, over the 50 cm followed"
-    assert ended.note == AGAIN + why
+    # Inside the box, and without one, it is the same bound.
+    for bench in (boxed([[-1.0, -1.0, -1.0], [1.0, 1.0, 1.0]]), Bench()):
+        bench.engage()
+        bench.hand = bench.hand + np.array([0.0, 0.49, 0.0])
+        assert setpoint(bench.step(squeeze=1.0)).engaged
+        bench.hand = bench.hand + np.array([0.0, 0.03, 0.0])
+        ended = setpoint(bench.step(squeeze=1.0))
+        assert ended.note == AGAIN + why
 
 
 def test_a_tip_outside_the_tip_box_at_a_squeeze_may_only_come_toward_it():
@@ -2303,14 +2366,20 @@ def test_a_wall_is_named_from_a_centimetre_beyond_it_until_the_hand_is_back(
     low, high = np.array([0.11, -0.29, 0.01]), np.array([0.49, 0.29, 0.145])
     at = np.array([0.3, 0.0, tip_z])
     beyond = np.array([0.0, 0.0, past])
-    assert logic_module._walls_at(beyond, at, low, high, named) == walls
+    assert logic_module._walls_at(beyond, at, low, high, named, "bottom") == walls
     assert logic_module.WALL_NAMES == (
         ("back", "front"),
         ("right", "left"),
         ("bottom", "top"),
     )
-    every = logic_module._walls_at(np.array([-0.02, -0.02, -0.02]), low, low, high, ())
+    under = np.array([-0.02, -0.02, -0.02])
+    every = logic_module._walls_at(under, low, low, high, (), "bottom")
     assert every == ("back", "right", "bottom")
+    # The lowest wall has the name it is given: the table's, where it is the
+    # height the robot app names for a low gripper tip.
+    assert logic_module.WALL_TABLE == "table"
+    every = logic_module._walls_at(under, low, low, high, (), "table")
+    assert every == ("back", "right", "table")
     assert NOTE_AT_LIMIT.format(walls="front") == "at the workspace limit: front"
 
 
@@ -2391,10 +2460,11 @@ def test_no_engage_after_a_press_of_b_until_a_robot_state_shows_its_stop():
     bench.state = nobody(2, takeover_open=True)
     assert none_engaged(bench.run(5)) and not bench.logic.armed
 
-    # A ROBOT_STATE with a higher stop number ends the wait at once.
+    # A ROBOT_STATE with a higher stop number ends the wait for the STOP at
+    # once; the next one shows the arm at rest.
     bench = tapped()
     bench.state = robot_state(owner_number=4, stop_number=2)
-    bench.step()
+    bench.run(2)
     assert bench.logic.armed and setpoint(bench.step(squeeze=1.0)).engaged
 
     # A STOP that never shows is waited for 1 s from the press, not longer.
@@ -2449,7 +2519,7 @@ def test_the_stop_of_a_press_goes_out_on_a_pass_that_fails_afterwards():
     assert setpoint(held[-1:]).note == NOTE_RELEASE_FIRST
     assert bench.logic.counts()["clutch"] == 0
     bench.halted()
-    bench.step()
+    bench.run(2)
     assert setpoint(bench.step(squeeze=1.0)).engaged
 
 
@@ -2541,10 +2611,13 @@ def test_a_released_grip_ends_the_engagement_and_the_next_squeeze_engages():
         True,
     )
     assert released.note == NOTE_SQUEEZE
-    # The next squeeze counts once a ROBOT_STATE shows that drive as ended:
-    # here on its second pass.
+    # The next squeeze counts once a ROBOT_STATE has shown that drive as
+    # ended and the next one the arm at rest: here on its third pass.
     assert not bench.logic.armed
     bench.halted()
+    waiting = setpoint(bench.step(squeeze=1.0))
+    assert not waiting.engaged and waiting.note == NOTE_STOPPING
+    assert not bench.logic.armed
     waiting = setpoint(bench.step(squeeze=1.0))
     assert not waiting.engaged and waiting.note == NOTE_STOPPING
     assert bench.logic.armed
@@ -2553,7 +2626,463 @@ def test_a_released_grip_ends_the_engagement_and_the_next_squeeze_engages():
     assert (counts["engagements"], counts["released"]) == (2, 1)
 
 
-# Rates, numbers, fields
+# At rest. After an engagement the arm goes on for a moment, and the first
+# ROBOT_STATE that shows the drive as ended still has readings taken while it
+# moved. A new squeeze counts once two readings of every joint, both begun
+# after the Thor's last setpoint, agree: the home is then where the arm
+# stands.
+
+SENT_AT = 450.0  # when the Thor's last setpoint went out, on its clock
+
+
+def released_at_speed() -> tuple[Bench, list[float], int]:
+    """An engagement ended by a released grip: the bench, the arm's pose, the seq.
+
+    From here on the test gives each ROBOT_STATE its own readings.
+    """
+    bench = Bench()
+    bench.engage()
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.2])
+    at = bench.drive(6)[-1].q
+    released = setpoint(bench.step())
+    bench.reads = False
+    return bench, at, released.seq
+
+
+def read(
+    q: Sequence[float], began: float, seq: int, sent_at: float | None
+) -> RobotState:
+    """A ROBOT_STATE with no drive, every joint read anew at `began`."""
+    state = read_at(robot_state(q=q, target_q=q, seq=seq), began)
+    return dataclasses.replace(state, target_t=sent_at)
+
+
+def test_the_arm_is_at_rest_once_two_readings_of_every_joint_after_the_last_setpoint_agree():
+    assert logic_module.REST_TOL_RAD == 0.002
+    bench, at, end = released_at_speed()
+    homes = len(bench.graph.homes)
+
+    def armed(q: Sequence[float], began: float) -> bool:
+        bench.state = read(q, began, end + 1, SENT_AT)
+        waiting = setpoint(bench.step(squeeze=1.0))
+        assert not waiting.engaged and waiting.note == NOTE_STOPPING
+        return bench.logic.armed
+
+    def off(by: float, joint: int | None = None) -> list[float]:
+        """The pose `by` short of where the arm comes to rest, on one joint or all."""
+        return [v - by * (joint in (None, i)) for i, v in enumerate(at)]
+
+    # The drive is shown as ended, with readings that began before the Thor's
+    # last setpoint went out: the arm has moved since, however well they agree.
+    assert not armed(off(0.03), SENT_AT - 0.02)
+    assert not armed(off(0.03), SENT_AT - 0.01)
+    # The first readings since that setpoint: nothing to compare them with.
+    assert not armed(off(0.010), SENT_AT + 0.11)
+    # The same readings in a later ROBOT_STATE are no new ones.
+    assert not armed(off(0.010), SENT_AT + 0.11)
+    # New ones, 0.004 rad on: the arm still moves.
+    assert not armed(off(0.006), SENT_AT + 0.17)
+    # One joint alone that still moves holds the squeeze back.
+    assert not armed(off(0.003, joint=2), SENT_AT + 0.23)
+    assert len(bench.graph.homes) == homes  # no home from any of these
+    # Every joint within 0.002 rad of its reading before: at rest. The home
+    # is the arm's pose of this state, and the squeeze counts from it on.
+    assert armed(off(0.0015, joint=2), SENT_AT + 0.29)
+    np.testing.assert_allclose(
+        bench.graph.homes[-1], bench.solver.fk(off(0.0015, joint=2))
+    )
+    first = setpoint(bench.step(squeeze=1.0))
+    assert first.engaged and first.q == pytest.approx(off(0.0015, joint=2))
+
+    # A robot app that names no send time of a setpoint has sent none: any
+    # two readings of a joint count.
+    bench, at, end = released_at_speed()
+    bench.state = read(at, 400.0, end + 1, None)
+    bench.step(squeeze=1.0)
+    assert not bench.logic.armed
+    bench.state = read(at, 400.06, end + 1, None)
+    bench.step(squeeze=1.0)
+    assert bench.logic.armed
+
+
+def test_a_squeeze_waits_half_a_second_at_most_for_the_arm_to_be_shown_at_rest():
+    assert logic_module.REST_WAIT_S == 0.5
+    # A robot app whose readings never show the arm at rest: here the same
+    # ones in every ROBOT_STATE. The squeeze is taken on the newest state
+    # half a second after the engagement ended, so the person is not left
+    # without a squeeze; the robot app's own step limit stays the backstop.
+    bench, at, end = released_at_speed()
+    bench.state = read(at, SENT_AT + 0.11, end + 1, SENT_AT)
+    waited = 0
+    while not bench.logic.armed:
+        waiting = setpoint(bench.step(squeeze=1.0))
+        assert not waiting.engaged and waiting.note == NOTE_STOPPING
+        waited += 1
+        assert waited < 40
+    assert waited == round(logic_module.REST_WAIT_S / PASS_S) + 1
+    first = setpoint(bench.step(squeeze=1.0))
+    assert first.engaged and first.q == pytest.approx(at)
+
+
+def test_a_robot_app_that_goes_on_reporting_its_drive_is_named_after_a_second():
+    assert logic_module.DRIVE_ON_NOTE_S == 1.0
+    assert NOTE_DRIVE_ON == (
+        "wait: the robot app still reports the last drive; if this stays, type stop"
+    )
+    assert len(NOTE_DRIVE_ON) <= NOTE_MAX_CHARS
+    bench = Bench()
+    bench.engage()
+    bench.run(3, squeeze=1.0)
+    assert setpoint(bench.step()).note == NOTE_SQUEEZE
+    # The ROBOT_STATE goes on showing the drive. For a second the notes are
+    # the usual ones; then they say what is waited for, grip squeezed or not.
+    said = [setpoint(bench.step(squeeze=index % 2)).note for index in range(49)]
+    assert set(said[0::2]) == {NOTE_SQUEEZE} and set(said[1::2]) == {NOTE_STOPPING}
+    setpoint(bench.step())
+    later = [setpoint(bench.step(squeeze=index % 2)).note for index in range(200)]
+    assert set(later) == {NOTE_DRIVE_ON} and not bench.logic.armed
+    assert len(bench.solver.solves) == 4  # nothing was solved for meanwhile
+    # The drive ends after all, long after the half second the arm is given
+    # to come to rest: the squeeze counts on the state that shows it.
+    bench.halted()
+    assert setpoint(bench.step(squeeze=1.0)).note == NOTE_STOPPING
+    assert bench.logic.armed and setpoint(bench.step(squeeze=1.0)).engaged
+
+
+# A low gripper. While the gripper tip is low the Thor's drive sends nothing
+# until the joint target's tip is back at the highest it measured. A first
+# joint target that stood until the Thor followed it would never get there:
+# once the Thor's drive has had the engagement's joint target for longer than
+# its start read takes and has sent nothing, the joint target follows the hand.
+
+
+def waiting(first: HumanSetpoint, **state: Any) -> RobotState:
+    """The Thor's drive has this engagement's joint target and has sent nothing."""
+    return following(robot_state(seq=first.seq, **state), sent=0)
+
+
+def test_a_drive_that_waits_for_a_lift_gets_a_joint_target_that_follows_the_hand():
+    assert logic_module.LIFT_AFTER_S == 0.15
+    assert logic_module.LIFT_SLACK_RAD == 0.005
+    bench = Bench(retarget=FAST)
+    first = bench.engage(follow=False)
+    bench.state = waiting(first)
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.1])
+    # For 0.15 s this may be the drive's start read: the first target stands.
+    held = of(bench.run(8, squeeze=1.0), HumanSetpoint)
+    assert all(m.q == first.q and NOTE_RAISE not in m.note for m in held)
+    # Then it follows the hand, at the joint speed, up to ik.max_ahead_rad
+    # less 0.005 rad from the measured arm: where the Thor still takes it as
+    # a first step. The note says what the Thor waits for.
+    room = bench.settings.ik.max_ahead_rad - logic_module.LIFT_SLACK_RAD
+    moved = of(bench.run(4, squeeze=1.0), HumanSetpoint)
+    rose = [m.q[2] for m in moved]
+    assert rose == pytest.approx(
+        [min(first.q[2] + (k + 1) * JOINT_STEP, room) for k in range(4)]
+    )
+    assert rose[-1] == pytest.approx(room) and all(m.engaged for m in moved)
+    assert {m.note for m in moved} == {NOTE_RAISE}  # it leaves no room for more
+    assert NOTE_RAISE == (
+        "raise the hand: the gripper is low and the robot app waits for a lift"
+    )
+    # The Thor's drive goes: its first setpoint is on its way to that joint
+    # target, which stands until the Thor's own is within a step of it.
+    on_its_way = [0.0, 0.0, THOR_STEP, 0.0, 0.0, 0.0]
+    bench.state = following(robot_state(seq=moved[-1].seq, target_q=on_its_way))
+    assert setpoint(bench.step(squeeze=1.0)).q == moved[-1].q
+    near = list(moved[-1].q)
+    bench.state = following(robot_state(q=near, target_q=near, seq=moved[-1].seq))
+    on = setpoint(bench.step(squeeze=1.0))
+    assert on.q[2] == pytest.approx(moved[-1].q[2] + JOINT_STEP)
+    assert NOTE_RAISE not in on.note
+
+    # A hand that does not rise: the engagement ends a second after the
+    # joint target's tip last rose, as one the arm did not follow.
+    bench = Bench(retarget=FAST)
+    first = bench.engage(follow=False)
+    bench.state = waiting(first)
+    still = of(bench.run(50, squeeze=1.0), HumanSetpoint)
+    assert all(m.engaged and m.q == first.q for m in still)
+    assert still[-1].note == NOTE_RAISE
+    ended = setpoint(bench.step(squeeze=1.0))
+    assert not ended.engaged
+    assert ended.note == AGAIN + "the arm did not follow the squeeze within 1 s"
+    # One that rises late restarts that second.
+    bench = Bench(retarget=FAST)
+    first = bench.engage(follow=False)
+    bench.state = waiting(first)
+    bench.run(40, squeeze=1.0)
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.1])
+    late = of(bench.run(50, squeeze=1.0), HumanSetpoint)
+    assert all(m.engaged for m in late) and late[-1].q[2] == pytest.approx(room)
+
+    # A robot app that names no seq is not taken to wait: as before.
+    bench = Bench(retarget=FAST)
+    first = bench.engage(follow=False)
+    bench.state = following(sent=0)
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.1])
+    assert all(m.q == first.q for m in of(bench.run(30, squeeze=1.0), HumanSetpoint))
+
+
+def test_under_the_height_the_robot_app_names_the_joint_target_only_lifts_the_tip():
+    # The stand-in arm's tip is 10.5 cm up at the squeeze; the robot app
+    # names 20 cm as the height under which the tip is low.
+    bench = Bench(retarget=FAST)
+    bench.welcome = dataclasses.replace(bench.welcome, human_tip_floor=0.2)
+    first = bench.engage(follow=False)
+    assert tip(bench, first)[2] == pytest.approx(0.105)
+    bench.state = waiting(first)
+    # The hand goes up and far to the side. While the Thor's drive waits,
+    # the joint target goes on the hand's own way, a step of the joint
+    # target a pass, up to ik.max_ahead_rad less 0.005 rad from the arm:
+    # every step of the Thor's way to it from the arm lifts the tip.
+    bench.hand = bench.hand + np.array([0.3, 0.0, 0.2])
+    held = of(bench.run(8, squeeze=1.0), HumanSetpoint)
+    assert all(m.q == first.q for m in held)
+    lifted = of(bench.run(3, squeeze=1.0), HumanSetpoint)
+    assert all(m.note.startswith(NOTE_RAISE_TABLE + "; hand ") for m in lifted)
+    assert NOTE_RAISE_TABLE == (
+        "raise the hand: the gripper is under the table clearance"
+    )
+    room = bench.settings.ik.max_ahead_rad - logic_module.LIFT_SLACK_RAD
+    for index, made in enumerate(lifted):
+        assert made.q[1] == first.q[1] and made.q[3:] == first.q[3:]
+        side = min((index + 1) * JOINT_STEP, room)
+        assert made.q[0] == pytest.approx(side)
+        assert made.q[2] - first.q[2] == pytest.approx(side * 2.0 / 3.0)
+    # The Thor's drive goes. The joint target stands until the Thor's own is
+    # the last one sent: then each of the Thor's steps ends on a joint
+    # target, and none is cut by its clamp.
+    last = lifted[-1]
+    short = [*last.q[:2], last.q[2] - 0.01, *last.q[3:]]
+    bench.state = following(robot_state(q=short, target_q=short, seq=last.seq))
+    assert setpoint(bench.step(squeeze=1.0)).q == last.q
+    bench.state = following(robot_state(q=last.q, target_q=last.q, seq=last.seq))
+    on = setpoint(bench.step(squeeze=1.0))
+    assert on.q != last.q and tip(bench, on)[2] > tip(bench, last)[2]
+    # The next one waits again for the Thor's joint target to be that one.
+    assert setpoint(bench.step(squeeze=1.0)).q == on.q
+
+    # While the Thor's drive waits, a hand that goes to the side at one
+    # height moves nothing, however far it goes: the arm starts only where
+    # the hand rises. The engagement ends after a second.
+    bench = Bench(retarget=FAST)
+    bench.welcome = dataclasses.replace(bench.welcome, human_tip_floor=0.2)
+    first = bench.engage(follow=False)
+    bench.state = waiting(first)
+    bench.hand = bench.hand + np.array([0.3, 0.0, 0.0])
+    level = of(bench.run(50, squeeze=1.0), HumanSetpoint)
+    assert all(m.engaged and m.q == first.q for m in level)
+    assert level[-1].note.startswith(NOTE_RAISE_TABLE)
+    assert not setpoint(bench.step(squeeze=1.0)).engaged
+
+    # The first step of the Thor toward the joint target keeps the tip
+    # inside the hand's speed limit: a target whose first step would be
+    # faster is not taken, and the last one stands.
+    bench = Bench()
+    bench.welcome = dataclasses.replace(bench.welcome, human_tip_floor=0.2)
+    first = bench.engage(follow=False)
+    bench.state = waiting(first, q=list(first.q))  # the arm is measured there
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.2])
+    risen = of(bench.run(40, squeeze=1.0), HumanSetpoint)
+    limit = bench.settings.retarget.max_linear_velocity * 0.02
+    arm = tip(bench, first)
+    steps = []
+    for made in risen:
+        ways = zip(first.q, made.q)
+        to = [a + max(-THOR_STEP, min(THOR_STEP, b - a)) for a, b in ways]
+        steps.append(float(np.linalg.norm(bench.solver.fk(to)[:3, 3] - arm)))
+    assert 0.5 * limit < max(steps) <= limit + 1e-9
+    assert risen[-1].q != first.q and risen[-1].q == risen[-20].q
+
+    # A hand that goes down or to the side there moves nothing: no joint
+    # target is sent whose tip is not higher than the last one's.
+    bench = Bench(retarget=FAST)
+    bench.welcome = dataclasses.replace(bench.welcome, human_tip_floor=0.2)
+    first = bench.engage()
+    bench.hand = bench.hand + np.array([0.3, 0.0, -0.05])
+    assert all(m.q == first.q for m in bench.drive(30))
+    assert bench.logic.walls == ("table",)
+    # Above that height the arm follows the hand as everywhere.
+    bench = Bench(retarget=FAST)
+    bench.welcome = dataclasses.replace(bench.welcome, human_tip_floor=0.05)
+    first = bench.engage()
+    bench.hand = bench.hand + np.array([0.3, 0.0, 0.0])
+    assert bench.drive(5)[-1].q[0] > first.q[0] + 0.1
+
+
+# The table. The robot app names the height under which a person's gripper
+# tip is low: there it may only rise, and its checker refuses a target under
+# its table clearance. The pose solved for stays 1 cm above that height, as
+# it stays 1 cm inside the walls of the tip box.
+
+
+def test_the_tip_stops_above_the_height_the_robot_app_names_and_slides_along_it():
+    bench = boxed()
+    bench.welcome = dataclasses.replace(bench.welcome, human_tip_floor=0.05)
+    first = bench.engage()
+    stop = 0.05 + TIP_BOX_MARGIN_M  # 4.5 cm under the tip
+    assert tip(bench, first)[2] - stop == pytest.approx(0.045)
+    # The hand goes 20 cm down and 5 cm to the side, at once.
+    bench.hand = bench.hand + np.array([0.0, 0.05, -0.20])
+    sent = bench.drive(80)
+    assert all(m.engaged for m in sent)
+    tips = np.array([tip(bench, m) for m in sent])
+    assert tips[:, 2].min() == pytest.approx(stop, abs=1e-9)
+    np.testing.assert_allclose(tips[-1], HOME_TIP + [0.0, 0.05, -0.045], atol=1e-9)
+    # The note names the table, not the bottom of the box.
+    assert sent[-1].note == "at the workspace limit: table"
+    assert bench.logic.walls == ("table",)
+    ended = ("no_solution", "jump", "solution_ahead", "hand_ahead", "limiter")
+    assert not any(bench.logic.counts()[key] for key in ended)
+
+
+@pytest.mark.parametrize(
+    "box, floor, low_z, table",
+    [
+        (TIP_BOX, None, 0.01, False),  # no height named: the box's bottom
+        (TIP_BOX, 0.02, 0.03, True),
+        (TIP_BOX, -0.05, 0.01, False),  # under the box: its bottom binds
+        (None, 0.02, 0.03, True),  # no box named: the table alone
+        (TIP_BOX, 0.5, 0.145, True),  # above the box: its top, less the margin
+        (TIP_BOX, float("nan"), 0.01, False),
+        (TIP_BOX, "low", 0.01, False),
+        (TIP_BOX, True, 0.01, False),
+    ],
+)
+def test_the_lowest_wall_is_the_higher_of_the_boxs_bottom_and_the_named_height(
+    box, floor, low_z, table
+):
+    named = dataclasses.replace(welcome(), human_tip_box=box, human_tip_floor=floor)
+    low, high, is_table = logic_module._named_box(named)
+    assert low[2] == pytest.approx(low_z) and is_table is table
+    assert (high[2] == pytest.approx(0.145)) == (box is not None)
+    if box is None:
+        assert np.all(np.isinf(low[:2])) and np.all(np.isinf(high))
+    # Neither named: nothing is bounded.
+    nothing = dataclasses.replace(named, human_tip_box=None, human_tip_floor=None)
+    assert logic_module._named_box(nothing) is None
+
+
+# The joint box and the reach. The robot app names the joint box its checker
+# holds a person's joint target in. The joint target stops 0.01 rad inside
+# it and the engagement goes on, where the checker's refusal ended the drive.
+
+JOINT_BOX = [[-1.0, -0.05, -0.05, -1.0, -1.0, -1.0], [1.0, 1.0, 0.3, 1.0, 1.0, 1.0]]
+
+
+def test_the_joint_target_stops_inside_the_joint_box_and_follows_again():
+    assert logic_module.JOINT_BOX_MARGIN_RAD == 0.01
+    bench = Bench()
+    bench.welcome = dataclasses.replace(bench.welcome, human_joint_box=JOINT_BOX)
+    first = bench.engage()
+    stop = JOINT_BOX[1][2] - logic_module.JOINT_BOX_MARGIN_RAD  # 0.29 rad
+    # The hand goes 10 cm up, which the third joint alone makes on the
+    # stand-in arm: 0.5 rad, past its bound of 0.3 rad.
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.10])
+    sent = bench.drive(60)
+    assert all(m.engaged for m in sent)
+    third = [m.q[2] for m in sent]
+    assert max(third) == pytest.approx(stop) and third[-1] == pytest.approx(stop)
+    # The last step went as far as the box allows, not a whole pass's.
+    assert np.diff([first.q[2], *third]).max() == pytest.approx(0.01)
+    said = NOTE_AT_JOINT_LIMIT.format(joint=3)
+    assert said == "at a joint limit: joint 3"
+    assert said in sent[-1].note and bench.logic.stand == said
+    assert bench.logic.counts()["no_solution"] == 0
+    # The hand goes on to the side, still 2.2 cm above what the joint
+    # allows: every step toward it asks that joint for more, and the arm
+    # stands. Nothing but the last joint target goes out.
+    bench.hand = bench.hand + np.array([0.0, 0.05, 0.0])
+    stood = bench.drive(40)
+    assert {tuple(m.q) for m in stood} == {tuple(sent[-1].q)}
+    assert all(m.engaged and said in m.note for m in stood)
+    # The hand comes back down: the arm follows again, to the side as well,
+    # and the note is gone.
+    bench.hand = bench.hand + np.array([0.0, 0.0, -0.10])
+    back = bench.drive(60)
+    assert back[-1].q[2] == pytest.approx(first.q[2], abs=1e-9)
+    assert back[-1].q[1] == pytest.approx(first.q[1] + 0.25)
+    assert said not in back[-1].note and bench.logic.stand == ""
+
+    # A joint that is outside the box at the squeeze may come back toward it
+    # and goes no further out: the checker's own rule.
+    bench = Bench()
+    bench.welcome = dataclasses.replace(bench.welcome, human_joint_box=JOINT_BOX)
+    outside = (0.0, 0.025, 0.4, 0.0, 0.0, 0.0)
+    bench.state = robot_state(q=outside)
+    first = bench.engage()
+    assert first.q == pytest.approx(outside)
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.02])
+    assert bench.drive(10)[-1].q[2] == pytest.approx(0.4)
+    bench.hand = bench.hand + np.array([0.0, 0.0, -0.06])
+    inward = bench.drive(40)
+    assert inward[-1].q[2] == pytest.approx(0.2)
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.10])
+    assert bench.drive(60)[-1].q[2] == pytest.approx(stop)
+
+
+@pytest.mark.parametrize(
+    "named",
+    [
+        None,
+        "box",
+        [[0.0] * 6],
+        [[0.0] * 5, [1.0] * 5],
+        [[1.0] * 6, [0.0] * 6],
+        [[0.0] * 6, [float("inf")] * 6],
+        [[0.0] * 6, [float("nan")] * 6],
+    ],
+    ids=["none", "text", "one corner", "five joints", "min above max", "inf", "nan"],
+)
+def test_a_joint_box_that_cannot_be_used_bounds_nothing(named):
+    bench = Bench()
+    bench.welcome = dataclasses.replace(bench.welcome, human_joint_box=named)
+    assert not bench.logic.joint_box(bench.welcome)
+    first = bench.engage()
+    bench.hand = bench.hand + np.array([0.0, 0.0, 0.10])
+    assert bench.drive(60)[-1].q[2] == pytest.approx(first.q[2] + 0.5)
+
+
+# The hold-back, once the next ROBOT_STATE is overdue.
+
+
+def test_no_more_is_given_for_the_time_since_a_robot_state_once_the_next_is_overdue():
+    assert logic_module.STATE_DUE_PERIODS == 1.5
+    assert logic_module.STATE_GAPS_MIN == 3
+    base = HOLD_BACK_STEPS * THOR_STEP
+
+    def room(period_s: float, age_s: float) -> float:
+        """How far ahead of the Thor's joint target the joint target comes to stand.
+
+        The Thor's drive has made a ROBOT_STATE every period_s, the newest
+        age_s ago, and its joint target has stood since.
+        """
+        bench, start = held_drive()
+        state = following(robot_state(q=start.q, target_q=start.q, seq=start.seq))
+        for index in range(5):
+            made = 500.0 + index * period_s
+            numbered = dataclasses.replace(state, seq=10 + index)
+            sent = 1 + index * round(period_s / PASS_S)  # its loop is on time
+            bench.state = timed(numbered, made, made - 0.001, sent)
+            bench.state_age_s = 0.001
+            bench.step(squeeze=1.0)
+        bench.state_age_s = age_s
+        last = [setpoint(bench.step(squeeze=1.0)).q[2] for _ in range(8)][-1]
+        return last - start.q[2]
+
+    credit = SPEED_MARGIN * HUMAN_SPEED
+    # Where the joint target stood on the passes before, with ROBOT_STATEs
+    # 0.001 s old: it is not taken back from there.
+    stood = base + 0.001 * credit
+    # A ROBOT_STATE with every setpoint: the next is overdue 0.03 s after
+    # the newest arrived, and nothing more is given from then on.
+    assert room(0.02, 0.029) == pytest.approx(base + 0.029 * credit)
+    assert room(0.02, 0.031) == pytest.approx(stood)
+    # One every third setpoint, about as an older robot app sends them:
+    # 0.09 s. Until then all is as with that robot app before.
+    assert room(0.06, 0.089) == pytest.approx(base + 0.089 * credit)
+    assert room(0.06, 0.091) == pytest.approx(stood)
 
 
 def sent_per_pass(bench: Bench, passes: int, **controls: Any) -> list[bool]:
@@ -2714,6 +3243,7 @@ def test_the_notes_name_the_operators_next_step():
     # Back at rest after the arm was moved, and after a STOP there.
     bench.state = robot_state(**at_rest)
     assert setpoint(bench.step()).note == NOTE_AT_REST
+    assert setpoint(bench.step()).note == NOTE_AT_REST  # shown at rest
     assert setpoint(bench.step(squeeze=1.0)).note == ""
     bench.state = nobody(3, takeover_open=True, motion="rest_hold")
     assert bench.status().note == NOTE_AT_REST

@@ -233,6 +233,7 @@ class HumanDrive:
         note_clamped: Callable[[], None] | None = None,
         reads_paused: Callable[[], AbstractContextManager[None]] | None = None,
         last_grasp_region: Callable[[], GraspRegion | None] | None = None,
+        after_setpoint: Callable[[], None] | None = None,
     ) -> None:
         """checker is the human checker; view_age(now) is the live view's age.
 
@@ -240,9 +241,11 @@ class HumanDrive:
         starts meanwhile. note_clamped is called for a step the speed clamp
         cut. From its start read on the drive runs inside reads_paused()
         (IdleReader.paused). last_grasp_region() is the grasp region of the
-        agent's last grasp, None when there is none.
+        agent's last grasp, None when there is none. after_setpoint() is
+        called once each setpoint has gone out: it publishes a ROBOT_STATE.
         """
         self._last_grasp_region = last_grasp_region or (lambda: None)
+        self._after_setpoint = after_setpoint
         self._arm = arm
         self._authority = authority
         self._checker = checker
@@ -414,6 +417,8 @@ class HumanDrive:
         drive.sent += 1
         drive.q_prev = drive.q_next
         self._set_progress(drive.sent)
+        if self._after_setpoint is not None:
+            self._after_setpoint()
         if behind > config.large_delay_s:
             return self._late(index, behind, "went out")
         if behind > config.small_delay_s:

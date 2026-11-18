@@ -398,6 +398,8 @@ MESSAGE_FIELDS = {
         "agent_max_joint_speed": None,
         "human_max_joint_speed": None,
         "human_tip_box": None,
+        "human_tip_floor": None,
+        "human_joint_box": None,
     },
     Move: {
         "command_id": ...,
@@ -766,6 +768,37 @@ def test_welcome_carries_the_human_tip_box_and_an_old_welcome_declares_none():
     ):
         bad = [[0.1, -0.3, -0.01], ["far", 0.3, 0.55]]
         decode(Welcome.TYPE, _changed(WELCOME, ("human_tip_box",), bad))
+
+
+def test_welcome_carries_the_human_tip_floor_and_joint_box_and_an_old_one_neither():
+    # Two more bounds of the robot app's human checker: the height under
+    # which a person's gripper tip is low, where it may only rise, and the
+    # joint box a person's joint target is held in. The human program stops
+    # the tip above the one and the joints inside the other.
+    box = [
+        [-2.07, -0.05, -0.05, -1.67, -1.55, -2.07],
+        [2.07, 2.07, 2.07, 1.77, 1.55, 2.07],
+    ]
+    sent = dataclasses.replace(WELCOME, human_tip_floor=0.02, human_joint_box=box)
+    payload = json.loads(sent.to_payload())
+    assert payload["human_tip_floor"] == 0.02 and payload["human_joint_box"] == box
+    assert decode(Welcome.TYPE, sent.to_payload()) == sent
+    # A robot app whose checker knows no table says so with null.
+    assert json.loads(WELCOME.to_payload())["human_tip_floor"] is None
+    # A WELCOME from a robot app that knows neither field declares neither,
+    # and the protocol version did not change for them.
+    old = decode(Welcome.TYPE, _without(WELCOME, "human_tip_floor", "human_joint_box"))
+    assert old.human_tip_floor is None and old.human_joint_box is None
+    assert old == WELCOME and messages.PROTOCOL_VERSION == 1
+    # A human program that knows neither field reads such a WELCOME as it
+    # reads any field it does not know: it is left out.
+    older = json.loads(sent.to_payload())
+    older["a_field_of_a_later_robot_app"] = [1, 2, 3]
+    assert decode(Welcome.TYPE, json.dumps(older).encode()) == sent
+    with pytest.raises(ProtocolError, match=r"human_tip_floor: expected a number"):
+        decode(Welcome.TYPE, _changed(WELCOME, ("human_tip_floor",), "low"))
+    with pytest.raises(ProtocolError, match=r"human_joint_box: expected a list"):
+        decode(Welcome.TYPE, _changed(WELCOME, ("human_joint_box",), 2.0))
 
 
 def test_human_setpoint_round_trips_and_is_newest_wins():

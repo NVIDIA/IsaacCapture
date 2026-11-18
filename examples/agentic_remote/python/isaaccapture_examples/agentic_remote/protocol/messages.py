@@ -183,6 +183,14 @@ class Welcome(Message):
     # frame. A tip outside it may only come back. None: not declared, or the
     # checker has no such box.
     human_tip_box: list[list[float]] | None = None
+    # The height, m, in the arm's base frame, under which the robot app counts
+    # a person's gripper tip as low: a tip under it may only rise. None: not
+    # declared, or the checker knows no table.
+    human_tip_floor: float | None = None
+    # The joint box the robot app's human checker holds a person's joint
+    # target in: its lowest and its highest corner, one value per joint, rad.
+    # A joint outside it may only come back. None: not declared.
+    human_joint_box: list[list[float]] | None = None
 
 
 @dataclass(frozen=True)

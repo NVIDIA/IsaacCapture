@@ -821,6 +821,177 @@ def test_a_lift_from_where_the_arm_settled_is_followed_and_not_ended(
     assert (state.owner, state.motion, state.torque_on) == ("human", "hold", True)
 
 
+class ProgramHand:
+    """The human program's graph, solver and logic in place of PacedHand.
+
+    On configs/human.yaml, whose arm model is the mock arm's. One pass per
+    period: while a human drive runs, in step with it; else from passes().
+    """
+
+    def __init__(self, h: ApaiHarness, rows: list[dict]) -> None:
+        pytest.importorskip("isaaccapture.retargeters")
+        from isaaccapture_examples.agentic_remote.human import __main__ as program
+        from isaaccapture_examples.agentic_remote.human.feed import ScriptFeed
+        from isaaccapture_examples.agentic_remote.human.ik import Solver
+        from isaaccapture_examples.agentic_remote.human.logic import HumanLogic
+        from isaaccapture_examples.agentic_remote.human.retarget import HumanGraph
+        from repo_paths import repo_root
+
+        configs = repo_root() / "examples" / "agentic_remote" / "configs"
+        self.h, self._as_sent = h, program.as_sent
+        self.settings = program.load_human_settings(configs / "human.yaml")
+        ik = self.settings.ik
+        self.solver = Solver.from_apai(
+            ik.apai_arm, max_iter=ik.max_iter, tol=ik.tol, max_jump_rad=ik.max_jump_rad
+        )
+        self.graph = HumanGraph(self.settings.retarget)
+        self.feed = ScriptFeed(self.graph, rows)
+        self.logic = HumanLogic(self.graph, self.solver, self.settings, "teleop")
+        self.sent: list[HumanSetpoint] = []  # the HUMAN_SETPOINTs it made
+        sleep = h.clock.sleep
+
+        def fed(seconds: float) -> None:
+            sleep(seconds)
+            worker = threading.current_thread().name == MOTION_WORKER
+            if worker and h.app._human_drive.progress() is not None:
+                made = self._pass()
+                if made is not None:
+                    feed(h, made)
+
+        h.clock.sleep = fed
+
+    def _pass(self) -> HumanSetpoint | None:
+        h, logic, graph = self.h, self.logic, self.graph
+        now = h.clock.monotonic()
+        events = graph.events(stopped=not logic.armed)
+        fed = self.feed.step(graph.external_inputs(logic.armed), events, now)
+        state = h.app._publisher.build(now)
+        messages = logic.step(now, fed, h.client.welcome, state, 0.02, ())
+        logic.log_pass()
+        made = None
+        for message in messages:
+            if isinstance(message, HumanSetpoint):
+                made = self._as_sent(message, now, now, now)
+                self.sent.append(made)
+        return made
+
+    def passes(self, seconds: float) -> None:
+        """The script for this long on the app's clock; each drive runs to its end."""
+        end = self.h.clock.monotonic() + seconds
+        while self.h.clock.monotonic() < end:
+            self.h.clock.advance(0.02)
+            made = self._pass()
+            if made is not None:
+                feed(self.h, made)
+            if made is not None and made.engaged:
+                self.h.idle()
+
+    def notes(self) -> list[str]:
+        """Each note it sent, once per stretch of passes that said it."""
+        said: list[str] = []
+        for made in self.sent:
+            if not said or said[-1] != made.note:
+                said.append(made.note)
+        return said
+
+
+@apai
+def test_the_human_program_lifts_a_low_gripper_from_where_the_arm_settled(
+    make_app: Callable[..., ApaiHarness], profile
+) -> None:
+    # A person takes over after a failed grasp with the gripper at the table.
+    # A first squeeze with a still hand: the arm settles 3 mm under its
+    # target. On every squeeze after it the Thor's drive sends nothing until
+    # the joint target's tip is back at the highest it measured; the human
+    # program's joint target follows the hand meanwhile where the hand
+    # rises, so a hand that rises lifts the gripper out and one that goes
+    # sideways moves nothing. At the rig's 0.8 rad/s, where one setpoint
+    # lifts the tip that far.
+    from test_takeover import drives
+
+    h = make_app(person_config(profile, max_joint_speed=0.8))
+    low_in_a_grasp(h, profile)
+    settles_low(h)
+    take_over(h)
+    ended = drives(h)
+    hand_at = np.array([0.0, 1.2, -0.3])
+    up, right = np.array([0.0, 1.0, 0.0]), np.array([1.0, 0.0, 0.0])
+    rows = [
+        {"t": 0.0, "pos": list(hand_at), "quat": [0, 0, 0, 1]},
+        {"t": 0.1, "squeeze": 1.0},  # a still hand: the arm settles
+        {"t": 1.2, "squeeze": 0.0},
+        {"t": 1.8, "squeeze": 1.0},  # still again: the Thor's drive waits
+        {"t": 3.4, "squeeze": 0.0},
+        {"t": 4.0, "squeeze": 1.0},  # 2 cm to the right at one height: waits too
+        {"t": 4.3},
+        {"t": 4.7, "pos": list(hand_at + 0.02 * right)},
+        {"t": 5.6, "squeeze": 0.0},
+        {"t": 5.8, "pos": list(hand_at)},
+        {"t": 6.2, "squeeze": 1.0},  # the lift: 3 cm up in 3 s
+        {"t": 6.7},
+        {"t": 9.7, "pos": list(hand_at + 0.03 * up)},
+        {"t": 10.7, "squeeze": 0.0},
+    ]
+    hand = ProgramHand(h, rows)
+    top = tip_z(profile, h.spy.pose())
+    hand.passes(1.6)
+    at_rest = list(h.spy.pose())
+    settled = tip_z(profile, at_rest)
+    assert top < FLOOR_M and 0.002 < top - settled < 0.004
+    assert [end.status for end in ended] == ["released"]
+
+    # The second squeeze, with a still hand: the Thor's drive sends nothing,
+    # the note says what to do, and after 1 s the engagement ends as one the
+    # arm did not follow.
+    before = len(h.sent())
+    hand.passes(2.2)
+    assert len(h.sent()) == before and len(ended) == 2 and ended[1].sent == 0
+    raise_the_hand = "raise the hand: the gripper is under the table clearance"
+    not_followed = (
+        "release the grip and squeeze again: the arm did not follow the squeeze "
+        "within 1 s"
+    )
+    said = hand.notes()
+    assert said[-3:] == [raise_the_hand, not_followed, "squeeze the grip to move"]
+    assert hand.logic.counts()["solution_ahead"] == 1
+
+    # The third squeeze, with the hand going to the right at one height:
+    # nothing is sent either. The arm does not start where the hand did not
+    # rise.
+    hand.passes(2.2)
+    assert len(h.sent()) == before and len(ended) == 3 and ended[2].sent == 0
+    assert hand.logic.counts()["solution_ahead"] == 2
+    assert tip_z(profile, h.spy.pose()) == settled
+
+    # The fourth squeeze, with the hand rising: the arm is lifted out, above
+    # the table clearance, and the drive goes on until the grip is released.
+    hand.passes(5.5)
+    statuses = ["released", "disengaged", "disengaged", "released"]
+    assert [end.status for end in ended] == statuses
+    assert ended[3].sent > 100
+    lifted = tip_z(profile, h.spy.pose())
+    assert lifted > FLOOR_M and lifted - settled == pytest.approx(0.03, abs=0.004)
+    assert hand.logic.counts()["solution_ahead"] == 2
+    # Its first setpoint is on the hand's way, straight up, and inside the
+    # hand's speed limit for one setpoint period.
+    first = tip(profile, h.sent()[before]) - tip(profile, at_rest)
+    most = hand.settings.retarget.max_linear_velocity * 0.02
+    assert 0.0 < first[2] <= most and float(np.linalg.norm(first[:2])) < 0.0005
+    # The Thor told of two drives' ends: the two that sent nothing.
+    told = [what for _, what, _ in h.heard("human")]
+    assert len(told) == 2
+    assert all("the arm did not follow the squeeze within 1 s" in what for what in told)
+    said = hand.notes()
+    assert raise_the_hand in said[said.index(not_followed) :]
+    state = state_now(h)
+    assert (state.owner, state.motion, state.torque_on) == ("human", "hold", True)
+    assert h.checkers.human.harness.violations == []
+    print(
+        f"\ntip z {1000 * top:.1f} mm, settled at {1000 * settled:.1f} mm, lifted to "
+        f"{1000 * lifted:.1f} mm; drives {[(end.status, end.sent) for end in ended]}"
+    )
+
+
 @apai
 def test_a_step_that_dips_on_the_way_to_a_higher_target_is_refused_too(
     make_app: Callable[..., ApaiHarness], profile

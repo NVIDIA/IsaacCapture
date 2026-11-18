@@ -163,6 +163,14 @@ def test_start_connects_the_arm_and_sends_welcome_and_state(robot_app):
     # simulated arm's checkers know no kinematics and have no such box.
     assert welcome.human_max_joint_speed == config.limits.human.max_joint_speed
     assert h.checkers.human.tip_box() is None and welcome.human_tip_box is None
+    # Nor do they know a table: no height under which the tip is low.
+    assert h.checkers.human.tip_floor() is None and welcome.human_tip_floor is None
+    # The joint box the human checker holds a person's joint target in: the
+    # human program stops its joint target inside it.
+    human = config.limits.human
+    box = (list(human.joint_min), list(human.joint_max))
+    assert h.checkers.human.joint_box() == box
+    assert welcome.human_joint_box == [box[0], box[1]]
     state = h.client.state
     assert state.session_id == welcome.session_id
     assert (state.owner, state.owner_number) == ("nobody", 0)
@@ -3291,3 +3299,78 @@ def test_a_release_leaves_the_jaws_closed_in_the_light_hold(robot_app):
         "at rest: closing the jaws with the driver's close",
         "at rest: the jaws are closed",
     ]
+
+
+# A person's drive: a ROBOT_STATE behind every setpoint
+
+
+def test_a_robot_state_goes_out_behind_every_setpoint_of_a_human_drive(
+    make_robot_app, config
+):
+    # The human program holds its joint target back to where the robot app's
+    # own can be, which it reads off ROBOT_STATE: one goes out behind every
+    # setpoint of a person's drive, on the drive's thread.
+    from test_takeover import MOTION_WORKER, drive, moved, person
+
+    h = make_robot_app(config=human_config(config))
+    hand = person(h)
+    behind: dict[int, RobotState] = {}
+    build = h.app._publisher.build
+
+    def noted(now: float) -> RobotState:
+        state = build(now)
+        if threading.current_thread().name == MOTION_WORKER:
+            behind[state.move_index] = state
+        return state
+
+    h.app._publisher.build = noted
+    before = len(h.arm.sent)
+    drive(h, hand, moved(REST), sends=6)
+    sent = h.arm.sent[before:]
+    assert len(sent) == 6
+    # Each shows its setpoint as the drive's joint target, with the time it
+    # went out, and was made after it. One is left out when another thread
+    # has the app's lock at that moment: here the dispatcher never rests.
+    assert len(behind) >= 4 and set(behind) <= {1, 2, 3, 4, 5, 6}
+    for index, state in behind.items():
+        assert state.health["human"]["driving"]
+        q, when = sent[index - 1]
+        assert (state.target_q, state.target_t) == (q, when)
+        assert state.clock_mono_s >= when and state.motion == "moving"
+    # The drive itself is what it was: its end, and no event of it.
+    assert h.heard("human") == [] and h.app.motion_state is MotionState.HOLD
+
+
+def test_the_state_behind_a_setpoint_never_waits_for_the_apps_lock(robot_app):
+    h = robot_app
+    seen: list[int] = []
+    h.client.add_listener(
+        lambda message: (
+            seen.append(message.seq) if isinstance(message, RobotState) else None
+        )
+    )
+    newest = h.client.state.seq
+    h.app._publish_setpoint()
+    assert h.client.wait_state(lambda s: s.seq > newest, WAIT_S) is not None
+    # Another thread has the app's lock, as the dispatcher has while it
+    # serves a STOP: the call returns at once and sends nothing. The drive's
+    # next setpoint is not held up.
+    held, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with h.app._lock:
+            held.set()
+            release.wait(WAIT_S)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert held.wait(WAIT_S)
+        count = len(seen)
+        began = time.monotonic()
+        h.app._publish_setpoint()
+        assert time.monotonic() - began < BLOCKED_S
+        assert len(seen) == count
+    finally:
+        release.set()
+        holder.join(WAIT_S)

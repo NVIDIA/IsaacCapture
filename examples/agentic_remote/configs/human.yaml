@@ -87,11 +87,14 @@ ik:
   # drives, from its last joint target moved on by what its speed clamp allows
   # since.
   max_ahead_rad: 0.08
-  # The farthest the hand may be ahead of the arm's gripper tip. Up to it the
-  # arm catches up with the hand and stops where the hand stopped; a hand
-  # further ahead is not believed, and the engagement ends.
+  # The farthest the hand may be from the arm's gripper tip, in all. Up to it
+  # the arm catches up with the hand and stops where the hand stopped; a hand
+  # further away is not believed, and the engagement ends.
   max_ahead_m: 0.5
-  max_failures: 5  # failed solves in a row that end the engagement; a whole number
+  # Failed solves in a row from which the note says "out of reach". While the
+  # hand's pose has no solution the arm stands at its last joint target and
+  # the engagement goes on. A whole number.
+  max_failures: 5
 
 buttons:
   # How long right B is held for the takeover and right A for the hand-back.

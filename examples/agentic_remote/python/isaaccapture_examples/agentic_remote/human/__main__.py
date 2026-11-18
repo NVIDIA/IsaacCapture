@@ -436,6 +436,11 @@ def _fixed(value: float, digits: int) -> str:
     return text.lstrip("-") if float(text) == 0.0 else text
 
 
+def _bound(metres: float) -> str:
+    """A side of the tip's room in m; "any" for one that nothing bounds."""
+    return _fixed(metres, 2) if math.isfinite(metres) else "any"
+
+
 def _ms(seconds: Any, digits: int = 0) -> str:
     """A time in ms; "-" for one that is not known."""
     if isinstance(seconds, bool) or not isinstance(seconds, Real):
@@ -512,6 +517,7 @@ def report_line(
     ahead_m: float | None = None,
     walls: Sequence[str] = (),
     behind: bool = False,
+    stand: str = "",
 ) -> str:
     """The report line: the last pass, and the ages and times since the last line.
 
@@ -524,7 +530,9 @@ def report_line(
     is ahead of the tip of the last joint target while the arm follows it;
     from AHEAD_NOTE_CM on the line says so. walls are the walls of the robot
     app's box for the gripper tip that the tip stands at with the hand beyond
-    them; behind says that the joint target is held back for a slow robot app.
+    them; behind says that the joint target is held back for a slow robot app;
+    stand is why the joint target stands though the hand goes on, as the
+    note gives it.
     """
     human = _human_facts(state)
     tip = None if last is None else last.ee_target
@@ -550,6 +558,8 @@ def report_line(
     )
     if walls:
         line += "; " + NOTE_AT_LIMIT.format(walls=", ".join(walls))
+    if stand:
+        line += "; " + _plain(stand)
     if behind:
         line += "; " + NOTE_THOR_BEHIND
     if ahead_m is not None and math.isfinite(ahead_m):
@@ -716,6 +726,7 @@ class _Loop:
         )
         self._say(self._speed_line(welcome))
         self._say(self._box_line(welcome))
+        self._say(self._joints_line(welcome))
         self._feed.open()
         try:
             return self._passes()
@@ -745,14 +756,31 @@ class _Loop:
                 f"{PROGRAM}: the robot app names no workspace box for the gripper "
                 "tip: a target outside its limits ends the drive"
             )
-        low, high = box
+        low, high, table = box
         sides = ", ".join(
-            f"{axis} {_fixed(low[index], 2)} to {_fixed(high[index], 2)}"
+            f"{axis} {_bound(low[index])} to {_bound(high[index])}"
             for index, axis in enumerate("xyz")
+        )
+        bottom = (
+            "its lowest is the table clearance"
+            if table
+            else "it names no table clearance: a tip lowered under it ends the drive"
         )
         return (
             f"{PROGRAM}: the gripper tip stops at the robot app's workspace "
-            f"limits: {sides} m from the arm's base"
+            f"limits: {sides} m from the arm's base; {bottom}"
+        )
+
+    def _joints_line(self, welcome: Welcome) -> str:
+        """Where the joints are held under a WELCOME: one line."""
+        if self._logic.joint_box(welcome):
+            return (
+                f"{PROGRAM}: the joints stop at the robot app's joint limits for "
+                "a person, and the arm stands while the hand is out of reach"
+            )
+        return (
+            f"{PROGRAM}: the robot app names no joint limits for a person: a "
+            "joint target outside them ends the drive"
         )
 
     def _problem(self, welcome: Welcome) -> str | None:
@@ -860,6 +888,7 @@ class _Loop:
             _log.info(_NEW_SESSION, _plain(welcome.session_id))
             self._say(self._speed_line(welcome))  # its limit may be another
             self._say(self._box_line(welcome))
+            self._say(self._joints_line(welcome))
         logic.log_pass()
         self._edges.note(feed_step, logic.last)
         self._stage = feed_step.stage
@@ -917,6 +946,7 @@ class _Loop:
                 self._logic.ahead_m,
                 self._logic.walls,
                 self._logic.behind,
+                self._logic.stand,
             )
         )
         for samples in (self._tick_ages, self._state_ages, self._solver.times_s):

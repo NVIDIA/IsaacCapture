@@ -14,35 +14,54 @@ is ready, its sample age is known and the graph reports the controller
 present. The grip is squeezed on a fresh pass with the squeeze above the
 threshold, and released on one with it at or below. The gates are what must
 hold before the arm may follow the hand. Armed: the gates held on a pass with
-the grip released, so the next squeeze is a new one, and a ROBOT_STATE has
-shown the drive of the engagement before as ended: one made earlier gives a
-pose the arm has left. Ahead: how far a target lies ahead of what follows it.
+the grip released, so the next squeeze is a new one, and the ROBOT_STATEs
+have shown the drive of the engagement before as ended and the arm at rest:
+one made earlier gives a pose the arm has left. Ahead: how far a target lies
+ahead of what follows it.
+
+At rest. After an engagement the arm counts as at rest once, for every joint,
+two readings in a row that both began after the robot app's last setpoint
+agree within REST_TOL_RAD. That is waited for at most REST_WAIT_S from the
+engagement's end; then the squeeze counts on the newest ROBOT_STATE.
 
 Following. The Thor is the machine on the robot; its robot app follows a joint
 target at its speed clamp, a share of the human joint speed limit it names in
 WELCOME. An engagement's first joint target is the home, and it stands until a
-ROBOT_STATE shows the robot app's drive following it. From then on each pass
-solves for a pose at most one pass of the hand speed limits from the pose of
-the last joint target sent, toward the graph's target, and moves the joint
-target toward that solution by at most JOINT_SPEED_SHARE of what the clamp
-allows, every joint by the same share. A hand that is ahead is caught up
-with; the arm stops where the hand stopped, or at once when the grip is
-released.
+ROBOT_STATE shows the robot app's drive: one that follows it, or one that has
+had this engagement's joint target for LIFT_AFTER_S and has sent no setpoint.
+Such a drive waits for a low gripper tip to be lifted: the joint target then
+follows the hand, within ik.max_ahead_rad less LIFT_SLACK_RAD of the measured
+arm. From there on
+each pass solves for a pose at most one pass of the hand speed limits from
+the pose of the last joint target sent, toward the graph's target, and moves
+the joint target toward that solution by at most JOINT_SPEED_SHARE of what
+the clamp allows, every joint by the same share. A hand that is ahead is
+caught up with; the arm stops where the hand stopped, or at once when the
+grip is released.
 
 The tip box. The robot app names in WELCOME the box its checker holds a
-person's gripper tip in. The pose solved for stays TIP_BOX_MARGIN_M inside
-it, on each axis by itself: the tip stops at a wall and slides along it while
-the hand goes on. On an axis on which the tip is outside already it may come
-toward the box and go no further out, which keeps the checker's own rule: a
-tip outside may only come back.
+person's gripper tip in, and the height under which that tip counts as low.
+The pose solved for stays TIP_BOX_MARGIN_M inside the box and above that
+height, on each axis by itself: the tip stops at a wall and slides along it
+while the hand goes on. On an axis on which the tip is outside at the
+engagement's first pass it may come toward the box and go no further out,
+which keeps the checker's own rule: a tip outside may only come back, a low
+one only rise.
+
+The joint box and the reach. The robot app names in WELCOME the joint box its
+checker holds a person's joint target in. The joint target stops
+JOINT_BOX_MARGIN_RAD inside it, and it stands while the pose solved for has no
+solution: the engagement goes on, and the arm follows again once a step
+toward the hand solves inside the box.
 
 The hold-back. The joint target goes no further than HOLD_BACK_STEPS of the
 robot app's steps ahead of where its own joint target can be: its last one in
 the ROBOT_STATE, moved on by what its loop can have done since, at the pace
-its last two ROBOT_STATEs show. A loop that runs slow then costs speed, and
-so does one that pauses, once a ROBOT_STATE shows the pause. A joint target
-that is held back for NO_FOLLOW_S with no new joint target of the robot app
-ends the engagement.
+its last two ROBOT_STATEs show. Nothing is added once the next ROBOT_STATE is
+overdue, STATE_DUE_PERIODS of the time from one to the next in this drive:
+the robot app may stand. A loop that runs slow then costs speed, and so does
+one that pauses. A joint target that is held back for NO_FOLLOW_S with no new
+joint target of the robot app ends the engagement.
 
 Buttons. A pass has known buttons when the feed gave the graph's outputs with
 a known sample age; the controller's pose need not be valid. Right B sends one
@@ -71,6 +90,7 @@ from __future__ import annotations
 import itertools
 import logging
 import math
+import statistics
 import uuid
 from collections import deque
 from collections.abc import Sequence
@@ -94,10 +114,13 @@ from ..protocol.messages import (
 from .types import (
     AHEAD_NOTE_CM,
     LIMITER_PASS_S,
+    NOTE_AT_JOINT_LIMIT,
     NOTE_AT_LIMIT,
     NOTE_CATCHING_UP,
+    NOTE_OUT_OF_REACH,
     NOTE_THOR_BEHIND,
     WALL_NAMES,
+    WALL_TABLE,
     FeedStep,
     GraphPort,
     GraphStep,
@@ -117,8 +140,39 @@ JOINT_SPEED_SHARE = 0.9
 # The human joint speed limit, rad/s, taken for a robot app that names none.
 UNNAMED_JOINT_SPEED = 0.1
 # How long an engagement's first joint target stands with no ROBOT_STATE that
-# shows the robot app's drive following it; then the engagement ends.
+# shows the robot app's drive following it; then the engagement ends. While
+# that drive waits for a lift, the time counts from the last pass on which
+# the joint target's tip rose by LIFT_RISE_M.
 FOLLOW_WAIT_S = 1.0
+LIFT_RISE_M = 0.0005
+# While the robot app's drive waits for a lift, the joint target stays this
+# far inside ik.max_ahead_rad of the measured arm: two readings of a holding
+# arm differ, and beyond ik.max_ahead_rad the engagement ends.
+LIFT_SLACK_RAD = 0.005
+# Under the height the robot app names for a low gripper tip its checker
+# takes a step only when the tip rises with it. The joint target moves there
+# only where each step of the robot app lifts the tip by this much, m; the
+# way to a solution is tried in these shares, and a way of more steps of the
+# robot app than LIFT_STEPS_MOST is not taken.
+LIFT_STEP_M = 2e-5
+LIFT_SHARES = (1.0, 0.5, 0.25, 0.125)
+LIFT_STEPS_MOST = 64
+# A drive of the robot app that has this engagement's joint target and has
+# sent no setpoint for this long waits for a lift: the joint target follows
+# the hand and the note says NOTE_RAISE. Its start read, about 0.06 s before
+# its first setpoint, looks the same until then.
+LIFT_AFTER_S = 0.15
+# Two readings of a joint that differ by no more than this show it at rest,
+# rad: 5 steps of the motors' 16-bit position word over 8 pi rad. The idle
+# reads of one joint are 0.06 s apart, so a joint slower than 2 degrees a
+# second counts as at rest.
+REST_TOL_RAD = 0.002
+# The longest a new squeeze waits, from the end of the engagement before it,
+# for the arm to be shown at rest.
+REST_WAIT_S = 0.5
+# NOTE_DRIVE_ON shows once the robot app has reported the drive of an ended
+# engagement for this long.
+DRIVE_ON_NOTE_S = 1.0
 # A pose step whose solution is a jump is halved up to this often.
 STEP_HALVINGS = 3
 # The farthest the hand may be turned ahead of the last joint target's tip,
@@ -139,6 +193,10 @@ TIP_BOX_MARGIN_M = 0.01
 # NOTE_AT_LIMIT names a wall once the hand is this far beyond it, m, with the
 # tip no further than this from it; then until the hand is back inside it.
 WALL_NOTE_M = 0.01
+# How far inside the robot app's joint box for a person the joint target
+# stops, rad: a joint driven to the edge of that box can read a few
+# thousandths of a rad outside it, where a takeover is refused.
+JOINT_BOX_MARGIN_RAD = 0.01
 # The joint target goes at most this many of the robot app's steps, each its
 # speed clamp times its setpoint period, ahead of where its joint target can be.
 HOLD_BACK_STEPS = 2.0
@@ -146,6 +204,16 @@ HOLD_BACK_STEPS = 2.0
 # of its setpoint periods after its last setpoint: its joint target is then
 # taken not to have moved since.
 STANDING_PERIODS = 1.5
+# The next ROBOT_STATE is overdue when the newest one arrived more than this
+# many state periods ago; the state period is the middle one of the last
+# STATE_GAPS_KEPT times from one ROBOT_STATE of this drive to the next, on
+# the robot app's clock, and is not known before STATE_GAPS_MIN of them.
+STATE_DUE_PERIODS = 1.5
+STATE_GAPS_KEPT = 5
+STATE_GAPS_MIN = 3
+# The robot app's reported joint target counts as a new one when a joint of
+# it moved by more than this share of one of its steps.
+NEW_TARGET_SHARE = 0.05
 # How long the joint target may be held back with no new joint target of the
 # robot app in a ROBOT_STATE; then the engagement ends.
 NO_FOLLOW_S = 1.0
@@ -169,9 +237,19 @@ NOTE_RELEASE_B = (
 NOTE_RELEASE_FIRST = "release the grip, then squeeze it to move"
 NOTE_SQUEEZE = "squeeze the grip to move"
 NOTE_SQUEEZE_AGAIN = "release the grip and squeeze again: "  # then why
-# While a new squeeze waits for the ROBOT_STATE that shows the drive of the
-# engagement before as ended; the squeeze counts from that state on.
+# While a new squeeze waits for the ROBOT_STATEs that show the drive of the
+# engagement before as ended and the arm at rest; the squeeze counts from then.
 NOTE_STOPPING = "wait: the arm is still stopping"
+# In its place, and with the grip released too, once the robot app has
+# reported that drive for DRIVE_ON_NOTE_S: no squeeze counts until it ends.
+NOTE_DRIVE_ON = (
+    "wait: the robot app still reports the last drive; if this stays, type stop"
+)
+# While the robot app's drive waits for a low gripper tip to be lifted: it
+# sends nothing until the joint target's tip is back at the highest it
+# measured. With a tip under the height the robot app names, and without.
+NOTE_RAISE_TABLE = "raise the hand: the gripper is under the table clearance"
+NOTE_RAISE = "raise the hand: the gripper is low and the robot app waits for a lift"
 # Why an engagement ended whose joint target the robot app did not come after.
 NOT_FOLLOWED = (
     f"the arm does not follow: no new setpoint of the robot app in {NO_FOLLOW_S:g} s"
@@ -291,8 +369,14 @@ class _Pass:
     thor_speed: float  # the robot app's speed clamp on a person's joint, rad/s
     thor_period_s: float  # the time from one of its setpoints to the next
     # The lowest and the highest corner, m, the pose solved for stays within
-    # for the robot app's tip box; None: the robot app names no usable box.
+    # for the robot app's tip box and the height it names; None: it names
+    # neither in a form that can be used.
     box: tuple[np.ndarray, np.ndarray] | None
+    table: bool  # the bottom of that room is the named height, not the box's
+    floor: float | None  # the height the robot app names for a low tip, m
+    # The lowest and the highest corner, rad, the joint target stays within
+    # for the robot app's joint box; None: it names no usable one.
+    joint_box: tuple[np.ndarray, np.ndarray] | None
 
     @property
     def takeover_open(self) -> bool:
@@ -374,7 +458,15 @@ class HumanLogic:
         # shown that engagement's drive as ended, and before any engagement.
         self._end_seq: int | None = None
         self._ended_at = 0.0
-        self._waits = False  # this pass's squeeze waits for that ROBOT_STATE
+        # The arm has not been shown at rest since the last engagement ended.
+        self._settling = False
+        # Per joint, the newest reading that began after the robot app's last
+        # setpoint, as (when it began, its value), and whether it agreed with
+        # the one before it.
+        self._rest_marks: list[tuple[float, float] | None] = []
+        self._rest_agree: list[bool] = []
+        self._waits = False  # this pass's squeeze waits for those ROBOT_STATEs
+        self._drive_on = False  # the note says NOTE_DRIVE_ON
         self._last: GraphStep | None = None
         self._clutch_engaged = False  # after the graph's last pass
         self._engaged = False  # the last pass sent a joint target
@@ -389,6 +481,19 @@ class HumanLogic:
         # The walls the tip stands at with the hand beyond them, as the note
         # names them, in the order of the axes.
         self._walls: tuple[str, ...] = ()
+        # This engagement's room for the pose solved for and for the joint
+        # target: opened at its first pass to where the tip and the joints
+        # were, then only narrowed. None before that pass.
+        self._room: tuple[np.ndarray, np.ndarray] | None = None
+        self._joint_room: tuple[np.ndarray, np.ndarray] | None = None
+        # Why the joint target stands though the hand goes on: NOTE_OUT_OF_REACH
+        # or NOTE_AT_JOINT_LIMIT with its joint; "" when it does not.
+        self._stand = ""
+        # Since when the robot app's drive waits for a lift, and the highest
+        # the joint target's tip has been meanwhile, m.
+        self._lift_since: float | None = None
+        self._lift_top = -math.inf
+        self._lift_under = False  # the measured tip is under the named height
         # The robot app's loop as its ROBOT_STATEs of this engagement show it:
         # (setpoints sent, when the last one went out) of the newest state
         # that names both, and its setpoint period over the time between two
@@ -396,6 +501,10 @@ class HumanLogic:
         self._thor_mark: tuple[int, float] | None = None
         self._thor_pace = 1.0
         self._thor_target: tuple[float, ...] | None = None  # its last joint target
+        # (seq, when it was made) of the newest ROBOT_STATE of this drive, and
+        # the times from one to the next, on the robot app's clock.
+        self._state_mark: tuple[int, float] | None = None
+        self._state_gaps: deque[float] = deque(maxlen=STATE_GAPS_KEPT)
         # Since when the joint target is held back with that target unchanged.
         self._held_since: float | None = None
         self._behind = 0  # rises on a pass that was held back, falls on another
@@ -459,17 +568,31 @@ class HumanLogic:
         """Whether the joint target is being held back for a slow robot app."""
         return self._engaged and self._behind_shown
 
+    @property
+    def stand(self) -> str:
+        """Why the joint target stands though the hand goes on; "" when it does not.
+
+        NOTE_OUT_OF_REACH, or NOTE_AT_JOINT_LIMIT with its joint.
+        """
+        return self._stand if self._engaged else ""
+
     def tip_box(
         self, welcome: Welcome | None
-    ) -> tuple[tuple[float, ...], tuple[float, ...]] | None:
+    ) -> tuple[tuple[float, ...], tuple[float, ...], bool] | None:
         """The corners the pose solved for stays within under this WELCOME, m.
 
-        None: it names no box that can be used.
+        With them, whether the bottom is the height the WELCOME names for a
+        low tip. A side it does not bound is infinite. None: it names
+        neither a box nor that height in a form that can be used.
         """
         box = _named_box(welcome)
         if box is None:
             return None
-        return tuple(map(float, box[0])), tuple(map(float, box[1]))
+        return tuple(map(float, box[0])), tuple(map(float, box[1])), box[2]
+
+    def joint_box(self, welcome: Welcome | None) -> bool:
+        """Whether this WELCOME names a joint box the joint target is held in."""
+        return _named_joint_box(welcome, self._solver.n_joints) is not None
 
     def joint_speed(self, welcome: Welcome | None) -> float:
         """The fastest a joint of the joint target moves under this WELCOME, rad/s."""
@@ -547,7 +670,7 @@ class HumanLogic:
         """The gates, the home and the joint target: this pass's HUMAN_SETPOINT."""
         step = p.step
         gate = self._gate(p)
-        awaited = self._end_seq is not None
+        awaited = self._end_seq is not None or self._settling
         over = self._drive_over(p)
         if gate is not None:
             self._armed = False
@@ -559,9 +682,11 @@ class HumanLogic:
             self._armed = True
         # A new squeeze that came before the ROBOT_STATE it counts from.
         self._waits = awaited and self._released and p.squeezed
+        reported_s = p.now_mono - self._ended_at
+        self._drive_on = self._end_seq is not None and reported_s > DRIVE_ON_NOTE_S
 
-        # No home while the drive of the engagement before may still run: the
-        # measured pose of such a ROBOT_STATE lies behind the arm.
+        # No home while the drive of the engagement before may still run, or
+        # the arm still moves: the measured pose then lies behind the arm.
         if not self._clutch_engaged and over and p.young and p.measured is not None:
             self._home_q = tuple(self._solver.inside(p.measured))
             self._graph.set_home(self._solver.fk(self._home_q))
@@ -585,36 +710,82 @@ class HumanLogic:
     def _await_end(self, p: _Pass) -> None:
         """An engagement ended on this pass: its drive is to be shown as ended.
 
-        Until then the logic is not armed and takes no home.
+        And then the arm as at rest. Until then the logic is not armed and
+        takes no home.
         """
         self._armed = False
         # The next HUMAN_SETPOINT: the first without a joint target.
         self._end_seq = self._seq + 1
         self._ended_at = p.now_mono
+        self._settling = True
+        self._rest_marks = [None] * self._solver.n_joints
+        self._rest_agree = [False] * self._solver.n_joints
 
     def _drive_over(self, p: _Pass) -> bool:
-        """Whether a ROBOT_STATE has shown the last engagement's drive as ended.
+        """Whether the last engagement's drive has ended and the arm is at rest.
+
+        First a ROBOT_STATE shows the drive as ended; with none such the
+        logic stays un-armed, however long. Then the ROBOT_STATEs show the
+        arm at rest, or REST_WAIT_S have passed since the engagement ended.
+        True also when no engagement has ended since.
+        """
+        if self._end_seq is not None:
+            if not self._shown_ended(p):
+                return False
+            self._end_seq = None
+        if not self._settling:
+            return True
+        waited_s = p.now_mono - self._ended_at
+        if self._at_rest(p) or waited_s > REST_WAIT_S + _EPS:
+            self._settling = False
+            return True
+        return False
+
+    def _shown_ended(self, p: _Pass) -> bool:
+        """Whether this ROBOT_STATE shows the last engagement's drive as ended.
 
         It shows no human drive, and it was made after the pass that ended
         the engagement: the newest HUMAN_SETPOINT the robot app had taken
         then is that pass's, or a later one. A robot app that names no seq
-        is taken at a ROBOT_STATE that arrived after that pass. With none
-        such the logic stays un-armed; states that stop coming close the
-        gates as old. True also when no engagement has ended since the last
-        such state.
+        is taken at a ROBOT_STATE that arrived after that pass. States that
+        stop coming close the gates as old.
         """
-        if self._end_seq is None:
-            return True
         if p.state is None or p.state_age_s is None or p.human.get("driving"):
             return False
         seq = p.human.get("seq")
         if isinstance(seq, int) and not isinstance(seq, bool):
-            if seq < self._end_seq:
-                return False
-        elif not p.now_mono - p.state_age_s > self._ended_at:
+            return seq >= self._end_seq
+        return p.now_mono - p.state_age_s > self._ended_at
+
+    def _at_rest(self, p: _Pass) -> bool:
+        """Whether the ROBOT_STATEs so far show every joint at rest.
+
+        For each joint: two readings in a row that both began after the
+        robot app's last setpoint and agree within REST_TOL_RAD. A robot app
+        that names no send time of a setpoint has sent none.
+        """
+        state = p.state
+        if state is None or p.human.get("driving"):
             return False
-        self._end_seq = None
-        return True
+        sent_at = _finite(state.target_t)
+        after = -math.inf if sent_at is None else sent_at
+        marks, agree = self._rest_marks, self._rest_agree
+        for sample in state.joints:
+            began = _finite(sample.t_start)
+            value = _finite(sample.value)
+            if not 0 <= sample.joint < len(marks) or not sample.valid:
+                continue
+            if began is None or value is None or not began > after:
+                continue
+            mark = marks[sample.joint]
+            if mark is None or not mark[0] > after:
+                agree[sample.joint] = False  # the first reading since the setpoint
+            elif began > mark[0]:
+                agree[sample.joint] = abs(value - mark[1]) <= REST_TOL_RAD
+            else:
+                continue  # the reading the mark was taken from
+            marks[sample.joint] = (began, value)
+        return all(agree)
 
     def _pass(
         self,
@@ -635,6 +806,7 @@ class HumanLogic:
             state is not None and state.session_id != welcome.session_id
         ):
             state = None
+        room = _named_box(welcome)
         return _Pass(
             now_mono=now_mono,
             feed=feed,
@@ -658,7 +830,10 @@ class HumanLogic:
             ),
             thor_speed=THOR_SPEED_MARGIN * _named_speed(welcome),
             thor_period_s=_named_period(welcome, self._period),
-            box=_named_box(welcome),
+            box=None if room is None else (room[0], room[1]),
+            table=room is not None and room[2],
+            floor=_named_floor(welcome),
+            joint_box=_named_joint_box(welcome, self._solver.n_joints),
         )
 
     def _take_results(self, results: Sequence[Result], p: _Pass) -> None:
@@ -836,9 +1011,16 @@ class HumanLogic:
             self._first_seq = self._seq + 1
             self._ahead_cm = None
             self._walls = ()
+            self._room = None
+            self._joint_room = None
+            self._stand = ""
+            self._lift_since = None
+            self._lift_top = -math.inf
             self._thor_mark = None
             self._thor_pace = 1.0
             self._thor_target = None
+            self._state_mark = None
+            self._state_gaps.clear()
             self._held_since = None
             self._behind = 0
             self._behind_shown = False
@@ -861,29 +1043,23 @@ class HumanLogic:
             return None
         at = self._solver.fk(seed)  # the tip's pose at the last joint target
         tip = at[:3, 3]
-        low, high = _room(p.box, tip)
+        self._room = _room(p.box, tip, self._room)
+        low, high = self._room
         hand = step.commanded_target[:3, 3]
+        far_m = float(np.linalg.norm(hand - tip))
+        if not far_m <= ik.max_ahead_m:
+            why = (
+                f"the hand is {far_m * 100.0:.0f} cm from the gripper tip, over "
+                f"the {ik.max_ahead_m * 100.0:.0f} cm believed"
+            )
+            self._end("hand_ahead", why)
+            return None
         # Where the tip may go for this hand: the hand's point, held inside
         # the tip box. The arm is behind the hand by its way to that point;
         # the rest of the hand's way lies beyond a wall, where no tip follows.
+        # Neither part is longer than the hand's distance from a tip inside.
         reach = np.clip(hand, low, high)
         ahead_m = float(np.linalg.norm(reach - tip))
-        if not ahead_m <= ik.max_ahead_m:
-            # Short enough to stand whole behind NOTE_SQUEEZE_AGAIN, as below.
-            why = (
-                f"the hand is {ahead_m * 100.0:.0f} cm ahead of the arm, over "
-                f"the {ik.max_ahead_m * 100.0:.0f} cm followed"
-            )
-            self._end("hand_ahead", why)
-            return None
-        past_m = float(np.linalg.norm(hand - reach))
-        if not past_m <= ik.max_ahead_m:
-            why = (
-                f"the hand is {past_m * 100.0:.0f} cm past the workspace limit "
-                f"({ik.max_ahead_m * 100.0:.0f} are believed)"
-            )
-            self._end("hand_ahead", why)
-            return None
         turned = _axis_angle(at[:3, :3].T @ step.commanded_target[:3, :3])[1]
         if not turned <= MAX_AHEAD_TURN_RAD:
             why = (
@@ -894,36 +1070,53 @@ class HumanLogic:
             return None
         self._ahead_m = ahead_m
         self._ahead_cm = _ahead_step(100.0 * ahead_m, self._ahead_cm)
-        self._walls = _walls_at(hand - reach, tip, low, high, self._walls)
+        bottom = WALL_TABLE if p.table else WALL_NAMES[2][0]
+        self._walls = _walls_at(hand - reach, tip, low, high, self._walls, bottom)
+        waits = False
         if self._q_sent is not None and not self._thor_follows(p):
-            # The first target stands: the robot app measures the first step
-            # of its drive from the arm, and refuses a target that has moved
-            # on while it read the arm.
+            waits = self._thor_waits(p)
             if p.now_mono - self._began_at > FOLLOW_WAIT_S + _EPS:
                 why = f"the arm did not follow the squeeze within {FOLLOW_WAIT_S:g} s"
                 self._end("solution_ahead", why)
                 return None
+        if not waits:
+            self._lift_since = None
+        elif self._lift_since is None:
+            self._lift_since = p.now_mono
+            self._lift_top = float(tip[2])
+            # The robot app counts the measured arm's tip as low under the
+            # height it names.
+            measured_z = float(self._solver.fk(p.measured)[2, 3])
+            self._lift_under = p.floor is not None and measured_z < p.floor
+        # The robot app's drive has had this engagement's joint target for
+        # longer than its start read takes and has sent nothing: it waits
+        # for a low gripper tip to be lifted.
+        lifting = waits and p.now_mono - self._lift_since > LIFT_AFTER_S
+        if self._q_sent is not None and not self._followed and not lifting:
+            # The first target stands: the robot app measures the first step
+            # of its drive from the arm, and refuses a target that has moved
+            # on while it read the arm.
             q = seed
         else:
             goal = np.array(step.ee_target, dtype=np.float64)
             goal[:3, 3] = np.clip(goal[:3, 3], low, high)
-            solved = self._solve(goal, at, seed, since)
-            q = None if solved.problem else _joints(solved.q, len(seed))
+            q = self._stepped(goal, at, seed, since, p)
             if q is None:
-                problem = solved.problem or "no IK solution (no usable joint values)"
-                if problem.startswith(_JUMP):
-                    self._end("jump", problem)
-                    return None
-                self._failures += 1
-                if self._failures >= ik.max_failures:
-                    self._end("no_solution", problem)
-                    return None
-                q = seed  # one failed pass sends the last joint values again
-            else:
-                self._failures = 0
-                q = self._limited(seed, q, since, p)
+                return None
         reference, moves = _reference(p.state, p.human, p.measured)
         held = False
+        if lifting:
+            # The robot app's first step is measured from the arm: the joint
+            # target stays where that step is taken.
+            share = _share_within(seed, q, reference, ik.max_ahead_rad - LIFT_SLACK_RAD)
+            q = tuple(a + share * (b - a) for a, b in zip(seed, q))
+        if p.floor is not None and float(tip[2]) < p.floor:
+            q = self._lifted(seed, q, reference, lifting or moves, p)
+        if lifting:
+            top = float(self._solver.fk(q)[2, 3])
+            if top > self._lift_top + LIFT_RISE_M:
+                self._lift_top = top
+                self._began_at = p.now_mono
         if moves:
             # The hold-back: this pass's joint target goes only as far as it
             # stays within reach of where the robot app's joint target can be.
@@ -964,14 +1157,28 @@ class HumanLogic:
     def _watch_thor(self, p: _Pass, target: tuple[float, ...]) -> None:
         """Take what a ROBOT_STATE of the robot app's drive says of its loop.
 
-        Its joint target, and the pace of its loop: its setpoint period over
-        the time it took for each setpoint between this state and the one
-        before, 1.0 at most. A robot app that names no send time of its joint
-        target is taken at its setpoint period.
+        Its joint target, which is a new one when a joint of it moved by more
+        than NEW_TARGET_SHARE of a step. The time from one ROBOT_STATE to the
+        next. The pace of its loop: its setpoint period over the time it took
+        for each setpoint between this state and the one before, 1.0 at most.
+        A robot app that names no send time of its joint target is taken at
+        its setpoint period.
         """
-        if target != self._thor_target:
+        last_target = self._thor_target
+        least = NEW_TARGET_SHARE * p.thor_speed * p.thor_period_s
+        if last_target is None or any(
+            abs(a - b) > least for a, b in zip(target, last_target)
+        ):
             self._thor_target = target
             self._held_since = None
+        made_at = _finite(p.state.clock_mono_s)
+        seq = p.state.seq
+        if made_at is not None and isinstance(seq, int) and not isinstance(seq, bool):
+            seen = self._state_mark
+            if seen is not None and seq > seen[0] and made_at > seen[1]:
+                self._state_gaps.append((made_at - seen[1]) / (seq - seen[0]))
+            if seen is None or seq != seen[0]:
+                self._state_mark = (seq, made_at)
         sent_at = _finite(p.state.target_t)
         if sent_at is None:
             return
@@ -988,14 +1195,33 @@ class HumanLogic:
         Since the ROBOT_STATE: its age at the speed clamp and the pace of the
         robot app's loop. Nothing when the state was made more than
         STANDING_PERIODS setpoint periods after its last setpoint: the loop
-        stands.
+        stands. Nothing either when the next ROBOT_STATE is overdue: the
+        robot app, or the way from it, may stand, and what it has done since
+        is not known.
         """
         sent_at = _finite(p.state.target_t)
         made_at = _finite(p.state.clock_mono_s)
         if sent_at is not None and made_at is not None:
             if made_at - sent_at > STANDING_PERIODS * p.thor_period_s:
                 return 0.0
+        if len(self._state_gaps) >= STATE_GAPS_MIN:
+            period_s = statistics.median(self._state_gaps)
+            if p.state_age_s > STATE_DUE_PERIODS * period_s:
+                return 0.0
         return self._thor_pace * p.state_age_s * p.thor_speed
+
+    def _thor_waits(self, p: _Pass) -> bool:
+        """Whether a ROBOT_STATE shows the robot app's drive waiting for a lift.
+
+        Its drive runs, has this engagement's first joint target, or a later
+        one, as its newest, and has sent no setpoint. A robot app that names
+        no seq is not taken so.
+        """
+        seq = p.human.get("seq")
+        if not isinstance(seq, int) or isinstance(seq, bool):
+            return False
+        waits = p.human.get("driving") and p.state.move_index == 0
+        return bool(waits) and seq >= self._first_seq
 
     def _thor_follows(self, p: _Pass) -> bool:
         """Whether a ROBOT_STATE has shown the robot app's drive following this engagement.
@@ -1022,6 +1248,123 @@ class HumanLogic:
                 return False
         self._followed = True
         return True
+
+    def _stepped(
+        self,
+        goal: np.ndarray,
+        at: np.ndarray,
+        seed: tuple[float, ...],
+        since: float,
+        p: _Pass,
+    ) -> tuple[float, ...] | None:
+        """This pass's joint target toward goal; None when the engagement ends here.
+
+        seed again, the last joint target, while the pose solved for has no
+        solution: nothing moves on a solve that failed, and the engagement
+        goes on for the hand to come back. A solution that is a jump ends
+        the engagement, as it did. A solution outside the robot app's joint
+        box is gone toward as far as the box allows.
+        """
+        solved = self._solve(goal, at, seed, since)
+        q = None if solved.problem else _joints(solved.q, len(seed))
+        if q is None:
+            problem = solved.problem or "no IK solution (no usable joint values)"
+            if problem.startswith(_JUMP):
+                self._end("jump", problem)
+                return None
+            self._failures += 1
+            if self._failures >= self._settings.ik.max_failures:
+                self._stand = NOTE_OUT_OF_REACH
+            return seed
+        self._failures = 0
+        self._stand = ""
+        q = self._limited(seed, q, since, p)
+        self._joint_room = _room(p.joint_box, np.array(seed), self._joint_room)
+        share, joint = _share_inside(seed, q, *self._joint_room)
+        if joint is not None:
+            self._stand = NOTE_AT_JOINT_LIMIT.format(joint=joint + 1)
+            q = tuple(a + share * (b - a) for a, b in zip(seed, q))
+        return q
+
+    def _lifted(
+        self,
+        seed: tuple[float, ...],
+        q: tuple[float, ...],
+        reference: tuple[float, ...],
+        known: bool,
+        p: _Pass,
+    ) -> tuple[float, ...]:
+        """The joint target toward q that only lifts a low gripper tip; else seed.
+
+        For a last joint target whose tip is under the height the robot app
+        names. Its checker takes a step there only when the tip rises with
+        it, so the joint target moves only where every step of the robot app
+        toward it does. reference is where those steps begin: the measured
+        arm while its drive waits, its own joint target once it drives.
+        Once it drives the joint target waits for the robot app's to be the
+        last one sent, so that each of its steps ends on a joint target and
+        none is cut by its speed clamp. known False: no ROBOT_STATE of that
+        drive yet; the target stands.
+        """
+        if q == seed or not known:
+            return seed
+        if not (p.human.get("driving") and p.state.move_index > 0):
+            return self._lifted_off(seed, q, reference, p)
+        if max(abs(a - b) for a, b in zip(seed, reference)) > _EPS:
+            return seed
+        for share in LIFT_SHARES:
+            part = tuple(a + share * (b - a) for a, b in zip(seed, q))
+            if self._rises(reference, part, p):
+                return part
+        return seed
+
+    def _lifted_off(
+        self,
+        seed: tuple[float, ...],
+        q: tuple[float, ...],
+        arm: tuple[float, ...],
+        p: _Pass,
+    ) -> tuple[float, ...]:
+        """The joint target while the robot app's drive waits under that height.
+
+        q, this pass's step toward the hand's pose, when its tip is higher
+        than seed's, the robot app's way to it from the measured arm rises
+        with every step and its first step keeps the tip inside the hand's
+        speed limit; else seed. The arm then starts on the hand's own way,
+        no further than the hand has asked, and a hand that does not rise
+        moves nothing.
+        """
+        height = float(self._solver.fk(seed)[2, 3])
+        if not float(self._solver.fk(q)[2, 3]) > height + LIFT_STEP_M:
+            return seed
+        if not self._rises(arm, q, p):
+            return seed
+        most = p.thor_speed * p.thor_period_s
+        first = [a + max(-most, min(most, b - a)) for a, b in zip(arm, q)]
+        way = self._solver.fk(first)[:3, 3] - self._solver.fk(arm)[:3, 3]
+        limit = self._settings.retarget.max_linear_velocity * p.thor_period_s
+        if float(np.linalg.norm(way)) > limit:
+            return seed
+        return q
+
+    def _rises(self, start: Sequence[float], target: Sequence[float], p: _Pass) -> bool:
+        """Whether the tip rises with every step of the robot app from start to target.
+
+        Its steps: each joint by at most its speed clamp for one setpoint
+        period, as robot_app/human.py clamps them.
+        """
+        most = p.thor_speed * p.thor_period_s
+        at = [float(value) for value in start]
+        height = float(self._solver.fk(at)[2, 3])
+        for _ in range(LIFT_STEPS_MOST):
+            to = [a + max(-most, min(most, b - a)) for a, b in zip(at, target)]
+            if to == at:
+                return True
+            risen = float(self._solver.fk(to)[2, 3])
+            if not risen > height + LIFT_STEP_M:
+                return False
+            at, height = to, risen
+        return False
 
     def _solve(
         self,
@@ -1146,8 +1489,15 @@ class HumanLogic:
         """What the operator does next, or why the arm does not follow."""
         if p.owns and self._engaged:
             parts = []
+            lifted_s = None
+            if self._lift_since is not None:
+                lifted_s = p.now_mono - self._lift_since
+            if lifted_s is not None and lifted_s > LIFT_AFTER_S:
+                parts.append(NOTE_RAISE_TABLE if self._lift_under else NOTE_RAISE)
             if self._walls:
                 parts.append(NOTE_AT_LIMIT.format(walls=", ".join(self._walls)))
+            if self._stand:
+                parts.append(self._stand)
             if self._behind_shown:
                 parts.append(NOTE_THOR_BEHIND)
             if self._ahead_cm is not None:
@@ -1182,9 +1532,12 @@ class HumanLogic:
                 return NOTE_RELEASE_FIRST
             # The age in the text would change the note on every pass.
             return "no fresh robot state" if key == "state_old" else why
+        if self._drive_on:
+            return NOTE_DRIVE_ON
         if p.squeezed:
             # A new squeeze that waits for the drive before it to be shown as
-            # ended counts from that ROBOT_STATE on; any other is to be released.
+            # ended, and the arm as at rest, counts from then on; any other
+            # is to be released.
             return NOTE_STOPPING if self._waits else NOTE_RELEASE_FIRST
         # Before the arm was moved, the next step is the squeeze, also at rest.
         return self._give_back(state) if at_rest and self._moved else NOTE_SQUEEZE
@@ -1319,43 +1672,115 @@ def _named_period(welcome: Welcome | None, own_s: float) -> float:
     return period if period is not None and period > 0.0 else own_s
 
 
-def _named_box(welcome: Welcome | None) -> tuple[np.ndarray, np.ndarray] | None:
-    """The tip box a WELCOME names, TIP_BOX_MARGIN_M inside its walls, m.
+def _corners(named: Any, width: int, margin: float) -> np.ndarray | None:
+    """A box a WELCOME names, margin inside its walls: its two corners.
 
-    Its lowest and its highest corner. An axis narrower than twice the margin
-    is held at its middle. None: the WELCOME names none, or what it names is
-    not two corners of three finite numbers, the first no higher than the
-    second.
+    An axis narrower than twice the margin is held at its middle. None: what
+    is named is not two corners of width finite numbers, the first no higher
+    than the second.
     """
-    named = None if welcome is None else welcome.human_tip_box
     if named is None:
         return None
     try:
         corners = np.array(named, dtype=np.float64)
     except (TypeError, ValueError):
         return None
-    if corners.shape != (2, 3) or not np.all(np.isfinite(corners)):
+    if corners.shape != (2, width) or not np.all(np.isfinite(corners)):
         return None
     if np.any(corners[0] > corners[1]):
         return None
     middle = 0.5 * (corners[0] + corners[1])
-    low = np.minimum(corners[0] + TIP_BOX_MARGIN_M, middle)
-    high = np.maximum(corners[1] - TIP_BOX_MARGIN_M, middle)
-    return low, high
+    low = np.minimum(corners[0] + margin, middle)
+    high = np.maximum(corners[1] - margin, middle)
+    return np.array([low, high])
+
+
+def _named_floor(welcome: Welcome | None) -> float | None:
+    """The height a WELCOME names under which the gripper tip is low, m."""
+    return None if welcome is None else _finite(welcome.human_tip_floor)
+
+
+def _named_box(welcome: Welcome | None) -> tuple[np.ndarray, np.ndarray, bool] | None:
+    """Where a WELCOME lets the pose solved for be, m, and what its bottom is.
+
+    The lowest and the highest corner: the tip box it names, and the height
+    it names for a low tip as the bottom where that is higher, each
+    TIP_BOX_MARGIN_M inside. True when the bottom is that height. A side
+    that nothing bounds is infinite. None: it names neither in a usable form.
+    """
+    named = None if welcome is None else welcome.human_tip_box
+    corners = _corners(named, 3, TIP_BOX_MARGIN_M)
+    floor = _named_floor(welcome)
+    if corners is None and floor is None:
+        return None
+    if corners is None:
+        low, high = np.full(3, -math.inf), np.full(3, math.inf)
+    else:
+        low, high = corners
+    table = floor is not None and bool(floor + TIP_BOX_MARGIN_M > low[2])
+    if table:
+        low[2] = min(floor + TIP_BOX_MARGIN_M, high[2])
+    return low, high, table
+
+
+def _named_joint_box(
+    welcome: Welcome | None, n_joints: int
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """The joint box a WELCOME names, JOINT_BOX_MARGIN_RAD inside it, rad.
+
+    None: it names none that can be used.
+    """
+    named = None if welcome is None else welcome.human_joint_box
+    corners = _corners(named, n_joints, JOINT_BOX_MARGIN_RAD)
+    return None if corners is None else (corners[0], corners[1])
 
 
 def _room(
-    box: tuple[np.ndarray, np.ndarray] | None, tip: np.ndarray
+    box: tuple[np.ndarray, np.ndarray] | None,
+    at: np.ndarray,
+    kept: tuple[np.ndarray, np.ndarray] | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """The lowest and the highest point the pose solved for may have, by axis.
+    """The lowest and the highest values an engagement may go to, by axis.
 
-    The box, opened on each axis as far as the tip at `tip` is outside it
-    already: there the tip may come toward the box and go no further out.
-    Without a box nothing is bounded.
+    For the pose solved for, with `at` the tip of the last joint target, and
+    for the joint target, with `at` that target. kept is the room of the
+    pass before, None on an engagement's first pass. There the room is the
+    box, opened on each axis as far as `at` is outside it. From then on it
+    is only narrowed, to `at` where that has come toward the box: what a
+    solve leaves outward of its pose is not kept. Without a box nothing is
+    bounded.
     """
     if box is None:
-        return np.full(3, -math.inf), np.full(3, math.inf)
-    return np.minimum(box[0], tip), np.maximum(box[1], tip)
+        return np.full(len(at), -math.inf), np.full(len(at), math.inf)
+    if kept is None:
+        return np.minimum(box[0], at), np.maximum(box[1], at)
+    low = np.minimum(box[0], np.maximum(kept[0], at))
+    high = np.maximum(box[1], np.minimum(kept[1], at))
+    return low, high
+
+
+def _share_inside(
+    seed: Sequence[float],
+    q: Sequence[float],
+    low: np.ndarray,
+    high: np.ndarray,
+) -> tuple[float, int | None]:
+    """The largest share, 0 to 1, of the way from seed to q inside low..high.
+
+    With it the index of the joint that bounds it; None when the whole way
+    is inside. A joint outside already may still move toward the inside.
+    """
+    share, bound = 1.0, None
+    for joint, (start, to) in enumerate(zip(seed, q)):
+        way = to - start
+        if way == 0.0:
+            continue
+        edge = high[joint] if way > 0.0 else low[joint]
+        if (to - edge) * way > 0.0:
+            part = max(0.0, (edge - start) / way)
+            if part < share:
+                share, bound = part, joint
+    return share, bound
 
 
 def _walls_at(
@@ -1364,17 +1789,20 @@ def _walls_at(
     low: np.ndarray,
     high: np.ndarray,
     named: Sequence[str],
+    bottom: str,
 ) -> tuple[str, ...]:
     """The walls NOTE_AT_LIMIT names on this pass, in the order of the axes.
 
     past is the hand's position less that position held inside low..high;
     tip is the tip of the last joint target; named is what the pass before
-    named. A wall is named once the hand is WALL_NOTE_M beyond it with the
-    tip within WALL_NOTE_M of it, and from then on while the hand is beyond
-    it at all.
+    named; bottom is the name of the lowest wall. A wall is named once the
+    hand is WALL_NOTE_M beyond it with the tip within WALL_NOTE_M of it, and
+    from then on while the hand is beyond it at all.
     """
     walls = []
     for axis, names in enumerate(WALL_NAMES):
+        if axis == 2:
+            names = (bottom, names[1])
         sides = ((-1.0, low[axis], names[0]), (1.0, high[axis], names[1]))
         for side, bound, name in sides:
             need = 0.0 if name in named else WALL_NOTE_M

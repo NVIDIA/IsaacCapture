@@ -351,6 +351,18 @@ class Checker(Protocol):
         base frame: the frame of the arm model's forward kinematics.
         """
 
+    def tip_floor(self) -> float | None:
+        """The height under which tip_state() gives the gripper tip as low, m.
+
+        In the arm's base frame. None from a checker that knows no table.
+        """
+
+    def joint_box(self) -> tuple[list[float], list[float]]:
+        """The joint box this checker holds a setpoint in, rad.
+
+        Its lowest and its highest corner, one value per joint.
+        """
+
     def contact_watch(
         self, arm: ArmPort, q_start: Sequence[float], history: JointHistory
     ) -> ContactWatch:
