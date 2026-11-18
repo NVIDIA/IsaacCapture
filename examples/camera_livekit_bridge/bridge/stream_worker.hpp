@@ -26,9 +26,6 @@ struct WorkerConfig
     uint32_t fps = 30;
     uint32_t bitrate_bps = 8'000'000;
     uint32_t idr_period = 30;
-    /// A read that finishes later than this after its slot's notice is treated as possibly overwritten and dropped.
-    /// Zero derives it from the ring: the time the publisher needs to wrap it at `fps`.
-    uint32_t max_notice_age_ms = 0;
     /// Integer factor the picture is shrunk by on the GPU before encoding (1 keeps the source size).
     uint32_t scale_div = 1;
     /// The IPC pictures are full-range (0-255) rather than limited-range (16-235); the encoded stream signals it. The
@@ -44,12 +41,9 @@ struct WorkerStats
     std::atomic<uint64_t> skipped{ 0 };
     std::atomic<uint64_t> keyframes{ 0 };
     std::atomic<uint64_t> rejected{ 0 };
-    /// Pictures dropped because the publisher may have overwritten the IPC slot during the copy.
+    /// Pictures dropped because the publisher began writing the IPC slot after announcing the picture, either before
+    /// the copy or while it ran.
     std::atomic<uint64_t> slot_overruns{ 0 };
-    /// Pictures dropped because the copy finished too long after the slot's notice for the pixels to be trusted, and
-    /// pictures whose notice carried no time to check (those are kept).
-    std::atomic<uint64_t> stale_slot_reads{ 0 };
-    std::atomic<uint64_t> unchecked_slot_reads{ 0 };
     std::atomic<uint64_t> encode_us_total{ 0 };
     /// The bitrate the encoder is configured for now, and how many times congestion feedback changed it.
     std::atomic<uint32_t> bitrate_bps{ 0 };

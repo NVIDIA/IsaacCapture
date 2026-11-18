@@ -6,7 +6,6 @@
 #include <gpu_ops/box_downscale.hpp>
 #include <ipc_client/cuda_ipc_client.hpp>
 #include <nvenc/nvenc_encoder.hpp>
-#include <video_types/slot_age.hpp>
 #include <video_types/video_types.hpp>
 
 #include <algorithm>
@@ -15,7 +14,6 @@
 #include <cuda_runtime_api.h>
 #include <iostream>
 #include <mutex>
-#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -27,27 +25,20 @@ namespace
 
 constexpr auto kOverwriteReportInterval = std::chrono::seconds(5);
 
-/// The loud error for a picture that may mix two frames. Rate limited per stream; the stats line keeps the totals.
-void report_slot_overwrite_risk(const WorkerConfig& config,
-                                const FrameNotice& notice,
-                                std::size_t slot_count,
-                                bool newer_notice,
-                                bool late_copy,
-                                int64_t age_ns,
-                                int64_t deadline_ns,
-                                uint64_t dropped_total)
+/// The loud error for a picture whose slot the publisher rewrote after announcing it. Rate limited per stream; the
+/// stats line keeps the totals.
+void report_slot_overwrite(const WorkerConfig& config,
+                           const FrameNotice& notice,
+                           std::size_t slot_count,
+                           bool during_copy,
+                           uint64_t dropped_total)
 {
-    std::cerr << "\n!!!!!!!!!! SLOT OVERWRITE RISK on stream '" << config.stream << "': picture DROPPED !!!!!!!!!!\n"
-              << "  The receiver's ring (" << slot_count << " slots) may have rewritten slot " << notice.slot
-              << " (generation " << notice.slot_generation << ") while this bridge was still reading it, so the\n"
-              << "  pixels could be a mix of two frames under the first frame's ID and timestamp.\n";
-    if (newer_notice)
-        std::cerr << "  Evidence: a newer notice for the same slot, or a full ring of newer notices, arrived.\n";
-    if (late_copy)
-        std::cerr << "  Evidence: the copy finished " << static_cast<double>(age_ns) / 1e6
-                  << " ms after the notice; the ring wraps in " << static_cast<double>(deadline_ns) / 1e6 << " ms at "
-                  << config.fps << " fps.\n";
     std::cerr
+        << "\n!!!!!!!!!! SLOT OVERWRITE DETECTED on stream '" << config.stream << "': picture DROPPED !!!!!!!!!!\n"
+        << "  The receiver began writing slot " << notice.slot << " (generation " << notice.slot_generation
+        << ") of its " << slot_count << "-slot ring "
+        << (during_copy ? "while this bridge was copying it" : "before this bridge started copying it")
+        << ",\n  so the pixels could be a mix of two frames under the first frame's ID and timestamp.\n"
         << "  Cause: this consumer is reading too slowly (starved GPU or CPU), or the receiver is delivering frames\n"
         << "  faster than " << config.fps << " fps. Fix the stall; do not trust recordings of this period.\n"
         << "  Pictures dropped for this reason so far: " << dropped_total << " (reported at most every "
@@ -166,22 +157,13 @@ struct StreamWorker::Impl
 
         const IpcStream& stream = client.streams().front();
         bool need_idr = true;
-        const int64_t deadline_ns = config.max_notice_age_ms != 0 ?
-                                        static_cast<int64_t>(config.max_notice_age_ms) * 1'000'000 :
-                                        slot_read_deadline_ns(config.fps, stream.slots.size());
         auto last_overwrite_report = std::chrono::steady_clock::now() - kOverwriteReportInterval;
         uint32_t own_frame_id = 0;
         uint64_t last_session = 0;
         FrameNotice notice;
-        std::optional<FrameNotice> pending; // a newer notice seen while checking the last slot; used next
         while (running)
         {
-            if (pending)
-            {
-                notice = std::move(*pending);
-                pending.reset();
-            }
-            else if (!client.next_frame(notice, std::chrono::milliseconds(200)))
+            if (!client.next_frame(notice, std::chrono::milliseconds(200)))
                 continue;
             // Encode the newest picture: anything queued behind it is older, and a late frame is worse than a skipped
             // one.
@@ -192,6 +174,24 @@ struct StreamWorker::Impl
                 ++stats.skipped;
             }
 
+            // A picture whose slot the publisher rewrote is dropped, counted and reported loudly (rate limited).
+            const auto drop_overwritten = [&](bool during_copy)
+            {
+                ++stats.slot_overruns;
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last_overwrite_report >= kOverwriteReportInterval)
+                {
+                    last_overwrite_report = now;
+                    report_slot_overwrite(config, notice, stream.slots.size(), during_copy, stats.slot_overruns.load());
+                }
+            };
+            // Check before spending a copy on a slot that is already being rewritten. This only saves work; the check
+            // after the copy is the one that decides.
+            if (!client.slot_unchanged(notice))
+            {
+                drop_overwritten(/*during_copy=*/false);
+                continue;
+            }
             const IpcSlot& slot = client.slot(notice);
             const auto* base = static_cast<const uint8_t*>(slot.device_ptr);
             NvencEncoder::Surface surface;
@@ -224,51 +224,19 @@ struct StreamWorker::Impl
                                          cudaGetErrorString(copy_status));
             }
 
-            // The publisher overwrites a slot without notice once its ring wraps. The copy must have finished before
-            // that, and a newer notice for the same slot, or as many newer notices as the ring has other slots, means
-            // it may not have. Such a picture is dropped, never encoded.
+            // The copy must have finished before the marker is read: a write that began during it advanced the marker
+            // first, so an unchanged marker means no write overlapped the copy. A changed one means the picture may
+            // mix two frames; it is dropped, never encoded.
             if (cudaStreamSynchronize(copy_stream) != cudaSuccess)
             {
                 encoder.release(surface);
                 throw std::runtime_error("GPU copy from the IPC slot did not complete");
             }
+            if (!client.slot_unchanged(notice))
             {
-                bool overwritten = false;
-                std::size_t newer_count = 0;
-                FrameNotice newer;
-                while (client.next_frame(newer, std::chrono::milliseconds(0)))
-                {
-                    ++newer_count;
-                    if (newer.slot == notice.slot && newer.slot_generation > notice.slot_generation)
-                        overwritten = true;
-                    pending = std::move(newer);
-                }
-                if (stream.slots.size() > 1 && newer_count + 1 >= stream.slots.size())
-                    overwritten = true;
-                // The copy is done. If it finished later than the publisher needs to wrap its ring, the slot may have
-                // been overwritten during it, whether or not the replacement notice has arrived yet.
-                const int64_t copy_done_ns = monotonic_ns();
-                const SlotAge age = classify_slot_age(notice.timestamp_ns, copy_done_ns, deadline_ns);
-                if (age == SlotAge::Unknown && deadline_ns > 0)
-                    ++stats.unchecked_slot_reads;
-                const bool stale = age == SlotAge::Stale;
-                if (overwritten || stale)
-                {
-                    encoder.release(surface);
-                    if (overwritten)
-                        ++stats.slot_overruns;
-                    else
-                        ++stats.stale_slot_reads;
-                    const auto now = std::chrono::steady_clock::now();
-                    if (now - last_overwrite_report >= kOverwriteReportInterval)
-                    {
-                        last_overwrite_report = now;
-                        report_slot_overwrite_risk(config, notice, stream.slots.size(), overwritten, stale,
-                                                   copy_done_ns - static_cast<int64_t>(notice.timestamp_ns),
-                                                   deadline_ns, stats.slot_overruns + stats.stale_slot_reads);
-                    }
-                    continue;
-                }
+                encoder.release(surface);
+                drop_overwritten(/*during_copy=*/true);
+                continue;
             }
 
             const uint64_t session_id = unsigned_field(notice.metadata, "session_id");

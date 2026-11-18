@@ -22,8 +22,8 @@ sequence is the track's `frame_id`, the sensor start time (when the receiver
 derived one) is the `user_timestamp` in Unix microseconds, and the sensor
 counter is the 8-byte `user_data`. The newest picture is encoded and older
 queued ones are skipped. The receiver overwrites a slot without notice once its ring wraps, so after the GPU copy the
-bridge checks for a newer notice for the same slot, or as many newer notices as the ring has other slots, and drops the
-picture instead of encoding it (counted as `slot overruns`). The session also answers clock-sync requests that
+bridge checks the slot's shared write-generation marker and drops the picture instead of encoding it when the receiver
+began a write meanwhile (counted as `slot overruns`). The session also answers clock-sync requests that
 arrive as LiveKit data messages.
 
 ## Integration boundary
@@ -33,8 +33,8 @@ wiring (`livekit_publisher/` and the session handling in `bridge/`) is temporary
 behind transport adapters: a layer that carries camera video and application messages over a selectable network
 transport and owns sessions, admission limits and feedback. Camera buffer ownership and encode and decode
 responsibilities belong to the camera interface. A replacement must preserve browser delivery, bounded latency and
-safe GPU access. Until receiver slots have read leases, the residual risk described under "Reading the receiver's
-slots" applies.
+safe GPU access. Until the receiver excludes overlapping slot access instead of letting the bridge detect it, the
+residual described under "Reading the receiver's slots" applies.
 
 | Current path | Intended owner or replacement | Reuse, adapt or retire | Follow-up and landing condition |
 | --- | --- | --- | --- |
@@ -113,15 +113,21 @@ build/probe/camera_ipc_probe --socket /tmp/camera_receiver_avs1_cuda_ipc.sock \
 
 It prints each stream's plane layout, then per frame the slot, generation,
 stream sequence, session id, sensor start time and a checksum of the first
-pixels. Slots are overwritten without notice when the publisher's ring wraps.
+pixels. Slots are overwritten without notice when the publisher's ring wraps; the probe does not validate the pixels it
+checksums.
 
 ## Reading the receiver's slots
 
 The receiver rewrites its GPU ring slots in rotation and never waits for a reader: a slot is overwritten without
-notice about `ring_depth` frames after it was announced, and the only signal is a later frame notice. A consumer
-therefore has to finish with a slot within that window or skip ahead. The bridge follows this: it uses only the
-newest notice, starts the GPU copy at once on its own stream, waits for it to complete, and drops (never encodes)
-the picture when later notices show the ring may have wrapped; those frames count as slot overruns in the `[stats]`
-line. The notices arrive asynchronously, so this check cannot prove a copy was clean: a stall of most of the ring's
-window between the notice and the end of the copy can still publish a picture that mixes two frames under the earlier
-frame's metadata. Only a read guard in the receiver, which skips slots a reader holds, would remove that case.
+notice about `ring_depth` frames after it was announced, and the replacement notice only arrives after the new write.
+It therefore advances a shared write-generation marker for the slot before it touches the pixels and announces that
+generation in the frame notice once the write is complete. The bridge maps the markers through the same native helper
+the receiver uses (`camera_streamer/ipc_protocol`), uses only the newest notice, starts the GPU copy into the encoder
+input surface at once on its own stream, waits for it to complete, and then loads the marker. It encodes the picture
+only if the marker still equals the notified generation; otherwise it drops it, prints a prominent error (at most every
+5 s per stream) and counts a slot overrun in the `[stats]` line. The same check before the copy only saves work. A
+publisher that does not provide write generations is refused at connect time.
+
+CUDA's memory model does not specify what a read that races a write observes, so the check relies on the race only
+changing the bridge's private copy, which it discards. See `camera_streamer/ipc_protocol/README.md` for the ordering
+contract and what is and is not guaranteed.

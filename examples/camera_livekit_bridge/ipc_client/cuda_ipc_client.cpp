@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <cuda_runtime_api.h>
@@ -83,6 +84,8 @@ void CudaIpcClient::close_all()
         }
     }
     m_streams.clear();
+    m_markers.reset();
+    m_marker_streams.clear();
     if (m_fd >= 0)
     {
         ::close(m_fd);
@@ -166,6 +169,12 @@ void CudaIpcClient::connect()
     const auto hello = read_message(std::chrono::seconds(5), timed_out);
     if (timed_out || hello.value("type", "") != "hello")
         fail("expected a hello message from the IPC publisher");
+    // A publisher that does not advance write generations gives no way to tell that a copy overlapped a rewrite.
+    const auto features = hello.value("features", nlohmann::json::array());
+    if (std::find(features.begin(), features.end(), nlohmann::json("slot_write_generation")) == features.end())
+        fail(
+            "the IPC publisher does not provide slot write generations, so a copied picture cannot be validated; "
+            "update camera_receiver");
     send_message({ { "type", "subscribe" }, { "streams", m_requested } });
     const auto subscribed = read_message(std::chrono::seconds(5), timed_out);
     if (timed_out)
@@ -174,7 +183,27 @@ void CudaIpcClient::connect()
         fail("the IPC subscription was refused: " + subscribed.value("error", std::string("no reason given")));
     if (subscribed.value("type", "") != "subscribed")
         fail("expected a subscribed message from the IPC publisher");
+    open_markers(subscribed);
     open_streams(subscribed);
+}
+
+void CudaIpcClient::open_markers(const nlohmann::json& subscribed)
+{
+    const auto descriptor = subscribed.find("slot_markers");
+    if (descriptor == subscribed.end() || !descriptor->is_object())
+        fail("the IPC publisher did not offer slot write generations");
+    try
+    {
+        m_markers.emplace(camera_ipc::SlotMarkers::attach(
+            descriptor->at("name").get<std::string>(), descriptor->at("size").get<std::uint64_t>(),
+            descriptor->at("layout_version").get<std::uint32_t>(), descriptor->at("epoch").get<std::uint64_t>()));
+    }
+    catch (const nlohmann::json::exception& error)
+    {
+        fail(std::string("malformed slot write generation descriptor: ") + error.what());
+    }
+    for (const auto& [name, index] : descriptor->at("stream_indexes").items())
+        m_marker_streams[name] = index.get<std::uint32_t>();
 }
 
 void CudaIpcClient::open_streams(const nlohmann::json& subscribed)
@@ -219,6 +248,14 @@ const IpcSlot& CudaIpcClient::slot(const FrameNotice& notice) const
             return stream.slots.at(static_cast<std::size_t>(notice.slot));
     }
     throw std::out_of_range("unknown IPC stream " + notice.stream);
+}
+
+bool CudaIpcClient::slot_unchanged(const FrameNotice& notice) const
+{
+    const auto stream = m_marker_streams.find(notice.stream);
+    if (!m_markers || stream == m_marker_streams.end())
+        throw std::out_of_range("unknown IPC stream " + notice.stream);
+    return m_markers->unchanged(stream->second, static_cast<std::uint32_t>(notice.slot), notice.slot_generation);
 }
 
 bool CudaIpcClient::next_frame(FrameNotice& out, std::chrono::milliseconds timeout)
