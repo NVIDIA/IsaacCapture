@@ -66,7 +66,7 @@ void put_f32(std::vector<uint8_t>& out, float v)
 std::vector<uint8_t> reference_hand_payload(const protocol::HandSample& sample)
 {
     std::vector<uint8_t> out;
-    put_u64(out, static_cast<uint64_t>(sample.sample_time_ns));
+    put_u64(out, static_cast<uint64_t>(sample.sample_time_local_common_clock_ns));
     for (const XrHandJointLocationEXT& joint : sample.joints)
     {
         put_u64(out, joint.locationFlags);
@@ -82,7 +82,9 @@ std::vector<uint8_t> reference_hand_payload(const protocol::HandSample& sample)
 
 std::vector<uint8_t> hand_payload(const protocol::HandSample& sample)
 {
-    return protocol::split_frame(protocol::encode_hand_sample_frame(1, sample.joints, sample.sample_time_ns)).payload;
+    return protocol::split_frame(
+               protocol::encode_hand_sample_frame(1, sample.joints, sample.sample_time_local_common_clock_ns))
+        .payload;
 }
 
 std::vector<uint8_t> schema_payload(const protocol::SchemaSample& sample)
@@ -250,7 +252,7 @@ TEST_CASE("HELLO rejects an unknown wrist source mode", "[remote_device_bridge][
 TEST_CASE("HAND_SAMPLE is a bit-exact copy of 26 joints", "[remote_device_bridge][unit]")
 {
     protocol::HandSample sample;
-    sample.sample_time_ns = 987654321012345LL;
+    sample.sample_time_local_common_clock_ns = 987654321012345LL;
     for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i)
     {
         sample.joints[static_cast<size_t>(i)].locationFlags = 0xF000000000000000ULL | static_cast<uint64_t>(i);
@@ -262,7 +264,7 @@ TEST_CASE("HAND_SAMPLE is a bit-exact copy of 26 joints", "[remote_device_bridge
     REQUIRE(bytes.size() == protocol::kHandSamplePayloadSize);
 
     const protocol::HandSample decoded = protocol::decode_hand_sample(bytes);
-    REQUIRE(decoded.sample_time_ns == sample.sample_time_ns);
+    REQUIRE(decoded.sample_time_local_common_clock_ns == sample.sample_time_local_common_clock_ns);
     for (size_t i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i)
     {
         REQUIRE(decoded.joints[i].locationFlags == sample.joints[i].locationFlags);
@@ -300,7 +302,7 @@ TEST_CASE("SCHEMA_SAMPLE round-trips bytes and timestamps", "[remote_device_brid
 TEST_CASE("WRIST_SAMPLE round-trips", "[remote_device_bridge][unit]")
 {
     protocol::WristSample sample;
-    sample.sample_time_ns = -5;
+    sample.sample_time_local_common_clock_ns = -5;
     sample.hand = XR_HAND_RIGHT_EXT;
     sample.sample.valid = true;
     sample.sample.tracked = false;
@@ -310,7 +312,7 @@ TEST_CASE("WRIST_SAMPLE round-trips", "[remote_device_bridge][unit]")
     REQUIRE(bytes.size() == kWristSamplePayloadSize);
     REQUIRE(bytes[kWristHandOffset] == 0); // 1 = left, 0 = right
     const protocol::WristSample decoded = protocol::decode_wrist_sample(bytes);
-    REQUIRE(decoded.sample_time_ns == -5);
+    REQUIRE(decoded.sample_time_local_common_clock_ns == -5);
     REQUIRE(decoded.hand == XR_HAND_RIGHT_EXT);
     REQUIRE(decoded.sample.valid);
     REQUIRE_FALSE(decoded.sample.tracked);
@@ -405,7 +407,7 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
     SECTION("HAND_SAMPLE against the reference payload encoder")
     {
         protocol::HandSample sample;
-        sample.sample_time_ns = -42;
+        sample.sample_time_local_common_clock_ns = -42;
         for (size_t i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i)
         {
             sample.joints[i].locationFlags = 0xA000000000000000ULL | i;

@@ -40,7 +40,7 @@ struct HelloAck
 
 struct HandSample
 {
-    int64_t sample_time_ns = 0;
+    int64_t sample_time_local_common_clock_ns = 0;
     std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints{};
 };
 
@@ -54,7 +54,7 @@ struct SchemaSample
 //! On the wire the hand is one byte, 1 = left and 0 = right.
 struct WristSample
 {
-    int64_t sample_time_ns = 0;
+    int64_t sample_time_local_common_clock_ns = 0;
     XrHandEXT hand = XR_HAND_LEFT_EXT;
     core::WristTrackingSample sample;
 };
@@ -94,7 +94,9 @@ std::vector<uint8_t> encode_pong(const Pong& value);
 void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns);
 
 // Sample frames are only built this way: the builders read the plugin's buffers directly so a push copies once.
-std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id, HandJoints joints, int64_t sample_time_ns);
+std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
+                                              HandJoints joints,
+                                              int64_t sample_time_local_common_clock_ns);
 std::vector<uint8_t> encode_schema_sample_frame(uint16_t channel_id,
                                                 std::span<const uint8_t> bytes,
                                                 int64_t sample_time_local_common_clock_ns,

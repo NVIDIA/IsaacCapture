@@ -123,12 +123,14 @@ auto parse_payload(std::span<const uint8_t> payload, const char* what, Read read
 
 } // namespace
 
-std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id, HandJoints joints, int64_t sample_time_ns)
+std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
+                                              HandJoints joints,
+                                              int64_t sample_time_local_common_clock_ns)
 {
     return build_frame(FrameType::HandSample, channel_id, kHandSamplePayloadSize,
                        [&](Writer& writer)
                        {
-                           writer.i64(sample_time_ns);
+                           writer.i64(sample_time_local_common_clock_ns);
                            for (const XrHandJointLocationEXT& joint : joints)
                            {
                                writer.u64(joint.locationFlags);
@@ -203,7 +205,7 @@ std::vector<uint8_t> encode_wrist_sample(const WristSample& value)
     return build_payload(
         [&](Writer& writer)
         {
-            writer.i64(value.sample_time_ns);
+            writer.i64(value.sample_time_local_common_clock_ns);
             writer.u8(to_wire_is_left(value.hand));
             writer.boolean(value.sample.valid);
             writer.boolean(value.sample.tracked);
@@ -302,7 +304,7 @@ HandSample decode_hand_sample(std::span<const uint8_t> payload)
                          [](Reader& reader)
                          {
                              HandSample value;
-                             value.sample_time_ns = reader.i64();
+                             value.sample_time_local_common_clock_ns = reader.i64();
                              for (XrHandJointLocationEXT& joint : value.joints)
                              {
                                  joint.locationFlags = reader.u64();
@@ -333,7 +335,7 @@ WristSample decode_wrist_sample(std::span<const uint8_t> payload)
                          [](Reader& reader)
                          {
                              WristSample value;
-                             value.sample_time_ns = reader.i64();
+                             value.sample_time_local_common_clock_ns = reader.i64();
                              value.hand = reader.boolean() ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
                              value.sample.valid = reader.boolean();
                              value.sample.tracked = reader.boolean();
