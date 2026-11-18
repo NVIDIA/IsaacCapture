@@ -110,14 +110,12 @@ uint32_t frame_payload_size(std::span<const uint8_t> in)
 
 FrameHeader decode_header(std::span<const uint8_t> in)
 {
-    Reader reader(in, "header");
-    if (reader.u32() != kMagic)
-    {
-        throw DecodeError("protocol: bad frame magic");
-    }
     FrameHeader header;
+    header.payload_size = frame_payload_size(in); // length, magic and payload limit
+    Reader reader(in, "header");
+    reader.u32(); // magic
     const uint8_t type = reader.u8();
-    // Version before type: frame type numbers differ between versions.
+    // Version before type: another version may number its frame types differently.
     if (const uint8_t version = reader.u8(); version != kProtocolVersion)
     {
         throw DecodeError("protocol: peer speaks protocol version " + std::to_string(version) +
@@ -131,11 +129,7 @@ FrameHeader decode_header(std::span<const uint8_t> in)
     header.type = static_cast<FrameType>(type);
     header.channel_id = reader.u16();
     header.seq = reader.u32();
-    header.payload_size = reader.u32();
-    if (header.payload_size > kMaxPayloadSize)
-    {
-        throw DecodeError("protocol: payload size " + std::to_string(header.payload_size) + " exceeds limit");
-    }
+    reader.u32(); // payload size, read above
     header.t_send_monotonic_ns = reader.i64();
     return header;
 }

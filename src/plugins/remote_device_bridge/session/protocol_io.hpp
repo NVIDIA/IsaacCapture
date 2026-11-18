@@ -136,7 +136,7 @@ class Reader
 {
 public:
     //! `what` names the frame or header being read in DecodeError messages.
-    Reader(std::span<const uint8_t> data, const char* what) : m_data(data.data()), m_size(data.size()), m_what(what)
+    Reader(std::span<const uint8_t> data, const char* what) : m_data(data), m_what(what)
     {
     }
 
@@ -188,7 +188,7 @@ public:
     {
         const uint32_t size = u32();
         need(size);
-        std::string value(reinterpret_cast<const char*>(m_data + m_pos), size);
+        std::string value(reinterpret_cast<const char*>(m_data.data() + m_pos), size);
         m_pos += size;
         return value;
     }
@@ -196,7 +196,8 @@ public:
     std::vector<uint8_t> bytes(size_t size)
     {
         need(size);
-        std::vector<uint8_t> value(m_data + m_pos, m_data + m_pos + size);
+        const auto field = m_data.subspan(m_pos, size);
+        std::vector<uint8_t> value(field.begin(), field.end());
         m_pos += size;
         return value;
     }
@@ -216,9 +217,9 @@ public:
 
     void finish() const
     {
-        if (m_pos != m_size)
+        if (m_pos != m_data.size())
         {
-            throw DecodeError(std::string("protocol: ") + m_what + ": " + std::to_string(m_size - m_pos) +
+            throw DecodeError(std::string("protocol: ") + m_what + ": " + std::to_string(m_data.size() - m_pos) +
                               " trailing bytes");
         }
     }
@@ -228,21 +229,20 @@ private:
     T take()
     {
         need(sizeof(T));
-        const T value = load_le<T>(m_data + m_pos);
+        const T value = load_le<T>(m_data.data() + m_pos);
         m_pos += sizeof(T);
         return value;
     }
 
     void need(size_t count) const
     {
-        if (m_size - m_pos < count)
+        if (m_data.size() - m_pos < count)
         {
             throw DecodeError(std::string("protocol: ") + m_what + ": truncated");
         }
     }
 
-    const uint8_t* m_data;
-    size_t m_size;
+    std::span<const uint8_t> m_data;
     const char* m_what;
     size_t m_pos = 0;
 };

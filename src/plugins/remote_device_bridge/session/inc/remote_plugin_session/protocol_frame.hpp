@@ -15,9 +15,9 @@ namespace remote_plugin_protocol
 /*!
  * Remote plugin protocol v1: fixed little-endian frames over one connection per
  * plugin session. Frame = header + payload; payload layouts live in
- * protocol_payloads.hpp. kProtocolVersion is the only version number: any change
+ * protocol_payloads.hpp. kProtocolVersion versions the whole format: any change
  * to a header, payload or frame type number bumps it, and decode_header rejects
- * every other version before it reads anything else.
+ * every other version before it reads the type or anything after it.
  */
 
 constexpr uint32_t kMagic = 0x30535052u; // "RPS0"
@@ -72,9 +72,9 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-//! Reads the header from the first kHeaderSize bytes of `in`. Throws DecodeError, in the order the fields are read:
-//! bad magic, another protocol version (checked before the type byte is interpreted), unknown type, oversized
-//! payload; and if `in` ends before a field it reads.
+//! Reads the header from the first kHeaderSize bytes of `in`. Throws DecodeError, checking in this order: `in`
+//! shorter than a header, bad magic, oversized payload, another protocol version, unknown type. The version is
+//! checked before the type byte is interpreted, since another version may number its frame types differently.
 FrameHeader decode_header(std::span<const uint8_t> in);
 
 //! What framing needs: the payload size from the first kHeaderSize bytes of `in`, checking only the magic and the

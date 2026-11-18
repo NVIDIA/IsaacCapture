@@ -19,7 +19,6 @@ namespace protocol = remote_plugin_protocol;
 namespace
 {
 
-constexpr size_t kWristSamplePayloadSize = sizeof(int64_t) + 3 * sizeof(uint8_t) + protocol::kPoseSize;
 //! WRIST_SAMPLE payload: sample_time i64, then the hand byte, then `valid`.
 constexpr size_t kWristHandOffset = sizeof(int64_t);
 constexpr size_t kWristValidOffset = kWristHandOffset + sizeof(uint8_t);
@@ -287,11 +286,11 @@ TEST_CASE("HAND_SAMPLE is a bit-exact copy of 26 joints", "[remote_device_bridge
 {
     protocol::HandSample sample;
     sample.sample_time_local_common_clock_ns = 987654321012345LL;
-    for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i)
+    for (size_t i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i)
     {
-        sample.joints[static_cast<size_t>(i)].locationFlags = 0xF000000000000000ULL | static_cast<uint64_t>(i);
-        sample.joints[static_cast<size_t>(i)].pose = make_pose(0.01f * static_cast<float>(i + 1));
-        sample.joints[static_cast<size_t>(i)].radius = 0.001f * static_cast<float>(i);
+        sample.joints[i].locationFlags = 0xF000000000000000ULL | i;
+        sample.joints[i].pose = make_pose(0.01f * static_cast<float>(i + 1));
+        sample.joints[i].radius = 0.001f * static_cast<float>(i);
     }
 
     const std::vector<uint8_t> bytes = hand_payload(sample);
@@ -343,7 +342,7 @@ TEST_CASE("WRIST_SAMPLE round-trips", "[remote_device_bridge][unit]")
     sample.sample.pose = make_pose(0.3f);
 
     const std::vector<uint8_t> bytes = protocol::encode_wrist_sample(sample);
-    REQUIRE(bytes.size() == kWristSamplePayloadSize);
+    REQUIRE(bytes.size() == protocol::kWristSamplePayloadSize);
     REQUIRE(bytes[kWristHandOffset] == 1); // 0 = left, 1 = right, as in OPEN_HAND
     const protocol::WristSample decoded = protocol::decode_wrist_sample(bytes);
     REQUIRE(decoded.sample_time_local_common_clock_ns == -5);

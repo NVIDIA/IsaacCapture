@@ -67,11 +67,14 @@ struct Pong
 constexpr size_t kPoseSize = 7 * sizeof(float);
 constexpr size_t kJointSize = sizeof(uint64_t) + kPoseSize + sizeof(float);
 constexpr size_t kHandSamplePayloadSize = sizeof(int64_t) + XR_HAND_JOINT_COUNT_EXT * kJointSize;
+//! WRIST_SAMPLE payload: sample time i64, hand u8, valid u8, tracked u8, pose.
+constexpr size_t kWristSamplePayloadSize = sizeof(int64_t) + 3 * sizeof(uint8_t) + kPoseSize;
 //! SCHEMA_SAMPLE payload before the schema bytes: two sample times (i64) and the byte count (u32).
 constexpr size_t kSchemaSampleFixedSize = 2 * sizeof(int64_t) + sizeof(uint32_t);
 
 static_assert(kJointSize == 40);
 static_assert(kHandSamplePayloadSize == 1048);
+static_assert(kWristSamplePayloadSize == 39);
 static_assert(kSchemaSampleFixedSize == 20);
 
 //! One hand's joints, as IHandTrackingPushChannel::push receives them.
