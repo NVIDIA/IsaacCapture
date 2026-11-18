@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <remote_plugin_session/protocol_frame.hpp>
 #include <remote_plugin_session/protocol_payloads.hpp>
@@ -204,10 +205,12 @@ private:
 class BlockingTransport final : public ITransport
 {
 public:
-    BlockingTransport()
+    //! `ack_version` is the protocol version in the HELLO_ACK header, to stand in for a bridge of another version.
+    explicit BlockingTransport(uint8_t ack_version = protocol::kProtocolVersion)
     {
         m_inbox.push_back(protocol::encode_frame(protocol::FrameType::HelloAck, protocol::kSessionChannelId,
                                                  protocol::encode_hello_ack(protocol::HelloAck{ true, "" })));
+        m_inbox.back()[protocol::kVersionOffset] = ack_version;
         protocol::stamp_header(m_inbox.back(), 0, core::os_monotonic_now_ns());
     }
 
@@ -374,6 +377,12 @@ TEST_CASE("RemotePluginSession fails fast when the bridge refuses or is absent",
         {
             REQUIRE(std::string(e.what()).find("no OpenXR runtime") != std::string::npos);
         }
+    }
+    SECTION("a bridge on protocol version 0 is named in the error")
+    {
+        REQUIRE_THROWS_WITH(RemotePluginSession(std::make_unique<BlockingTransport>(0), "test_app", {}),
+                            Catch::Matchers::ContainsSubstring("undecodable HELLO_ACK: protocol: peer speaks protocol "
+                                                               "version 0, this build speaks version 1"));
     }
     SECTION("nothing listening throws")
     {

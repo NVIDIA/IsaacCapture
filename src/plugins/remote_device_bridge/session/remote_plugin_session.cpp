@@ -99,7 +99,16 @@ public:
                                          "RemotePluginSession: timed out waiting for HELLO_ACK" :
                                          "RemotePluginSession: connection lost while waiting for HELLO_ACK");
         }
-        const protocol::Frame frame = protocol::split_frame(std::move(bytes));
+        protocol::Frame frame;
+        try
+        {
+            frame = protocol::split_frame(std::move(bytes));
+        }
+        catch (const protocol::DecodeError& e)
+        {
+            // A bridge on another protocol version lands here, with both versions in the reason.
+            throw std::runtime_error(std::string("RemotePluginSession: undecodable HELLO_ACK: ") + e.what());
+        }
         if (frame.header.type != protocol::FrameType::HelloAck)
         {
             throw std::runtime_error("RemotePluginSession: expected HELLO_ACK, received frame type " +
