@@ -128,6 +128,9 @@ only if the marker still equals the notified generation; otherwise it drops it, 
 5 s per stream) and counts a slot overrun in the `[stats]` line. The same check before the copy only saves work. A
 publisher that does not provide write generations is refused at connect time.
 
-CUDA's memory model does not specify what a read that races a write observes, so the check relies on the race only
-changing the bridge's private copy, which it discards. See `camera_streamer/ipc_protocol/README.md` for the ordering
-contract and what is and is not guaranteed.
+This is interim protection, not a documented guarantee. CUDA's memory model makes a read that races a write undefined
+behavior, and the check relies on the race only changing the bridge's private copy, which it discards. It makes every
+detected overlap visible and narrows the window, but a picture that passed it is very likely intact rather than proven
+intact. The proper fix is for the receiver to exclude overlapping access (short reader reservations it honours), planned
+as follow-up work that would replace this check. See `camera_streamer/ipc_protocol/README.md` for the ordering
+contract.
