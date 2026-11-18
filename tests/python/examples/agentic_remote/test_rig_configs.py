@@ -16,6 +16,7 @@ import itertools
 import math
 import re
 import sys
+import threading
 import time
 import types
 from collections.abc import Callable, Iterator, Sequence
@@ -30,7 +31,10 @@ from isaaccapture_examples.agentic_remote.human import logic as human_logic
 from isaaccapture_examples.agentic_remote.human.ik import Solver
 from isaaccapture_examples.agentic_remote.link_service import __main__ as service_main
 from isaaccapture_examples.agentic_remote.link_service import config as service_config
-from isaaccapture_examples.agentic_remote.protocol.messages import HumanSetpoint
+from isaaccapture_examples.agentic_remote.protocol.messages import (
+    GraspRegion,
+    HumanSetpoint,
+)
 from isaaccapture_examples.agentic_remote.robot_app.app import (
     LOW_TIP,
     OUTSIDE_HUMAN_LIMITS,
@@ -60,6 +64,7 @@ from repo_paths import repo_root
 import test_apai_backend as rs
 from conftest import AppHarness, basic_checkers, import_experiment
 from test_takeover import (
+    MOTION_WORKER,
     ask_takeover,
     drives,
     feed,
@@ -611,10 +616,14 @@ class ProgramHand:
 
     Each call is one pass on the app's clock. Before the squeeze run() makes
     the passes, one period apart; from the squeeze on the hand is asked after
-    every setpoint the arm is sent, in step with the human drive.
+    every setpoint the arm is sent, in step with the human drive. A paced
+    hand makes one pass in every period of a human drive instead, also while
+    the drive sends nothing, and its script is run with passes().
     """
 
-    def __init__(self, h: AppHarness, rows: Sequence[dict[str, Any]]) -> None:
+    def __init__(
+        self, h: AppHarness, rows: Sequence[dict[str, Any]], paced: bool = False
+    ) -> None:
         pytest.importorskip("isaaccapture.retargeters")
         from isaaccapture_examples.agentic_remote.human import __main__ as program
         from isaaccapture_examples.agentic_remote.human.feed import ScriptFeed
@@ -633,7 +642,10 @@ class ProgramHand:
         self.logic = HumanLogic(self.graph, self.solver, self.settings, "teleop")
         self.sent: list[HumanSetpoint] = []  # the HUMAN_SETPOINTs it made
         self.on_pass: Callable[[], None] | None = None  # called before each pass
-        keep_human_fed(h, self)
+        if paced:
+            self._pace()
+        else:
+            keep_human_fed(h, self)
 
     def __call__(self) -> HumanSetpoint | None:
         """One pass: its HUMAN_SETPOINT; None on a pass that makes none."""
@@ -655,6 +667,40 @@ class ProgramHand:
             else:
                 h.client.send(message)  # right B's STOP, ahead of the setpoint
         return made
+
+    def _pace(self) -> None:
+        """One pass whenever the motion worker has slept through a drive's period."""
+        h, sleep = self.h, self.h.clock.sleep
+
+        def paced(seconds: float) -> None:
+            sleep(seconds)
+            worker = threading.current_thread().name == MOTION_WORKER
+            if worker and h.app._human_drive.progress() is not None:
+                made = self()
+                if made is not None:
+                    feed(h, made)
+
+        h.clock.sleep = paced
+
+    def passes(self, seconds: float) -> None:
+        """A paced hand's script for this long; each human drive runs to its end."""
+        h = self.h
+        end = h.clock.monotonic() + seconds
+        while h.clock.monotonic() < end:
+            h.clock.advance(h.config.executor.period_s)
+            made = self()
+            if made is not None:
+                feed(h, made)
+            if made is not None and made.engaged:
+                h.idle()
+
+    def notes(self) -> list[str]:
+        """Each note it sent, once per stretch of passes that said it."""
+        said: list[str] = []
+        for made in self.sent:
+            if not said or said[-1] != made.note:
+                said.append(made.note)
+        return said
 
     def _pass(self) -> None:
         """One pass a period after the last; the app has taken what it made."""
@@ -920,7 +966,14 @@ def person_rig(request, robot_rig, clock, monkeypatch, tmp_path) -> Iterator[Per
     # Human driving ships switched off in the rig file: on here, in memory only.
     on = dataclasses.replace(robot_rig.human, enabled=True)
     config = dataclasses.replace(robot_rig, human=on)
-    if request.param == "sim":
+    yield from person_rig_on(request.param, config, clock, monkeypatch, tmp_path)
+
+
+def person_rig_on(
+    kind: str, config: RobotAppConfig, clock: FakeClock, monkeypatch, tmp_path
+) -> Iterator[PersonRig]:
+    """person_rig with this configuration: "sim" or "apai", as its two params."""
+    if kind == "sim":
         rest_q = list(config.rest.rest_q)
         arm = SimArm(n_joints=config.n_joints, clock=clock, q0=rest_q)
         h = AppHarness(config, arm, basic_checkers(config, clock), clock)
@@ -2099,6 +2152,358 @@ def test_the_largest_jump_at_a_squeeze_moves_the_gripper_tip_by_centimetres(
         "gripper tip in the ready pose, up to 9 cm with the arm reaching out, "
         "taken in 0.08 s"
     ) in comment
+
+
+# A settled arm under the human program, on the rig files. The agent's last
+# grasp region is the column its last grasp was allowed to go down in; a
+# gripper tip inside it, or under the table clearance, is low. The Thor keeps
+# the highest tip it measured in a human drive of this owner. An arm that has
+# come to rest more than 1 mm under that has settled: the Thor's drive then
+# waits, sending nothing, until the joint target's tip is back within 1 mm of
+# the highest. The human program takes a drive to wait once a ROBOT_STATE has
+# shown it for 0.15 s with the engagement's joint target and no setpoint. Its
+# joint target then goes toward the hand's pose, no further than the Thor
+# reaches from the measured arm in one step: the Thor's first setpoint is that
+# joint target.
+
+# Poses of the rebot_rs arm model with a low gripper tip: the rig's, the arm
+# stretched forward, and the arm folded with the tip near the base. tip_at()
+# moves joint index 1 for the height a test names.
+LOW_POSES = {
+    "rig": TIP_LOW,
+    "reaching": [0.0, 1.895, 1.0, 0.0, 0.0, 0.0],
+    "folded": [0.0, 1.385, 0.2, 0.0, 1.0, 0.0],
+}
+# The farthest a setpoint moves the gripper tip under the hand's speed limit,
+# m: retarget.max_linear_velocity for one setpoint period.
+TIP_STEP_M = TIP_SPEED * 0.02
+RAISED_M = 0.03  # how far the hand is raised, straight up
+_RIG_SOLVER: list[Solver] = []
+
+
+def tip_of(q: Sequence[float]) -> np.ndarray:
+    """Where the arm model of configs/human_rebot.yaml has the gripper tip at q, m."""
+    if not _RIG_SOLVER:
+        settings = yaml.safe_load((CONFIGS / "human_rebot.yaml").read_text())
+        _RIG_SOLVER.append(Solver.from_apai(settings["ik"]["apai_arm"]))
+    return _RIG_SOLVER[0].fk([float(value) for value in q])[:3, 3]
+
+
+def tip_at(pose: Sequence[float], z: float) -> list[float]:
+    """pose with joint index 1 moved so that the gripper tip is z over the table, m."""
+
+    def moved(by: float) -> list[float]:
+        return [pose[0], pose[1] + by, *pose[2:]]
+
+    low, high = -0.45, 0.15  # more of that joint lowers the tip
+    for _ in range(60):
+        middle = 0.5 * (low + high)
+        if tip_of(moved(middle))[2] > z:
+            low = middle
+        else:
+            high = middle
+    found = moved(0.5 * (low + high))
+    assert tip_of(found)[2] == pytest.approx(z, abs=1e-7)
+    return found
+
+
+class Squeezed(NamedTuple):
+    """What a squeeze did on an arm that had come to rest."""
+
+    hand: ProgramHand
+    arm: list[float]  # where the arm was at the squeeze
+    got: np.ndarray  # the joint targets the motors got from the squeeze on
+    ended: list[Any]  # how its human drives ended
+
+
+def squeeze_settled(
+    rig: PersonRig,
+    top: Sequence[float],
+    arm: Sequence[float],
+    move: Sequence[float],
+    seconds: float,
+    region: bool = False,
+) -> Squeezed:
+    """A still squeeze at top, the arm then at rest at `arm`, and a second squeeze.
+
+    The first makes the Thor measure the tip at top, the highest of this
+    owner. From 0.3 s after the second the hand goes `move`, m in the stage
+    space, in `seconds`; the grip is released after 4 s. region: the last
+    grasp region, put on file in memory, is a column around the tip.
+    """
+    h, place, sent = rig
+    place(top)
+    if region:
+        x, y, _ = tip_of(top)
+        h.app._grasp_region = GraspRegion((float(x), float(y)), 0.05, 0.0, None)
+    take_over(h)
+    ended = drives(h)
+    rows = [
+        {"t": 0.0, "pos": list(HAND_AT), "quat": [0, 0, 0, 1]},
+        {"t": 0.1, "squeeze": 1.0},
+        {"t": 1.2, "squeeze": 0.0},
+        {"t": 1.8, "squeeze": 1.0},
+        {"t": 2.1},
+        {"t": 2.1 + seconds, "pos": [at + by for at, by in zip(HAND_AT, move)]},
+        {"t": 5.8, "squeeze": 0.0},
+    ]
+    hand = ProgramHand(h, rows, paced=True)
+    hand.passes(1.5)
+    assert [end.status for end in ended] == ["released"]
+    if list(arm) != list(top):
+        place(arm)
+    before = len(sent())
+    hand.passes(5.0)
+    got = np.array(sent()[before:], dtype=float).reshape(-1, len(arm))
+    return Squeezed(hand, list(arm), got, ended[1:])
+
+
+def started_with_one_step(
+    rig: PersonRig, squeezed: Squeezed, way: Sequence[float]
+) -> bool:
+    """Whether the arm started; what such a squeeze shows either way.
+
+    No drive ends refused and APAI's human checker has no violation. An arm
+    that starts does so with one step of the joint target: no joint more
+    than 0.9 of the Thor's clamp from the arm, the tip within TIP_STEP_M
+    and along `way`, the hand's in the stage space. One that does not gets
+    no setpoint, and the engagement ends as one the arm did not follow.
+    """
+    h = rig.h
+    hand, arm, got, ended = squeezed
+    assert h.checkers.human.harness.violations == []
+    if not len(got):
+        assert [(end.status, end.sent) for end in ended] == [("disengaged", 0)]
+        assert hand.ended() == {"solution_ahead": 1}
+        assert ended[0].reason.endswith("the arm did not follow the squeeze within 1 s")
+        return False
+    assert [(end.status, end.sent) for end in ended] == [("released", len(got))]
+    assert hand.ended() == {}
+    speed, period = h.config.limits.human.max_joint_speed, h.config.executor.period_s
+    own = JOINT_SHARE * SPEED_MARGIN * speed * period
+    joints = np.abs(np.diff(np.array([arm, *got]), axis=0)).max(axis=1)
+    assert joints.max() <= own + 1e-9 and state_now(h).health["clamped"] == 0
+    tips = np.diff(np.array([tip_of(q) for q in (arm, *got)]), axis=0)
+    first = tips[0]
+    assert 2e-4 < np.linalg.norm(first) <= TIP_STEP_M + 1e-9
+    along = tip_way(way) / np.linalg.norm(way)
+    assert first @ along > 0.99 * np.linalg.norm(first)  # within 8 degrees
+    assert np.linalg.norm(tips, axis=1).max() <= TIP_STEP_M + 2e-4
+    return True
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+@pytest.mark.parametrize("seconds", [3.0, 0.3], ids=["in 3 s", "in 0.3 s"])
+@pytest.mark.parametrize("under_mm", [2.8, 5.0, 7.2, 8.6])
+@pytest.mark.parametrize("pose", ["rig", "reaching"])
+def test_a_settled_arm_inside_the_last_grasp_region_starts_with_one_step_or_not_at_all(
+    person_rig, pose, under_mm, seconds
+):
+    # The tip 4.5 cm over the table, above the clearance: it is low for the
+    # agent's last grasp region alone, and the Thor names no such region.
+    # The joint target of the human program used to run up to 0.04 rad
+    # ahead of the arm there, and the Thor's first setpoint, cut by its
+    # clamp, moved the tip up to 12 mm and ended above the joint target,
+    # which then ended the drive.
+    top = tip_at(LOW_POSES[pose], 0.045)
+    arm = tip_at(LOW_POSES[pose], 0.045 - under_mm / 1000.0)
+    up = (0.0, RAISED_M, 0.0)
+    squeezed = squeeze_settled(person_rig, top, arm, up, seconds, region=True)
+    lifted = started_with_one_step(person_rig, squeezed, HAND_UP)
+    # One step of the joint target lifts the tip about 3 mm in these poses,
+    # and the Thor starts within 1 mm of the highest tip: an arm 2.8 mm
+    # under it is lifted out, one 5.0, 7.2 or 8.6 mm under it gets no
+    # setpoint.
+    assert lifted == (under_mm < 4.0)
+    assert any(human_logic.NOTE_RAISE in note for note in squeezed.hand.notes())
+    did = "nothing was sent"
+    if lifted:
+        rise = tip_of(squeezed.got[-1])[2] - tip_of(arm)[2]
+        assert rise == pytest.approx(RAISED_M, abs=1e-3)
+        first = np.linalg.norm(tip_of(squeezed.got[0]) - tip_of(arm))
+        did = f"lifted, the first setpoint moved the tip {1000 * first:.2f} mm"
+    assert person_rig.h.arm.torque_on()
+    assert person_rig.h.app.snapshot().owner is Owner.HUMAN
+    print(f"\n{pose}, {under_mm} mm under, hand up in {seconds:g} s: {did}")
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+@pytest.mark.parametrize("seconds", [3.0, 0.3], ids=["in 3 s", "in 0.3 s"])
+@pytest.mark.parametrize(
+    ("pose", "top_mm", "lifted"),
+    [("rig", 25, False), ("reaching", 25, False), ("reaching", 21, True)],
+)
+def test_a_highest_tip_above_the_clearance_and_the_arm_under_it_start_the_same_way(
+    person_rig, pose, top_mm, lifted, seconds
+):
+    # The highest tip above the table clearance, inside the last grasp
+    # region, and the arm at rest at 17 mm, under the clearance. The joint
+    # target's tip crosses the height the Thor names on its way up: the
+    # one-step bound holds on both sides of it.
+    top = tip_at(LOW_POSES[pose], top_mm / 1000.0)
+    arm = tip_at(LOW_POSES[pose], 0.017)
+    up = (0.0, RAISED_M, 0.0)
+    squeezed = squeeze_settled(person_rig, top, arm, up, seconds, region=True)
+    assert started_with_one_step(person_rig, squeezed, HAND_UP) == lifted
+    said = squeezed.hand.notes()
+    assert any(human_logic.NOTE_RAISE_TABLE in note for note in said)
+    did = "nothing was sent"
+    if lifted:
+        # Under the clearance APAI's human checker took every step: each rose.
+        heights = [tip_of(q)[2] for q in (arm, *squeezed.got)]
+        low = [b - a for a, b in zip(heights, heights[1:]) if a < RIG_TIP_FLOOR]
+        assert low and min(low) > 0.0
+        did = f"lifted, the first setpoint raised the tip {1000 * low[0]:.2f} mm"
+    print(f"\n{pose}, highest {top_mm} mm, arm at 17 mm, {seconds:g} s: {did}")
+
+
+@pytest.fixture
+def slower_rig(request, robot_rig, clock, monkeypatch, tmp_path) -> Iterator[PersonRig]:
+    """person_rig on APAI's driver, limits.human.max_joint_speed replaced in memory."""
+    on = dataclasses.replace(robot_rig.human, enabled=True)
+    human = dataclasses.replace(robot_rig.limits.human, max_joint_speed=request.param)
+    limits = dataclasses.replace(robot_rig.limits, human=human)
+    config = dataclasses.replace(robot_rig, human=on, limits=limits)
+    yield from person_rig_on("apai", config, clock, monkeypatch, tmp_path)
+
+
+@apai
+@pytest.mark.parametrize(
+    ("slower_rig", "under_mm", "lifted"),
+    [
+        (0.8, 3.6, True),
+        (0.8, 4.0, False),
+        (0.4, 2.4, True),
+        (0.4, 2.8, False),
+        (0.2, 1.6, True),
+        (0.2, 2.0, False),
+    ],
+    indirect=["slower_rig"],
+)
+def test_the_depth_a_squeeze_lifts_shrinks_with_the_human_joint_speed_limit(
+    slower_rig, under_mm, lifted
+):
+    # The rig's low pose, the tip 11 mm over the table, the hand raised 3 cm
+    # in 3 s. A squeeze lifts an arm that has settled no deeper than 1 mm
+    # plus what one step of the joint target raises the tip, and that step
+    # is 0.9 of the Thor's clamp of limits.human.max_joint_speed: 0.8 rad/s
+    # in the rig file, less for a careful session.
+    h = slower_rig.h
+    named = h.client.welcome.human_max_joint_speed
+    assert named == h.config.limits.human.max_joint_speed
+    top = tip_at(TIP_LOW, 0.011)
+    arm = tip_at(TIP_LOW, 0.011 - under_mm / 1000.0)
+    squeezed = squeeze_settled(slower_rig, top, arm, (0.0, RAISED_M, 0.0), 3.0)
+    assert started_with_one_step(slower_rig, squeezed, HAND_UP) == lifted
+    if lifted:
+        # Under the clearance every setpoint raised the tip, up to 3 cm.
+        heights = [tip_of(q)[2] for q in (arm, *squeezed.got)]
+        assert all(b > a for a, b in zip(heights, heights[1:]) if a < RIG_TIP_FLOOR)
+        assert heights[-1] - heights[0] == pytest.approx(RAISED_M, abs=1e-3)
+
+
+def slow_start(h: AppHarness, extra_s: float) -> None:
+    """From here on the start read of a human drive lasts extra_s longer."""
+    drive = h.app._human_drive
+    arm, period = drive._arm, h.config.executor.period_s
+
+    def read_all() -> Any:
+        progress = drive.progress()
+        worker = threading.current_thread().name == MOTION_WORKER
+        if worker and progress is not None and progress[1] == 0:
+            for _ in range(round(extra_s / period)):
+                h.clock.sleep(period)
+        return arm.read_all()
+
+    class Slow:
+        def __getattr__(self, name: str) -> Any:
+            return read_all if name == "read_all" else getattr(arm, name)
+
+    drive._arm = Slow()
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+@pytest.mark.parametrize("extra_s", [0.2, 0.3])
+@pytest.mark.parametrize(
+    "way",
+    [HAND_UP, (0.0, -1.0, 0.0), HAND_BACK, HAND_LEFT],
+    ids=["up", "down", "back", "left"],
+)
+def test_a_slow_start_of_the_thors_drive_costs_one_ordinary_step(
+    person_rig, way, extra_s
+):
+    # A squeeze at the raised pose: the gripper is not low and the Thor's
+    # drive waits for no lift. Its start read is made to last 0.2 or 0.3 s
+    # longer, while the hand goes 10 cm at 20 cm a second. The human
+    # program cannot tell that from a wait and says so in its note. What it
+    # costs is one step of the joint target, on the hand's way: the first
+    # setpoint used to be a full step of the clamp on every joint that was
+    # behind, up to 12 mm at the tip, and down under a hand that went level.
+    h, _, sent = person_rig
+    person_rig.place(READY)
+    take_over(h)
+    ended = drives(h)
+    slow_start(h, extra_s)
+    metres = 0.10
+    hand = ProgramHand(h, hand_rows(way, metres, HAND_SPEED, hold_s=1.0), paced=True)
+    hand.passes(2.5)
+    got = np.array(sent())
+    assert [(end.status, end.sent) for end in ended] == [("released", len(got))]
+    assert hand.ended() == {} and h.heard("human") == []
+    assert any(human_logic.NOTE_RAISE in note for note in hand.notes())
+    squeezed = Squeezed(hand, list(READY), got, ended)
+    assert started_with_one_step(person_rig, squeezed, way)
+    # The first setpoint is the joint target, one step from the arm.
+    own = JOINT_SHARE * clamp_of(h)
+    assert np.abs(got[0] - np.array(READY)).max() == pytest.approx(own, abs=1e-9)
+    # Nothing went down that the hand did not ask for, and the arm stands
+    # where the hand stopped.
+    heights = np.array([tip_of(q)[2] for q in got]) - tip_of(READY)[2]
+    asked = min(0.0, metres * way[1])
+    assert heights.min() >= asked - 5e-4
+    moved = tip_of(got[-1]) - tip_of(READY)
+    np.testing.assert_allclose(moved, metres * tip_way(way), atol=0.009)
+    first = np.linalg.norm(tip_of(got[0]) - tip_of(READY))
+    step = 1000 * first
+    print(f"\nhand {way}, start read {extra_s} s longer: first setpoint {step:.2f} mm")
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+@pytest.mark.parametrize("under_mm", [0.0, 1.01], ids=["not settled", "settled"])
+def test_a_level_hand_moves_nothing_under_the_clearance_in_a_folded_pose(
+    person_rig, under_mm
+):
+    # The arm folded, its tip 11 mm over the table and near the base. A
+    # solve leaves up to ik.tol of its pose, 0.1 mm, and in this pose it
+    # leaves it upward: a hand that went 5 cm toward the person at one
+    # height used to slide the tip 4 cm along the table, each step rising
+    # 0.02 mm. Under the height the Thor names the joint target now moves
+    # only where the hand's pose is above its tip by more than 2 of ik.tol.
+    # Not settled, the Thor's drive goes at once and holds the arm where it
+    # is; settled 1.01 mm, it waits for 0.01 mm of rise, which a level hand
+    # does not give: it sends nothing.
+    top = tip_at(LOW_POSES["folded"], 0.011)
+    arm = tip_at(LOW_POSES["folded"], 0.011 - under_mm / 1000.0)
+    toward = tuple(0.05 * step for step in HAND_BACK)
+    squeezed = squeeze_settled(person_rig, top, arm, toward, 1.0)
+    hand, _, got, ended = squeezed
+    assert person_rig.h.checkers.human.harness.violations == []
+    assert human_logic.LIFT_ASKED_TOLS * hand.settings.ik.tol == 2e-4
+    if under_mm:
+        assert len(got) == 0 and hand.ended() == {"solution_ahead": 1}
+        assert human_logic.NOTE_RAISE_TABLE in hand.notes()
+    else:
+        assert [(end.status, end.sent) for end in ended] == [("released", len(got))]
+        assert len(got) > 100 and hand.ended() == {}
+        assert np.abs(got - np.array(arm)).max() < 1e-9
 
 
 # agent_rebot.yaml

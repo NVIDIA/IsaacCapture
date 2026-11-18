@@ -30,8 +30,8 @@ WELCOME. An engagement's first joint target is the home, and it stands until a
 ROBOT_STATE shows the robot app's drive: one that follows it, or one that has
 had this engagement's joint target for LIFT_AFTER_S and has sent no setpoint.
 Such a drive waits for a low gripper tip to be lifted: the joint target then
-follows the hand, within ik.max_ahead_rad less LIFT_SLACK_RAD of the measured
-arm. From there on
+follows the hand no further than the robot app reaches from the measured arm
+in one step, so that its first setpoint is that joint target. From there on
 each pass solves for a pose at most one pass of the hand speed limits from
 the pose of the last joint target sent, toward the graph's target, and moves
 the joint target toward that solution by at most JOINT_SPEED_SHARE of what
@@ -155,6 +155,9 @@ LIFT_SLACK_RAD = 0.005
 # way to a solution is tried in these shares, and a way of more steps of the
 # robot app than LIFT_STEPS_MOST is not taken.
 LIFT_STEP_M = 2e-5
+# The hand's pose counts as above the last joint target's tip from this many
+# times ik.tol, what a solve may leave of its pose.
+LIFT_ASKED_TOLS = 2.0
 LIFT_SHARES = (1.0, 0.5, 0.25, 0.125)
 LIFT_STEPS_MOST = 64
 # A drive of the robot app that has this engagement's joint target and has
@@ -1092,6 +1095,7 @@ class HumanLogic:
         # longer than its start read takes and has sent nothing: it waits
         # for a low gripper tip to be lifted.
         lifting = waits and p.now_mono - self._lift_since > LIFT_AFTER_S
+        rise = 0.0  # how far the hand's pose is above the last joint target's tip
         if self._q_sent is not None and not self._followed and not lifting:
             # The first target stands: the robot app measures the first step
             # of its drive from the arm, and refuses a target that has moved
@@ -1100,18 +1104,17 @@ class HumanLogic:
         else:
             goal = np.array(step.ee_target, dtype=np.float64)
             goal[:3, 3] = np.clip(goal[:3, 3], low, high)
+            rise = float(goal[2, 3] - tip[2])
             q = self._stepped(goal, at, seed, since, p)
             if q is None:
                 return None
         reference, moves = _reference(p.state, p.human, p.measured)
         held = False
+        under = p.floor is not None and float(tip[2]) < p.floor
         if lifting:
-            # The robot app's first step is measured from the arm: the joint
-            # target stays where that step is taken.
-            share = _share_within(seed, q, reference, ik.max_ahead_rad - LIFT_SLACK_RAD)
-            q = tuple(a + share * (b - a) for a, b in zip(seed, q))
-        if p.floor is not None and float(tip[2]) < p.floor:
-            q = self._lifted(seed, q, reference, lifting or moves, p)
+            q = self._lifted_off(seed, q, reference, under, rise, p)
+        elif under:
+            q = self._lifted(seed, q, reference, moves, rise, p)
         if lifting:
             top = float(self._solver.fk(q)[2, 3])
             if top > self._lift_top + LIFT_RISE_M:
@@ -1292,24 +1295,26 @@ class HumanLogic:
         q: tuple[float, ...],
         reference: tuple[float, ...],
         known: bool,
+        rise: float,
         p: _Pass,
     ) -> tuple[float, ...]:
         """The joint target toward q that only lifts a low gripper tip; else seed.
 
         For a last joint target whose tip is under the height the robot app
-        names. Its checker takes a step there only when the tip rises with
-        it, so the joint target moves only where every step of the robot app
-        toward it does. reference is where those steps begin: the measured
-        arm while its drive waits, its own joint target once it drives.
-        Once it drives the joint target waits for the robot app's to be the
-        last one sent, so that each of its steps ends on a joint target and
-        none is cut by its speed clamp. known False: no ROBOT_STATE of that
-        drive yet; the target stands.
+        names, once the robot app's drive has sent a setpoint. Its checker
+        takes a step there only when the tip rises with it, so the joint
+        target moves only where the hand's pose is above its tip by more
+        than a solve may leave (rise over LIFT_ASKED_TOLS of ik.tol) and
+        every step of the robot app toward it lifts the tip. The joint
+        target waits for the robot app's own, reference, to be the last one
+        sent, so that each of its steps ends on a joint target and none is
+        cut by its speed clamp. known False: no ROBOT_STATE of that drive
+        yet; the target stands.
         """
-        if q == seed or not known:
+        if q == seed or not known or not self._asked_up(rise):
             return seed
         if not (p.human.get("driving") and p.state.move_index > 0):
-            return self._lifted_off(seed, q, reference, p)
+            return seed
         if max(abs(a - b) for a, b in zip(seed, reference)) > _EPS:
             return seed
         for share in LIFT_SHARES:
@@ -1323,29 +1328,52 @@ class HumanLogic:
         seed: tuple[float, ...],
         q: tuple[float, ...],
         arm: tuple[float, ...],
+        under: bool,
+        rise: float,
         p: _Pass,
     ) -> tuple[float, ...]:
-        """The joint target while the robot app's drive waits under that height.
+        """The joint target while the robot app's drive has sent no setpoint.
 
-        q, this pass's step toward the hand's pose, when its tip is higher
-        than seed's, the robot app's way to it from the measured arm rises
-        with every step and its first step keeps the tip inside the hand's
-        speed limit; else seed. The arm then starts on the hand's own way,
-        no further than the hand has asked, and a hand that does not rise
-        moves nothing.
+        The longest part of this pass's step from seed toward q that the
+        robot app reaches from the measured arm in one step: no joint
+        further from the arm than one step of the joint target, and the tip
+        no further than the hand's speed limit allows in one setpoint
+        period. The robot app's first setpoint is then that joint target: on
+        the hand's way, not cut by its speed clamp, no faster than the hand
+        may be. under, the last joint target's tip is under the height the
+        robot app names: only where the hand's pose is above that tip and
+        the tip rises, from the last joint target and from the arm. seed
+        when no part does.
         """
-        height = float(self._solver.fk(seed)[2, 3])
-        if not float(self._solver.fk(q)[2, 3]) > height + LIFT_STEP_M:
+        if q == seed or (under and not self._asked_up(rise)):
             return seed
-        if not self._rises(arm, q, p):
-            return seed
-        most = p.thor_speed * p.thor_period_s
-        first = [a + max(-most, min(most, b - a)) for a, b in zip(arm, q)]
-        way = self._solver.fk(first)[:3, 3] - self._solver.fk(arm)[:3, 3]
+        step = JOINT_SPEED_SHARE * p.thor_speed * p.thor_period_s
+        room = min(step, self._settings.ik.max_ahead_rad - LIFT_SLACK_RAD)
         limit = self._settings.retarget.max_linear_velocity * p.thor_period_s
-        if float(np.linalg.norm(way)) > limit:
-            return seed
-        return q
+        from_arm = self._solver.fk(arm)[:3, 3]
+        height = float(self._solver.fk(seed)[2, 3])
+        share = _share_within(seed, q, arm, room)
+        for _ in LIFT_SHARES:
+            if share <= 0.0:
+                break
+            part = tuple(a + share * (b - a) for a, b in zip(seed, q))
+            tip = self._solver.fk(part)[:3, 3]
+            fits = float(np.linalg.norm(tip - from_arm)) <= limit
+            if fits and under:
+                rises = float(tip[2]) > height + LIFT_STEP_M
+                fits = rises and self._rises(arm, part, p)
+            if fits:
+                return part
+            share *= 0.5
+        return seed
+
+    def _asked_up(self, rise: float) -> bool:
+        """Whether the hand's pose is above the last joint target's tip.
+
+        By more than a solve may leave of its pose: what a solve leaves
+        upward is not a rise the hand asked for.
+        """
+        return rise > LIFT_ASKED_TOLS * self._settings.ik.tol
 
     def _rises(self, start: Sequence[float], target: Sequence[float], p: _Pass) -> bool:
         """Whether the tip rises with every step of the robot app from start to target.

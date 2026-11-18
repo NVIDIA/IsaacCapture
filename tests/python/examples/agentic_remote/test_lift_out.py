@@ -903,10 +903,11 @@ def test_the_human_program_lifts_a_low_gripper_from_where_the_arm_settled(
     # A first squeeze with a still hand: the arm settles 3 mm under its
     # target. On every squeeze after it the Thor's drive sends nothing until
     # the joint target's tip is back at the highest it measured; the human
-    # program's joint target follows the hand meanwhile where the hand
-    # rises, so a hand that rises lifts the gripper out and one that goes
-    # sideways moves nothing. At the rig's 0.8 rad/s, where one setpoint
-    # lifts the tip that far.
+    # program's joint target meanwhile goes toward the hand's pose where
+    # that is above the tip, one step of the Thor from the measured arm, so
+    # a hand that rises lifts the gripper out and one that goes sideways
+    # moves nothing. At the rig's 0.8 rad/s, where one such step lifts the
+    # tip that far.
     from test_takeover import drives
 
     h = make_app(person_config(profile, max_joint_speed=0.8))

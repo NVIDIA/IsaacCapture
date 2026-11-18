@@ -2753,7 +2753,8 @@ def test_a_robot_app_that_goes_on_reporting_its_drive_is_named_after_a_second():
 # until the joint target's tip is back at the highest it measured. A first
 # joint target that stood until the Thor followed it would never get there:
 # once the Thor's drive has had the engagement's joint target for longer than
-# its start read takes and has sent nothing, the joint target follows the hand.
+# its start read takes and has sent nothing, the joint target goes toward the
+# hand's pose, one step of the Thor from the measured arm and no further.
 
 
 def waiting(first: HumanSetpoint, **state: Any) -> RobotState:
@@ -2766,28 +2767,28 @@ def test_a_drive_that_waits_for_a_lift_gets_a_joint_target_that_follows_the_hand
     assert logic_module.LIFT_SLACK_RAD == 0.005
     bench = Bench(retarget=FAST)
     first = bench.engage(follow=False)
-    bench.state = waiting(first)
+    bench.state = waiting(first, q=list(first.q))  # the arm is measured there
     bench.hand = bench.hand + np.array([0.0, 0.0, 0.1])
     # For 0.15 s this may be the drive's start read: the first target stands.
     held = of(bench.run(8, squeeze=1.0), HumanSetpoint)
     assert all(m.q == first.q and NOTE_RAISE not in m.note for m in held)
-    # Then it follows the hand, at the joint speed, up to ik.max_ahead_rad
-    # less 0.005 rad from the measured arm: where the Thor still takes it as
-    # a first step. The note says what the Thor waits for.
-    room = bench.settings.ik.max_ahead_rad - logic_module.LIFT_SLACK_RAD
+    # Then it follows the hand, as far as the Thor reaches from the measured
+    # arm in one step: one step of the joint target, however long the Thor
+    # waits. Its first setpoint is then that joint target, not a step cut by
+    # its speed clamp. The note says what the Thor waits for.
+    room = first.q[2] + JOINT_STEP
     moved = of(bench.run(4, squeeze=1.0), HumanSetpoint)
     rose = [m.q[2] for m in moved]
-    assert rose == pytest.approx(
-        [min(first.q[2] + (k + 1) * JOINT_STEP, room) for k in range(4)]
-    )
-    assert rose[-1] == pytest.approx(room) and all(m.engaged for m in moved)
+    assert rose == pytest.approx([room] * 4) and JOINT_STEP < THOR_STEP
+    assert all(m.engaged for m in moved)
     assert {m.note for m in moved} == {NOTE_RAISE}  # it leaves no room for more
     assert NOTE_RAISE == (
         "raise the hand: the gripper is low and the robot app waits for a lift"
     )
-    # The Thor's drive goes: its first setpoint is on its way to that joint
-    # target, which stands until the Thor's own is within a step of it.
-    on_its_way = [0.0, 0.0, THOR_STEP, 0.0, 0.0, 0.0]
+    # The Thor's drive goes. The joint target stands until the Thor's own
+    # is within a step of it.
+    on_its_way = list(moved[-1].q)
+    on_its_way[2] -= 1.5 * THOR_STEP
     bench.state = following(robot_state(seq=moved[-1].seq, target_q=on_its_way))
     assert setpoint(bench.step(squeeze=1.0)).q == moved[-1].q
     near = list(moved[-1].q)
@@ -2810,7 +2811,7 @@ def test_a_drive_that_waits_for_a_lift_gets_a_joint_target_that_follows_the_hand
     # One that rises late restarts that second.
     bench = Bench(retarget=FAST)
     first = bench.engage(follow=False)
-    bench.state = waiting(first)
+    bench.state = waiting(first, q=list(first.q))
     bench.run(40, squeeze=1.0)
     bench.hand = bench.hand + np.array([0.0, 0.0, 0.1])
     late = of(bench.run(50, squeeze=1.0), HumanSetpoint)
@@ -2831,11 +2832,11 @@ def test_under_the_height_the_robot_app_names_the_joint_target_only_lifts_the_ti
     bench.welcome = dataclasses.replace(bench.welcome, human_tip_floor=0.2)
     first = bench.engage(follow=False)
     assert tip(bench, first)[2] == pytest.approx(0.105)
-    bench.state = waiting(first)
+    bench.state = waiting(first, q=list(first.q))  # the arm is measured there
     # The hand goes up and far to the side. While the Thor's drive waits,
-    # the joint target goes on the hand's own way, a step of the joint
-    # target a pass, up to ik.max_ahead_rad less 0.005 rad from the arm:
-    # every step of the Thor's way to it from the arm lifts the tip.
+    # the joint target goes on the hand's own way, one step of the joint
+    # target from the measured arm and no further: the Thor's first
+    # setpoint is that joint target, and it lifts the tip.
     bench.hand = bench.hand + np.array([0.3, 0.0, 0.2])
     held = of(bench.run(8, squeeze=1.0), HumanSetpoint)
     assert all(m.q == first.q for m in held)
@@ -2844,12 +2845,10 @@ def test_under_the_height_the_robot_app_names_the_joint_target_only_lifts_the_ti
     assert NOTE_RAISE_TABLE == (
         "raise the hand: the gripper is under the table clearance"
     )
-    room = bench.settings.ik.max_ahead_rad - logic_module.LIFT_SLACK_RAD
-    for index, made in enumerate(lifted):
+    for made in lifted:
         assert made.q[1] == first.q[1] and made.q[3:] == first.q[3:]
-        side = min((index + 1) * JOINT_STEP, room)
-        assert made.q[0] == pytest.approx(side)
-        assert made.q[2] - first.q[2] == pytest.approx(side * 2.0 / 3.0)
+        assert made.q[0] == pytest.approx(JOINT_STEP)
+        assert made.q[2] - first.q[2] == pytest.approx(JOINT_STEP * 2.0 / 3.0)
     # The Thor's drive goes. The joint target stands until the Thor's own is
     # the last one sent: then each of the Thor's steps ends on a joint
     # target, and none is cut by its clamp.
@@ -2909,6 +2908,104 @@ def test_under_the_height_the_robot_app_names_the_joint_target_only_lifts_the_ti
     first = bench.engage()
     bench.hand = bench.hand + np.array([0.3, 0.0, 0.0])
     assert bench.drive(5)[-1].q[0] > first.q[0] + 0.1
+
+
+def lifting(bench: Bench, first: HumanSetpoint, passes: int = 3) -> HumanSetpoint:
+    """The last HUMAN_SETPOINT of this many squeezed passes; all are engaged."""
+    made = of(bench.run(passes, squeeze=1.0), HumanSetpoint)
+    assert all(m.engaged for m in made)
+    return made[-1]
+
+
+def test_while_the_drive_waits_the_joint_target_goes_one_step_of_the_robot_app_from_the_arm():
+    up = np.array([0.0, 0.0, 1.0])
+    # A step whose tip would be further from the arm's than the hand's speed
+    # limit allows in one setpoint period is shortened, not given up: the
+    # joint target comes to within an eighth of such a step of that bound.
+    # The stand-in arm's bound is 2 mm, and a pass's step toward the hand's
+    # pose is 2 mm of the tip.
+    bench = Bench()
+    limit = bench.settings.retarget.max_linear_velocity * PASS_S
+    assert limit == pytest.approx(0.002) and logic_module.LIFT_SHARES[-1] == 0.125
+    first = bench.engage(follow=False)
+    bench.state = waiting(first, q=list(first.q))  # the arm is measured there
+    bench.hand = bench.hand + 0.0012 * up
+    bench.run(8, squeeze=1.0)
+    at_hand = lifting(bench, first, 1)
+    assert tip(bench, at_hand)[2] - tip(bench, first)[2] == pytest.approx(0.0012)
+    bench.hand = bench.hand + 0.1 * up
+    risen = tip(bench, lifting(bench, first, 6))[2] - tip(bench, first)[2]
+    assert limit - 0.125 * limit <= risen <= limit + 1e-9
+
+    # No joint goes further from the measured arm than ik.max_ahead_rad less
+    # 0.005 rad either, where a step of the joint target is longer than
+    # that: the joint target stays one the engagement is not ended for.
+    near = dataclasses.replace(IkSettings(), max_ahead_rad=0.02)
+    bench = Bench(retarget=FAST, ik=near)
+    bench.state = robot_state(q=REST_INSIDE)  # no joint on a stop
+    first = bench.engage(follow=False)
+    bench.state = waiting(first, q=list(first.q))
+    bench.hand = bench.hand + 0.1 * up
+    bench.run(8, squeeze=1.0)
+    room = 0.02 - logic_module.LIFT_SLACK_RAD
+    assert room < JOINT_STEP
+    assert lifting(bench, first).q[2] == pytest.approx(first.q[2] + room)
+
+
+def test_under_the_named_height_a_waiting_drives_joint_target_only_rises():
+    up = np.array([0.0, 0.0, 1.0])
+
+    def low_bench() -> tuple[Bench, HumanSetpoint]:
+        bench = Bench(retarget=FAST)
+        bench.welcome = dataclasses.replace(bench.welcome, human_tip_floor=0.2)
+        return bench, bench.engage(follow=False)
+
+    # The hand's pose counts as above the tip from 2 of ik.tol on, 0.2 mm:
+    # what a solve may leave of its pose upward moves nothing.
+    assert logic_module.LIFT_ASKED_TOLS == 2.0
+    bench, first = low_bench()
+    assert bench.settings.ik.tol == 1e-4
+    bench.state = waiting(first, q=list(first.q))  # the arm is measured there
+    bench.hand = bench.hand + 0.00015 * up
+    bench.run(8, squeeze=1.0)
+    assert lifting(bench, first).q == first.q
+    bench.hand = bench.hand + 0.0001 * up
+    assert tip(bench, lifting(bench, first))[2] == pytest.approx(0.10525)
+    # The same once the robot app drives.
+    bench, first = low_bench()
+    bench.state = following(robot_state(q=first.q, target_q=first.q, seq=first.seq))
+    bench.hand = bench.hand + 0.00015 * up
+    assert lifting(bench, first).q == first.q
+    bench.hand = bench.hand + 0.0001 * up
+    assert tip(bench, lifting(bench, first))[2] == pytest.approx(0.10525)
+
+    # A step whose tip is not higher than the last joint target's is not
+    # taken, though it lies above the arm and the hand's pose is higher
+    # still: here a solution 2 mm to the side that comes out 0.8 mm lower.
+    bench, first = low_bench()
+    bench.state = waiting(first, q=list(first.q))
+    bench.hand = bench.hand + 0.1 * up
+    bench.run(8, squeeze=1.0)
+    risen = lifting(bench, first)
+    assert risen.q[2] == pytest.approx(first.q[2] + JOINT_STEP)
+    bench.solver.answer = lambda pose, seed: IkStep(
+        (seed[0] + 0.01, seed[1], seed[2] - 0.004, *seed[3:]), ""
+    )
+    assert lifting(bench, first).q == risen.q
+
+    # Nor is one whose tip is under the measured arm's: the robot app's step
+    # to it from the arm would lower the tip. The robot app waits while the
+    # joint target's tip is up to 1 mm under the measured one; here the arm
+    # reads 0.8 mm above the first joint target.
+    bench, first = low_bench()
+    arm = [*first.q[:2], first.q[2] + 0.004, *first.q[3:]]
+    bench.state = waiting(first, q=arm)
+    bench.hand = bench.hand + 0.0005 * up
+    bench.run(8, squeeze=1.0)
+    assert lifting(bench, first).q == first.q
+    bench.hand = bench.hand + 0.001 * up
+    over = tip(bench, lifting(bench, first))[2] - FakeSolver().fk(arm)[2, 3]
+    assert over == pytest.approx(0.0007)
 
 
 # The table. The robot app names the height under which a person's gripper
