@@ -51,7 +51,7 @@ ui = [
     "imgui[glfw]>=2.0.0",
 ]
 ovxr = [
-    "ovxr==0.1.0.5842",
+    "ovxr==0.2.0.1794933073",
     "cuda-bindings>=13,<14",
 ]
 desktop-mirror = [

@@ -365,8 +365,19 @@ class OvxrFramePump:
                             first_error.add_note(f"OVXR retirement failed: {exc}")
                 finally:
                     if context_retired:
+                        context = self._context
                         self._context = None
-                        self._pending_plan = None
+                        if self._pending_plan is not None:
+                            # Destroy drains frame work, but a plan left by a failed
+                            # live cancellation still owns a detached frame handle.
+                            try:
+                                context.cancel_frame(self._pending_plan)
+                            except BaseException as exc:
+                                first_error.add_note(
+                                    f"Detached frame release failed: {exc}"
+                                )
+                            else:
+                                self._pending_plan = None
         if not context_retired:
             # A pre-call/FFI failure does not prove native consumption. Keep its
             # renderer, Stage and runtime alive; never retry an ambiguous destroy.

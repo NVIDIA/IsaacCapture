@@ -235,7 +235,7 @@ def test_failed_map_cleanup_is_retained_and_prevents_additional_maps():
 
 
 @pytest.mark.parametrize("stream,event", [(0, 7), (5, 0), (1, 7), (0, 0)])
-def test_producer_event_and_stream_are_both_synchronized(stream, event):
+def test_output_readiness_uses_only_the_per_product_event(stream, event):
     from isaaccapture.ovxr_session_manager.gpu_output import _wait_ready
 
     calls = []
@@ -245,9 +245,7 @@ def test_producer_event_and_stream_are_both_synchronized(stream, event):
         cudaStreamSynchronize=lambda value: (calls.append(("stream", value)) or 0,),
     )
     _wait_ready(cuda, SimpleNamespace(stream=stream, wait_event=event))
-    expected = ([("event", event)] if event else []) + (
-        [("stream", 999 if stream == 1 else stream)] if stream else []
-    )
+    expected = [("event", event)] if event else []
     assert calls == expected
 
 

@@ -1699,15 +1699,10 @@ def test_actual_public_destroy_wrapper_distinguishes_consumed_context(
     monkeypatch, failure
 ):
     ovxr = pytest.importorskip("ovxr")
+    from ovxr._src.bindings import ovxr_frame_view_t
+
     host = _FakeHost()
     calls = []
-    invalidations = []
-    native = ovxr.Context.__new__(ovxr.Context)
-    native._handle = 123
-    native._uses_explicit_stage_ordinals = True
-    native._frame_lifetime = SimpleNamespace(
-        invalidate_context=lambda: invalidations.append(True)
-    )
 
     def destroy(_handle, ordinal):
         calls.append(ordinal)
@@ -1716,9 +1711,23 @@ def test_actual_public_destroy_wrapper_distinguishes_consumed_context(
         host.ordinal_ledger.seal_external(ordinal)
         return ovxr.Result.ERROR if failure == "native-result" else ovxr.Result.SUCCESS
 
-    native._bindings = SimpleNamespace(
-        destroy=destroy, get_last_error=lambda: "release failed"
+    native = ovxr.Context(
+        ovxr.ContextDesc(
+            ovrtx_renderer=1, ovstage=2, ordinal_mode=ovxr.StageOrdinalMode.APPLICATION
+        ),
+        bindings=SimpleNamespace(
+            create=lambda _desc: (ovxr.Result.SUCCESS, 123),
+            acquire_frame=lambda _handle: (
+                ovxr.Result.SUCCESS,
+                ovxr_frame_view_t(sequence=1),
+            ),
+            destroy=destroy,
+            get_last_error=lambda: "release failed",
+        ),
     )
+
+    frame = native.acquire_frame()
+    assert frame.is_valid
 
     class WrappedContext(_FakeContext):
         def destroy(self, *, stage_ordinal):
@@ -1737,7 +1746,7 @@ def test_actual_public_destroy_wrapper_distinguishes_consumed_context(
             owner.close()
     consumed = failure in ("native-result", "success")
     assert (owner._pump._context is None) == consumed
-    assert bool(invalidations) == consumed
+    assert frame.is_valid == (not consumed)
     assert (native._handle is None) == consumed
     assert (
         any(isinstance(e, tuple) and e[0] == "environment-close" for e in host.events)
@@ -2502,16 +2511,22 @@ def test_cancel_failure_does_not_skip_context_and_service_cleanup(
     )
     failure = error_type("cancel failed")
 
-    def cancel(_self, _plan):
-        raise failure
+    cancel_calls = []
+
+    def cancel(_self, plan):
+        destroyed = any(name == "destroy" for name, _ in _FakeContext.operations)
+        cancel_calls.append((plan, destroyed))
+        if not destroyed:
+            raise failure
 
     monkeypatch.setattr(_FakeContext, "cancel_frame", cancel)
     owner.start()
-    owner._pump._pending_plan = SimpleNamespace(step_result=0)
+    plan = SimpleNamespace(step_result=0)
+    owner._pump._pending_plan = plan
     with pytest.raises(error_type) as caught:
         owner.close()
     assert caught.value is failure
-    assert "destroy" in [name for name, _thread in _FakeContext.operations]
+    assert cancel_calls == [(plan, False), (plan, True)]
     assert owner._pump._context is None
     assert owner._pump._pending_plan is None
     assert [name for name, _thread in launcher.events] == ["stop-start", "stop-end"]

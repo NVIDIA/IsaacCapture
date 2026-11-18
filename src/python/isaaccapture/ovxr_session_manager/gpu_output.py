@@ -10,7 +10,10 @@ import threading
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ovrtx import StepResultHandle
 
 
 @lru_cache(maxsize=1)
@@ -23,7 +26,7 @@ def _api():
     lib = ctypes.CDLL(str(Path(root) / b.OVRTX_LOADER_LIB_NAME))
     lib.ovrtx_map_render_var_output.argtypes = [
         ctypes.c_void_p,
-        ctypes.c_uint64,
+        b.ovrtx_render_var_output_handle_t,
         ctypes.POINTER(b.ovrtx_map_output_description_t),
         b.ovrtx_timeout_t,
         ctypes.POINTER(b.ovrtx_render_var_output_t),
@@ -31,7 +34,7 @@ def _api():
     lib.ovrtx_map_render_var_output.restype = b.ovrtx_result_t
     lib.ovrtx_unmap_render_var_output.argtypes = [
         ctypes.c_void_p,
-        ctypes.c_uint64,
+        b.ovrtx_render_var_output_map_handle_t,
         b.ovrtx_cuda_sync_t,
     ]
     lib.ovrtx_unmap_render_var_output.restype = b.ovrtx_result_t
@@ -55,7 +58,7 @@ def native_renderer_handle(renderer) -> int:
     return value
 
 
-def completed_outputs(renderer: int, step_result: int):
+def completed_outputs(renderer: int, step_result: StepResultHandle):
     """Borrow completed output metadata until OVXR consumes the bound plan."""
     b, lib = _api()
     outputs = b.ovrtx_render_product_set_outputs_t()
@@ -74,12 +77,10 @@ def _check_cuda(result):
 
 
 def _wait_ready(cuda, sync) -> None:
-    # Both fields are independently valid in the public OVRTX contract.
+    # OVRTX 0.7 exposes the producer stream for enqueueing work. Consumers
+    # reading on other streams synchronize only the per-output readiness event.
     if sync.wait_event:
         _check_cuda(cuda.cudaEventSynchronize(sync.wait_event))
-    if sync.stream:
-        stream = cuda.cudaStreamLegacy if sync.stream == 1 else sync.stream
-        _check_cuda(cuda.cudaStreamSynchronize(stream))
 
 
 class OutputMapCleanupError(RuntimeError):
@@ -259,7 +260,7 @@ def map_cuda_array_rgba(renderer: int, handle: int, max_bytes: int) -> MappedGpu
     )
     result = lib.ovrtx_map_render_var_output(
         renderer,
-        handle,
+        b.ovrtx_render_var_output_handle_t(handle),
         ctypes.byref(desc),
         b.OVRTX_TIMEOUT_INFINITE,
         ctypes.byref(mapped),

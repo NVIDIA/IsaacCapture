@@ -15,18 +15,22 @@ from isaaccapture.ovxr_session_manager.camera_mailbox import FrameOutputs
 from isaaccapture.ovxr_session_manager.camera_mailbox import CompletedCameraMailbox
 
 
-def test_cpu_unmap_failure_retains_handle_and_blocks_more_maps(monkeypatch):
-    """Exercise the real CPU copier; failed unmap must not lose its native lease."""
+@pytest.mark.parametrize("use_gpu", [False, True], ids=["cpu", "cuda-array"])
+def test_unmap_failure_retains_handle_and_blocks_more_maps(
+    monkeypatch, mock_cuda, use_gpu
+):
+    """Pass OVRTX output and map handle types through each native boundary."""
     b = pytest.importorskip("ovrtx._src.bindings")
     from isaaccapture.ovxr_session_manager import gpu_output
 
     gpu_output._api.cache_clear()
 
-    def map_output(_renderer, _handle, _description, _timeout, output):
+    def map_output(_renderer, handle, _description, _timeout, output):
         mapped = ctypes.cast(
             output, ctypes.POINTER(b.ovrtx_render_var_output_t)
         ).contents
-        mapped.map_handle = 71
+        assert handle == output_var.output_handle
+        mapped.map_handle = b.ovrtx_render_var_output_map_handle_t(71)
         mapped.num_tensors = 0  # Validation fails after a successful native map.
         mapped.status = b.EventStatus.COMPLETED
         return SimpleNamespace(status=b.OVRTX_API_SUCCESS)
@@ -44,8 +48,17 @@ def test_cpu_unmap_failure_retains_handle_and_blocks_more_maps(monkeypatch):
     monkeypatch.setattr(b, "ovrtx_loaded_bin_dir", lambda: "/declared/provider")
     monkeypatch.setattr(ctypes, "CDLL", lambda _path: native)
     try:
-        mailbox = CompletedCameraMailbox("/Camera", 4)
-        mailbox.on_outputs(FrameOutputs(1, _outputs(_frame(1.0, 1))))
+        output_var = b.ovrtx_render_product_render_var_output_t(
+            source_name=b.ovx_string_t("LdrColor"),
+            status=b.EventStatus.COMPLETED,
+            output_handle=b.ovrtx_render_var_output_handle_t(2**40 + 1),
+        )
+        frame = _frame(1.0, 1)
+        frame.output_render_vars = [output_var]
+        mailbox = CompletedCameraMailbox(
+            "/Camera", 4, gpu_mapper=gpu_output.map_cuda_array_rgba if use_gpu else None
+        )
+        mailbox.on_outputs(FrameOutputs(1, _outputs(frame)))
         assert mailbox.snapshot() is None and mailbox.error() is not None
         mailbox.on_outputs(FrameOutputs(1, _outputs(_frame(2.0, 2))))
         assert native.ovrtx_map_render_var_output.call_count == 1
@@ -53,7 +66,7 @@ def test_cpu_unmap_failure_retains_handle_and_blocks_more_maps(monkeypatch):
         assert native.ovrtx_unmap_render_var_output.call_count == 2
         assert [
             call.args[1] for call in native.ovrtx_unmap_render_var_output.call_args_list
-        ] == [71, 71]
+        ] == [b.ovrtx_render_var_output_map_handle_t(71)] * 2
         mailbox.close()
         assert native.ovrtx_unmap_render_var_output.call_count == 2
     finally:
@@ -65,11 +78,12 @@ def _string(text):
     return SimpleNamespace(ptr=ctypes.c_char_p(encoded), length=len(encoded))
 
 
-def _frame(time, handle, *, color=True):
+def _frame(time, handle, *, color=True, status=1):
     vars_ = [
         SimpleNamespace(
+            status=status,
             source_name=_string("LdrColor" if color else "XRDepth"),
-            output_handle=handle,
+            output_handle=SimpleNamespace(raw_id=handle) if handle else None,
         )
     ]
     return SimpleNamespace(
@@ -95,7 +109,11 @@ def test_newest_completed_image_and_zero_output_retention(monkeypatch):
 
     monkeypatch.setattr(camera_mailbox, "_copy_host_rgba", copy)
     mailbox = CompletedCameraMailbox("/Camera", 4)
-    mailbox.on_outputs(FrameOutputs(1, _outputs(_frame(3.0, 3), _frame(4.0, 4))))
+    mailbox.on_outputs(
+        FrameOutputs(
+            1, _outputs(_frame(3.0, 3), _frame(4.0, 4), _frame(5.0, 5, status=2))
+        )
+    )
     image = mailbox.snapshot()
     assert image is not None
     assert (image.sensor_time, image.revision, image.rgba) == (
@@ -115,7 +133,7 @@ def test_produced_but_invalid_image_is_omitted_and_error_is_contained(monkeypatc
     assert mailbox.snapshot() is not None
     mailbox.on_outputs(FrameOutputs(1, _outputs(_frame(2.0, 2, color=False))))
     assert mailbox.snapshot() is None
-    assert "without LdrColor" in mailbox.error()
+    assert "without completed LdrColor" in mailbox.error()
 
 
 def test_mapping_failure_is_contained_without_reusing_stale_pixels(monkeypatch):

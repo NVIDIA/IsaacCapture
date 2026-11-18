@@ -19,6 +19,8 @@ from typing import Any, Callable, TypeVar
 from .gpu_output import MappedGpuImage, MappedOutput, OutputMapCleanupError, _api
 
 _Image = TypeVar("_Image")
+# Native ovrtx_event_status_t value in fetched RenderVar descriptors.
+_OVRTX_EVENT_STATUS_COMPLETED = 1
 
 
 @dataclass(frozen=True)
@@ -50,13 +52,20 @@ def _latest_color_handle(outputs: Any, product_path: str) -> tuple[int, float] |
             frame = product.output_frames[frame_index]
             for var_index in range(frame.render_var_count):
                 var = frame.output_render_vars[var_index]
-                if _text(var.source_name) != "LdrColor" or not var.output_handle:
+                if (
+                    var.status != _OVRTX_EVENT_STATUS_COMPLETED
+                    or not var.output_handle
+                    or _text(var.source_name) != "LdrColor"
+                ):
                     continue
-                candidate = (int(var.output_handle), float(frame.frame_end_time))
+                # FrameOutputs exposes numeric IDs to application callbacks.
+                candidate = (var.output_handle.raw_id, float(frame.frame_end_time))
                 if latest is None or candidate[1] >= latest[1]:
                     latest = candidate
     if produced and latest is None:
-        raise RuntimeError(f"{product_path} produced a frame without LdrColor")
+        raise RuntimeError(
+            f"{product_path} produced a frame without completed LdrColor"
+        )
     return latest
 
 
@@ -71,7 +80,7 @@ def _copy_host_rgba(
     mapped = b.ovrtx_render_var_output_t()
     result = lib.ovrtx_map_render_var_output(
         renderer,
-        handle,
+        b.ovrtx_render_var_output_handle_t(handle),
         ctypes.byref(description),
         b.OVRTX_TIMEOUT_INFINITE,
         ctypes.byref(mapped),
