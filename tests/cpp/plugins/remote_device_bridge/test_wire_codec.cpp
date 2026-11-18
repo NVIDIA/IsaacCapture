@@ -125,10 +125,16 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
         bytes[protocol::kTypeOffset] = 200;
         REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
-    SECTION("other protocol versions are rejected")
+    SECTION("other protocol versions are rejected, naming both versions")
     {
-        bytes[protocol::kVersionOffset] = 1;
-        REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
+        for (const uint8_t version : { 0, 2 })
+        {
+            bytes[protocol::kVersionOffset] = version;
+            REQUIRE_THROWS_WITH(
+                protocol::decode_header({ bytes, protocol::kHeaderSize }),
+                Catch::Matchers::ContainsSubstring("peer speaks protocol version " + std::to_string(version) +
+                                                   ", this build speaks version 1"));
+        }
     }
     SECTION("oversized payloads are rejected")
     {
@@ -137,17 +143,35 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
     }
 }
 
+TEST_CASE("A version-0 peer's frames are rejected by version, never decoded", "[remote_device_bridge][unit]")
+{
+    // HELLO v2 inside a version-0 header, as the previous wire format sent it, and a version-0 PONG (type 14 there).
+    std::vector<uint8_t> old_hello = { 0x52, 0x50, 0x53, 0x30, 1, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0 };
+    old_hello.resize(protocol::kHeaderSize, 0);
+    for (const uint8_t b : { 2, 0, 0, 0, 0, 0, 0, 0, 0 })
+    {
+        old_hello.push_back(b); // version u16 = 2, empty app_name, three false flags
+    }
+    REQUIRE_THROWS_WITH(
+        protocol::split_frame(old_hello),
+        Catch::Matchers::ContainsSubstring("peer speaks protocol version 0, this build speaks version 1"));
+
+    std::vector<uint8_t> old_pong = { 0x52, 0x50, 0x53, 0x30, 14, 0, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0 };
+    old_pong.resize(protocol::kHeaderSize + 24, 0);
+    REQUIRE_THROWS_WITH(protocol::split_frame(old_pong), Catch::Matchers::ContainsSubstring("protocol version 0"));
+}
+
 TEST_CASE("Wire contract is 13 frame types in a 24-byte header", "[remote_device_bridge][unit]")
 {
-    // Frame type numbers are part of the wire contract; 6 is unassigned.
+    // Frame type numbers are part of the wire contract.
     const std::vector<std::pair<protocol::FrameType, uint8_t>> contract = {
-        { protocol::FrameType::Hello, 1 },        { protocol::FrameType::HelloAck, 2 },
-        { protocol::FrameType::OpenHand, 3 },     { protocol::FrameType::OpenSchema, 4 },
-        { protocol::FrameType::OpenPull, 5 },     { protocol::FrameType::Close, 7 },
-        { protocol::FrameType::HandSample, 8 },   { protocol::FrameType::SchemaSample, 9 },
-        { protocol::FrameType::WristSample, 10 }, { protocol::FrameType::Heartbeat, 11 },
-        { protocol::FrameType::Error, 12 },       { protocol::FrameType::Ping, 13 },
-        { protocol::FrameType::Pong, 14 },
+        { protocol::FrameType::Hello, 1 },       { protocol::FrameType::HelloAck, 2 },
+        { protocol::FrameType::OpenHand, 3 },    { protocol::FrameType::OpenSchema, 4 },
+        { protocol::FrameType::OpenPull, 5 },    { protocol::FrameType::Close, 6 },
+        { protocol::FrameType::HandSample, 7 },  { protocol::FrameType::SchemaSample, 8 },
+        { protocol::FrameType::WristSample, 9 }, { protocol::FrameType::Heartbeat, 10 },
+        { protocol::FrameType::Error, 11 },      { protocol::FrameType::Ping, 12 },
+        { protocol::FrameType::Pong, 13 },
     };
     for (const auto& [type, number] : contract)
     {
@@ -155,14 +179,14 @@ TEST_CASE("Wire contract is 13 frame types in a 24-byte header", "[remote_device
     }
 
     // magic u32 @0, type u8 @4, version u8 @5, channel u16 @6, seq u32 @8, payload size u32 @12, t_send i64 @16.
-    std::vector<uint8_t> frame = protocol::encode_frame(protocol::FrameType::Pong, 0x0A0B, std::vector<uint8_t>(24, 0));
+    std::vector<uint8_t> frame = protocol::encode_frame(protocol::FrameType::Pong, 0x0A0B, std::vector<uint8_t>(16, 0));
     protocol::stamp_header(frame, 0x0C0D0E0F, 0x1112131415161718LL);
-    const std::vector<uint8_t> expected = { 0x52, 0x50, 0x53, 0x30, 14,   0,    0x0B, 0x0A, 0x0F, 0x0E, 0x0D, 0x0C,
-                                            24,   0,    0,    0,    0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11 };
+    const std::vector<uint8_t> expected = { 0x52, 0x50, 0x53, 0x30, 13,   1,    0x0B, 0x0A, 0x0F, 0x0E, 0x0D, 0x0C,
+                                            16,   0,    0,    0,    0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11 };
     REQUIRE(std::vector<uint8_t>(frame.begin(), frame.begin() + protocol::kHeaderSize) == expected);
     uint8_t* bytes = frame.data();
 
-    for (const uint8_t type : { 0, 6, 15 })
+    for (const uint8_t type : { 0, 14 })
     {
         bytes[protocol::kTypeOffset] = type;
         REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
@@ -190,10 +214,6 @@ TEST_CASE("HELLO and HELLO_ACK round-trip", "[remote_device_bridge][unit]")
 
     hello.requirements.wrist_tracking_pull.reset();
     REQUIRE_FALSE(protocol::decode_hello(protocol::encode_hello(hello)).requirements.wrist_tracking_pull);
-
-    std::vector<uint8_t> old_version = protocol::encode_hello(hello);
-    old_version[0] = 1; // HELLO version u16 leads the payload
-    REQUIRE_THROWS_AS(protocol::decode_hello(old_version), protocol::DecodeError);
 
     const protocol::HelloAck ack =
         protocol::decode_hello_ack(protocol::encode_hello_ack(protocol::HelloAck{ false, "no runtime" }));
@@ -242,8 +262,8 @@ TEST_CASE("HELLO rejects an unknown wrist source mode", "[remote_device_bridge][
                                                                               .left_aim_to_wrist = make_pose(0.1f),
                                                                               .right_aim_to_wrist = make_pose(0.7f) };
     std::vector<uint8_t> bytes = protocol::encode_hello(hello);
-    // version u16, app_name (u32 length, empty), three flags, then the wrist mode byte.
-    const size_t mode_offset = sizeof(uint16_t) + sizeof(uint32_t) + 3;
+    // app_name (u32 length, empty), three flags, then the wrist mode byte.
+    const size_t mode_offset = sizeof(uint32_t) + 3;
     REQUIRE(bytes[mode_offset] == 0);
     bytes[mode_offset] = 7;
     REQUIRE_THROWS_AS(protocol::decode_hello(bytes), protocol::DecodeError);
@@ -310,7 +330,7 @@ TEST_CASE("WRIST_SAMPLE round-trips", "[remote_device_bridge][unit]")
 
     const std::vector<uint8_t> bytes = protocol::encode_wrist_sample(sample);
     REQUIRE(bytes.size() == kWristSamplePayloadSize);
-    REQUIRE(bytes[kWristHandOffset] == 0); // 1 = left, 0 = right
+    REQUIRE(bytes[kWristHandOffset] == 1); // 0 = left, 1 = right, as in OPEN_HAND
     const protocol::WristSample decoded = protocol::decode_wrist_sample(bytes);
     REQUIRE(decoded.sample_time_local_common_clock_ns == -5);
     REQUIRE(decoded.hand == XR_HAND_RIGHT_EXT);
@@ -330,38 +350,28 @@ TEST_CASE("ERROR carries a message and empty payloads decode", "[remote_device_b
     REQUIRE_THROWS_AS(protocol::decode_error(bytes_of({ 4, 0, 0, 0, 'a' })), protocol::DecodeError);
 }
 
-TEST_CASE("PING and PONG round-trip and PONG records its send time", "[remote_device_bridge][unit]")
+TEST_CASE("PONG carries the PING send time and receive time; send times live in headers", "[remote_device_bridge][unit]")
 {
-    const std::vector<uint8_t> ping = protocol::encode_ping(-123456789012345LL);
-    REQUIRE(ping.size() == 8);
-    REQUIRE(protocol::decode_ping(ping) == -123456789012345LL);
-    REQUIRE_THROWS_AS(protocol::decode_ping(bytes_of({ 1, 2, 3 })), protocol::DecodeError);
-
-    const std::vector<uint8_t> payload = protocol::encode_pong(protocol::Pong{ 1, 2, 3 });
-    REQUIRE(payload.size() == 24);
+    const std::vector<uint8_t> payload = protocol::encode_pong(protocol::Pong{ 1, 2 });
+    REQUIRE(payload.size() == 2 * sizeof(int64_t));
     const protocol::Pong pong = protocol::decode_pong(payload);
     REQUIRE(pong.ping_sent_ns == 1);
     REQUIRE(pong.ping_received_ns == 2);
-    REQUIRE(pong.pong_sent_ns == 3);
-    REQUIRE_THROWS_AS(protocol::decode_pong(std::vector<uint8_t>(25, 0)), protocol::DecodeError);
+    REQUIRE_THROWS_AS(protocol::decode_pong(std::vector<uint8_t>(17, 0)), protocol::DecodeError);
+    REQUIRE_THROWS_WITH(protocol::decode_pong(bytes_of({ 1 })), Catch::Matchers::ContainsSubstring("PONG"));
+
+    // PING has no payload; each side's send time is the t_send stamped when the frame is written.
+    std::vector<uint8_t> ping = protocol::encode_frame(protocol::FrameType::Ping, protocol::kSessionChannelId, {});
+    REQUIRE(ping.size() == protocol::kHeaderSize);
+    protocol::stamp_header(ping, 3, -123456789012345LL);
+    REQUIRE(protocol::split_frame(ping).header.t_send_monotonic_ns == -123456789012345LL);
 
     std::vector<uint8_t> frame = protocol::encode_frame(protocol::FrameType::Pong, protocol::kSessionChannelId, payload);
     protocol::stamp_header(frame, 7, 0x0102030405060708LL);
-    REQUIRE(protocol::decode_pong(protocol::split_frame(frame).payload).pong_sent_ns == 3); // header only
-    protocol::set_pong_sent_time(frame, 0x0102030405060708LL);
     const protocol::Frame split = protocol::split_frame(frame);
     REQUIRE(split.header.type == protocol::FrameType::Pong);
     REQUIRE(split.header.t_send_monotonic_ns == 0x0102030405060708LL);
-    const protocol::Pong stamped = protocol::decode_pong(split.payload);
-    REQUIRE(stamped.ping_sent_ns == 1);
-    REQUIRE(stamped.ping_received_ns == 2);
-    REQUIRE(stamped.pong_sent_ns == 0x0102030405060708LL);
-
-    std::vector<uint8_t> ping_frame =
-        protocol::encode_frame(protocol::FrameType::Ping, protocol::kSessionChannelId, ping);
-    REQUIRE_THROWS_AS(protocol::set_pong_sent_time(ping_frame, 42), std::invalid_argument);
-    REQUIRE_THROWS_WITH(protocol::decode_ping(bytes_of({ 1, 2, 3 })), Catch::Matchers::ContainsSubstring("PING"));
-    REQUIRE_THROWS_WITH(protocol::decode_pong(bytes_of({ 1 })), Catch::Matchers::ContainsSubstring("PONG"));
+    REQUIRE(split.payload == payload);
 }
 
 TEST_CASE("Contiguous frame builders match header + payload encoder byte for byte", "[remote_device_bridge][unit]")
@@ -373,7 +383,7 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
         // clang-format off
         const std::vector<uint8_t> golden = {
             0x52, 0x50, 0x53, 0x30,                         // magic "RPS0"
-            0x09, 0x00,                                     // type SCHEMA_SAMPLE, version 0
+            0x08, 0x01,                                     // type SCHEMA_SAMPLE, version 1
             0x03, 0x00,                                     // channel 3
             0x00, 0x00, 0x00, 0x00,                         // seq (unstamped)
             0x16, 0x00, 0x00, 0x00,                         // payload_size 22

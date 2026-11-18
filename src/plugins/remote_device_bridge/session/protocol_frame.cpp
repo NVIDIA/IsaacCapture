@@ -97,16 +97,18 @@ FrameHeader decode_header(std::span<const uint8_t> in)
     }
     FrameHeader header;
     const uint8_t type = reader.u8();
+    // Version before type: frame type numbers differ between versions.
+    if (const uint8_t version = reader.u8(); version != kProtocolVersion)
+    {
+        throw DecodeError("protocol: peer speaks protocol version " + std::to_string(version) +
+                          ", this build speaks version " + std::to_string(kProtocolVersion) +
+                          "; rebuild the sender and the bridge from the same source");
+    }
     if (!is_frame_type(type))
     {
         throw DecodeError("protocol: unknown frame type " + std::to_string(type));
     }
     header.type = static_cast<FrameType>(type);
-    const uint8_t version = reader.u8();
-    if (version != kProtocolVersion)
-    {
-        throw DecodeError("protocol: unsupported protocol version " + std::to_string(version));
-    }
     header.channel_id = reader.u16();
     header.seq = reader.u32();
     header.payload_size = reader.u32();

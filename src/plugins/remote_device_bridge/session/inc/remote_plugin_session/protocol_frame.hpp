@@ -13,13 +13,15 @@ namespace remote_plugin_protocol
 {
 
 /*!
- * Remote plugin protocol v0: fixed little-endian frames over one connection per
+ * Remote plugin protocol v1: fixed little-endian frames over one connection per
  * plugin session. Frame = header + payload; payload layouts live in
- * protocol_payloads.hpp.
+ * protocol_payloads.hpp. kProtocolVersion is the only version number: any change
+ * to a header, payload or frame type number bumps it, and decode_header rejects
+ * every other version before it reads anything else.
  */
 
 constexpr uint32_t kMagic = 0x30535052u; // "RPS0"
-constexpr uint8_t kProtocolVersion = 0;
+constexpr uint8_t kProtocolVersion = 1;
 //! Header byte offsets: magic u32, type u8, version u8, channel u16, seq u32, payload size u32, t_send i64.
 constexpr size_t kTypeOffset = sizeof(kMagic);
 constexpr size_t kVersionOffset = kTypeOffset + sizeof(uint8_t);
@@ -31,7 +33,7 @@ constexpr size_t kHeaderSize = kSendTimeOffset + sizeof(int64_t);
 constexpr uint16_t kSessionChannelId = 0;
 constexpr uint32_t kMaxPayloadSize = 16u * 1024u * 1024u; // large tactile/sensor payloads; still bounded
 
-//! Direction is c->s (plugin to bridge) or s->c. OPEN_PULL, CLOSE and HEARTBEAT have empty payloads.
+//! Direction is c->s (plugin to bridge) or s->c. OPEN_PULL, CLOSE, HEARTBEAT and PING have empty payloads.
 enum class FrameType : uint8_t
 {
     Hello = 1, // c->s
@@ -39,15 +41,14 @@ enum class FrameType : uint8_t
     OpenHand = 3, // c->s
     OpenSchema = 4, // c->s
     OpenPull = 5, // c->s
-    // 6 is unassigned: the wrist source config travels in HELLO.
-    Close = 7, // c->s
-    HandSample = 8, // c->s
-    SchemaSample = 9, // c->s
-    WristSample = 10, // s->c
-    Heartbeat = 11, // both
-    Error = 12, // s->c
-    Ping = 13, // s->c
-    Pong = 14, // c->s
+    Close = 6, // c->s
+    HandSample = 7, // c->s
+    SchemaSample = 8, // c->s
+    WristSample = 9, // s->c
+    Heartbeat = 10, // both
+    Error = 11, // s->c
+    Ping = 12, // s->c
+    Pong = 13, // c->s
 };
 
 struct FrameHeader
@@ -71,11 +72,13 @@ public:
     using std::runtime_error::runtime_error;
 };
 
-//! Reads the header from the first kHeaderSize bytes of `in`. Throws DecodeError if `in` is shorter, or on bad
-//! magic, unknown type, unsupported version or an oversized payload.
+//! Reads the header from the first kHeaderSize bytes of `in`. Throws DecodeError, in the order the fields are read:
+//! bad magic, another protocol version (checked before the type byte is interpreted), unknown type, oversized
+//! payload; and if `in` ends before a field it reads.
 FrameHeader decode_header(std::span<const uint8_t> in);
 
-//! Writes header + payload into one contiguous buffer. seq and t_send stay zero until stamp_header().
+//! Writes header + payload into one contiguous buffer. seq and t_send stay zero until stamp_header(), which the
+//! sender calls at the moment it writes the frame: t_send is the send time PING/PONG clock exchanges use.
 std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, std::span<const uint8_t> payload);
 //! Patches seq and t_send into an encoded frame's header in place.
 void stamp_header(std::vector<uint8_t>& frame, uint32_t seq, int64_t t_send_monotonic_ns);

@@ -43,19 +43,6 @@ XrHandEXT from_wire_hand(uint8_t hand)
     }
 }
 
-uint8_t to_wire_is_left(XrHandEXT hand)
-{
-    switch (hand)
-    {
-    case XR_HAND_LEFT_EXT:
-        return 1;
-    case XR_HAND_RIGHT_EXT:
-        return 0;
-    default:
-        throw std::invalid_argument("protocol: unsupported XrHandEXT value");
-    }
-}
-
 uint8_t to_wire_mode(core::WristTrackingSourceMode mode)
 {
     switch (mode)
@@ -160,7 +147,6 @@ std::vector<uint8_t> encode_hello(const Hello& value)
     return build_payload(
         [&](Writer& writer)
         {
-            writer.u16(kHelloVersion);
             writer.str(value.app_name);
             writer.boolean(value.requirements.schema_push);
             writer.boolean(value.requirements.hand_tracking_push);
@@ -206,7 +192,7 @@ std::vector<uint8_t> encode_wrist_sample(const WristSample& value)
         [&](Writer& writer)
         {
             writer.i64(value.sample_time_local_common_clock_ns);
-            writer.u8(to_wire_is_left(value.hand));
+            writer.u8(to_wire_hand(value.hand));
             writer.boolean(value.sample.valid);
             writer.boolean(value.sample.tracked);
             writer.pose(value.sample.pose);
@@ -218,11 +204,6 @@ std::vector<uint8_t> encode_error(const std::string& message)
     return build_payload([&](Writer& writer) { writer.str(message); });
 }
 
-std::vector<uint8_t> encode_ping(int64_t t1_ns)
-{
-    return build_payload([&](Writer& writer) { writer.i64(t1_ns); });
-}
-
 std::vector<uint8_t> encode_pong(const Pong& value)
 {
     return build_payload(
@@ -230,19 +211,7 @@ std::vector<uint8_t> encode_pong(const Pong& value)
         {
             writer.i64(value.ping_sent_ns);
             writer.i64(value.ping_received_ns);
-            writer.i64(value.pong_sent_ns);
         });
-}
-
-void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns)
-{
-    // PONG payload: ping_sent, ping_received, pong_sent (i64 each).
-    constexpr size_t kPongSentOffset = kHeaderSize + 2 * sizeof(int64_t);
-    if (pong_frame.size() != kHeaderSize + 3 * sizeof(int64_t) || decode_header(pong_frame).type != FrameType::Pong)
-    {
-        throw std::invalid_argument("protocol: not an encoded PONG frame");
-    }
-    detail::store_le(pong_frame.data() + kPongSentOffset, pong_sent_ns);
 }
 
 Hello decode_hello(std::span<const uint8_t> payload)
@@ -251,10 +220,6 @@ Hello decode_hello(std::span<const uint8_t> payload)
                          [](Reader& reader)
                          {
                              Hello value;
-                             if (const uint16_t version = reader.u16(); version != kHelloVersion)
-                             {
-                                 throw DecodeError("protocol: unsupported HELLO version " + std::to_string(version));
-                             }
                              value.app_name = reader.str();
                              value.requirements.schema_push = reader.boolean();
                              value.requirements.hand_tracking_push = reader.boolean();
@@ -336,7 +301,7 @@ WristSample decode_wrist_sample(std::span<const uint8_t> payload)
                          {
                              WristSample value;
                              value.sample_time_local_common_clock_ns = reader.i64();
-                             value.hand = reader.boolean() ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
+                             value.hand = from_wire_hand(reader.u8());
                              value.sample.valid = reader.boolean();
                              value.sample.tracked = reader.boolean();
                              value.sample.pose = reader.pose();
@@ -349,11 +314,6 @@ std::string decode_error(std::span<const uint8_t> payload)
     return parse_payload(payload, "ERROR", [](Reader& reader) { return reader.str(); });
 }
 
-int64_t decode_ping(std::span<const uint8_t> payload)
-{
-    return parse_payload(payload, "PING", [](Reader& reader) { return reader.i64(); });
-}
-
 Pong decode_pong(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "PONG",
@@ -362,7 +322,6 @@ Pong decode_pong(std::span<const uint8_t> payload)
                              Pong value;
                              value.ping_sent_ns = reader.i64();
                              value.ping_received_ns = reader.i64();
-                             value.pong_sent_ns = reader.i64();
                              return value;
                          });
 }

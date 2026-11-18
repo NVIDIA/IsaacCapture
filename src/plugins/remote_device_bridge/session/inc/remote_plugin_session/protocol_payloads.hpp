@@ -23,9 +23,6 @@ namespace remote_plugin_protocol
  * XrPosef order (orientation x,y,z,w then position x,y,z).
  */
 
-//! HELLO payload format version, the payload's first field; decode_hello accepts only this version.
-constexpr uint16_t kHelloVersion = 2;
-
 struct Hello
 {
     std::string app_name;
@@ -51,7 +48,7 @@ struct SchemaSample
     std::vector<uint8_t> bytes;
 };
 
-//! On the wire the hand is one byte, 1 = left and 0 = right.
+//! On the wire the hand is one byte, 0 = left and 1 = right, as in OPEN_HAND.
 struct WristSample
 {
     int64_t sample_time_local_common_clock_ns = 0;
@@ -59,12 +56,12 @@ struct WristSample
     core::WristTrackingSample sample;
 };
 
-//! Two-way clock exchange; times are CLOCK_MONOTONIC ns of the side that took them.
+//! Two-way clock exchange; times are CLOCK_MONOTONIC ns of the side that took them. The PING carries no payload:
+//! its send time is its header t_send. The PONG's own send time is the PONG header t_send.
 struct Pong
 {
-    int64_t ping_sent_ns = 0; //!< bridge clock, echoed from the PING
+    int64_t ping_sent_ns = 0; //!< bridge clock: the PING header t_send, echoed
     int64_t ping_received_ns = 0; //!< client clock
-    int64_t pong_sent_ns = 0; //!< client clock, set by set_pong_sent_time when the frame is sent
 };
 
 constexpr size_t kPoseSize = 7 * sizeof(float);
@@ -87,11 +84,7 @@ std::vector<uint8_t> encode_open_hand(XrHandEXT hand);
 std::vector<uint8_t> encode_open_schema(const core::SchemaPusherConfig& value);
 std::vector<uint8_t> encode_wrist_sample(const WristSample& value);
 std::vector<uint8_t> encode_error(const std::string& message);
-std::vector<uint8_t> encode_ping(int64_t t1_ns);
 std::vector<uint8_t> encode_pong(const Pong& value);
-//! Sets pong_sent_ns in an encoded PONG frame; call where the frame is sent, so it records when the frame left,
-//! not when it was queued.
-void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns);
 
 // Sample frames are only built this way: the builders read the plugin's buffers directly so a push copies once.
 std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
@@ -111,7 +104,6 @@ HandSample decode_hand_sample(std::span<const uint8_t> payload);
 SchemaSample decode_schema_sample(std::span<const uint8_t> payload);
 WristSample decode_wrist_sample(std::span<const uint8_t> payload);
 std::string decode_error(std::span<const uint8_t> payload);
-int64_t decode_ping(std::span<const uint8_t> payload);
 Pong decode_pong(std::span<const uint8_t> payload);
 
 } // namespace remote_plugin_protocol
