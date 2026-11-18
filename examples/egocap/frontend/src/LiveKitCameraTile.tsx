@@ -209,7 +209,7 @@ export function LiveKitCameraTile({
             title={
               latencyLabel === NO_LATENCY
                 ? "No latency for the displayed frame: it needs the publisher's per-frame stamp (matched by RTP timestamp), a current clock mapping to the publisher, and a stream whose timestamp is on the publisher's monotonic clock."
-                : `The publisher's frame stamp (frame-ready or sensor capture, per the stream) to the frame's expected display on this page, including receive, decode and render (${latencyDetail}); ± is half the clock-exchange round trip, the drift the exchange's age allows, and this browser's timer resolution`
+                : `The publisher's frame stamp (frame-ready or sensor capture, per the stream) to the frame's expected display on this page, including receive, decode and render (${latencyDetail}); ± is only this browser's clock mapping to the publisher (half the clock-exchange round trip, the drift the exchange's age allows, and this browser's timer resolution). It does not include the sensor-to-publisher clock conversion or how closely the sensor's start-of-frame marks the exposure`
             }
           >
             {latencyLabel}

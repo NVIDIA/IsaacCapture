@@ -22,11 +22,6 @@ sipl:
 network:
   bind: 0.0.0.0
   port: 5000  # TCP port the PC receiver connects to
-  # The two settings below are what let the page show latency measured from the sensor's capture time: the timing
-  # records carry the capture instant, and the clock responder lets the PC map the sender's clock onto its own.
-  # The bridge connects to clock_port, so the launcher takes it from here.
-  timing_extension: true
-  clock_port: 5611  # UDP
 
 runtime:
   frames: 0  # 0 = run until stopped

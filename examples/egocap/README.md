@@ -105,16 +105,24 @@ timestamp because the mock sender has no clock to measure. A recording made in t
 Without `--orin` or `--mock` only the PC side starts. `--skip-deploy` reuses the previous release. The sender runs
 for `--seconds` (default one hour) and the launcher stops the whole stack when it ends, so a take in progress is
 cut off; the launcher prints the stop time at startup. The sender release the profile describes, its deploy tool, the
-LiveKit server and the bridge are not in this tree, so pass their paths (or set `EGOCAP_DEPLOY_SCRIPT`,
-`EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` needs an IPv4 address, because the bridge measures the sender's
-clock at that address.
+timesync tool, the LiveKit server and the bridge are not in this tree's base, so pass their paths (or set
+`EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_TIMESYNC_TOOL`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`); `--orin` needs the timesync
+tool and refuses to start without it. `--orin` also needs an IPv4 address, because the bridge finds the sender's chrony
+by it. After the bridge starts, the launcher runs time sync through `src/core/timesync/tools/timesync_tool.py` (see that
+module's README): `ensure-local` (which may install chrony on this PC), an unprivileged chronyd on this PC that measures
+the Orin's clock, and `configure-remote` on the Orin; each step has a timeout. These steps run before the page address
+is printed, and a failure leaves the preview up with capture times unavailable (`--require-chrony` makes it fatal). For
+the SIPL backend the launcher also stops `nvargus-daemon` on the Orin before starting the sender, since it holds the
+cameras; it does not restart it.
 
 The page needs the frontend built once (`cd frontend && npm install && npm run build`); the launcher refuses to start
-without `frontend/dist`.
+without `frontend/dist`. For the default receiver, the launcher runs the receiver's `setup.sh` (venv, requirements,
+native decoder) when the venv or decoder is missing and the camera chain starts (`--orin`, or `--mock` with the
+bridge); `CAMERA_RECEIVER_VENV` and `CAMERA_RECEIVER_PYTHON` select the environment as they do for the receiver's own
+scripts.
 
-The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (30 fps, 4 Mbit/s HEVC,
-timing extension and clock responder on). Pass another file with `--sender-config`, or override single values with
-`--fps`, `--bitrate-mbps`, `--clock-port` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
+The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (30 fps, 4 Mbit/s HEVC). Pass another file with `--sender-config`, or override single values with
+`--fps`, `--bitrate-mbps` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
 built from the same effective values. [`CAMERA_SETTINGS.md`](CAMERA_SETTINGS.md) says which component owns which
 setting and lists every key.
 
