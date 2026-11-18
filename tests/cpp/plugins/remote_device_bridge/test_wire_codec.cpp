@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <initializer_list>
 #include <string>
 #include <utility>
 #include <vector>
@@ -24,11 +23,6 @@ constexpr size_t kWristHandOffset = sizeof(int64_t);
 constexpr size_t kWristValidOffset = kWristHandOffset + sizeof(uint8_t);
 //! SCHEMA_SAMPLE payload: two i64 sample times, then the u32 byte count.
 constexpr size_t kSchemaByteCountOffset = 2 * sizeof(int64_t);
-
-std::vector<uint8_t> bytes_of(std::initializer_list<uint8_t> values)
-{
-    return values;
-}
 
 bool same_pose(const XrPosef& a, const XrPosef& b)
 {
@@ -242,11 +236,11 @@ TEST_CASE("OPEN_HAND encodes both hands and rejects others", "[remote_device_bri
 {
     REQUIRE(protocol::encode_open_hand(XR_HAND_LEFT_EXT) == std::vector<uint8_t>{ 0 });
     REQUIRE(protocol::encode_open_hand(XR_HAND_RIGHT_EXT) == std::vector<uint8_t>{ 1 });
-    REQUIRE(protocol::decode_open_hand(bytes_of({ 0 })) == XR_HAND_LEFT_EXT);
-    REQUIRE(protocol::decode_open_hand(bytes_of({ 1 })) == XR_HAND_RIGHT_EXT);
-    REQUIRE_THROWS_AS(protocol::decode_open_hand(bytes_of({ 2 })), protocol::DecodeError);
-    REQUIRE_THROWS_AS(protocol::decode_open_hand(bytes_of({})), protocol::DecodeError);
-    REQUIRE_THROWS_AS(protocol::decode_open_hand(bytes_of({ 0, 0 })), protocol::DecodeError);
+    REQUIRE(protocol::decode_open_hand(std::vector<uint8_t>{ 0 }) == XR_HAND_LEFT_EXT);
+    REQUIRE(protocol::decode_open_hand(std::vector<uint8_t>{ 1 }) == XR_HAND_RIGHT_EXT);
+    REQUIRE_THROWS_AS(protocol::decode_open_hand(std::vector<uint8_t>{ 2 }), protocol::DecodeError);
+    REQUIRE_THROWS_AS(protocol::decode_open_hand(std::vector<uint8_t>{}), protocol::DecodeError);
+    REQUIRE_THROWS_AS(protocol::decode_open_hand(std::vector<uint8_t>{ 0, 0 }), protocol::DecodeError);
 }
 
 TEST_CASE("OPEN_SCHEMA round-trips SchemaPusherConfig", "[remote_device_bridge][unit]")
@@ -360,7 +354,7 @@ TEST_CASE("ERROR carries a message and empty payloads decode", "[remote_device_b
 {
     REQUIRE(protocol::decode_error(protocol::encode_error("boom")) == "boom");
     REQUIRE(protocol::decode_error(protocol::encode_error("")).empty());
-    REQUIRE_THROWS_AS(protocol::decode_error(bytes_of({ 4, 0, 0, 0, 'a' })), protocol::DecodeError);
+    REQUIRE_THROWS_AS(protocol::decode_error(std::vector<uint8_t>{ 4, 0, 0, 0, 'a' }), protocol::DecodeError);
 }
 
 TEST_CASE("PONG carries the PING send time and receive time; send times live in headers", "[remote_device_bridge][unit]")
@@ -371,7 +365,7 @@ TEST_CASE("PONG carries the PING send time and receive time; send times live in 
     REQUIRE(pong.ping_sent_ns == 1);
     REQUIRE(pong.ping_received_ns == 2);
     REQUIRE_THROWS_AS(protocol::decode_pong(std::vector<uint8_t>(17, 0)), protocol::DecodeError);
-    REQUIRE_THROWS_WITH(protocol::decode_pong(bytes_of({ 1 })), Catch::Matchers::ContainsSubstring("PONG"));
+    REQUIRE_THROWS_WITH(protocol::decode_pong(std::vector<uint8_t>{ 1 }), Catch::Matchers::ContainsSubstring("PONG"));
 
     // PING has no payload; each side's send time is the t_send stamped when the frame is written.
     std::vector<uint8_t> ping = protocol::encode_frame(protocol::FrameType::Ping, protocol::kSessionChannelId, {});

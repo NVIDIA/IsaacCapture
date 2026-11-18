@@ -13,7 +13,7 @@ namespace remote_plugin_protocol
 {
 
 using detail::build_frame;
-using detail::Reader;
+using detail::load_le;
 using detail::store_le;
 using detail::Writer;
 
@@ -90,17 +90,15 @@ std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, std::span
 
 uint32_t frame_payload_size(std::span<const uint8_t> in)
 {
-    Reader reader(in, "header");
-    if (reader.u32() != kMagic)
+    if (in.size() < kHeaderSize)
+    {
+        throw DecodeError("protocol: header: truncated");
+    }
+    if (load_le<uint32_t>(in.data()) != kMagic)
     {
         throw DecodeError("protocol: bad frame magic");
     }
-    reader.u8(); // type
-    reader.u8(); // version
-    reader.u16(); // channel
-    reader.u32(); // seq
-    const uint32_t payload_size = reader.u32();
-    reader.i64(); // t_send: the whole header must be there
+    const auto payload_size = load_le<uint32_t>(in.data() + kPayloadSizeOffset);
     if (payload_size > kMaxPayloadSize)
     {
         throw DecodeError("protocol: payload size " + std::to_string(payload_size) + " exceeds limit");
@@ -112,25 +110,22 @@ FrameHeader decode_header(std::span<const uint8_t> in)
 {
     FrameHeader header;
     header.payload_size = frame_payload_size(in); // length, magic and payload limit
-    Reader reader(in, "header");
-    reader.u32(); // magic
-    const uint8_t type = reader.u8();
     // Version before type: another version may number its frame types differently.
-    if (const uint8_t version = reader.u8(); version != kProtocolVersion)
+    if (const uint8_t version = in[kVersionOffset]; version != kProtocolVersion)
     {
         throw DecodeError("protocol: peer speaks protocol version " + std::to_string(version) +
                           ", this build speaks version " + std::to_string(kProtocolVersion) +
                           "; rebuild the sender and the bridge from the same source");
     }
+    const uint8_t type = in[kTypeOffset];
     if (!is_frame_type(type))
     {
         throw DecodeError("protocol: unknown frame type " + std::to_string(type));
     }
     header.type = static_cast<FrameType>(type);
-    header.channel_id = reader.u16();
-    header.seq = reader.u32();
-    reader.u32(); // payload size, read above
-    header.t_send_monotonic_ns = reader.i64();
+    header.channel_id = load_le<uint16_t>(in.data() + kChannelOffset);
+    header.seq = load_le<uint32_t>(in.data() + kSeqOffset);
+    header.t_send_monotonic_ns = load_le<int64_t>(in.data() + kSendTimeOffset);
     return header;
 }
 

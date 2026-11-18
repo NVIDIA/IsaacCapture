@@ -67,11 +67,6 @@ public:
         u8(value ? 1 : 0);
     }
 
-    void u16(uint16_t value)
-    {
-        append(value);
-    }
-
     void u32(uint32_t value)
     {
         append(value);
@@ -154,11 +149,6 @@ public:
             throw DecodeError(std::string("protocol: ") + m_what + ": invalid boolean value " + std::to_string(value));
         }
         return value == 1;
-    }
-
-    uint16_t u16()
-    {
-        return take<uint16_t>();
     }
 
     uint32_t u32()

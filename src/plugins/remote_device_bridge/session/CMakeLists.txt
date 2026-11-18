@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-cmake_minimum_required(VERSION 3.20)
-
 add_library(remote_plugin_session STATIC
     protocol_frame.cpp
     protocol_payloads.cpp

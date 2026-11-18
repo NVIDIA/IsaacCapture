@@ -89,7 +89,8 @@ std::vector<uint8_t> encode_wrist_sample(const WristSample& value);
 std::vector<uint8_t> encode_error(const std::string& message);
 std::vector<uint8_t> encode_pong(const Pong& value);
 
-// Sample frames are only built this way: the builders read the plugin's buffers directly so a push copies once.
+// HAND_SAMPLE and SCHEMA_SAMPLE frames are only built this way: the builders read the plugin's buffers directly so a
+// push copies once.
 std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
                                               HandJoints joints,
                                               int64_t sample_time_local_common_clock_ns);
