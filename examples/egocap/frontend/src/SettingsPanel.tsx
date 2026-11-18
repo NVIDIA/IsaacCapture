@@ -5,16 +5,23 @@
 /**
  * The Settings dialog: a tabbed modal over the page.
  *
- * Tabs, in the order an operator sets up a station: Station (camera type and roles), Tasks (the catalogs the task picker
- * offers, imports, and the preselected task), Tools (calibration and rectification), Display (this browser's
- * choices and the keyboard shortcuts), Advanced (what the deployment is running with, read-only). Station and Tasks
- * are saved by the backend for every browser and need the run's control token to change, as recording
- * commands do; Tools lists unavailable stubs; Display is this browser's only; Advanced values are set where the backend is launched.
+ * Tabs, in the order an operator sets up a station: Station (the stations, the one in use, and each station's
+ * cameras; the camera setup itself while there are no stations), Devices (the live checklist of what the station
+ * in use needs, whether calibration files are required, and the calibration tools), Tasks (the catalogs the task
+ * picker offers, imports, and the preselected task), Display (this browser's choices and the keyboard
+ * shortcuts), Advanced (what the deployment is running with, read-only). Station, Tasks and the calibration
+ * requirement are saved by the backend for every browser and need the run's control token to change, as
+ * recording commands do; the rest of Devices only reports; Display is this browser's only; Advanced values are
+ * set where the backend is launched.
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CameraSetupCard } from "./CameraSetupCard";
+import { DevicesTab } from "./DevicesTab";
+import { Card, LoadState, TokenHint, errorMessage, useAction, useEscapeToClose, useModalFocus, type Loaded } from "./settingsParts";
+import { StationsCard } from "./StationsCard";
+import { fetchSetup, type SetupStatus } from "./setupApi";
+import { addStation, deleteStation, fetchStations, selectStation, updateStation, type StationChange, type StationListing } from "./stationsApi";
 import {
-  CAMERA_TYPE_LABELS,
-  ROLE_LABELS,
   fetchOperatorSettings,
   fetchSettings,
   fetchTaskFile,
@@ -33,9 +40,11 @@ import {
 } from "./settingsApi";
 
 export interface StationSetup {
+  /** The camera setup in effect: the station in use supplies it, else the values saved with the operator settings. */
   operator: OperatorSettings;
   tools: ToolInfo[];
   taskFiles: TaskFileListing;
+  stations: StationListing;
 }
 
 /** The backend calls the dialog makes; tests inject fakes, the page uses the real ones. */
@@ -46,26 +55,42 @@ export interface SettingsBackend {
   saveOperator: (controlToken: string, changes: OperatorSettingsChange) => Promise<OperatorSettings>;
   importTaskFile: (controlToken: string, source: TaskFileSource) => Promise<TaskFileListing & { file: TaskFileContents }>;
   removeTaskFile: (controlToken: string, name: string) => Promise<TaskFileListing>;
+  addStation: (controlToken: string, fields: StationChange) => Promise<StationListing>;
+  updateStation: (controlToken: string, id: string, changes: StationChange) => Promise<StationListing>;
+  deleteStation: (controlToken: string, id: string) => Promise<StationListing>;
+  selectStation: (controlToken: string, id: string | null) => Promise<StationListing>;
+  /** The start-of-day flow, which the Devices tab reads on its own, faster timer. */
+  loadSetup: (signal: AbortSignal, controlToken?: string | null) => Promise<SetupStatus>;
 }
 
 export const REAL_SETTINGS_BACKEND: SettingsBackend = {
   loadDeployment: fetchSettings,
   loadStationSetup: async (signal) => {
-    const [operator, tools, taskFiles] = await Promise.all([fetchOperatorSettings(signal), fetchTools(signal), fetchTaskFiles(signal)]);
-    return { operator, tools, taskFiles };
+    const [operator, tools, taskFiles, stations] = await Promise.all([
+      fetchOperatorSettings(signal),
+      fetchTools(signal),
+      fetchTaskFiles(signal),
+      fetchStations(signal),
+    ]);
+    return { operator, tools, taskFiles, stations };
   },
   loadTaskFile: fetchTaskFile,
   saveOperator: saveOperatorSettings,
   importTaskFile,
   removeTaskFile,
+  addStation,
+  updateStation,
+  deleteStation,
+  selectStation,
+  loadSetup: fetchSetup,
 };
 
-export type SettingsTab = "station" | "tasks" | "tools" | "display" | "advanced";
+export type SettingsTab = "station" | "devices" | "tasks" | "display" | "advanced";
 
 const TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
   { id: "station", label: "Station" },
+  { id: "devices", label: "Devices" },
   { id: "tasks", label: "Tasks" },
-  { id: "tools", label: "Tools" },
   { id: "display", label: "Display" },
   { id: "advanced", label: "Advanced" },
 ];
@@ -81,15 +106,10 @@ export interface SettingsPanelProps {
   controlToken: string | null;
   /** The cameras the current session offers, by name. */
   cameraSources?: string[];
+  /** The start-of-day flow as the page last read it; null while it could not be read. */
+  setup?: SetupStatus | null;
   initialTab?: SettingsTab;
   backend?: SettingsBackend;
-}
-
-type Loaded<T> = { kind: "loading" } | { kind: "error"; message: string } | { kind: "loaded"; value: T };
-
-/** Turn unknown request failures into a concise operator-facing explanation. */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Loads `load` each time the dialog opens, so a backend restart shows its new values; abandons a load the
@@ -138,206 +158,71 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
   );
 }
 
-/** One titled block of a tab. */
-function Card({ title, lead, children }: { title: string; lead?: string; children: ReactNode }) {
-  return (
-    <section className="settings-card" aria-label={title}>
-      <h3>{title}</h3>
-      {lead !== undefined && <p className="settings-lead">{lead}</p>}
-      {children}
-    </section>
-  );
-}
-
-/** Explain why station changes require the recording control token. */
-function TokenHint({ controlToken }: { controlToken: string | null }) {
-  if (controlToken !== null) return null;
-  return <p className="settings-note settings-note--hint">Enter the control token in the recording panel to change these.</p>;
-}
-
-/** The pending/failed state of one save-type action, shown next to its button. */
-function useAction(): [{ busy: boolean; failure: string | null }, (work: () => Promise<void>) => void] {
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-  /** Keep request failures visible and prevent duplicate submissions. */
-  const run = (work: () => Promise<void>) => {
-    setBusy(true);
-    setFailure(null);
-    work().then(
-      () => setBusy(false),
-      (error: unknown) => {
-        setBusy(false);
-        setFailure(errorMessage(error));
-      },
-    );
-  };
-  return [{ busy, failure }, run];
-}
-
 // --- Station ---------------------------------------------------------------------------------------------------
 
-/** Offer persistent camera setup and explain which roles are currently available. */
+/** The stations and the one in use; each station's cameras are edited in its own row. While there are no
+ * stations the camera setup is edited here instead, since no station holds it yet. */
 function StationTab({
+  stationSetup,
   setup,
   controlToken,
   backend,
   cameraSources,
-  onOperator,
+  setupUnread,
+  onReload,
+  onStations,
+  onSetup,
 }: {
-  setup: Loaded<StationSetup>;
+  stationSetup: Loaded<StationSetup>;
+  setup: SetupStatus | null;
   controlToken: string | null;
   backend: SettingsBackend;
   cameraSources: string[];
-  onOperator: (operator: OperatorSettings) => void;
+  /** Whether the station setup could not be read again after the registry changed, so the camera setup on screen may be a deleted station's. */
+  setupUnread: boolean;
+  onReload: () => void;
+  onStations: (stations: StationListing) => void;
+  onSetup: (update: (value: StationSetup) => StationSetup) => void;
 }) {
-  if (setup.kind !== "loaded") return <LoadState state={setup} what="Station setup" />;
-  const { operator } = setup.value;
+  // A camera setup save in flight: the first station inherits the saved setup, so it must not be added over it.
+  const [savingCameras, setSavingCameras] = useState(false);
+  if (stationSetup.kind !== "loaded") return <LoadState state={stationSetup} what="Station setup" />;
+  const { operator, stations } = stationSetup.value;
+  const empty = stations.stations.length === 0;
+  // With no station the camera setup on screen is what the first one inherits, so it must be the saved one.
+  const unknownSetup = empty && setupUnread;
+  /** Save the camera setup, holding the first station's creation until the save has answered. */
+  const saveCameras = (changes: OperatorSettingsChange): Promise<void> => {
+    if (controlToken === null) return Promise.resolve();
+    setSavingCameras(true);
+    return backend
+      .saveOperator(controlToken, changes)
+      .then((saved) => onSetup((value) => ({ ...value, operator: saved })))
+      .finally(() => setSavingCameras(false));
+  };
   return (
     <>
-      <ReadyLine operator={operator} cameraSources={cameraSources} />
-      <Card title="Camera type" lead="Which cameras this station is built with. A label for operators and tools; CaptureServer and the station file open the cameras.">
-        <CameraTypeChoice key={operator.camera_type ?? ""} operator={operator} controlToken={controlToken} save={backend.saveOperator} onSaved={onOperator} />
-        <TokenHint controlToken={controlToken} />
-      </Card>
-      <Card title="Camera roles" lead="Which of the session's cameras is the ego view and which is on each wrist. The ego camera gets the main tile; roles are shown on every tile so a swapped wrist is caught before a session, not after.">
-        <CameraRoles key={JSON.stringify(operator.camera_roles)} operator={operator} cameraSources={cameraSources} controlToken={controlToken} save={backend.saveOperator} onSaved={onOperator} />
-      </Card>
+      <StationsCard
+        listing={stations}
+        controlToken={controlToken}
+        backend={backend}
+        // The first station takes over the camera setup saved before any station existed.
+        inherited={{ camera_type: operator.camera_type, camera_roles: operator.camera_roles }}
+        held={savingCameras || unknownSetup}
+        cameraSources={cameraSources}
+        headset={setup?.headset ?? null}
+        onListing={onStations}
+      />
+      {unknownSetup && (
+        <p className="settings-note tone-warning">
+          The camera setup could not be read again, so it cannot be edited or handed to a new station yet.{" "}
+          <button type="button" className="settings-quiet" onClick={onReload}>
+            Read again
+          </button>
+        </p>
+      )}
+      {empty && !unknownSetup && <CameraSetupCard operator={operator} cameraSources={cameraSources} controlToken={controlToken} save={saveCameras} />}
     </>
-  );
-}
-
-/** The station's readiness at a glance: what is set, what is still to do. */
-function ReadyLine({ operator, cameraSources }: { operator: OperatorSettings; cameraSources: string[] }) {
-  const assigned = operator.roles.filter((role) => operator.camera_roles[role] !== null);
-  const offered = assigned.filter((role) => cameraSources.includes(operator.camera_roles[role] ?? ""));
-  const items: Array<[boolean, string]> = [
-    [operator.camera_type !== null, operator.camera_type === null ? "Camera type not set" : `Camera type: ${CAMERA_TYPE_LABELS[operator.camera_type]?.split(" — ")[0] ?? operator.camera_type}`],
-    [assigned.length === operator.roles.length, `${assigned.length}/${operator.roles.length} roles assigned`],
-    [assigned.length > 0 && offered.length === assigned.length, cameraSources.length === 0 ? "No cameras offered by the session yet" : `${offered.length}/${assigned.length} assigned cameras in this session`],
-    [operator.task_file !== null, operator.task_file === null ? "No task catalog chosen" : `Task catalog: ${operator.task_file}`],
-  ];
-  return (
-    <p className="settings-ready" aria-label="Station readiness">
-      {items.map(([ok, text]) => (
-        <span key={text} className={ok ? "settings-ready-item--ok" : "settings-ready-item--todo"}>
-          {ok ? "✓" : "○"} {text}
-        </span>
-      ))}
-    </p>
-  );
-}
-
-/** One select per role over the cameras the session offers; a camera already saved for a role that the session
- * no longer offers stays selectable, so an operator can see (and clear) it. */
-function CameraRoles({
-  operator,
-  cameraSources,
-  controlToken,
-  save,
-  onSaved,
-}: {
-  operator: OperatorSettings;
-  cameraSources: string[];
-  controlToken: string | null;
-  save: SettingsBackend["saveOperator"];
-  onSaved: (operator: OperatorSettings) => void;
-}) {
-  const [roles, setRoles] = useState<Record<string, string | null>>({ ...operator.camera_roles });
-  const [{ busy, failure }, run] = useAction();
-  const dirty = operator.roles.some((role) => roles[role] !== operator.camera_roles[role]);
-  const options = [...new Set([...cameraSources, ...Object.values(roles).filter((name): name is string => name !== null)])];
-  /** Exclude cameras assigned to another role from this selector. */
-  const taken = (role: string) => new Set(operator.roles.filter((other) => other !== role).map((other) => roles[other]));
-  /** Swap both wrists in one local update so assignments stay unique. */
-  const swapWrists = () => setRoles((current) => ({ ...current, wrist_left: current.wrist_right ?? null, wrist_right: current.wrist_left ?? null }));
-  return (
-    <>
-      {options.length === 0 && <p className="settings-note">The session offers no cameras yet; roles can be assigned once CaptureServer lists them.</p>}
-      <div className="settings-roles">
-        {operator.roles.map((role) => (
-          <FragmentRow key={role} role={role}>
-            <select
-              id={`role-${role}`}
-              className="settings-input"
-              value={roles[role] ?? ""}
-              disabled={busy}
-              onChange={(e) => setRoles((current) => ({ ...current, [role]: e.target.value === "" ? null : e.target.value }))}
-            >
-              <option value="">Not assigned</option>
-              {options.map((name) => (
-                <option key={name} value={name} disabled={taken(role).has(name)}>
-                  {name}
-                  {cameraSources.includes(name) ? "" : " (not in this session)"}
-                </option>
-              ))}
-            </select>
-          </FragmentRow>
-        ))}
-      </div>
-      <div className="settings-actions">
-        <button type="button" className="settings-primary" disabled={!dirty || controlToken === null || busy} onClick={() => controlToken !== null && run(() => save(controlToken, { camera_roles: roles }).then(onSaved))}>
-          {busy ? "Saving…" : "Save camera roles"}
-        </button>
-        <button type="button" className="settings-quiet" disabled={busy || (roles.wrist_left === null && roles.wrist_right === null)} onClick={swapWrists}>
-          Swap wrists
-        </button>
-        {failure !== null && <span className="settings-note tone-warning">Not saved: {failure}</span>}
-      </div>
-      <TokenHint controlToken={controlToken} />
-    </>
-  );
-}
-
-/** Group the label and control for a single camera role. */
-function FragmentRow({ role, children }: { role: string; children: ReactNode }) {
-  return (
-    <>
-      <label htmlFor={`role-${role}`}>{ROLE_LABELS[role] ?? role}</label>
-      {children}
-    </>
-  );
-}
-
-/** Edit the station camera type while keeping unsaved choices local. */
-function CameraTypeChoice({
-  operator,
-  controlToken,
-  save,
-  onSaved,
-}: {
-  operator: OperatorSettings;
-  controlToken: string | null;
-  save: SettingsBackend["saveOperator"];
-  onSaved: (operator: OperatorSettings) => void;
-}) {
-  const [choice, setChoice] = useState<string | null>(operator.camera_type);
-  const [{ busy, failure }, run] = useAction();
-  const dirty = choice !== operator.camera_type;
-  return (
-    <fieldset className="settings-fieldset">
-      <legend className="visually-hidden">Choose the camera type</legend>
-      {operator.camera_types.map((type) => (
-        <label key={type} className={`settings-choice${choice === type ? " settings-choice--on" : ""}`}>
-          <input type="radio" name="camera-type" value={type} checked={choice === type} onChange={() => setChoice(type)} />
-          <span>{CAMERA_TYPE_LABELS[type] ?? type}</span>
-        </label>
-      ))}
-      <label className={`settings-choice${choice === null ? " settings-choice--on" : ""}`}>
-        <input type="radio" name="camera-type" value="" checked={choice === null} onChange={() => setChoice(null)} />
-        <span>Not set</span>
-      </label>
-      <div className="settings-actions">
-        <button
-          type="button"
-          className="settings-primary"
-          disabled={!dirty || controlToken === null || busy}
-          onClick={() => controlToken !== null && run(() => save(controlToken, { camera_type: choice }).then(onSaved))}
-        >
-          {busy ? "Saving…" : "Save camera type"}
-        </button>
-        {failure !== null && <span className="settings-note tone-warning">Not saved: {failure}</span>}
-      </div>
-    </fieldset>
   );
 }
 
@@ -345,18 +230,18 @@ function CameraTypeChoice({
 
 /** Manage the selected catalog, task defaults and browser uploads. */
 function TasksTab({
-  setup,
+  stationSetup,
   controlToken,
   backend,
   onSetup,
 }: {
-  setup: Loaded<StationSetup>;
+  stationSetup: Loaded<StationSetup>;
   controlToken: string | null;
   backend: SettingsBackend;
   onSetup: (update: (value: StationSetup) => StationSetup) => void;
 }) {
-  if (setup.kind !== "loaded") return <LoadState state={setup} what="Task catalogs" />;
-  const { operator, taskFiles } = setup.value;
+  if (stationSetup.kind !== "loaded") return <LoadState state={stationSetup} what="Task catalogs" />;
+  const { operator, taskFiles } = stationSetup.value;
   const canChange = controlToken !== null;
   return (
     <>
@@ -555,38 +440,6 @@ function PreselectedTask({
   );
 }
 
-// --- Tools -----------------------------------------------------------------------------------------------------
-
-/** Show calibration tools and the reason unavailable tools are disabled. */
-function ToolsTab({ setup }: { setup: Loaded<StationSetup> }) {
-  if (setup.kind !== "loaded") return <LoadState state={setup} what="Tools" />;
-  const { tools, operator } = setup.value;
-  return (
-    <Card title="Operator tools" lead="Calibration and rectification. A tool opens only when this build can launch it; the others say why not.">
-      <ul className="settings-list settings-list--tools">
-        {tools.map((tool) => {
-          const forOtherCameras = tool.applies_to !== null && operator.camera_type !== null && tool.applies_to !== operator.camera_type;
-          const reason = !tool.available ? tool.unavailable_reason : forOtherCameras ? `for ${CAMERA_TYPE_LABELS[tool.applies_to ?? ""]?.split(" — ")[0] ?? tool.applies_to} stations` : null;
-          return (
-            <li key={tool.id}>
-              <div className="settings-list-main settings-list-main--stacked">
-                <span className="settings-list-name">{tool.name}</span>
-                <span className="settings-note" id={`tool-${tool.id}-why`}>
-                  {tool.description}
-                  {reason !== null && ` — ${reason}.`}
-                </span>
-              </div>
-              <button type="button" className="settings-quiet" disabled={!tool.available || forOtherCameras} aria-describedby={`tool-${tool.id}-why`}>
-                Open
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </Card>
-  );
-}
-
 // --- Display ---------------------------------------------------------------------------------------------------
 
 const SHORTCUTS: ReadonlyArray<[string, string]> = [
@@ -698,52 +551,6 @@ function AdvancedTab({ deployment }: { deployment: Loaded<EffectiveSettings> }) 
 
 // --- Shell -----------------------------------------------------------------------------------------------------
 
-/** Explain an incomplete request without presenting stale controls. */
-function LoadState<T>({ state, what }: { state: Loaded<T>; what: string }) {
-  if (state.kind === "loading") return <p className="settings-note">Loading…</p>;
-  if (state.kind === "error") return <p className="settings-note tone-warning">{what} unavailable: {state.message}</p>;
-  return null;
-}
-
-/** Own keyboard focus for the dialog lifetime and return it to the invoking control. */
-function useModalFocus(open: boolean) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open || !dialogRef.current) return;
-    const dialog = dialogRef.current;
-    const previous = document.activeElement;
-    /** Recompute controls because loading, tab changes and saves can change their availability. */
-    const controls = () => Array.from(dialog.querySelectorAll<HTMLElement>(
-      'button, input, select, textarea, a[href], [tabindex]',
-    )).filter((element) => element.tabIndex >= 0 && !element.matches(":disabled") && !element.closest("[hidden], [inert]"));
-    /** Programmatic focus and pointer interaction must also respect the modal boundary. */
-    const containFocus = (event: FocusEvent) => {
-      if (!dialog.contains(event.target as Node)) dialog.focus();
-    };
-    /** Cycle only the current dialog controls, including wraparound in either direction. */
-    const onTab = (event: KeyboardEvent) => {
-      if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
-      const available = controls();
-      const current = available.indexOf(document.activeElement as HTMLElement);
-      const next = event.shiftKey
-        ? (current <= 0 ? available.length - 1 : current - 1)
-        : (current + 1) % available.length;
-      event.preventDefault();
-      (available[next] ?? dialog).focus();
-    };
-    document.addEventListener("focusin", containFocus);
-    document.addEventListener("keydown", onTab);
-    dialog.focus();
-    return () => {
-      // Release containment before restoring focus; rerenders must not recapture the invoking control.
-      document.removeEventListener("focusin", containFocus);
-      document.removeEventListener("keydown", onTab);
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
-  }, [open]);
-  return dialogRef;
-}
-
 /** Present station settings in a modal that owns focus until it closes. */
 export function SettingsPanel({
   open,
@@ -753,6 +560,7 @@ export function SettingsPanel({
   onResetSidebar,
   controlToken,
   cameraSources = [],
+  setup = null,
   initialTab = "station",
   backend = REAL_SETTINGS_BACKEND,
 }: SettingsPanelProps) {
@@ -761,23 +569,55 @@ export function SettingsPanel({
   /** Reload restricted details when the active credential changes. */
   const loadDeployment = useCallback((signal: AbortSignal) => backend.loadDeployment(signal, controlToken), [backend, controlToken]);
   const [deployment] = useLoaded(open && controlToken !== null, loadDeployment);
-  const [setup, updateSetup] = useLoaded(open, backend.loadStationSetup);
+  const { loadStationSetup } = backend;
+  const [stationSetup, applyStationSetup] = useLoaded(open, loadStationSetup);
+  // The newest read of the station setup asked for after a change, and whether it is still to answer. A read is
+  // a picture of the backend from when it was sent, so only the newest may replace what the dialog shows.
+  const reloads = useRef({ latest: 0, pending: false });
+  // Whether the newest of those reads failed, leaving the camera setup on screen older than the registry.
+  const [setupUnread, setSetupUnread] = useState(false);
 
-  // Escape closes, as for any dialog.
-  useEffect(() => {
-    if (!open) return;
-    /** Let Escape release the dialog from any focused control. */
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  useEscapeToClose(open, onClose);
 
   if (!open) return null;
 
-  /** Keep all tabs in sync with the persisted station setup. */
-  const setOperator = (operator: OperatorSettings) => updateSetup((value) => ({ ...value, operator }));
+  /** Read the station setup again, and show it unless a newer read or change has been made by the time it answers. */
+  const reloadStationSetup = () => {
+    const mine = ++reloads.current.latest;
+    reloads.current.pending = true;
+    /** Whether this read is still the newest; if so it is no longer pending. */
+    const settled = () => {
+      if (reloads.current.latest !== mine) return false;
+      reloads.current.pending = false;
+      return true;
+    };
+    loadStationSetup(new AbortController().signal).then(
+      (fresh) => {
+        if (!settled()) return;
+        applyStationSetup(() => fresh);
+        setSetupUnread(false);
+      },
+      () => {
+        // The change itself succeeded; what could not be read is the setup that goes with it.
+        if (settled()) setSetupUnread(true);
+      },
+    );
+  };
+  /** Apply a saved change to what the dialog shows. A read still on its way was sent before this change and
+   * would put the older value back, so it is replaced by a new one. */
+  const updateStationSetup = (update: (value: StationSetup) => StationSetup) => {
+    applyStationSetup(update);
+    if (reloads.current.pending) reloadStationSetup();
+  };
+  /** Show a changed registry at once, then read the station setup again: the station in use supplies the camera
+   * type and roles the rest of the dialog and the page's tiles go by, so a change of it changes those. */
+  const setStations = (stations: StationListing) => {
+    applyStationSetup((value) => ({ ...value, stations }));
+    reloadStationSetup();
+  };
+  /** Save whether calibration files are required, and show the saved value. */
+  const saveRequireCalibration = (required: boolean): Promise<void> =>
+    controlToken === null ? Promise.resolve() : backend.saveOperator(controlToken, { require_calibration: required }).then((saved) => updateStationSetup((value) => ({ ...value, operator: saved })));
 
   return (
     <>
@@ -805,10 +645,10 @@ export function SettingsPanel({
             </button>
           </header>
           <div className="settings-content-body">
-            {setup.kind === "loaded" && setup.value.operator.warning && <p className="settings-note tone-warning">{setup.value.operator.warning}</p>}
-            {tab === "station" && <StationTab setup={setup} controlToken={controlToken} backend={backend} cameraSources={cameraSources} onOperator={setOperator} />}
-            {tab === "tasks" && <TasksTab setup={setup} controlToken={controlToken} backend={backend} onSetup={updateSetup} />}
-            {tab === "tools" && <ToolsTab setup={setup} />}
+            {stationSetup.kind === "loaded" && stationSetup.value.operator.warning && <p className="settings-note tone-warning">{stationSetup.value.operator.warning}</p>}
+            {tab === "station" && <StationTab stationSetup={stationSetup} setup={setup} controlToken={controlToken} backend={backend} cameraSources={cameraSources} setupUnread={setupUnread} onReload={reloadStationSetup} onStations={setStations} onSetup={updateStationSetup} />}
+            {tab === "devices" && <DevicesTab setup={setup} controlToken={controlToken} loadSetup={backend.loadSetup} stationSetup={stationSetup} saveRequireCalibration={saveRequireCalibration} />}
+            {tab === "tasks" && <TasksTab stationSetup={stationSetup} controlToken={controlToken} backend={backend} onSetup={updateStationSetup} />}
             {tab === "display" && <DisplayTab sidebarWidth={sidebarWidth} sidebarDefault={sidebarDefault} onResetSidebar={onResetSidebar} />}
             {tab === "advanced" && (controlToken === null ? <p className="settings-note">Enter the control token in the recording panel to view deployment settings.</p> : <AdvancedTab deployment={deployment} />)}
           </div>

@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/** The station and uptime calls: what each sends, the backend's own reason on a refusal, and a body of the wrong shape. */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SettingsHttpError, SettingsParseError } from "./settingsApi";
+import { UPTIME_FIXTURE } from "./dayReportTestDoubles";
+import { STATIONS_FIXTURE } from "./settingsTestDoubles";
+import { addStation, deleteStation, fetchStations, fetchStationUptime, saveStationNotes, selectStation, updateStation } from "./stationsApi";
+
+afterEach(() => vi.unstubAllGlobals());
+
+function stubFetch(status: number, body: unknown) {
+  const fn = vi.fn(async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+
+const JSON_AUTH = { "content-type": "application/json", "X-Control-Token": "tok" };
+
+describe("the station registry", () => {
+  it("is read without a credential", async () => {
+    const fn = stubFetch(200, STATIONS_FIXTURE);
+    await expect(fetchStations()).resolves.toEqual(STATIONS_FIXTURE);
+    expect(fn).toHaveBeenLastCalledWith("/api/stations", { signal: expect.any(AbortSignal) });
+  });
+
+  it("sends every change with the control token and returns the new listing", async () => {
+    const fn = stubFetch(200, STATIONS_FIXTURE);
+    await addStation("tok", { name: "Bench A" });
+    expect(fn).toHaveBeenLastCalledWith("/api/stations", { signal: expect.any(AbortSignal), method: "POST", headers: JSON_AUTH, body: JSON.stringify({ name: "Bench A" }) });
+    await updateStation("tok", "st 1", { camera_roles: { ego: "cam_head" } });
+    expect(fn).toHaveBeenLastCalledWith("/api/stations/st%201", { signal: expect.any(AbortSignal), method: "PUT", headers: JSON_AUTH, body: JSON.stringify({ camera_roles: { ego: "cam_head" } }) });
+    await deleteStation("tok", "st_1");
+    expect(fn).toHaveBeenLastCalledWith("/api/stations/st_1", { signal: expect.any(AbortSignal), method: "DELETE", headers: { "X-Control-Token": "tok" } });
+    await expect(selectStation("tok", null)).resolves.toEqual(STATIONS_FIXTURE);
+    expect(fn).toHaveBeenLastCalledWith("/api/stations/select", { signal: expect.any(AbortSignal), method: "POST", headers: JSON_AUTH, body: JSON.stringify({ id: null }) });
+  });
+
+  it("surfaces the backend's reason for a refusal, or the status when it gave none", async () => {
+    stubFetch(400, { detail: "a station named 'Bench A' already exists" });
+    await expect(addStation("tok", { name: "bench a" })).rejects.toThrow(new SettingsHttpError("a station named 'Bench A' already exists", 400));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("gateway down", { status: 502 })));
+    await expect(fetchStations()).rejects.toThrow(new SettingsHttpError("HTTP 502", 502));
+  });
+
+  it("rejects a listing of the wrong shape", async () => {
+    for (const body of [null, { stations: {} }, { ...STATIONS_FIXTURE, label: 7 }, { ...STATIONS_FIXTURE, roles: "ego" }]) {
+      stubFetch(200, body);
+      await expect(fetchStations()).rejects.toThrow(SettingsParseError);
+    }
+  });
+});
+
+describe("station uptime", () => {
+  it("is read without a credential, so with the notes left empty", async () => {
+    const withheld = { ...UPTIME_FIXTURE, notes: "" };
+    const fn = stubFetch(200, withheld);
+    await expect(fetchStationUptime()).resolves.toEqual(withheld);
+    expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { signal: expect.any(AbortSignal) });
+  });
+
+  it("saves the day's notes for the station they were written for, with the control token, and sets nothing else", async () => {
+    const saved = { ...UPTIME_FIXTURE, notes: "left glove battery; replaced at 14:10" };
+    const fn = stubFetch(200, saved);
+    await expect(saveStationNotes("tok", "Bench A", "left glove battery; replaced at 14:10")).resolves.toEqual(saved);
+    expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { signal: expect.any(AbortSignal), method: "POST", headers: JSON_AUTH, body: JSON.stringify({ station: "Bench A", notes: "left glove battery; replaced at 14:10" }) });
+  });
+
+  it("reports a refusal and a malformed body", async () => {
+    stubFetch(400, { detail: "notes may be at most 4000 characters" });
+    await expect(saveStationNotes("tok", "Bench A", "x")).rejects.toThrow(new SettingsHttpError("notes may be at most 4000 characters", 400));
+    stubFetch(409, { detail: "the station in use changed; reload the report" });
+    await expect(saveStationNotes("tok", "Bench A", "x")).rejects.toMatchObject({ message: "the station in use changed; reload the report", status: 409 });
+    stubFetch(503, { detail: "stations are not available yet" });
+    await expect(fetchStationUptime()).rejects.toThrow(new SettingsHttpError("stations are not available yet", 503));
+    for (const body of [null, { ...UPTIME_FIXTURE, state: "active" }, { ...UPTIME_FIXTURE, down_seconds: "60" }, { ...UPTIME_FIXTURE, blockers: 2 }, { ...UPTIME_FIXTURE, notes: null }]) {
+      stubFetch(200, body);
+      await expect(fetchStationUptime()).rejects.toThrow(SettingsParseError);
+    }
+  });
+});

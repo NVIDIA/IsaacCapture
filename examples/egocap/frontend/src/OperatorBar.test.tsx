@@ -25,6 +25,7 @@ function snap(overrides: Partial<RecordingSnapshot> = {}): RecordingSnapshot {
     savedCount: 0,
     lastResult: null,
     readyToRecord: true,
+    notReadyReason: null,
     revision: 1,
     ...overrides,
   };
@@ -53,6 +54,12 @@ describe("deriveRecIndicator", () => {
     expect(deriveRecIndicator(snap(), true)).toMatchObject({ label: "READY", variant: "ready" });
     expect(deriveRecIndicator(snap({ readyToRecord: false }), true)).toMatchObject({ label: "NOT READY" });
     expect(deriveRecIndicator(snap({ readyToRecord: false, taskText: "" }), true).hint).toContain("Set a task");
+  });
+
+  it("says why a take would be refused, ahead of a missing task", () => {
+    const blocked = { readyToRecord: false, notReadyReason: "select a station before recording" };
+    expect(deriveRecIndicator(snap(blocked), true)).toMatchObject({ label: "NOT READY", hint: "Select a station before recording" });
+    expect(deriveRecIndicator(snap({ ...blocked, taskText: "" }), true).hint).toBe("Select a station before recording");
   });
 
   it("asks for whatever setup is missing instead of claiming READY", () => {

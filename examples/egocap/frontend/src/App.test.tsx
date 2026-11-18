@@ -478,7 +478,7 @@ describe("Settings modal recording isolation", () => {
       recordingSnapshot: {
         batchId: "b1", episodePhase: "RECORDING", currentEpisodeId: "e1", currentEpisodeElapsedMs: 0,
         taskText: "Fold towel", taskDetails: "", defaultOperator: null, autoFillOperatorName: false,
-        savedCount: 0, lastResult: null, readyToRecord: true, revision: 0,
+        savedCount: 0, lastResult: null, readyToRecord: true, notReadyReason: null, revision: 0,
       },
     }));
     const { container } = render(<App />);

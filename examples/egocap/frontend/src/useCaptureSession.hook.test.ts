@@ -674,6 +674,7 @@ describe("useCaptureSession (effect integration)", () => {
       savedCount: 0,
       lastResult: null,
       readyToRecord: false,
+      notReadyReason: null, // this wire body predates the reason, so none
       revision: 0,
     });
     expect(result.current.recordingSnapshotReceivedAtMonotonic).not.toBeNull();
@@ -846,6 +847,41 @@ describe("useCaptureSession (effect integration)", () => {
     expect(result.current.recordingSnapshot?.savedCount).toBe(2);
     push(5, 3);
     expect(result.current.recordingSnapshot?.savedCount).toBe(3);
+  });
+
+  it("carries the backend's reason a take would be refused, and drops a snapshot whose reason is not text", async () => {
+    const { result } = renderHook(() => useCaptureSession());
+    const ws1 = FakeWebSocket.instances[0];
+    act(() => ws1.open());
+    act(() => ws1.emitText(runningSnapshotBody(1)));
+    const push = (revision: number, reason: unknown) =>
+      act(() => {
+        ws1.emitText(
+          JSON.stringify({
+            type: "recording_snapshot",
+            snapshot: {
+              batch_id: "b1",
+              episode_phase: "IDLE",
+              current_episode_id: null,
+              current_episode_elapsed_ms: null,
+              task_text: "Pour water.",
+              default_operator: null,
+              auto_fill_operator_name: false,
+              saved_count: 0,
+              last_result: null,
+              ready_to_record: false,
+              not_ready_reason: reason,
+              revision,
+            },
+          }),
+        );
+      });
+    push(1, "select a station before recording");
+    expect(result.current.recordingSnapshot?.notReadyReason).toBe("select a station before recording");
+    push(2, null);
+    expect(result.current.recordingSnapshot?.notReadyReason).toBeNull();
+    push(3, 7);
+    expect(result.current.recordingSnapshot?.revision).toBe(2);
   });
 
   it("sendRecordingCommand rejects a second send while one is already in flight", async () => {

@@ -328,6 +328,23 @@ class CaptureStatusMonitor:
             return ()
         return tuple(s for s in self.native.started.streams if isinstance(s, p.CameraStream))
 
+    def offered_camera_names(self) -> frozenset[str] | None:
+        """Names of every camera the accepted session offers, CaptureServer's own and LiveKit streams alike;
+        None before a session has been accepted, when what it offers is not known yet."""
+        if self.native.started is None:
+            return None
+        return frozenset(
+            s.name for s in self.native.started.streams if isinstance(s, (p.CameraStream, p.LiveKitCameraStream))
+        )
+
+    def set_station_label(self, label: str) -> None:
+        """Replaces the station label every status and preview snapshot carries. The revision advances so
+        each viewer is sent the change, the same as any other lifecycle fact."""
+        if label == self._station_label:
+            return
+        self._station_label = label
+        self.revision += 1
+
     def camera_descriptor_by_stream_id(self, stream_id: int) -> p.CameraStream | None:
         """The accepted camera descriptor advertising this stream ID, if any."""
         for cam in self.camera_descriptors:

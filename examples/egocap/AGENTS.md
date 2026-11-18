@@ -51,7 +51,7 @@ with its history can still work on it.
 
 ## Before reporting a change ready
 
-Inspect changed paths against the intended MR base and audit path/install/dependency references. If an external configuration or CI edit is actually required, identify its exact path and purpose and obtain explicit user authorization before editing it. Do not silently broaden scope or duplicate files outside the allowed tree.
+Inspect changed paths against the intended MR base and audit path/install/dependency references. Before any push, search the whole diff, the new files and the commit messages for internal names and for anything credential-like (keys, tokens, storage URLs, addresses of real machines); a clean result is a precondition, not a courtesy. If an external configuration or CI edit is actually required, identify its exact path and purpose and obtain explicit user authorization before editing it. Do not silently broaden scope or duplicate files outside the allowed tree.
 
 Run all three test suites per "Run the tests yourself" above — check each package's own coverage target, not one combined number (see `pyproject.toml`'s `[tool.coverage.run]` comment for why).
 

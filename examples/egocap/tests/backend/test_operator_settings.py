@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -25,6 +26,7 @@ from egocap_web.operator_settings import (
 )
 
 TOKEN = "t" * 43
+AUTH = {"X-Control-Token": TOKEN}
 
 
 @dataclass
@@ -51,6 +53,7 @@ def test_store_defaults_when_nothing_is_saved_and_round_trips_a_value(tmp_path):
         "camera_roles": {"ego": None, "wrist_left": None, "wrist_right": None},
         "task_file": None,
         "preselected_task": None,
+        "require_calibration": False,
     }
     assert not store.path.with_name("operator_settings.json.tmp").exists()
 
@@ -81,6 +84,7 @@ def test_get_reports_defaults_and_the_accepted_types(tmp_path):
         "roles": ["ego", "wrist_left", "wrist_right"],
         "task_file": None,
         "preselected_task": None,
+        "require_calibration": False,
     }
 
 
@@ -104,6 +108,7 @@ def test_put_changes_only_the_fields_it_names(tmp_path):
         "camera_roles": {"ego": None, "wrist_left": None, "wrist_right": None},
         "task_file": "Kitchen.csv",
         "preselected_task": "wash_cup",
+        "require_calibration": False,
     }
     cleared = client.put("/api/operator-settings", json={"control_token": TOKEN, "preselected_task": None})
     assert cleared.json()["preselected_task"] is None and cleared.json()["task_file"] == "Kitchen.csv"
@@ -238,7 +243,7 @@ def test_camera_roles_start_unassigned_and_change_one_role_at_a_time(tmp_path):
         ({"head": "Ego"}, "unknown camera role"),
         ({"ego": ""}, "camera name or null"),
         ({"ego": 1}, "camera name or null"),
-        ({"ego": "Cam", "wrist_left": "Cam"}, "two roles"),
+        ({"ego": "Cam", "wrist_left": "Cam"}, "cannot fill both ego and wrist_left"),
         ("Ego", "must be an object"),
     ],
 )
@@ -372,3 +377,56 @@ def test_storage_failures_are_logged_without_exposing_paths_in_responses(tmp_pat
     assert response.json() == {"detail": "could not save operator settings"}
     assert "station-secret" not in response.text
     assert "station-secret" in caplog.text
+
+
+def test_the_calibration_requirement_is_off_by_default_and_saved_like_any_other_setting(tmp_path):
+    client = _client(tmp_path)
+    store = client.app.state.operator_settings_store
+    assert client.get("/api/operator-settings").json()["require_calibration"] is False
+    assert store.calibration_required() is False
+    refused = client.put("/api/operator-settings", json={"require_calibration": True})
+    assert refused.status_code == 403 and store.calibration_required() is False
+    saved = client.put("/api/operator-settings", json={"require_calibration": True}, headers=AUTH)
+    assert saved.status_code == 200 and saved.json()["require_calibration"] is True
+    assert store.calibration_required() is True
+    # Another field's change leaves it as it is, and it survives a new store on the same file.
+    client.put("/api/operator-settings", json={"camera_type": "oak_d"}, headers=AUTH)
+    assert OperatorSettingsStore(store.path).calibration_required() is True
+    assert (
+        client.put("/api/operator-settings", json={"require_calibration": False}, headers=AUTH).json()[
+            "require_calibration"
+        ]
+        is False
+    )
+
+
+@pytest.mark.parametrize("value", [None, "yes", 1])
+def test_the_calibration_requirement_must_be_a_boolean(tmp_path, value):
+    client = _client(tmp_path)
+    response = client.put("/api/operator-settings", json={"require_calibration": value}, headers=AUTH)
+    assert response.status_code == 400
+    assert response.json() == {"detail": "require_calibration must be true or false"}
+    assert not (tmp_path / "operator_settings.json").exists()
+
+
+def test_a_settings_file_saved_before_the_requirement_existed_or_unreadable_does_not_require_calibration(tmp_path):
+    path = tmp_path / "operator_settings.json"
+    store = OperatorSettingsStore(path)
+    path.write_text('{"camera_type": "oak_d"}')
+    assert store.load().require_calibration is False and store.calibration_required() is False
+    # A file that cannot be used must not start holding takes.
+    path.write_text('{"require_calibration": "yes"}')
+    assert store.calibration_required() is False
+    path.unlink()
+    path.mkdir()
+    assert store.calibration_required() is False
+
+
+def test_the_calibration_requirement_is_saved_while_a_station_is_in_use(tmp_path):
+    client = _client(tmp_path)
+    selected = SimpleNamespace(camera_type="oak_d", camera_roles={"ego": "cam_head"})
+    client.app.state.station_service = SimpleNamespace(registry=SimpleNamespace(selected=selected))
+    saved = client.put("/api/operator-settings", json={"require_calibration": True}, headers=AUTH)
+    assert saved.status_code == 200 and saved.json()["require_calibration"] is True
+    # The camera setup still belongs to the station.
+    assert client.put("/api/operator-settings", json={"camera_type": "oak_d"}, headers=AUTH).status_code == 400

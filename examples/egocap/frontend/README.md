@@ -76,6 +76,56 @@ The page is built for an operator mid-take: the cameras fill it, and everything 
   until then it says `SET UP` and what is missing. A command in flight shows at once (`STOPPING` while a take is written),
   because the backend's own phase only changes when the command finishes. A stale feed shows `NO FEED`, never a retained
   `REC`.
+- **Start-of-day rail (under the header).** Station, Devices, Record and Wrap up, each done, needing attention, still
+  to do, or not needed for this station, with a short reason (`StepRail.tsx`). The first step that is neither done nor
+  skipped is highlighted. Station opens Settings on its Station tab, Devices opens Settings on its Devices tab, and
+  Wrap up opens the end-of-day report. Record is not a control: recording is the page itself, so the step only shows
+  where it stands. The rail shows what `GET /api/setup` reports and is read again when a dialog closes, when the
+  recording readiness reason changes, and ten seconds after each read answers (a slow read is waited for, never
+  cut short by the timer); it is absent when that cannot be read.
+- **Dialogs.** Settings and End of day open over the page, so the cameras stay live behind them. While either is
+  open the page behind it is inert and the recording shortcuts and voice commands are suspended.
+- **Settings (dialog).** Tabs: Station, Devices, Tasks, Display, Advanced (`SettingsPanel.tsx`).
+  - *Station* is the Stations card (`StationsCard.tsx`): each station with a radio that puts it in use, the camera
+    filling each role, and why it cannot record yet. *Edit* opens the row's inline editor for its name, camera type and
+    the camera per role, saved together; only one editor is open at a time, and a save sends only the fields that
+    editor changed, so it never undoes a change made in another browser meanwhile. The editor of the station in use
+    ends with the address its headset connects to, and the row warns when this host's address has changed since the
+    headset was given it. While a take is being recorded the station in use cannot be replaced, edited or deleted, and
+    while an interrupted take waits for recovery the backend refuses a change of the station in use; the card shows
+    its reason.
+  - While the site has no stations, a second card, *Camera setup* (`CameraSetupCard.tsx`), edits the camera type and
+    the camera per role with the same fields and *Swap wrists*, saved with the operator settings
+    (`PUT /api/operator-settings`). Adding a station moves that setup onto the station, and the card goes away.
+    Until the operator changes a field the card follows the saved setup, so after the last station is deleted it
+    shows what the settings hold, not what that station held.
+  - *Devices* is a live checklist (`DevicesTab.tsx`): the tracking devices and cameras the station needs, its
+    calibration files and the free disk space, each passed (`✓`), failed with the reason (`✗`), advisory (`!`, a
+    finding that does not hold recording) or not needed (`–`), under one line that says whether station setup holds
+    recording. The backend judges them continuously and the tab reads them again two seconds after each answer while
+    it is shown, so there is nothing to run.
+  - Under the checklist, *Require calibration files before recording* is the deployment's choice
+    (`require_calibration` in the operator settings, off by default, changed with the control token). Off, missing
+    calibration files are an advisory item and takes are allowed; on, they fail and hold recording. A change is
+    followed by an immediate read of the checklist. The calibration tools are listed beneath it.
+- **End of day (dialog).** Opened from the rail's last step (`WrapUpDialog.tsx`); it always shows today for the station
+  in use and needs the control token. Top to bottom: the day's takes by outcome; the station's active and down time,
+  the stretches that blocked it, and a notes field; each session with its takes (outcome, duration, task, operator,
+  issues) and a form that corrects the task of one take or a range; *Save report*, which writes the report on the
+  station and names the files. A session with any take routed into a group shows where each take is recorded, since
+  a routed take is numbered by its slot in its group and an unfinished one by its place in the session; with more
+  than one group the correction also names the group it changed. Notes come from the day report and are saved for
+  the station they were typed for: if another station is in use by then the save is refused, the dialog says "The
+  station in use changed; reload the report." and keeps the draft, and after *Reload* it is saved for the station
+  the report now shows. Each opening starts from a fresh report, so while notes are unsaved or a correction is half
+  typed, Escape, the backdrop and *Close* ask "Discard unsaved changes?" instead of closing.
+- **Status strip (under the bar).** The station in use, its uptime chip, and the capture headline. The chip
+  (`UptimeChip.tsx`) is read-only: the backend logs by itself when the station could record. It reads `Ready`,
+  `Recording`, or `Down` with how long and why, and once the day has a take the active and down time and the number of
+  blockers follow it. It is read every fifteen seconds, and at once when the recording phase, the readiness reason or
+  the saved count changes, so it does not lag the bar above. It is read without the control token, so it never
+  carries the day's notes, and after a change of the station in use it shows nothing until that station's own
+  uptime has arrived.
 - **Camera stage (middle).** It takes every pixel the bar above and the dock below leave. The head camera (the one named
   `head*`, otherwise the first) takes the left two-thirds and the others stack on the right; each tile carries its name and
   measured / advertised Hz and latency on the picture. A live take puts a red frame around the stage.

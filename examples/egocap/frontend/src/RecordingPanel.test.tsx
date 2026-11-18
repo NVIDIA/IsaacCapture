@@ -46,6 +46,7 @@ function activeSnapshot(overrides: Partial<RecordingSnapshot> = {}): RecordingSn
     savedCount: 0,
     lastResult: null,
     readyToRecord: true,
+    notReadyReason: null,
     revision: 0,
     ...overrides,
   };
@@ -137,6 +138,19 @@ describe("RecordingPanel", () => {
     const record = screen.getByRole("button", { name: /record \(s\)/i }) as HTMLButtonElement;
     expect(record.disabled).toBe(true);
     expect(record.title).toBe("Required sources not ready");
+  });
+
+  it("Record gives the backend's own reason when it has one", () => {
+    const noop = vi.fn().mockResolvedValue({ outcome: "ok", reason: null });
+    render(
+      <RecordingPanel {...defaultOperatorProps}
+        recordingSnapshot={activeSnapshot({ readyToRecord: false, notReadyReason: "station 'Bench A': no camera is assigned to the ego (head) role" })}
+        actions={{ onStartEpisode: noop }}
+      />,
+    );
+    const record = screen.getByRole("button", { name: /record \(s\)/i }) as HTMLButtonElement;
+    expect(record.disabled).toBe(true);
+    expect(record.title).toBe("Station 'Bench A': no camera is assigned to the ego (head) role");
   });
 
   it("after an interrupted take, Record points to New batch as the way to clear it", () => {

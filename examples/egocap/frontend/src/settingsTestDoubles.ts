@@ -4,6 +4,7 @@
 
 /** A complete `/api/settings` body for tests: a development default with one camera. */
 import type { EffectiveSettings, OperatorSettings, TaskFileContents, TaskFileListing, ToolInfo } from "./settingsApi";
+import type { StationChange, StationListing, StationRecord } from "./stationsApi";
 
 export const OPERATOR_SETTINGS_FIXTURE: OperatorSettings = {
   camera_type: null,
@@ -12,6 +13,17 @@ export const OPERATOR_SETTINGS_FIXTURE: OperatorSettings = {
   roles: ["ego", "wrist_left", "wrist_right"],
   task_file: null,
   preselected_task: null,
+  require_calibration: false,
+};
+
+/** A registry with no stations: the configuration-free default, where the deployment's own label applies. */
+export const STATIONS_FIXTURE: StationListing = {
+  stations: [],
+  selected: null,
+  roles: ["ego", "wrist_left", "wrist_right"],
+  camera_types: ["sensing_gmsl", "oak_d"],
+  label: "Station 01",
+  locked_reason: null,
 };
 
 export const TASK_FILES_FIXTURE: TaskFileListing = { files: ["Kitchen.csv"], imported: [] };
@@ -86,3 +98,53 @@ export const SETTINGS_FIXTURE: EffectiveSettings = {
   task_files: { dir: "/repo/examples/egocap/data/taskfiles", available: true },
   origins: { allowed: [], trusted_hostnames: null },
 };
+
+/** An in-memory station registry that answers like the backend's, so a change shows up in the next listing. */
+export function fakeStationRegistry(initial: StationListing = STATIONS_FIXTURE) {
+  let listing = initial;
+  let nextId = initial.stations.length + 1;
+  /** Replace one station and return the listing, as every backend change does. */
+  const replace = (id: string, change: (station: StationRecord) => StationRecord): StationListing => {
+    listing = { ...listing, stations: listing.stations.map((station) => (station.id === id ? change(station) : station)) };
+    return listing;
+  };
+  /** The label recordings carry: the station in use, else the deployment's own. */
+  const relabel = (): StationListing => {
+    const inUse = listing.stations.find((station) => station.id === listing.selected);
+    listing = { ...listing, label: inUse?.name ?? STATIONS_FIXTURE.label };
+    return listing;
+  };
+  return {
+    get listing() {
+      return listing;
+    },
+    set listing(next: StationListing) {
+      listing = next;
+    },
+    /** The station in use, or null. */
+    inUse: (): StationRecord | null => listing.stations.find((station) => station.id === listing.selected) ?? null,
+    addStation: async (_token: string, fields: StationChange): Promise<StationListing> => {
+      const station: StationRecord = {
+        id: `st_${nextId++}`,
+        name: fields.name ?? "",
+        camera_type: fields.camera_type ?? null,
+        camera_roles: { ego: null, wrist_left: null, wrist_right: null, ...fields.camera_roles },
+        problems: [],
+      };
+      listing = { ...listing, stations: [...listing.stations, station] };
+      return listing;
+    },
+    updateStation: async (_token: string, id: string, changes: StationChange): Promise<StationListing> => {
+      replace(id, (station) => ({ ...station, ...changes, camera_roles: { ...station.camera_roles, ...changes.camera_roles } }));
+      return relabel();
+    },
+    deleteStation: async (_token: string, id: string): Promise<StationListing> => {
+      listing = { ...listing, stations: listing.stations.filter((station) => station.id !== id), selected: listing.selected === id ? null : listing.selected };
+      return relabel();
+    },
+    selectStation: async (_token: string, id: string | null): Promise<StationListing> => {
+      listing = { ...listing, selected: id };
+      return relabel();
+    },
+  };
+}
