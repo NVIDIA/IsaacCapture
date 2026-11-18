@@ -30,6 +30,9 @@ import pytest
 from isaaccapture_examples.agentic_remote.human.ik import (
     APAI_SRC_ENV,
     IK_MARGIN_RAD,
+    NEAR_GAIN_M,
+    NEAR_TURN_WEIGHT_M,
+    NO_NEARER,
     Solver,
 )
 from isaaccapture_examples.agentic_remote.human.types import (
@@ -449,3 +452,188 @@ def test_the_solve_time_and_the_joint_speed_per_hand_speed_are_printed(solver):
     # every direction. Raising a speed needs the jump limit raised with it.
     for name in ("raised", "mid", "just above rest", "10 cm above rest"):
         assert per_pass[name] < limit, name
+
+
+# The nearest pose. A pose with no solution lies out of reach: Solver.nearest
+# goes one step from the seed toward it on the arm model's FK, the tip's
+# position first and the wrist's turn second. The numbers below are those of
+# configs/human_rebot.yaml: one pass of the hand speed limit is 1 cm of the
+# tip, one pass of the joint target at its speed limit 0.028 rad of a joint,
+# and a solution is a jump from 0.10 rad.
+
+STRETCHED = (0.0, 1.5, 0.6, 0.0, 0.3, 0.0)  # the arm reaching forward, low
+FOLDED = (0.0, 0.3, 0.3, 0.0, 0.0, 0.0)  # the tip near the arm's base
+RIG_HAND_STEP_M = 0.01
+RIG_JOINT_STEP_RAD = 0.9 * 0.98 * 1.6 * PASS_S
+RIG_JUMP_RAD = 0.10
+
+
+@pytest.fixture
+def rig_solver() -> Solver:
+    return Solver(kinematics_of("rebot_rs"), max_jump_rad=RIG_JUMP_RAD)
+
+
+def follow(
+    solver: Solver, q: Sequence[float], goal: np.ndarray, passes: int
+) -> list[tuple[str, np.ndarray]]:
+    """Go toward goal from q pass by pass; how each pass went, and the joints after it.
+
+    Each pass asks for the pose at most one pass of the hand speed limit
+    from the tip toward goal: "solved" when it has a solution, else
+    "nearest" when the solver's nearest pose is taken, else "stands". The
+    joints move by one pass of the joint speed limit at most.
+    """
+    q = np.array(q, dtype=float)
+    out = []
+    for _ in range(passes):
+        at = solver.fk(q)
+        pose = goal.copy()
+        way = goal[:3, 3] - at[:3, 3]
+        far = float(np.linalg.norm(way))
+        if far > RIG_HAND_STEP_M:
+            pose[:3, 3] = at[:3, 3] + way * (RIG_HAND_STEP_M / far)
+        solved, how = solver.solve(pose, q), "solved"
+        if solved.q is None:
+            solved, how = solver.nearest(pose, q), "nearest"
+        if solved.q is None:
+            how = "stands"
+        else:
+            step = np.array(solved.q) - q
+            most = float(np.abs(step).max())
+            q = q + step * min(1.0, RIG_JOINT_STEP_RAD / max(most, 1e-12))
+        out.append((how, q))
+    return out
+
+
+@pytest.mark.parametrize(
+    "beyond",
+    [(0.5, 0.3, 0.0), (0.5, 0.0, 0.3), (0.5, 0.0, 0.0), (0.0, 0.0, 0.9)],
+    ids=["forward and left", "forward and up", "forward", "up"],
+)
+def test_beyond_the_reach_the_nearest_pose_takes_the_tip_on_and_then_the_arm_stands(
+    rig_solver, kinematics, beyond
+):
+    assert NEAR_TURN_WEIGHT_M == 0.1 and NEAR_GAIN_M == 2e-6
+    start = rig_solver.inside(STRETCHED)
+    goal = moved(rig_solver.fk(start), beyond, 1.0)
+    passes = follow(rig_solver, start, goal, 400)
+    hows = [how for how, _ in passes]
+    # First the poses on the way have solutions; from the edge of reach on
+    # the nearest pose is taken; then nothing is nearer and the arm stands.
+    first_near, first_stand = hows.index("nearest"), hows.index("stands")
+    assert set(hows[:first_near]) == {"solved"} and first_near > 10
+    assert set(hows[first_near:first_stand]) == {"nearest"}
+    assert set(hows[first_stand:]) == {"stands"} and first_stand - first_near > 10
+    np.testing.assert_array_equal(passes[-1][1], passes[first_stand][1])
+    # The tip never went back from the hand: every pass that moved brought
+    # it nearer, and the nearest poses took it at least 3 cm further than
+    # the solves had.
+    off = [
+        float(np.linalg.norm(goal[:3, 3] - rig_solver.fk(q)[:3, 3])) for _, q in passes
+    ]
+    assert np.all(np.diff(off[:first_stand]) < 0.0)
+    assert off[first_near - 1] - off[-1] > 0.03
+    # The wrist gave way by less than 0.3 rad from the hand's orientation.
+    assert pose_error(rig_solver.fk(passes[-1][1]), goal)[1] < 0.3
+    # No joint left the margin the IK keeps from the joint limits.
+    low, high = kinematics.joint_limits
+    for _, q in passes:
+        assert np.all(q >= low + IK_MARGIN_RAD - 1e-12)
+        assert np.all(q <= high - IK_MARGIN_RAD + 1e-12)
+    print(
+        f"\n{beyond}: {first_near} passes solved, {first_stand - first_near} by the "
+        f"nearest pose, {100 * (off[first_near - 1] - off[-1]):.1f} cm further; the "
+        f"wrist {pose_error(rig_solver.fk(passes[-1][1]), goal)[1]:.2f} rad off"
+    )
+
+
+def test_a_hand_that_comes_back_into_reach_is_solved_for_again(rig_solver):
+    start = rig_solver.inside(STRETCHED)
+    home = rig_solver.fk(start)
+    out = follow(rig_solver, start, moved(home, (0.5, 0.3, 0.0), 1.0), 150)
+    assert out[-1][0] == "stands"
+    back = follow(rig_solver, out[-1][1], moved(home, LEFT, 0.05), 200)
+    assert back[-1][0] == "solved"
+    # The arm is at the hand's pose again, with the hand's orientation.
+    metres, rad = pose_error(rig_solver.fk(back[-1][1]), moved(home, LEFT, 0.05))
+    assert metres < 1e-3 and rad < 1e-3
+
+
+def test_the_nearest_pose_of_a_pose_in_reach_is_nearly_that_pose(rig_solver):
+    for q in (RAISED, MID):
+        for direction in DIRECTIONS:
+            pose = moved(rig_solver.fk(q), direction, 0.005)
+            near = rig_solver.nearest(pose, q)
+            assert near.problem == ""
+            metres, rad = pose_error(rig_solver.fk(near.q), pose)
+            assert metres < 0.0005 and rad < 0.005
+            assert step_of(near.q, q) <= RIG_JUMP_RAD
+
+
+def test_no_nearest_pose_where_nothing_is_nearer(rig_solver):
+    none = rig_solver.nearest(rig_solver.fk(RAISED), RAISED)
+    assert none.q is None and none.problem.startswith(NO_NEARER)
+    assert none.problem == "no nearer pose than the one of the last joint target"
+
+
+def test_the_nearest_pose_takes_the_tip_no_further_from_the_position_asked_for(
+    rig_solver,
+):
+    # A pose at the tip's own position, turned by 0.2 rad: a turn of the
+    # wrist alone would move the tip off it, so no joints come back.
+    for q in (RAISED, MID):
+        turned = moved(rig_solver.fk(q), UP, 0.0, axis=UP, angle=0.2)
+        none = rig_solver.nearest(turned, q)
+        assert none.q is None and none.problem.startswith(NO_NEARER)
+
+
+def test_a_step_to_the_nearest_pose_is_no_longer_than_the_jump_limit(kinematics):
+    solver = Solver(kinematics, max_jump_rad=0.01)
+    pose = moved(solver.fk(RAISED), UP, 0.01)  # asks the third joint for 0.05 rad
+    near = solver.nearest(pose, RAISED)
+    assert near.problem == "" and step_of(near.q, RAISED) == pytest.approx(0.01)
+    # It is on the way all the same: the tip rose.
+    assert solver.fk(near.q)[2, 3] > solver.fk(RAISED)[2, 3] + 0.001
+
+
+def test_the_nearest_pose_keeps_each_joint_inside_the_bounds_it_is_given(rig_solver):
+    low, high = [-10.0] * 6, [10.0] * 6
+    pose = moved(rig_solver.fk(RAISED), UP, 0.01)
+    free = rig_solver.nearest(pose, RAISED, low, high)
+    assert free.q[2] > RAISED[2] + 0.03  # the third joint makes most of the way
+    # The third joint may not go on: the others take the tip up without it.
+    high[2] = RAISED[2]
+    held = rig_solver.nearest(pose, RAISED, low, high)
+    assert held.problem == "" and held.q[2] == RAISED[2]
+    assert rig_solver.fk(held.q)[2, 3] > rig_solver.fk(RAISED)[2, 3] + 0.002
+    # A joint outside its bounds at the seed may come back and goes no
+    # further out.
+    high[2] = RAISED[2] - 0.2
+    outside = rig_solver.nearest(pose, RAISED, low, high)
+    assert outside.problem == "" and outside.q[2] <= RAISED[2]
+
+
+@pytest.mark.parametrize(
+    "q, slowest, fastest",
+    [(RAISED, 0.265, 0.36), (FOLDED, 0.155, 0.325), (STRETCHED, 0.265, 0.365)],
+    ids=["ready", "folded", "stretched"],
+)
+def test_a_pass_at_the_rigs_hand_speed_limit_is_no_jump_on_the_rigs_file(
+    rig_solver, q, slowest, fastest
+):
+    start = rig_solver.inside(q)
+    steps = []
+    for direction in DIRECTIONS:
+        solved = rig_solver.solve(
+            moved(rig_solver.fk(start), direction, RIG_HAND_STEP_M), start
+        )
+        assert solved.problem == ""
+        steps.append(step_of(solved.q, start))
+    # 1 cm of the tip asks a joint for 0.04 to 0.09 rad: no jump at 0.10,
+    # and more than a pass of the joint target, so the joints set the pace.
+    assert RIG_JOINT_STEP_RAD < min(steps) and max(steps) < 0.095 < RIG_JUMP_RAD
+    assert 2 * RIG_JOINT_STEP_RAD <= RIG_JUMP_RAD
+    # The tip's speed with the fastest joint at its limit, by direction, m/s.
+    speeds = [RIG_HAND_STEP_M / step * RIG_JOINT_STEP_RAD / PASS_S for step in steps]
+    assert slowest <= min(speeds) and max(speeds) <= fastest
+    print(f"\n{q}: the tip at {min(speeds):.2f} to {max(speeds):.2f} m/s")

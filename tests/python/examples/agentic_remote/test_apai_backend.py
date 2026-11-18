@@ -458,7 +458,7 @@ def test_setpoint_inside_the_harness_joint_margin_is_refused(
 
 
 def test_on_the_rig_file_only_the_agent_enters_the_joint_margin_at_the_rest_stops(
-    clock: FakeClock,
+    clock: FakeClock, tmp_path: Path
 ) -> None:
     """What the fold rule lets the Thor's agent checker accept, and nobody else's.
 
@@ -473,7 +473,9 @@ def test_on_the_rig_file_only_the_agent_enters_the_joint_margin_at_the_rest_stop
     from repo_paths import repo_root
 
     file = repo_root() / "examples/agentic_remote/configs/robot_app_rebot.yaml"
-    profile = apai_backend.load_apai_profile("rebot_rs")
+    # The rig's arm profile, the one the experiment's launcher runs: only on
+    # it may a person be as fast as the rig file lets them.
+    profile = apai_backend.load_apai_profile(thor_arm_profile(tmp_path))
     rig = apai_backend.config_for_profile(load_config(file), profile)
     checkers = apai_backend.build_apai_checkers(rig, profile, clock)
     agent, human, recovery = checkers.agent, checkers.human, checkers.recovery
@@ -818,7 +820,9 @@ def test_the_tip_floor_is_the_height_under_which_a_persons_tip_may_only_rise(
 ) -> None:
     # What WELCOME announces as human_tip_floor: the height tip_state()
     # compares the arm model's FK with, in the arm's base frame whatever the
-    # base_pose. The table plane and the higher of the two table clearances.
+    # base_pose. Where the human limit set names no table clearance: the
+    # table plane and the higher of the profile's and the file's clearance.
+    assert config.limits.human.table_clearance_m is None
     arm_cfg = profile.arm_cfg.as_dict()
     if mounted:
         arm_cfg["base_pose"] = [0.2, -0.1, 0.0, 0.0, 0.0, 0.0]
@@ -852,6 +856,122 @@ def test_the_tip_floor_is_the_height_under_which_a_persons_tip_may_only_rise(
     again = apai_backend.build_apai_checkers(raised, stood, clock).human
     assert again.tip_floor() == pytest.approx(limits.table_z + 0.035)
     assert again.tip_state(ABOVE, None).low is not None
+
+
+def with_human(config: RobotAppConfig, **fields: Any) -> RobotAppConfig:
+    """The configuration with fields of its human limit set replaced."""
+    human = dataclasses.replace(config.limits.human, **fields)
+    limits = dataclasses.replace(config.limits, human=human)
+    return dataclasses.replace(config, limits=limits)
+
+
+def test_a_table_clearance_the_human_limit_set_names_is_a_persons_alone(
+    config: RobotAppConfig, profile: apai_backend.ApaiProfile, clock: FakeClock
+) -> None:
+    # limits.human.table_clearance_m: the height over the table plane under
+    # which a person's gripper tip may only rise. 0.0, the rig's value, is
+    # the table plane itself.
+    floored = with_human(config, table_clearance_m=0.0)
+    checkers = apai_backend.build_apai_checkers(floored, profile, clock)
+    human, agent, recovery = checkers.human, checkers.agent, checkers.recovery
+    table_z = human.harness.limits.table_z
+    assert human.harness.limits.table_clearance == 0.0
+    # What WELCOME announces as human_tip_floor.
+    assert human.tip_floor() == table_z == 0.0 and type(human.tip_floor()) is float
+    # The agent and a return to rest keep the profile's clearance, and the
+    # return to rest the one of the app's file.
+    for other in (agent, recovery):
+        assert other.harness.limits.table_clearance == 0.02
+        assert other.tip_floor() == table_z + 0.02
+    assert floored.rest.table_clearance_m == 0.02
+
+    def height(q: Sequence[float]) -> float:
+        return float(profile.kinematics.fk(np.array(q, dtype=float))[2, 3])
+
+    # The tip 1 cm, 7 mm and 2 mm over the table plane, and 4 mm under it.
+    lower, lowest, under = (moved(BELOW, 1, v) for v in (1.69, 1.705, 1.72))
+    heights = [height(q) for q in (ABOVE, BELOW, lower, lowest, under)]
+    assert heights == sorted(heights, reverse=True)
+    assert 0.0 < heights[3] < 0.003 and -0.005 < heights[4] < 0.0
+    # Over the table plane a person's tip goes down, sideways at one height
+    # and up again, and no pose there is low.
+    slid = moved(lowest, 0, 0.05)
+    assert height(slid) == pytest.approx(height(lowest), abs=1e-9)
+    human.check_path(ABOVE, [BELOW, lower, lowest, slid, lowest, BELOW], 10.0)
+    for pose in (BELOW, lower, lowest, slid):
+        human.check_pose(pose)
+        assert human.tip_state(pose, None).low is None
+        # The agent's checker takes none of them, and a return to rest
+        # starts from none.
+        refusal_of(lambda q=pose: agent.check_pose(q), r"below table clearance 0\.020")
+        assert agent.tip_state(pose, None).low is not None
+        assert "below the table clearance 0.020 m" in recovery.tip_blocked(pose, None)
+    refusal_of(
+        lambda: agent.check_path(ABOVE, [BELOW], 10.0), r"below table clearance 0\.020"
+    )
+    # No step of a person ends under the table plane; from under it only a
+    # step that rises is taken, and a hold.
+    refusal_of(
+        lambda: human.check_path(lowest, [under], 10.0),
+        r"TCP z=-0\.004 below table clearance 0\.000",
+    )
+    refusal_of(lambda: human.check_pose(under), r"below table clearance 0\.000")
+    human.check_low_pose(under)
+    assert human.tip_state(under, None).low == (
+        "the gripper tip is at z=-0.004 m, below the table clearance 0.000 m"
+    )
+    human.check_path(under, [under, lowest, BELOW], 10.0)
+    for lowered in (moved(under, 1, 1.722), moved(under, 0, 0.05)):
+        refusal_of(
+            lambda q=lowered: human.check_path(under, [q], 10.0),
+            r"below table clearance 0\.000",
+        )
+
+    # Any other height is taken the same way: here above the profile's.
+    raised = with_human(config, table_clearance_m=0.035)
+    again = apai_backend.build_apai_checkers(raised, profile, clock)
+    assert again.human.harness.limits.table_clearance == 0.035
+    assert again.human.tip_floor() == pytest.approx(table_z + 0.035)
+    assert again.human.tip_state(ABOVE, None).low is not None
+    assert again.agent.tip_floor() == again.recovery.tip_floor() == table_z + 0.02
+
+
+def test_a_tip_box_the_human_limit_set_names_is_a_persons_alone(
+    config: RobotAppConfig, profile: apai_backend.ApaiProfile, clock: FakeClock
+) -> None:
+    # limits.human.workspace_min and workspace_max: the corners of the box a
+    # person's gripper tip is held in, in the arm's base frame.
+    plain = apai_backend.build_apai_checkers(config, profile, clock)
+    box = plain.human.tip_box()
+    assert box == ([0.1, -0.3, -0.01], [0.5, 0.3, 0.55])
+    wide = ([0.1, -0.5, -0.01], [0.55, 0.5, 0.7])
+    widened = with_human(config, workspace_min=wide[0], workspace_max=wide[1])
+    checkers = apai_backend.build_apai_checkers(widened, profile, clock)
+    human, agent, recovery = checkers.human, checkers.agent, checkers.recovery
+    # What WELCOME announces as human_tip_box.
+    assert human.tip_box() == wide
+    assert all(type(value) is float for corner in human.tip_box() for value in corner)
+    assert human.harness.limits.workspace_min.tolist() == wide[0]
+    assert human.harness.limits.workspace_max.tolist() == wide[1]
+    assert agent.tip_box() == recovery.tip_box() == box
+    # The first joint turns the tip 35 cm to the side: inside a person's box
+    # and outside the profile's.
+    beside = moved(HOME, 0, 0.9)
+    y = float(profile.kinematics.fk(np.array(beside))[1, 3])
+    assert box[0][1] > y > wide[0][1]
+    human.check_pose(beside)
+    human.check_path(HOME, [beside], 10.0)
+    for other in (agent, recovery):
+        refusal_of(lambda c=other: c.check_pose(beside), r"outside workspace")
+    refusal_of(lambda: agent.check_path(HOME, [beside], 10.0), r"outside workspace")
+    # A person's own wall is the one they named.
+    front = wide[1][0]
+    at, inside = tip_at(profile, 0, front - 0.02), tip_at(profile, 0, front - 0.001)
+    human.check_path(at, [inside], 10.0)
+    refusal_of(
+        lambda: human.check_path(at, [tip_at(profile, 0, front + 0.001)], 10.0),
+        r"outside workspace \[\[0\.1, -0\.5, -0\.01\] \.\. \[0\.55, 0\.5, 0\.7\]\]",
+    )
 
 
 def test_the_joint_box_is_the_box_each_checker_holds_a_setpoint_in(
@@ -4151,11 +4271,13 @@ def test_on_the_launchers_profile_only_a_person_may_be_faster_than_the_launcher(
 ) -> None:
     thor = apai_backend.load_apai_profile(thor_arm_profile(tmp_path))
     assert thor.launcher_dir == tmp_path.resolve()
-    # The profile's cap is the launcher's speed; a person's bound is the cap
-    # of APAI's rebot_rs profile, which the launcher holds its own speed to.
+    # The profile's cap is the launcher's speed; a person's bound is the
+    # robot app's own, above the cap of APAI's rebot_rs profile, which the
+    # launcher holds its own speed to.
     assert apai_backend.speed_cap(thor) == LAUNCHER_SPEED
-    ceiling = apai_backend.speed_cap(rs_profile)
-    assert apai_backend.human_speed_cap(thor) == ceiling == 0.8
+    ceiling = apai_backend.HUMAN_SPEED_CAP
+    assert apai_backend.human_speed_cap(thor) == ceiling == 2.0
+    assert apai_backend.speed_cap(rs_profile) == 0.8 < ceiling
     fits = with_speed(with_speed(config, "agent", LAUNCHER_SPEED), "human", ceiling)
     checkers = apai_backend.build_apai_checkers(fits, thor, clock)
     speeds = [checker.harness.limits.max_joint_vel for checker in checkers.all()]
@@ -4169,10 +4291,10 @@ def test_on_the_launchers_profile_only_a_person_may_be_faster_than_the_launcher(
             apai_backend.build_apai_checkers(with_speed(fits, owner, 0.41), thor, clock)
     with pytest.raises(
         ValueError,
-        match=r"limits\.human\.max_joint_speed 0\.81 rad/s is above the speed cap "
-        r"of APAI's rebot_rs profile of 0\.8 rad/s \(safety\.max_joint_vel\)",
+        match=r"limits\.human\.max_joint_speed 2\.01 rad/s is above the robot app's "
+        r"speed cap for a person of 2 rad/s \(apai_backend\.HUMAN_SPEED_CAP\)",
     ):
-        apai_backend.build_apai_checkers(with_speed(fits, "human", 0.81), thor, clock)
+        apai_backend.build_apai_checkers(with_speed(fits, "human", 2.01), thor, clock)
     # A profile no launcher runs binds a person by its own cap.
     capped = {"safety": {"max_joint_vel": LAUNCHER_SPEED}}
     plain = apai_backend.load_apai_profile("rebot_rs", capped)
@@ -4180,10 +4302,70 @@ def test_on_the_launchers_profile_only_a_person_may_be_faster_than_the_launcher(
     assert apai_backend.human_speed_cap(plain) == LAUNCHER_SPEED
     with pytest.raises(
         ValueError,
-        match=r"limits\.human\.max_joint_speed 0\.8 rad/s is above the APAI "
-        r"profile's speed cap of 0\.4 rad/s",
+        match=r"limits\.human\.max_joint_speed 2 rad/s is above the APAI "
+        r"profile's speed cap of 0\.4 rad/s \(safety\.max_joint_vel\)",
     ):
         apai_backend.build_apai_checkers(fits, plain, clock)
+
+
+def test_on_the_rig_file_a_person_is_checked_with_the_owners_values_and_nobody_else(
+    tmp_path: Path, clock: FakeClock
+) -> None:
+    """The rig file's limits for a person, on the arm profile the rig runs.
+
+    The owner's values of 2026-11-18: a person's joints at 1.6 rad/s, their
+    gripper tip free down to the table plane and held in a box of their own.
+    The agent and a return to rest keep the launcher's speed bound, the
+    profile's table clearance and the profile's box.
+    """
+    from isaaccapture_examples.agentic_remote.robot_app.config import load_config
+    from isaaccapture_examples.agentic_remote.robot_app.human import SPEED_MARGIN
+    from repo_paths import repo_root
+
+    file = repo_root() / "examples/agentic_remote/configs/robot_app_rebot.yaml"
+    profile = apai_backend.load_apai_profile(thor_arm_profile(tmp_path))
+    rig = apai_backend.config_for_profile(load_config(file), profile)
+    checkers = apai_backend.build_apai_checkers(rig, profile, clock)
+    human, agent, recovery = checkers.human, checkers.agent, checkers.recovery
+    speeds = [checker.harness.limits.max_joint_vel for checker in checkers.all()]
+    assert speeds == [0.2, 1.6, 0.2]
+    assert rig.limits.human.max_joint_speed <= apai_backend.human_speed_cap(profile)
+    assert human.harness.limits.table_clearance == 0.0 == human.tip_floor()
+    assert human.tip_box() == ([0.1, -0.5, -0.01], [0.55, 0.5, 0.7])
+    for other in (agent, recovery):
+        assert other.harness.limits.table_clearance == 0.02 == other.tip_floor()
+        assert other.tip_box() == ([0.1, -0.3, -0.01], [0.5, 0.3, 0.55])
+    assert rig.rest.table_clearance_m == 0.02
+
+    for checker in checkers.all():
+        start_motion(checker)
+    # The speed clamp of a person's drive is taken on every joint at once,
+    # and a step over the limit is not.
+    step = SPEED_MARGIN * rig.limits.human.max_joint_speed * STEP_S
+    assert step == pytest.approx(0.03136)
+    assert 3 * step < rig.limits.human.max_step_rad == 0.1 < 4 * step
+    clamped = [q + step for q in HOME]
+    human.check_setpoint(HOME, clamped, STEP_S)
+    over = [q + 1.01 * 1.6 * STEP_S for q in HOME]
+    refusal_of(
+        lambda: human.check_setpoint(HOME, over, STEP_S),
+        r"joint 1 velocity 1\.62 rad/s exceeds 1\.60",
+    )
+    for other in (agent, recovery):
+        refusal_of(
+            lambda c=other: c.check_setpoint(HOME, clamped, STEP_S),
+            r"velocity 1\.57 rad/s exceeds 0\.20",
+        )
+    # The tip 1 cm over the table and 35 cm to the side: a person's alone.
+    beside = moved(HOME, 0, 0.9)
+    for pose in (BELOW, beside):
+        human.check_pose(pose)
+    for other in (agent, recovery):
+        refusal_of(lambda c=other: c.check_pose(BELOW), r"below table clearance 0\.020")
+        refusal_of(lambda c=other: c.check_pose(beside), r"outside workspace")
+    assert recovery.tip_blocked(BELOW, None) == (
+        "the gripper tip is at z=0.011 m, below the table clearance 0.020 m"
+    )
 
 
 # The motion bounds of the experiment's launcher

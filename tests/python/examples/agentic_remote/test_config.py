@@ -413,13 +413,10 @@ def test_load_config_accepts_a_string_path():
         ),
         (
             "robot_app_human_check.yaml",
-            # The speed limit and the step limit of the rig's file for a
-            # person; the live view stays required, as on the rig.
-            {
-                "human.enabled": True,
-                "limits.human.max_joint_speed": 0.8,
-                "limits.human.max_step_rad": 0.05,
-            },
+            # The speed limit of the rig's file for a person, whose step
+            # limit is the shipped file's; the live view stays required, as
+            # on the rig.
+            {"human.enabled": True, "limits.human.max_joint_speed": 1.6},
         ),
     ],
 )
@@ -597,6 +594,57 @@ def test_changed_copies_are_checked_too(config):
         dataclasses.replace(config, n_joints=5)
     with pytest.raises(ConfigError, match=r"rest must be a RestConfig"):
         dataclasses.replace(config, rest={"rest_q": [0.0] * 6})
+
+
+def test_a_person_keeps_the_profiles_table_and_tip_box_unless_the_file_names_them(
+    config, tmp_path
+):
+    # limits.human.table_clearance_m is the height over the table plane under
+    # which a person's gripper tip may only rise; workspace_min and
+    # workspace_max are the corners of the box that tip is held in.
+    for limit_set in (config.limits.agent, config.limits.human, config.limits.recovery):
+        assert limit_set.table_clearance_m is None
+        assert limit_set.workspace_min is None and limit_set.workspace_max is None
+    shipped = yaml.safe_load(CONFIG_YAML.read_text(encoding="utf-8"))
+    for key in ("table_clearance_m", "workspace_min", "workspace_max"):
+        assert key not in shipped["limits"]["human"]
+    named = _load_changed(
+        tmp_path,
+        _put("limits.human.table_clearance_m", 0),
+        _put("limits.human.workspace_min", [0.1, -0.5, -0.01]),
+        _put("limits.human.workspace_max", [0.55, 0.5, 1]),
+    )
+    human = named.limits.human
+    # 0 is a clearance: the tip may go down to the table plane.
+    assert human.table_clearance_m == 0.0
+    assert isinstance(human.table_clearance_m, float)
+    assert human.workspace_min == (0.1, -0.5, -0.01)
+    assert human.workspace_max == (0.55, 0.5, 1.0)
+    assert all(isinstance(value, float) for value in human.workspace_max)
+    # Nothing else of the configuration follows them.
+    plain = dataclasses.replace(
+        human, table_clearance_m=None, workspace_min=None, workspace_max=None
+    )
+    limits = dataclasses.replace(named.limits, human=plain)
+    assert dataclasses.replace(named, limits=limits) == config
+    assert named.rest.table_clearance_m == 0.02
+
+
+def test_the_rig_file_gives_a_person_a_table_and_a_tip_box_of_their_own():
+    rig = load_config(CONFIG_YAML.with_name("robot_app_rebot.yaml"))
+    human = rig.limits.human
+    # The owner's values of 2026-11-18 for a person on the rig.
+    assert human.max_joint_speed == 1.6 and human.max_step_rad == 0.1
+    assert human.table_clearance_m == 0.0
+    assert human.workspace_min == (0.10, -0.50, -0.01)
+    assert human.workspace_max == (0.55, 0.50, 0.70)
+    # The agent and a return to rest keep theirs: the arm profile's box and
+    # clearance, and 2 cm above the table before a return to rest.
+    for limit_set in (rig.limits.agent, rig.limits.recovery):
+        assert limit_set.max_joint_speed == 0.2
+        assert limit_set.table_clearance_m is None
+        assert limit_set.workspace_min is None and limit_set.workspace_max is None
+    assert rig.rest.table_clearance_m == 0.02
 
 
 def test_limits_reject_a_limit_set_in_the_wrong_slot(config):
@@ -816,6 +864,90 @@ INVALID = [
         [_put("limits.recovery.max_step_rad", 0.1)],
         r"limits\.recovery\.max_step_rad must not be set",
         id="recovery-with-step-clamp",
+    ),
+    # The table clearance and the tip box of a person's checker.
+    pytest.param(
+        [_put("limits.human.table_clearance_m", -0.001)],
+        r"limits\.human\.table_clearance_m must not be negative, got -0\.001",
+        id="human-table-clearance-negative",
+    ),
+    pytest.param(
+        [_put("limits.human.table_clearance_m", "low")],
+        r"limits\.human\.table_clearance_m must be a number",
+        id="human-table-clearance-not-a-number",
+    ),
+    pytest.param(
+        [_put("limits.agent.table_clearance_m", 0.0)],
+        r"limits\.agent\.table_clearance_m must not be set: only the human "
+        r"limit set has a table clearance and a tip box of its own",
+        id="agent-with-table-clearance",
+    ),
+    pytest.param(
+        [_put("limits.recovery.table_clearance_m", 0.0)],
+        r"limits\.recovery\.table_clearance_m must not be set",
+        id="recovery-with-table-clearance",
+    ),
+    pytest.param(
+        [_put("limits.human.workspace_min", [0.1, -0.5, -0.01])],
+        r"limits\.human\.workspace_min and limits\.human\.workspace_max must be "
+        r"given together",
+        id="human-tip-box-without-its-highest-corner",
+    ),
+    pytest.param(
+        [_put("limits.human.workspace_max", [0.55, 0.5, 0.7])],
+        r"limits\.human\.workspace_min and limits\.human\.workspace_max must be "
+        r"given together",
+        id="human-tip-box-without-its-lowest-corner",
+    ),
+    pytest.param(
+        [
+            _put("limits.human.workspace_min", [0.1, -0.5]),
+            _put("limits.human.workspace_max", [0.55, 0.5]),
+        ],
+        r"limits\.human\.workspace_min must hold 3 values, x, y and z, "
+        r"got \[0\.1, -0\.5\]",
+        id="human-tip-box-with-two-values",
+    ),
+    pytest.param(
+        [
+            _put("limits.human.workspace_min", [0.1, -0.5, -0.01]),
+            _put("limits.human.workspace_max", [0.55, 0.5, 0.7, 1.0]),
+        ],
+        r"limits\.human\.workspace_max must hold 3 values",
+        id="human-tip-box-with-four-values",
+    ),
+    pytest.param(
+        [
+            _put("limits.human.workspace_min", [0.1, -0.5, 0.7]),
+            _put("limits.human.workspace_max", [0.55, 0.5, 0.7]),
+        ],
+        r"limits\.human\.workspace_min\[2\] must be below "
+        r"limits\.human\.workspace_max\[2\], got 0\.7 and 0\.7",
+        id="human-tip-box-with-no-height",
+    ),
+    pytest.param(
+        [
+            _put("limits.human.workspace_min", [0.1, float("nan"), -0.01]),
+            _put("limits.human.workspace_max", [0.55, 0.5, 0.7]),
+        ],
+        r"limits\.human\.workspace_min\[1\] must be finite",
+        id="human-tip-box-not-finite",
+    ),
+    pytest.param(
+        [
+            _put("limits.agent.workspace_min", [0.1, -0.5, -0.01]),
+            _put("limits.agent.workspace_max", [0.55, 0.5, 0.7]),
+        ],
+        r"limits\.agent\.workspace_min must not be set",
+        id="agent-with-tip-box",
+    ),
+    pytest.param(
+        [
+            _put("limits.recovery.workspace_min", [0.1, -0.5, -0.01]),
+            _put("limits.recovery.workspace_max", [0.55, 0.5, 0.7]),
+        ],
+        r"limits\.recovery\.workspace_min must not be set",
+        id="recovery-with-tip-box",
     ),
     pytest.param(
         [

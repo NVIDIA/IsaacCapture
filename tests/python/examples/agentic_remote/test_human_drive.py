@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import inspect
 import logging
 import math
 import time
@@ -1382,6 +1383,30 @@ def test_a_checker_refusal_ends_the_drive_in_a_hold(rig):
     assert rig.arm.holds == []
     assert rig.arm.torque_on()
     assert rig.authority.snapshot() == rig.admitted
+
+
+def test_the_table_is_the_checkers_alone_and_a_drive_asks_no_tip_of_it(
+    rig, monkeypatch
+):
+    # A drive keeps no height of its own for the gripper tip: what its
+    # checker's check_setpoint() takes is sent, whatever that checker would
+    # say of the tip, and every pass sends a setpoint.
+    asked: list[str] = []
+    for name in ("tip_state", "tip_blocked", "tip_floor"):
+        monkeypatch.setattr(
+            rig.checker, name, lambda *args, what=name: asked.append(what)
+        )
+    assert "last_grasp_region" not in inspect.signature(HumanDrive).parameters
+    rig.lead(FAR, sends=12)
+    end = rig.run()
+    assert (end.status, end.sent) == ("released", 12)
+    assert rig.sent() == [
+        approx([STEP * n, 0.0, 0.0, 0.0, 0.0, 0.0]) for n in range(1, 13)
+    ]
+    # One setpoint per period from the first on: no pass sends nothing.
+    times = [when for _, when in rig.sends]
+    assert [b - a for a, b in zip(times, times[1:])] == [approx(PERIOD)] * 11
+    assert asked == []
 
 
 def test_a_contact_holds_at_the_measured_pose_and_is_not_a_fault(rig):

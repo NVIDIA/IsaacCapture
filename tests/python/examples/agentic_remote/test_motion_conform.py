@@ -209,12 +209,31 @@ def functional_move(
 # The split's side: the Thor
 
 
+def rig_file_on(profile: Any) -> Any:
+    """The rig's robot file for an arm profile the experiment's launcher does not run.
+
+    Such a profile's speed cap bounds a person too, and the file's
+    limits.human.max_joint_speed lies above it: here a person gets that cap.
+    The agent's limits, which every move of these tests is checked with, are
+    the file's.
+    """
+    config = load_config(ROBOT_RIG)
+    assert profile.launcher_dir is None
+    cap = apai_backend.human_speed_cap(profile)
+    assert config.limits.human.max_joint_speed > cap
+    human = dataclasses.replace(config.limits.human, max_joint_speed=cap)
+    limits = dataclasses.replace(config.limits, human=human)
+    return apai_backend.config_for_profile(
+        dataclasses.replace(config, limits=limits), profile
+    )
+
+
 class Thor:
     """The Thor's executor on APAI's software arm, with the rig's robot file."""
 
     def __init__(self, profile: Any, start: Sequence[float]) -> None:
         self.clock = FakeClock()
-        self.config = apai_backend.config_for_profile(load_config(ROBOT_RIG), profile)
+        self.config = rig_file_on(profile)
         self.arm = apai_backend.build_apai_arm(self.config, profile, self.clock)
         self.arm.connect()
         self.arm.backend._q = np.array(start, dtype=float)

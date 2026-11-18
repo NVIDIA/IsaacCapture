@@ -1122,12 +1122,13 @@ def test_apais_claim_is_switched_off_for_the_connect_only(
             "limits.recovery.max_joint_speed 0.5 rad/s is above the APAI profile's "
             "speed cap of 0.4 rad/s (safety.max_joint_vel)",
         ),
-        # A person: no faster than the cap of APAI's rebot_rs profile.
+        # A person: no faster than the robot app's own speed cap for them,
+        # which is above the cap of APAI's rebot_rs profile.
         (
             "human",
-            0.9,
-            "limits.human.max_joint_speed 0.9 rad/s is above the speed cap of "
-            "APAI's rebot_rs profile of 0.8 rad/s (safety.max_joint_vel)",
+            2.1,
+            "limits.human.max_joint_speed 2.1 rad/s is above the robot app's "
+            "speed cap for a person of 2 rad/s (apai_backend.HUMAN_SPEED_CAP)",
         ),
     ],
 )

@@ -71,12 +71,12 @@ TAKE = [
     {"t": 0.5, "b": False},
 ]
 # The hand goes 30 cm to the left in 0.3 s: the joints at their limit for
-# about a second and a half.
+# about three quarters of a second.
 FAR_LEFT = list(HAND + 0.30 * np.array(LEFT))
 # The fastest a joint of the rig's robot app moves in one setpoint, rad, and
 # the farthest a human target may lie from its last setpoint.
-CLAMP = SPEED_MARGIN * 0.8 * PASS_S
-STEP_LIMIT = 0.05
+CLAMP = SPEED_MARGIN * 1.6 * PASS_S
+STEP_LIMIT = 0.10
 
 
 class Recorded(ScriptFeed):
@@ -237,7 +237,7 @@ def own_ends(logic: Any) -> dict[str, int]:
 # human program takes the squeeze once two readings of every joint, both
 # begun after the robot app's last setpoint, agree.
 
-RELEASE_S = 2.0
+RELEASE_S = 1.7
 
 
 @pytest.mark.parametrize("run_", [0, 1, 2])
@@ -270,7 +270,7 @@ def test_a_second_squeeze_right_after_a_release_at_full_speed_starts_at_rest(
         first, second = targets[times <= again], targets[times > again]
         # The arm was at full joint speed when the grip was released.
         speed = np.abs(np.diff(first, axis=0)).max(axis=1)[-6:-1].max() / PASS_S
-        assert speed > 0.68
+        assert speed > 1.36
         # Both squeezes drove, each until its grip was released: the robot
         # app refused nothing and the human program ended nothing.
         assert [end.status for end in run.ended] == ["released", "released"]
@@ -342,7 +342,7 @@ def paused_run(
                 time.sleep(pause_s)
 
         def send_target(q: Any) -> None:
-            if kind and not paused and len(h.arm.sent) - before >= 30:
+            if kind and not paused and len(h.arm.sent) - before >= 20:
                 paused.append(time.monotonic())
                 if kind == "app":
                     threading.Thread(target=hold_app, daemon=True).start()
@@ -383,17 +383,17 @@ def test_a_hand_30_cm_ahead_is_caught_up_with_at_the_joint_speed_limit(
     monkeypatch,
 ):
     # The healthy case: nothing pauses. The arm arrives where the hand
-    # stopped, 30 cm to the left, in about a second and a half.
+    # stopped, 30 cm to the left, in about three quarters of a second.
     out = paused_run(make_realtime_robot_app, folder, start, monkeypatch, "", 0.0)
     assert [status for status, _ in out.ended] == ["released"]
     assert out.heard == [] and out.own == {}
     assert out.steps.max() <= CLAMP + 1e-9
     np.testing.assert_allclose(out.moved, [0.0, 0.30, 0.0], atol=2e-3)
     # No target lay further from the robot app's last setpoint than its step
-    # limit: two of the human program's own steps, 0.028 rad, on a machine
+    # limit: two of the human program's own steps, 0.056 rad, on a machine
     # that does nothing else.
     assert out.lead < STEP_LIMIT
-    assert out.on_its_way_s < 1.9
+    assert out.on_its_way_s < 1.2
     print(
         f"\n30 cm at the joint speed limit: on its way {out.on_its_way_s:.2f} s; the "
         f"farthest a target lay from the robot app's last setpoint {out.lead:.4f} rad"

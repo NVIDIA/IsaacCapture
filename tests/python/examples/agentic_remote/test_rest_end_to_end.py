@@ -19,7 +19,9 @@ its next motion.
 
 The tests marked on_the_rig build the same stack from the rig's robot file
 and the rig's ready pose, which lies 0.025 rad above the two stops, with a
-motor that ends a few mrad from every command.
+motor that ends a few mrad from every command. Their arm profile is laid out
+as the one the experiment's launcher runs, the only kind the rig's robot file
+is taken on.
 
 They need an APAI checkout (AGENTIC_REMOTE_APAI_SRC).
 """
@@ -67,7 +69,7 @@ from isaaccapture_examples.agentic_remote.robot_app.interfaces import (
     Refusal,
 )
 from repo_paths import repo_root
-from test_apai_backend import MotorSdk, make_config
+from test_apai_backend import MotorSdk, make_config, thor_arm_profile
 from test_arm_adapter import PERIOD_S, EveryFrame
 
 from conftest import AppHarness, FakeGridClient, apai_runtime_env, import_experiment
@@ -177,7 +179,9 @@ class Thor:
 
     It has the functional rest's route and can build the driver anew, so a
     typed rest ends with the motors off and they can be switched on again.
-    With rig_home it is the rig's: that ready pose and the rig's robot file.
+    With rig_home it is the rig's: that ready pose, the rig's robot file and
+    an arm profile laid out in `folder` as the one the experiment's launcher
+    runs, at the agent's speed of that file.
     """
 
     def __init__(
@@ -185,12 +189,19 @@ class Thor:
         monkeypatch: pytest.MonkeyPatch,
         rig_home: list[float] | None = None,
         settles: dict[str, float] | None = None,
+        folder: Path | None = None,
     ) -> None:
         import apai.control.rs_gripper as rs_gripper
 
         self.rig = rig_home is not None
-        ready = {"arm": {"home_q": list(rig_home)}} if self.rig else None
-        self.profile = apai_backend.load_apai_profile("rebot_rs", ready)
+        arm, ready = "rebot_rs", None
+        if self.rig:
+            # The rig's robot file lets a person be faster than the cap of
+            # APAI's rebot_rs profile: only the launcher's profile takes it.
+            speed = load_config(ROBOT_RIG).limits.agent.max_joint_speed
+            arm = thor_arm_profile(folder, speed)
+            ready = {"arm": {"home_q": list(rig_home)}}
+        self.profile = apai_backend.load_apai_profile(arm, ready)
         self.config = thor_config(self.profile, rig=self.rig)
         self.speed = self.config.limits.agent.max_joint_speed
         self.clock = SystemClock()
@@ -414,15 +425,17 @@ def thor(
 ) -> Iterator[Thor]:
     """The robot app at rest on the rebot_rs profile, with no robot connection.
 
-    For a test on_the_rig: with the rig's robot file and ready pose. After
-    the test: every torque cut the motor layer saw was at measured rest.
+    For a test on_the_rig: with the rig's robot file and ready pose, on an
+    arm profile laid out as the launcher's. After the test: every torque cut
+    the motor layer saw was at measured rest.
     """
-    rig_home = None
+    rig_home = launcher = None
     if settles is not None:
         folder = request.getfixturevalue("experiment_dir")
         arm = yaml.safe_load((folder / RIG_ARM).read_text(encoding="utf-8"))
         rig_home = [float(value) for value in arm["home_q"]]
-    made = Thor(monkeypatch, rig_home, settles)
+        launcher = request.getfixturevalue("tmp_path_factory").mktemp("launcher")
+    made = Thor(monkeypatch, rig_home, settles, launcher)
     try:
         yield made
     finally:
@@ -867,6 +880,12 @@ def on_the_rigs_stack(thor: Thor) -> None:
     """The stack is the rig's: its robot file's speeds and its ready pose."""
     rig = load_config(ROBOT_RIG)
     assert thor.rig and thor.speed == rig.limits.agent.max_joint_speed
+    # The arm profile is the launcher's: its speed is the profile's cap, and
+    # a person's limit set is held to the robot app's own bound.
+    assert thor.profile.launcher_dir is not None
+    assert apai_backend.speed_cap(thor.profile) == thor.speed
+    human = thor.h.checkers.human.harness.limits.max_joint_vel
+    assert human == rig.limits.human.max_joint_speed > thor.speed
     assert thor.config.rest.recovery_speed == rig.rest.recovery_speed
     margin = thor.h.checkers.agent.harness.limits.joint_margin
     assert 0.0 < thor.home[1] - REST[1] < margin + 0.01

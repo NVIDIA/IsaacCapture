@@ -28,6 +28,7 @@ import threading
 import time
 import types
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -928,12 +929,16 @@ class RigRest:
     """The robot app on the rig's robot file as it stands, and an agent on it.
 
     The driver is APAI's over the stand-in motors; the motors can be switched
-    on again. The agent is the control owner.
+    on again. The agent is the control owner. The arm profile is laid out in
+    `folder` as the one the experiment's launcher runs: the rig's robot file
+    is taken on no other.
     """
 
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, profile: Any) -> None:
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, profile: Any, folder: Path
+    ) -> None:
         home = [float(value) for value in profile.arm_cfg.home_q]
-        self.thor = Thor(monkeypatch, home)
+        self.thor = Thor(monkeypatch, home, folder=folder)
         self.h, self.motors = self.thor.h, self.thor.motors
         self.config = self.thor.config
         jaws = profile.arm_cfg.gripper
@@ -981,8 +986,10 @@ class RigRest:
 
 
 @pytest.fixture
-def rig_rest(monkeypatch: pytest.MonkeyPatch, rs_profile: Any) -> Iterator[RigRest]:
-    made = RigRest(monkeypatch, rs_profile)
+def rig_rest(
+    monkeypatch: pytest.MonkeyPatch, rs_profile: Any, tmp_path: Path
+) -> Iterator[RigRest]:
+    made = RigRest(monkeypatch, rs_profile, tmp_path)
     try:
         yield made
     finally:
