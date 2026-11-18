@@ -21,26 +21,34 @@ import dataclasses
 import json
 import logging
 import math
+import os
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 import test_arm_adapter
 import test_launcher
-from isaaccapture_examples.agentic_remote.agent import arm_adapter, launcher
+from isaaccapture_examples.agentic_remote.agent import (
+    arm_adapter,
+    launcher,
+    move_paths,
+)
 from isaaccapture_examples.agentic_remote.agent.config import RunOptions
 from isaaccapture_examples.agentic_remote.agent.launcher import Measures
 from isaaccapture_examples.agentic_remote.agent.link_client import (
     STOP_SHOWN_WAIT_S,
     Arrival,
+    LinkLost,
 )
 from isaaccapture_examples.agentic_remote.protocol.messages import (
     GripperState,
     JointSample,
+    Result,
     RobotState,
     Stop,
 )
@@ -48,7 +56,7 @@ from link_bench import until
 from test_agent_link import Rig as LinkRig
 from test_agent_link import a_state
 from test_agent_options import Evidence
-from test_arm_adapter import LONG, SimRig
+from test_arm_adapter import LONG, SHORT, ScriptedRig, SimRig
 from test_launcher import LOOK, PICK, QUICK, Stage
 
 from conftest import EXPERIMENT_DIR_ENV, import_experiment
@@ -58,6 +66,7 @@ experiment = pytest.mark.experiment
 # The fixtures of the two neighbours, for the tests of this file.
 make_sim = test_arm_adapter.make_sim
 sim = test_arm_adapter.sim
+make_scripted = test_arm_adapter.make_scripted
 make_stage = test_launcher.make_stage
 stage = test_launcher.stage
 
@@ -627,7 +636,8 @@ def test_the_debug_recorder_gets_ten_poses_a_second_and_each_read_once(
     finally:
         made.close()
     assert [hook.rsplit(".", 2)[1:] for hook in evidence.hooks] == [
-        ["Measures", "on_state"]
+        ["Measures", "on_state"],
+        ["RobotLinkArm", "_move"],  # where a MOVE's planned path is handed over
     ]
     poses = [data for kind, data in evidence.events if kind == "robot.feedback"]
     # The Thor published 20 ROBOT_STATEs a second: every second one is a pose.
@@ -918,6 +928,8 @@ def test_a_measurement_that_fails_in_the_adapter_is_logged_once_and_stops_nothin
             assert sim.move(LONG, 1.2) is True
         sim.adapter.set_gripper(3.1, effort=0.4)
     assert calls == [
+        arm_adapter.MEASURED_PATH,
+        arm_adapter.MEASURED_PATH_END,
         arm_adapter.MEASURED_MOVE,
         arm_adapter.MEASURED_JAW_BEGIN,
         arm_adapter.MEASURED_JAW,
@@ -925,6 +937,426 @@ def test_a_measurement_that_fails_in_the_adapter_is_logged_once_and_stops_nothin
     warned = [r for r in caplog.records if "a measurement of the arm adapter" in r.msg]
     assert len(warned) == 1
     assert sim.adapter.last_jaw["status"] == "completed"
+
+
+# The planned path of every MOVE
+
+PATHS = launcher.MOVE_PATHS_FILE
+# How often the hand-over of a path is timed, per length of the path.
+HAND_OVERS = 100
+
+
+def as_sent(setpoints: Any) -> list[list[float]]:
+    """Setpoints as the MOVE link message carries them."""
+    return [[float(value) for value in row] for row in setpoints]
+
+
+@apai
+def test_a_move_leaves_one_line_with_every_setpoint_the_arm_was_sent_and_its_end(
+    sim: SimRig, tmp_path: Path
+) -> None:
+    measures = measured(sim, tmp_path)
+    pinned = sim.link.pinned
+    before = len(sim.h.sent())
+    began = time.monotonic()
+    with sim.adapter.asked_by("move_home", 7), sim.camera(0.1):
+        assert sim.move(LONG, 1.2) is True
+    ended = time.monotonic()
+    measures.close()
+    (line,) = read_lines(tmp_path / PATHS)
+    (move,) = read_lines(tmp_path / launcher.MOVES_FILE)
+    _, move_id, start, tol, planned, region, evidence, _, _ = sim.of("move")[-1]
+    # The same move as the line of moves.jsonl, which names this file.
+    assert line["move_id"] == move["move_id"] == move_id
+    assert move["path_file"] == PATHS == "move-paths.jsonl"
+    # Every setpoint, in order and whole: what the agent's link was given
+    # for the MOVE, and what the simulated arm on the Thor's side was sent.
+    assert line["count"] == len(line["setpoints"]) == 60
+    assert line["setpoints"] == as_sent(planned)
+    assert line["setpoints"] == sim.h.sent()[before:]
+    assert line["start_q"] == as_sent([start])[0] and line["start_tol_rad"] == tol
+    # What it was sent under, and when, on this machine's two clocks.
+    assert (line["sent"], line["not_sent"]) == (True, None)
+    assert (line["session_id"], line["owner_number"], line["stop_number"]) == (
+        pinned.session_id,
+        pinned.owner_number,
+        pinned.stop_number,
+    )
+    assert line["period_s"] == sim.link.welcome.setpoint_period_s
+    assert region is None and line["grasp_region"] is None
+    assert line["evidence_wall_s"] == evidence
+    assert line["expires_in_s"] == sim.settings.expires_in_s
+    assert began < line["sent_mono_s"] < ended
+    assert line["utc"] == measures._utc(line["sent_mono_s"])
+    # Who asked, as far as the adapter was told.
+    assert (line["skill"], line["trace_step"]) == ("move_home", 7)
+    # How it ended: the robot app's final RESULT, so all 60 were commanded.
+    end = line["end"]
+    assert (end["status"], end["sent"], end["outcome"]) == (
+        "completed",
+        60,
+        "completed",
+    )
+    assert (end["reason"], end["error"]) == ("", None) and end["sent_seen"] <= 60
+    assert line["sent_mono_s"] + 1.0 < end["mono_s"] < ended + 0.001
+    assert end["end_q"][0] == pytest.approx(LONG[0], abs=0.05)
+    # The setpoints are the line's last field: a reader finds the rest first.
+    assert list(line)[-2:] == ["end", "setpoints"]
+
+
+@apai
+def test_a_move_stopped_on_its_way_says_how_much_of_its_path_was_commanded(
+    sim: SimRig, tmp_path: Path
+) -> None:
+    measures = measured(sim, tmp_path)
+    before = len(sim.h.sent())
+
+    def switch_in(count: int) -> None:
+        if count == 30:
+            sim.obstacle_beyond(-9.0)  # an obstacle appears ahead of the arm
+
+    sim.checker.before_approve = switch_in
+    with sim.camera(0.1), pytest.raises(test_arm_adapter.types().SafetyViolation):
+        sim.move(LONG, 1.2)
+    sim.h.idle()
+    measures.close()
+    (line,) = read_lines(tmp_path / PATHS)
+    end = line["end"]
+    # The whole planned path is there, and the end names the part the robot
+    # app sent to the arm: exactly those setpoints, and no other.
+    assert line["count"] == len(line["setpoints"]) == 60
+    assert 0 < end["sent"] < 60 and end["status"] != "completed"
+    assert line["setpoints"][: end["sent"]] == sim.h.sent()[before:]
+    assert "obstacle ahead" in end["error"] and end["sent_seen"] <= end["sent"]
+
+
+@apai
+def test_a_refused_a_cancelled_a_failed_and_an_unsent_move_each_leave_their_line(
+    make_scripted: Callable[..., ScriptedRig], tmp_path: Path
+) -> None:
+    types = test_arm_adapter.types()
+    refusal = "the move leaves the agent's envelope at setpoint 3"
+    settle = "joint index 0 is not within 0.03 rad of the last setpoint after 2 s"
+    region = {"center_xy": [0.31, -0.02], "radius_m": 0.07, "z_min": -0.06}
+    cases: dict[str, tuple[Any, dict[str, Any]]] = {
+        "refused": (
+            types.SafetyViolation,
+            {"status": "refused", "sent": None, "reason": refusal, "outcome": None},
+        ),
+        "cancelled": (
+            types.MotionHalted,
+            {"status": "cancelled", "sent": 7, "reason": "stop: operator"},
+        ),
+        "failed": (
+            None,  # stream_to returns False: the arm did not settle
+            {"status": "failed", "sent": 25, "reason": settle},
+        ),
+        "unsent": (arm_adapter.RobotLinkError, {}),
+    }
+    for name, (error, ending) in cases.items():
+        rig = make_scripted()
+        rig.own()
+        thor = rig.thor
+        folder = tmp_path / name
+        folder.mkdir()
+        measures = measured(rig, folder)
+        if name == "refused":
+            thor.admit = Result("", "refused", refusal)
+        elif name == "cancelled":
+            thor.at_first_permit = ("cancelled", "stop: operator", {"sent": 7}, None)
+        elif name == "failed":
+            detail = {"outcome": "not_settled", "sent": 25, "total": 25}
+            thor.at_first_permit = ("failed", settle, detail, [0.07] + [0.0] * 5)
+            rig.checker._grasp_exempt = (np.array([0.31, -0.02]), 0.07, -0.06)
+        else:
+
+            def lost(*args: Any, **kwargs: Any) -> None:
+                raise LinkLost("the robot link service is gone")
+
+            rig.link.send_move = lost
+        if error is None:
+            assert rig.move(SHORT, 0.5) is False
+        else:
+            with pytest.raises(error):
+                rig.move(SHORT, 0.5)
+        measures.close()
+        (line,) = read_lines(folder / PATHS)
+        assert line["count"] == len(line["setpoints"]) == 25, name
+        assert line["move_id"] == rig.adapter.last_move["move_id"], name
+        if name == "unsent":
+            # Nothing reached the Thor; the line says so and has no end.
+            assert thor.moves == [] and line["end"] is None
+            assert (line["sent"], line["not_sent"]) == (
+                False,
+                "LinkLost: the robot link service is gone",
+            )
+            assert line["start_q"] == [0.0] * 6
+            assert line["setpoints"][-1] == pytest.approx(SHORT)
+            continue
+        # What the Thor's side received in the MOVE, value for value.
+        (received,) = thor.moves
+        assert line["sent"] is True and line["not_sent"] is None, name
+        assert line["move_id"] == received.command_id, name
+        assert line["setpoints"] == received.setpoints, name
+        assert line["start_q"] == received.start_q, name
+        assert line["start_tol_rad"] == received.start_tol_rad, name
+        assert line["period_s"] == received.period_s, name
+        assert line["evidence_wall_s"] == received.evidence_wall_s, name
+        assert (line["session_id"], line["owner_number"], line["stop_number"]) == (
+            received.session_id,
+            received.owner_number,
+            received.stop_number,
+        ), name
+        # The region the MOVE carried, when it carried one.
+        carried = received.grasp_region
+        assert (carried is not None) is (name == "failed")
+        assert line["grasp_region"] == ({**region, "z_max": None} if carried else None)
+        # How it ended, so a reader knows how much of the path was commanded.
+        for key, value in ending.items():
+            assert line["end"][key] == value, (name, key)
+        # The error APAI got for the move; none for a move that returned.
+        if name == "failed":
+            assert line["end"]["error"] is None
+            assert line["end"]["outcome"] == "not_settled"
+            assert line["end"]["end_q"] == [0.07] + [0.0] * 5
+        else:
+            assert line["end"]["error"].startswith(f"{error.__name__}: "), name
+        # No skill was named to the adapter: none is invented.
+        assert (line["skill"], line["trace_step"]) == (None, None)
+
+
+@apai
+def test_a_move_sampled_again_leaves_a_line_for_each_move_it_sent(
+    make_scripted: Callable[..., ScriptedRig], tmp_path: Path
+) -> None:
+    rig = make_scripted()
+    rig.own()
+    thor = rig.thor
+    measures = measured(rig, tmp_path)
+    moved = f"{arm_adapter.START_POSE}joint index 0 is 0.05 rad away"
+    thor.admit = Result("", "refused", moved)
+    thor.at_first_permit = ("completed", "", {"outcome": "completed", "sent": 25}, [])
+    take = thor._take
+
+    def refuse_the_first_only(message: Any) -> None:
+        take(message)
+        if type(message).__name__ == "Move":
+            thor.admit = None
+
+    thor._take = refuse_the_first_only
+    assert rig.move(SHORT, 0.5) is True
+    measures.close()
+    first, second = read_lines(tmp_path / PATHS)
+    (move,) = read_lines(tmp_path / launcher.MOVES_FILE)
+    # One call of the arm, two MOVEs: moves.jsonl names the second.
+    assert [first["move_id"], second["move_id"]] == [m.command_id for m in thor.moves]
+    assert move["move_id"] == second["move_id"] and move["start_retries"] == 1
+    assert (first["end"]["status"], first["end"]["reason"]) == ("refused", moved)
+    assert (second["end"]["status"], second["end"]["sent"]) == ("completed", 25)
+    for line, received in zip((first, second), thor.moves, strict=True):
+        assert line["setpoints"] == received.setpoints
+
+
+@apai
+def test_handing_a_path_over_takes_microseconds_whatever_its_length(
+    sim: SimRig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The time the hand-over adds on the thread that sends the MOVE.
+
+    It is timed while the measuring thread makes the lines of the paths
+    handed over before, as in a run.
+    """
+    written = {"lines": 0, "bytes": 0}
+
+    class Sink:
+        def write(self, text: str) -> None:
+            written["lines"] += 1
+            written["bytes"] += len(text)
+
+        def close(self) -> None:
+            pass
+
+        def __enter__(self) -> Sink:
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            pass
+
+    monkeypatch.setattr(launcher, "_open_append", lambda path: Sink())
+    measures = measured(sim, tmp_path)
+    adapter, pinned = sim.adapter, sim.link.pinned
+    start = np.zeros(6)
+    medians, longest = {}, {}
+    for count in (25, 3000):  # a short move, and the most a MOVE may carry
+        q = [np.full(6, 1e-4 * index) for index in range(count)]
+        took = []
+        for n in range(HAND_OVERS):
+            began = time.perf_counter()
+            adapter._note_path(f"timed-{count}-{n}", pinned, start, q, 0.01, None, 1.0)
+            took.append(time.perf_counter() - began)
+        until(lambda: measures._queue.empty(), "the paths to be taken")
+        medians[count] = sorted(took)[len(took) // 2]
+        longest[count] = max(took)
+    measures.close()
+    # Shown with pytest -rP.
+    print(
+        "measured: handing a path over on the sending thread took a median of "
+        f"{medians[25] * 1e6:.1f} us for 25 setpoints (longest "
+        f"{longest[25] * 1e6:.0f} us) and {medians[3000] * 1e6:.1f} us for 3000 "
+        f"(longest {longest[3000] * 1e6:.0f} us), of {HAND_OVERS} each"
+    )
+    assert measures.dropped == 0
+    # Microseconds, and no more for 3000 setpoints than for 25: the arrays
+    # are handed over as they are.
+    assert medians[25] < 50e-6 and medians[3000] < 50e-6, medians
+    assert medians[3000] < 3 * medians[25] + 10e-6, medians
+    # The lines were made all the same, megabytes of them, on the other thread.
+    assert written["bytes"] > HAND_OVERS * 3000 * 6 * 3
+
+
+def test_the_hand_over_of_a_path_formats_nothing() -> None:
+    """What the adapter's two hand-overs call: no copy, no text, no link message."""
+    import ast
+    import inspect
+    import textwrap
+
+    adapter = arm_adapter.RobotLinkArm
+    for name in ("_note_path", "_note_path_end"):
+        source = textwrap.dedent(inspect.getsource(getattr(adapter, name)))
+        called = {
+            node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call)
+        }
+        assert called <= {
+            "monotonic",
+            "getattr",
+            "get",
+            "type",
+            "isinstance",
+            "update",
+            "_note",
+            "_measure_trouble",
+        }, (name, called)
+    # The arrays go into the facts as they are, by these names.
+    source = inspect.getsource(adapter._note_path)
+    assert '"start_q": start,' in source and '"setpoints": q,' in source
+
+
+@apai
+def test_a_folder_that_cannot_be_written_fails_no_move_and_no_jaw_command(
+    sim: SimRig, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    folder = tmp_path / "read-only"
+    folder.mkdir()
+    folder.chmod(0o555)
+    try:
+        if os.access(folder, os.W_OK):
+            pytest.skip("this user writes into a read-only folder")
+        with caplog.at_level(logging.WARNING):
+            measures = measured(sim, folder)
+            began = time.monotonic()
+            with sim.camera(0.1):
+                assert sim.move(LONG, 1.2) is True
+            took = time.monotonic() - began
+            sim.adapter.set_gripper(3.1, effort=0.4)
+            lines = measures.close()
+    finally:
+        folder.chmod(0o755)
+    # The move was sent whole in its own time; no file is there.
+    assert sim.adapter.last_move["sent"] == 60 and took < 3.0
+    assert sim.adapter.last_jaw["status"] == "completed"
+    assert list(folder.iterdir()) == []
+    warned = [r.getMessage() for r in caplog.records if "cannot be written" in r.msg]
+    assert len(warned) == len(launcher.MEASURE_FILES)
+    (line,) = (text for text in warned if str(folder / PATHS) in text)
+    assert "PermissionError" in line and line.endswith("the run goes on without it")
+    assert lines[-1] == f"not written: {', '.join(launcher.MEASURE_FILES)}"
+
+
+def test_a_path_whose_end_never_comes_is_written_when_the_run_ends(
+    tmp_path: Path,
+) -> None:
+    measures = Measures(tmp_path)
+    q = [np.array([0.1 * index, -1.0 / 3.0]) for index in range(3)]
+    facts = {"move_id": "agent-9", "sent_mono_s": time.monotonic(), "setpoints": q}
+    facts.update(start_q=np.zeros(2), not_sent=None, period_s=0.02)
+    measures.note(arm_adapter.MEASURED_PATH, facts)
+    # The end of a move whose path was never handed over leaves no line.
+    measures.note(arm_adapter.MEASURED_PATH_END, {"move_id": "agent-8"})
+    measures.close()
+    (line,) = read_lines(tmp_path / PATHS)
+    assert line["move_id"] == "agent-9" and line["end"] is None
+    # Each value whole: the text reads back as the same number.
+    assert line["setpoints"] == [
+        [0.0, -1.0 / 3.0],
+        [0.1, -1.0 / 3.0],
+        [0.2, -1.0 / 3.0],
+    ]
+    assert line["start_q"] == [0.0, 0.0] and line["count"] == 3
+
+
+def test_a_long_path_is_made_into_text_and_into_an_array_in_pieces() -> None:
+    """The measuring thread pauses between the pieces of a long path."""
+    count = 10 * move_paths.CHUNK + 5
+    q = [np.array([index / 7.0, -index / 3.0]) for index in range(count)]
+    facts = {"move_id": "agent-1", "setpoints": q, "start_q": q[0]}
+    pauses: list[float] = []
+    text = move_paths.points_text(facts, pauses.append)
+    assert json.loads(text) == [point.tolist() for point in q]
+    assert pauses == [move_paths.PAUSE_S] * 10
+    line = move_paths.line_text(move_paths.path_row(facts, None), text)
+    assert line.endswith("}\n") and json.loads(line)["setpoints"] == json.loads(text)
+    pauses.clear()
+    array = move_paths.points_array(facts, pauses.append)
+    assert array.dtype == np.float64 and array.shape == (count, 2)
+    assert (array == np.array(q)).all() and len(pauses) == 2
+    # A MOVE without setpoints, which the robot app would refuse.
+    assert move_paths.points_text({"setpoints": []}) == "[]"
+    assert move_paths.points_array({"setpoints": []}).shape == (0, 0)
+
+
+@apai
+def test_the_debug_recorder_gets_one_event_with_the_whole_path_of_each_move(
+    sim: SimRig, tmp_path: Path
+) -> None:
+    evidence = Evidence()
+    measures = Measures(tmp_path, evidence)
+    measures.attach(sim.link)
+    sim.adapter._measure = measures.note
+    with sim.camera(0.1):
+        assert sim.move(LONG, 1.2) is True
+        assert sim.move([0.0] * 6, 1.2) is True
+    measures.close()
+    lines = read_lines(tmp_path / PATHS)
+    events = [data for kind, data in evidence.events if kind == move_paths.PATH_EVENT]
+    assert move_paths.PATH_EVENT == "robot.move_path" and len(events) == 2
+    for data, line in zip(events, lines, strict=True):
+        # The event says what it is: the planned path of one MOVE, and not
+        # the experiment's single targets at the motor.
+        assert data["what"] == move_paths.PATH_NOTE
+        assert "PLANNED joint path of one MOVE" in data["what"]
+        assert "no single targets timed at the motors" in data["what"]
+        assert "method" not in data and "args" not in data  # no robot.call
+        # One array with every setpoint, as the line of the run folder has it.
+        assert data["setpoints"].dtype == np.float64
+        assert data["setpoints"].tolist() == line["setpoints"]
+        for key in ("move_id", "sent", "session_id", "owner_number", "stop_number"):
+            assert data[key] == line[key], key
+        for key in ("period_s", "start_q", "start_tol_rad", "count", "grasp_region"):
+            assert data[key] == line[key], key
+        assert data["sent_mono_s"] == pytest.approx(line["sent_mono_s"], abs=1e-6)
+    # Recorded when the MOVE left, before the first ROBOT_STATE that names it.
+    kinds = [
+        (kind, data.get("move_id"))
+        for kind, data in evidence.events
+        if kind == move_paths.PATH_EVENT
+        or (kind == launcher.STATE_EVENT and data["move_index"] > 0)
+    ]
+    first = lines[0]["move_id"]
+    assert kinds.index((move_paths.PATH_EVENT, first)) < kinds.index(
+        (launcher.STATE_EVENT, first)
+    )
 
 
 # The whole launcher on APAI's mock scene
@@ -1076,3 +1508,58 @@ def test_the_hand_overs_only_queue() -> None:
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         }
         assert called <= {"_put", "put_nowait", "monotonic", "_log_trouble"}, name
+
+
+@apai
+def test_a_run_of_the_launcher_writes_the_path_of_every_move_the_arm_was_sent(
+    stage: Stage,
+) -> None:
+    stage.typed = [QUICK, PICK]
+    stage.answers = ["yes", "yes"]
+    code = stage.run("--interactive")
+    assert code in (launcher.EXIT_OK, launcher.EXIT_FAILED), stage.lines
+    run = stage.run_dir
+    lines = read_lines(run / PATHS)
+    moves = [
+        move for move in read_lines(run / launcher.MOVES_FILE) if "move_id" in move
+    ]
+    trace = {row["step"]: row for row in read_lines(run / "trace.jsonl")}
+    # One line per MOVE the agent's link sent, in their order, each named by
+    # its line of moves.jsonl.
+    assert len(lines) == stage.motion.count("send_move") > 3
+    assert [line["move_id"] for line in lines] == [move["move_id"] for move in moves]
+    assert all(move["path_file"] == PATHS for move in moves)
+    (told,) = stage.said("measurements: ")
+    assert PATHS in told
+    # What the mock arm's driver on the Thor's side took, target for target:
+    # the setpoints of each MOVE as far as the robot app said it sent them.
+    assert all(line["end"]["status"] == "completed" for line in lines)
+    assert all(line["end"]["sent"] == line["count"] for line in lines)
+    commanded = [q for line in lines for q in line["setpoints"]]
+    assert len(commanded) > 100 and commanded == stage.h.spy.targets
+    # Each begins where the arm stood, and the next one where the last ended.
+    for line in lines:
+        assert line["setpoints"][0] == pytest.approx(line["start_q"], abs=0.05)
+    # Who asked: the skill of APAI's trace row with that step.
+    assert {line["skill"] for line in lines} == {"pick_and_place"}
+    for line in lines:
+        assert trace[line["trace_step"]]["skill"] == line["skill"]
+    # A jaw command's line holds what a re-run needs of it, and who asked.
+    jaws = read_lines(run / launcher.JAWS_FILE)
+    assert len(jaws) == stage.motion.count("gripper") >= 2
+    for jaw in jaws:
+        for key in ("mode", "opening", "effort", "timeout_s", "sent_mono_s"):
+            assert jaw[key] is not None, key
+        assert jaw["sent_utc"] <= jaw["utc"]
+        assert trace[jaw["trace_step"]]["skill"] == jaw["skill"]
+    assert jaws[0]["skill"] == "open_gripper"
+    (close,) = (jaw for jaw in jaws if jaw["mode"] == "close_until_contact")
+    assert close["scout_opening"] == pytest.approx(0.5)
+    # The moves and the jaw commands in one order, by the time they left.
+    sent = sorted(
+        [(line["sent_mono_s"], "move") for line in lines]
+        + [(jaw["sent_mono_s"], "jaw") for jaw in jaws]
+    )
+    assert [what for _, what in sent] == [
+        "move" if name == "send_move" else "jaw" for name in stage.motion
+    ]

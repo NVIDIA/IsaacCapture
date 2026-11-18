@@ -3069,3 +3069,88 @@ def test_apais_shutdown_sends_no_motion_and_no_torque_cut(apai_rig: ApaiRig) -> 
     time.sleep(0.2)
     assert len(rig.h.spy.targets) == sent and len(rig.moves) == 1
     assert rig.link.state().torque_on is True
+
+
+# What the adapter hands over of a MOVE's path
+
+
+@apai
+def test_a_moves_own_arrays_are_handed_over_behind_the_move_and_its_end_behind_that(
+    scripted: ScriptedRig,
+) -> None:
+    thor, adapter = scripted.thor, scripted.adapter
+    noted: list[tuple[str, dict[str, Any], int]] = []  # (kind, facts, MOVEs sent)
+    adapter._measure = lambda kind, facts: noted.append(
+        (kind, facts, len(scripted.of("move")))
+    )
+    thor.at_first_permit = ("completed", "", {"outcome": "completed", "sent": 25}, [])
+    with adapter.asked_by("move_home", 4):
+        with adapter.asked_by("pick_and_place"):  # a skill inside a skill
+            pass
+        assert scripted.move(SHORT, 0.5) is True
+    assert [kind for kind, _, _ in noted] == [
+        arm_adapter.MEASURED_PATH,
+        arm_adapter.MEASURED_PATH_END,
+        arm_adapter.MEASURED_MOVE,
+    ]
+    (_, path, moves_sent), (_, end, _), _ = noted
+    _, move_id, start, tol, setpoints, region, evidence, _, _ = scripted.of("move")[0]
+    # Handed over when the MOVE had left, and before the first PERMIT.
+    assert moves_sent == 1 and path["not_sent"] is None
+    assert path["sent_mono_s"] < scripted.permit_times[0]
+    # The MOVE's own start pose and list of setpoints: nothing was copied.
+    assert path["setpoints"] is setpoints and path["start_q"] is start
+    assert len(path["setpoints"]) == 25 and path["move_id"] == move_id
+    assert (path["start_tol_rad"], path["grasp_region"]) == (tol, region)
+    assert path["evidence_wall_s"] == evidence
+    assert path["period_s"] == PERIOD_S
+    assert path["expires_in_s"] == scripted.settings.expires_in_s
+    pinned = ScriptedRig.PIN
+    assert (path["session_id"], path["owner_number"], path["stop_number"]) == (
+        pinned.session_id,
+        pinned.owner_number,
+        pinned.stop_number,
+    )
+    # The skill that was named on this thread; outside of one, none.
+    assert (path["skill"], path["trace_step"]) == ("move_home", 4)
+    assert end == {
+        "move_id": move_id,
+        "status": "completed",
+        "sent": 25,
+        "reason": "",
+        "outcome": "completed",
+        "end_q": [],
+        "sent_seen": 0,
+        "error": None,
+    }
+    noted.clear()
+    asked: list[Any] = []
+    with adapter.asked_by("move_home", 4):
+        other = in_thread(lambda: asked.append(getattr(adapter._skill, "asked", None)))
+        other.join(5.0)
+    assert asked == [None] and getattr(adapter._skill, "asked", None) is None
+    assert scripted.move(SHORT, 0.5) is True
+    assert (noted[0][1]["skill"], noted[0][1]["trace_step"]) == (None, None)
+
+
+@apai
+def test_without_a_measure_a_move_asks_the_link_nothing_more(
+    scripted: ScriptedRig,
+) -> None:
+    thor, adapter, link = scripted.thor, scripted.adapter, scripted.link
+    asked: list[str] = []
+    final = link.final_result
+    link.final_result = lambda move_id: (asked.append(move_id), final(move_id))[1]
+    thor.admit = Result("", "refused", "the move leaves the envelope")
+    assert adapter._measure is None
+    with pytest.raises(types().SafetyViolation):
+        scripted.move(SHORT, 0.5)
+    without = len(asked)
+    # With one, a move that ends before it is armed is asked for its RESULT
+    # once more, for the path's end; the hand-overs raise nothing.
+    adapter._measure = lambda kind, facts: 1 / 0
+    asked.clear()
+    with pytest.raises(types().SafetyViolation):
+        scripted.move(SHORT, 0.5)
+    assert len(asked) == without + 1
+    assert len(thor.moves) == 2 and thor.permits == []

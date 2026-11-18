@@ -272,6 +272,14 @@ def at_limit(settings: Any, *arguments: str) -> str:
     return launcher._debug_at_limit(args, settings)
 
 
+def idle_map_s(settings: Any, *arguments: str) -> float | None:
+    """The seconds between two map pictures while such a run waits for a task."""
+    args = launcher._parser().parse_args(["--config", "unused", *arguments])
+    args.debug_map_hz = launcher._debug_map_hz(args, settings)
+    args.debug_idle_map_s = launcher._debug_idle_map_s(args, settings)
+    return launcher._idle_map_s(args)
+
+
 # What a run takes, from its arguments and its file
 
 
@@ -318,12 +326,16 @@ def test_the_full_stack_times_and_transcribes_by_default_and_the_minimal_does_no
         **dataclasses.asdict(recorded),
         "debug_map_hz": 0.5,
         "debug_at_limit": "drop-oldest",
+        "debug_idle_map_s": 10.0,
     }
+    # With every map picture stored there is no rule for the wait for a task.
     assert launcher._options_row(recorded, 0.0, "stop") == {
         **dataclasses.asdict(recorded),
         "debug_map_hz": 0.0,
         "debug_at_limit": "stop",
+        "debug_idle_map_s": None,
     }
+    assert launcher._options_row(recorded, 2.0, "stop", 0.0)["debug_idle_map_s"] == 0.0
     plain = RunOptions(timing=True, model_trace=True)
     assert launcher._options_row(plain, 0.5) == dataclasses.asdict(plain)
     assert launcher._options_row(plain, 0.5, "stop") == dataclasses.asdict(plain)
@@ -402,6 +414,57 @@ def test_the_shipped_files_name_the_two_recordings(
     )
 
 
+def test_the_wait_for_a_task_has_an_option_of_the_programs_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    full = agent_config.load_settings(
+        settings_file(tmp_path, experiment={"stack": "full"})
+    )
+    # While the program waits for a task the debug recording stores one map
+    # picture per 10 s unless the run names another period; 0 stores none.
+    assert idle_map_s(full) == idle_map_s(full, "--record-debug") == 10.0
+    assert idle_map_s(full, "--record-debug", "--debug-idle-map-s", "0") == 0.0
+    assert idle_map_s(full, "--debug-idle-map-s", "3600") == 3600.0
+    assert idle_map_s(full, "--debug-map-hz", "0.5", "--debug-idle-map-s", "2") == 2.0
+    # With every map picture stored there is no rule for the wait.
+    assert idle_map_s(full, "--record-debug", "--debug-map-hz", "0") is None
+    # It is no field of what the experiment's launcher takes.
+    recorded = parsed(full, "--record-debug")
+    assert parsed(full, "--record-debug", "--debug-idle-map-s", "0") == recorded
+    # run-options.json and --check name it with the other two.
+    assert launcher._options_row(recorded, 2.0, "drop-oldest", 0.0) == {
+        **dataclasses.asdict(recorded),
+        "debug_map_hz": 2.0,
+        "debug_at_limit": "drop-oldest",
+        "debug_idle_map_s": 0.0,
+    }
+    plain = RunOptions(timing=True, model_trace=True)
+    assert "debug_idle_map_s" not in launcher._options_row(plain, 2.0, "stop", 0.0)
+    # The program's line at the start names the rule in a few words, and
+    # the event of the planned paths.
+    monkeypatch.setattr(launcher, "_disk_warning", lambda run_dir, max_gib: "")
+    line = launcher._option_lines(recorded, Path("run"))[-1]
+    assert line.endswith(
+        "The joint path of each MOVE is in it as robot.move_path: what was "
+        "planned and sent to the robot app, not what the motors were sent. While "
+        "the program waits for a task one map picture is stored every 10 s, "
+        "which --debug-idle-map-s sets; what the arm did or was refused is "
+        "stored as always"
+    )
+    none = launcher._option_lines(recorded, Path("run"), 2.0, "drop-oldest", 0.0)[-1]
+    assert (
+        "While the program waits for a task no map picture is stored, which "
+        "--debug-idle-map-s sets"
+    ) in none
+    # Nothing is said of a wait that has no rule.
+    for line in (
+        launcher._option_lines(recorded, Path("run"), 0.0)[-1],
+        launcher._option_lines(recorded, Path("run"), 2.0, "stop", None)[-1],
+    ):
+        assert "waits for a task" not in line
+        assert line.endswith("not what the motors were sent")
+
+
 @pytest.mark.parametrize(
     ("arguments", "block", "message"),
     [
@@ -478,6 +541,32 @@ def test_the_shipped_files_name_the_two_recordings(
             {},
             "--debug-at-limit needs experiment.stack full (it is minimal)",
         ),
+        (
+            ["--debug-idle-map-s", "0"],
+            {},
+            "--debug-idle-map-s needs experiment.stack full (it is minimal)",
+        ),
+        (
+            ["--record-debug", "--debug-idle-map-s", "-1"],
+            {"stack": "full"},
+            "--debug-idle-map-s must be a finite number, 0 or above, not -1.0",
+        ),
+        (
+            ["--debug-idle-map-s", "nan"],
+            {"stack": "full"},
+            "--debug-idle-map-s must be a finite number, 0 or above",
+        ),
+        (
+            ["--debug-idle-map-s", "inf"],
+            {"stack": "full"},
+            "--debug-idle-map-s must be a finite number, 0 or above",
+        ),
+        (
+            ["--record-debug", "--debug-map-hz", "0", "--debug-idle-map-s", "5"],
+            {"stack": "full"},
+            "--debug-idle-map-s needs --debug-map-hz above 0: with 0 every map "
+            "picture is stored, also while the program waits for a task",
+        ),
         (["--motion-approval", "tool"], {}, "--motion-approval tool is not built"),
         (
             ["--speed-profile", "conservative"],
@@ -546,6 +635,7 @@ def test_without_an_option_a_run_loads_nothing_of_the_experiment_and_leaves_no_f
         **dataclasses.asdict(recorded),
         "debug_map_hz": 2.0,
         "debug_at_limit": "drop-oldest",
+        "debug_idle_map_s": 10.0,
     }
 
 
@@ -643,6 +733,7 @@ def test_each_option_installs_its_hook_once_in_the_order_of_the_experiments_laun
         **dataclasses.asdict(ALL),
         "debug_map_hz": 2.0,
         "debug_at_limit": "drop-oldest",
+        "debug_idle_map_s": 10.0,
     }
 
 
@@ -849,7 +940,8 @@ def test_a_run_with_the_debug_recording_records_the_poses_of_robot_state(
     # The arm's own read is not wrapped: nothing is recorded on the skill thread.
     assert RobotLinkArm.get_state is get_state
     assert [hook.rsplit(".", 2)[1:] for hook in made.evidence.hooks] == [
-        ["Measures", "on_state"]
+        ["Measures", "on_state"],
+        ["RobotLinkArm", "_move"],  # where a MOVE's planned path is handed over
     ]
 
 

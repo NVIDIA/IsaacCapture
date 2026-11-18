@@ -39,7 +39,11 @@ import pytest
 import test_launcher
 import test_viewer
 from isaaccapture_examples.agentic_remote.agent import config as agent_config
-from isaaccapture_examples.agentic_remote.agent import debug_recording, launcher
+from isaaccapture_examples.agentic_remote.agent import (
+    debug_recording,
+    launcher,
+    move_paths,
+)
 from isaaccapture_examples.agentic_remote.agent.config import RunOptions
 from test_launcher import EXAMPLE, QUICK, Stage, settings_file
 from test_viewer import CELLS, Bridge, served
@@ -291,13 +295,16 @@ def recorded(
     at_limit: str = DROP,
     picture: tuple[int, int] = PICTURE,
     noisy: bool = False,
+    idle_map_s: float | None = None,
+    task_wait: debug_recording.TaskWait | None = None,
 ) -> Iterator[tuple[Scene, Any, Any]]:
     """A Scene recorded into `run`; yields (scene, recorder, the limit or None).
 
     map_hz None is the experiment's recorder alone. by_launcher starts the
     recording as the agent program does (launcher.experiment_sessions).
     at_limit is what the recording does at max_bytes; its Keeper, if it has
-    one, is scene.keeper.
+    one, is scene.keeper. idle_map_s is the rule for the wait for a task, which
+    task_wait.waiting() stands for; None is a rate that knows no such wait.
     """
     from apai.perception import occupancy, segmenter
     from apai.safety import trajectory
@@ -326,7 +333,14 @@ def recorded(
             session = recording.recording_session(run, max_bytes=max_bytes)
             recorder = stack.enter_context(session)
             if map_hz is not None:
-                limits = debug_recording.limited(recorder, map_hz, at_limit, clock)
+                limits = debug_recording.limited(
+                    recorder,
+                    map_hz,
+                    at_limit,
+                    clock,
+                    idle_map_s=idle_map_s,
+                    task_wait=task_wait,
+                )
                 gate, keeper = stack.enter_context(limits)
         scene = Scene(picture, noisy)
         scene.keeper = keeper
@@ -460,7 +474,13 @@ def test_of_twenty_refreshes_a_second_about_two_are_stored_whole_and_the_viewer_
     assert gaps.min() > 0.3, gaps  # never two inside half a second
     # What the recording says of itself: the rate, and what it left out.
     opened, closed = (row["data"] for row in rows if row["kind"] == RATE_EVENT)
-    assert opened == {"map_hz": 2.0, "note": debug_recording.RATE_NOTE}
+    # The program never waited for a task here: the rule is named, no more.
+    assert opened == {
+        "map_hz": 2.0,
+        "note": debug_recording.RATE_NOTE,
+        "idle_map_s": debug_recording.DEBUG_IDLE_MAP_S,
+        "idle_note": debug_recording.IDLE_NOTE,
+    }
     numbers = {
         "map_hz": 2.0,
         "ticks": ticks,
@@ -468,6 +488,9 @@ def test_of_twenty_refreshes_a_second_about_two_are_stored_whole_and_the_viewer_
         "skipped": ticks - by_rate,
         "rescued": len(late),
         "missing": 0,
+        "idle_map_s": debug_recording.DEBUG_IDLE_MAP_S,
+        "idle_seconds": 0.0,
+        "idle_skipped": 0,
     }
     assert closed == numbers
     assert f"{debug_recording.__name__}.MapRate.emit" in hooks
@@ -1853,6 +1876,187 @@ def test_the_experiments_replay_tools_refuse_a_run_with_map_pictures_left_out_or
                 module.replay(run, *arguments)
 
 
+# While the program waits for a task
+
+# The stand-in watcher's period on the test's clock: 16 ticks a second. A
+# power of two, so that the clock's steps add up without rounding.
+TICK_S = 1 / 16
+# The stand-in for the task prompt of the tests on the mock scene waits this
+# long, and a map picture counts as stored during it after this margin.
+PROMPT_S = 1.5
+PROMPT_MARGIN_S = 0.25
+PATH_EVENT = move_paths.PATH_EVENT
+
+
+def ticked(scene: Scene, clock: Clock, count: int) -> list[int]:
+    """`count` ticks of the watcher, TICK_S apart; the map revisions they made."""
+    made = []
+    for _ in range(count):
+        scene.tick()
+        made.append(scene.map.refreshes)
+        clock.now += TICK_S
+    return made
+
+
+@apai
+@experiment
+def test_while_the_program_waits_for_a_task_one_map_picture_is_stored_per_idle_period(
+    apai_scratch: Path,
+) -> None:
+    run = apai_scratch / "run"
+    clock = Clock()
+    wait = debug_recording.TaskWait()
+    rule = {"idle_map_s": 10.0, "task_wait": wait}
+    with recorded(run, 2.0, clock, **rule) as (scene, _, gate):
+        # A task runs for 2.5 s: of 16 map refreshes a second 2 are stored.
+        assert ticked(scene, clock, 40) == list(range(1, 41))
+        assert gate.counts["stored"] == 5 and gate.idle_seconds() == 0.0
+        # The task prompt: the map refreshes on, 16 times a second.
+        with wait.waiting():
+            ticked(scene, clock, 100)
+            # 6.25 s without a task: no map picture was stored.
+            assert gate.counts["stored"] == 5 and gate.idle_skipped == 100
+            # Evidence while it waits is stored as always: a refusal with
+            # the map it names, which had been left out, and a skill's mask.
+            assert scene.refuse() == 140
+            scene.grasp_mask()
+            assert gate.counts["rescued"] == 1
+            # One picture per 10 s after the last map that was stored: the
+            # ticks at 18.75 s and 28.75 s of the 321 that follow.
+            ticked(scene, clock, 321)
+            assert gate.counts["stored"] == 7 and gate.idle_skipped == 419
+            assert gate.idle_seconds() == 421 * TICK_S
+        # The task line is read. The last picture of the wait is one tick
+        # old, and the first refresh behind the line is stored at once; then
+        # the rate goes on, 2 a second.
+        ticked(scene, clock, 9)
+        assert gate.counts == {
+            "ticks": 470,
+            "stored": 9,
+            "skipped": 461,
+            "rescued": 1,
+            "missing": 0,
+        }
+        assert gate.idle_seconds() == 421 * TICK_S  # no longer counted
+    rows = events(run)
+    # The map revisions in the recording: those of the task, the refusal's,
+    # the two of the wait, and the first two behind it.
+    assert revisions(rows) == [1, 9, 17, 25, 33, 140, 301, 461, 462, 470]
+    counts = kinds(rows)
+    assert counts[debug_recording.REFUSAL] == 1
+    assert counts["object.mask"] == 9 + 1  # the detector's, and the skill's
+    late = [row for row in rows if "recorded_late" in row["data"]]
+    assert {row["data"]["recorded_late"]["for"] for row in late} == {
+        debug_recording.REFUSAL
+    }
+    # What the recording says of itself: the rule at its start, and in the
+    # status how long the program waited and what it left out for that.
+    opened, closed = (row["data"] for row in rows if row["kind"] == RATE_EVENT)
+    assert opened == {
+        "map_hz": 2.0,
+        "note": debug_recording.RATE_NOTE,
+        "idle_map_s": 10.0,
+        "idle_note": debug_recording.IDLE_NOTE,
+    }
+    assert "waits for a task at its prompt" in debug_recording.IDLE_NOTE
+    left = status(run)
+    assert (
+        left[RATE_BLOCK]
+        == closed
+        == {
+            "map_hz": 2.0,
+            "ticks": 470,
+            "stored": 9,
+            "skipped": 461,
+            "rescued": 1,
+            "missing": 0,
+            "idle_map_s": 10.0,
+            "idle_seconds": 26.312,
+            "idle_skipped": 419,
+        }
+    )
+    assert left["complete"] is False and left["dropped_events"] == 0
+
+
+@apai
+@experiment
+@pytest.mark.parametrize(
+    ("idle_map_s", "while_waiting"),
+    [
+        (0.0, 0),  # --debug-idle-map-s 0: none
+        (1e6, 1),  # a period no wait reaches: the first map, then none
+        (10.0, 3),  # at once, and 10 s and 20 s later
+        (None, 50),  # a rate that knows no wait: 2 a second
+    ],
+)
+def test_a_wait_from_the_start_stores_what_its_period_says_and_the_task_begins_stored(
+    apai_scratch: Path, idle_map_s: float | None, while_waiting: int
+) -> None:
+    run = apai_scratch / "run"
+    clock = Clock()
+    wait = debug_recording.TaskWait()
+    rule = {"idle_map_s": idle_map_s, "task_wait": wait}
+    with recorded(run, 2.0, clock, **rule) as (scene, _, gate):
+        # Before the first task: 25 s at the prompt.
+        with wait.waiting():
+            ticked(scene, clock, 400)
+            assert gate.counts["stored"] == while_waiting
+            # The camera gives no frame for 2 s. At any other time the newest
+            # map that was left out is then stored; in a wait only when its
+            # period has passed.
+            scene.no_frame = True
+            ticked(scene, clock, 32)
+            scene.no_frame = False
+            stalled = gate.counts["rescued"]
+            assert stalled == int(idle_map_s is None)
+        # The first task is taken: its first refresh is stored at once.
+        made = ticked(scene, clock, 1)
+        assert gate.counts["stored"] == while_waiting + 1
+        assert gate.counts["rescued"] == stalled
+    rows = events(run)
+    stored = revisions(rows)
+    assert made == [401] and stored[-1] == 401
+    if idle_map_s == 0.0:
+        assert stored == [401]  # nothing of the wait is in the recording
+    elif idle_map_s == 1e6:
+        assert stored == [1, 401]
+    elif idle_map_s == 10.0:
+        assert stored == [1, 161, 321, 401]
+    left = status(run)[RATE_BLOCK]
+    if idle_map_s is None:
+        assert "idle_seconds" not in left and "idle_skipped" not in left
+    else:
+        assert left["idle_map_s"] == idle_map_s
+        assert left["idle_seconds"] == 432 * TICK_S
+        assert left["idle_skipped"] == 400 - while_waiting
+
+
+def test_a_wait_without_a_rate_and_a_rate_without_a_wait_do_nothing() -> None:
+    # Before limited() bound a rate, and with --debug-map-hz 0, which has none.
+    wait = debug_recording.TaskWait()
+    with wait.waiting():
+        pass
+    with debug_recording.limited(None, 2.0, idle_map_s=0.0, task_wait=wait) as limits:
+        assert limits == (None, None)
+        with wait.waiting():
+            pass
+    # An error inside a wait goes on up, and the wait has ended.
+    recorder = SimpleNamespace(emit=lambda kind, **data: None, local=SimpleNamespace())
+    gate = debug_recording.MapRate(recorder, 2.0, Clock(), 10.0)
+    wait.bind(gate)
+    with pytest.raises(EOFError), wait.waiting():
+        assert gate._idle_since is not None
+        raise EOFError
+    assert gate._idle_since is None and gate.idle_seconds() == 0.0
+    # The numbers of the option.
+    assert debug_recording.idle_map_s_of(None) == debug_recording.DEBUG_IDLE_MAP_S
+    assert debug_recording.DEBUG_IDLE_MAP_S == 10.0
+    assert debug_recording.idle_map_s_of(0) == 0.0
+    for refused in (-1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="--debug-idle-map-s must be a finite"):
+            debug_recording.idle_map_s_of(refused)
+
+
 # The word that the recording is full
 
 
@@ -2192,6 +2396,176 @@ def test_the_agent_program_sends_the_arm_the_same_commands_with_the_keeper_as_wi
     assert state["recording"][DROPPED_BLOCK] == told[DROPPED_BLOCK]
 
 
+@apai
+@experiment
+def test_the_agent_program_sends_the_arm_the_same_commands_with_the_paths_and_the_wait(
+    make_stage: Callable[..., Stage],
+) -> None:
+    """The agent program on APAI's mock scene: a pick and place, then a jaw command.
+
+    Both runs record with the rate and a size the pick and place passes
+    several times, and wait PROMPT_S at each task prompt. The first has
+    neither the move paths nor the rule for the wait; the second has both,
+    with --debug-idle-map-s 0.
+    """
+    from isaaccapture_examples.agentic_remote.agent.arm_adapter import RobotLinkArm
+
+    recording = import_experiment("thor_recording")
+    rate = debug_recording.MapRate
+    left = {}
+    for name in ("without", "with"):
+        stage = make_stage()
+        run = stage.folder / "runs" / f"20261117T120000Z-{name}"
+        options = RunOptions(
+            timing=True, model_trace=True, record_debug=True, debug_max_gib=SMALL_GIB
+        )
+        marks: list[str] = []  # what the program did, in order
+        waits: list[tuple[int, int]] = []  # each wait at the prompt, in ns
+
+        def at_the_prompt(marks: list = marks, waits: list = waits) -> None:
+            marks.append("prompt")
+            began = time.monotonic_ns()
+            time.sleep(PROMPT_S)
+            waits.append((began, time.monotonic_ns()))
+
+        def begin(gate: Any, marks: list = marks, real: Any = rate.idle_begin) -> None:
+            marks.append("wait begins")
+            real(gate)
+
+        def end(gate: Any, marks: list = marks, real: Any = rate.idle_end) -> None:
+            real(gate)
+            marks.append("wait ends")
+
+        stage.on_ask = lambda marks=marks: marks.append("question")
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch.object(rate, "idle_begin", begin))
+            stack.enter_context(mock.patch.object(rate, "idle_end", end))
+            if name == "without":
+                for method in ("_note_path", "_note_path_end"):
+                    nothing = mock.patch.object(
+                        RobotLinkArm, method, lambda *a, **k: None
+                    )
+                    stack.enter_context(nothing)
+                stack.enter_context(mock.patch.object(RobotLinkArm, "asked_by", None))
+                off = mock.patch.object(launcher, "_idle_map_s", lambda args: None)
+                stack.enter_context(off)
+            else:
+                none = mock.patch.object(launcher, "_debug_idle_map_s", lambda *_: 0.0)
+                stack.enter_context(none)
+            code = test_viewer.record(
+                stage, run, options, test_launcher.PICK, QUICK, between=at_the_prompt
+            )
+        assert code in (launcher.EXIT_OK, launcher.EXIT_FAILED), stage.lines
+        (result,) = stage.results("pick_and_place")
+        assert result["picked"]
+        rows = events(run)
+        segments = [
+            (row["kind"], row["data"].get("reason"))
+            for row in rows
+            if row["kind"].startswith("route.segment.")
+        ]
+        # The map pictures stored by their turn, by the time of their frame.
+        turns = [
+            row["mono_ns"]
+            for row in rows
+            if row["kind"] == "map.frame" and "recorded_late" not in row["data"]
+        ]
+        margin = int(PROMPT_MARGIN_S * 1e9)
+        left[name] = {
+            "code": code,
+            "targets": [
+                [float(value) for value in target] for target in stage.h.spy.targets
+            ],
+            "jaws": stage.jaw_commands(),
+            "motion": list(stage.motion),
+            "order": list(stage.order),
+            "segments": segments,
+            "marks": marks,
+            "waits": waits,
+            "while_waiting": [
+                sum(began + margin < at < ended for at in turns)
+                for began, ended in waits
+            ],
+            "after": [
+                min((at for at in turns if at > ended), default=None)
+                for _, ended in waits
+            ],
+            "paths": list(recording.read_events(run, kinds={PATH_EVENT})),
+            "rows": rows,
+            "status": status(run),
+            "run": run,
+        }
+    without, with_both = left["without"], left["with"]
+    # What the arm was sent: the same setpoints, jaw commands, moves and
+    # owner requests, and the same route checks with the same answers.
+    assert len(without["targets"]) > 100 and len(without["segments"]) >= 4
+    for what in ("code", "targets", "jaws", "motion", "order", "segments"):
+        assert with_both[what] == without[what], what
+    # The program waited at three prompts, and nowhere else: the typed yes
+    # of a task and the question at the session's end are no such wait.
+    for run in (without, with_both):
+        marks = run["marks"]
+        assert marks.count("prompt") == 3 and marks.count("question") >= 2
+        assert marks[:4] == ["wait begins", "prompt", "wait ends", "question"]
+        waiting = False
+        for mark in marks:
+            if mark in ("wait begins", "wait ends"):
+                waiting = mark == "wait begins"
+            else:
+                assert waiting is (mark == "prompt"), marks
+    # Without the rule the map was stored at its rate while the program
+    # waited; with it, and 0, not one picture in the three waits.
+    assert all(count >= 1 for count in without["while_waiting"]), without
+    assert with_both["while_waiting"] == [0, 0, 0]
+    told = with_both["status"][RATE_BLOCK]
+    assert told["idle_map_s"] == 0.0 and told["idle_skipped"] > 0
+    assert 3 * PROMPT_S <= told["idle_seconds"] < 3 * PROMPT_S + 5.0
+    assert "idle_seconds" not in without["status"][RATE_BLOCK]
+    # The pick and place began with a map stored behind its line: at the
+    # watcher's next tick, a third of a second apart on the mock scene. The
+    # jaw command behind the second wait is over before a tick comes.
+    (_, ended), stored = with_both["waits"][0], with_both["after"][0]
+    assert stored is not None and 0 < stored - ended < 1.0e9
+    # The planned path of every MOVE is in the recording, one event each,
+    # whole: the rate left none out and the keeper dropped none, though it
+    # dropped map pictures to stay under the size.
+    assert without["paths"] == []
+    lines = [
+        json.loads(line)
+        for line in (with_both["run"] / launcher.MOVE_PATHS_FILE)
+        .read_text()
+        .splitlines()
+    ]
+    paths = with_both["paths"]
+    assert len(paths) == len(lines) == with_both["motion"].count("send_move") > 3
+    assert with_both["status"][DROPPED_BLOCK]["refreshes"] > 0
+    assert with_both["status"][RATE_BLOCK]["skipped"] > 0
+    assert with_both["status"]["dropped_events"] == 0
+    assert folder_bytes(with_both["run"] / "debug") <= SMALL_GIB * 2**30
+    for event, line in zip(paths, lines, strict=True):
+        data = event["data"]
+        assert data["move_id"] == line["move_id"] and data["sent"] is True
+        assert (
+            "arrays" in event
+            and (with_both["run"] / "debug" / event["arrays"]).is_file()
+        )
+        assert data["setpoints"].tolist() == line["setpoints"]
+        assert (
+            data["what"] == move_paths.PATH_NOTE and data["skill"] == "pick_and_place"
+        )
+        assert event["thread"] == launcher.MEASURE_THREAD
+        assert event["refresh_id"] is None
+    # What the arm's driver took is what these events and lines hold.
+    commanded = [q for line in lines for q in line["setpoints"][: line["end"]["sent"]]]
+    assert commanded == with_both["targets"]
+    assert not (without["run"] / launcher.MOVE_PATHS_FILE).read_text()
+    counted = with_both["status"]["counts"]
+    assert counted[PATH_EVENT] == len(paths)
+    assert (
+        f"{RobotLinkArm.__module__}.RobotLinkArm._move" in with_both["status"]["hooks"]
+    )
+
+
 # What the program says at the start, and the README
 
 
@@ -2354,3 +2728,38 @@ def test_the_readme_tells_the_rate_the_duration_and_the_line_of_a_full_recording
     # The share of the size the map's points of dropped pictures may take.
     assert debug_recording.POINTS_SHARE == 4 and "a quarter of the limit" in whole
     assert debug_recording.KEPT_NEWEST == 4 and "the four newest map pictures" in whole
+
+
+def test_the_readme_tells_the_rule_for_the_wait_for_a_task_and_its_option() -> None:
+    readme = README.read_text(encoding="utf-8")
+    whole = one_line(readme)
+    program = readme[readme.index("\n### The agent program\n") :]
+    usage = program[program.index("```text") : program.index("\n```\n")]
+    option = debug_recording.IDLE_OPTION
+    assert option == "--debug-idle-map-s" and f"[{option} SECONDS]" in usage
+    default = debug_recording.DEBUG_IDLE_MAP_S
+    assert f"`{option} SECONDS` (default {default:g})" in whole
+    assert whole.count(f"`{option} 0` stores none") == 2
+    # The usage names every argument of the program's own for the recording.
+    for action in launcher._parser()._actions:
+        if action.dest.startswith("debug_"):
+            assert action.option_strings[0] in usage, action.dest
+    # What idle is, what is stored then, and what the recording says of it.
+    for said in (
+        "**While the program waits for a task.**",
+        "The program is **idle** while it waits at the prompt `task>`",
+        "the first map refresh behind the line is stored at once",
+        "the typed `yes` or the question about the motors, is not idle",
+        f"`{option}` seconds, {default:g} by default",
+        "`idle_map_s`",
+        "`idle_seconds`",
+        "`idle_skipped`",
+        "`debug_idle_map_s`",
+        "and it is refused together with `--debug-map-hz 0`",
+        "no session on the rig has run with the rule yet",
+    ):
+        assert said in whole, said
+    # The line at the start says the same in a few words.
+    options = RunOptions(timing=True, record_debug=True)
+    line = launcher._option_lines(options, Path("run"))[-1]
+    assert f"one map picture is stored every {default:g} s, which {option} sets" in line

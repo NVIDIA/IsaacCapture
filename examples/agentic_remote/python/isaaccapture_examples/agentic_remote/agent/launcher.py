@@ -13,6 +13,7 @@ its modules are patched for the lifetime of demo.main.
 Every run measures what the split over two machines costs: Measures writes
 the robot connection's delays, each move's stretches, the Thor's single joint
 reads and the camera's deliveries into the run folder, on a thread of its own.
+The same thread writes the joint path the agent planned for each MOVE.
 
 Ctrl+C at this terminal is a STOP. The program cuts no torque. APAI's rest
 tool asks the robot app for the motors off, and when the program ends the
@@ -38,7 +39,7 @@ import termios
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import ExitStack, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,13 +48,15 @@ from unittest.mock import patch
 
 from ..console_log import set_console_level
 from . import config as agent_config
-from . import debug_recording
+from . import debug_recording, move_paths
 from .arm_adapter import (
     AGENT_TERMINAL,
     ARM_TYPE,
     MEASURED_JAW,
     MEASURED_JAW_BEGIN,
     MEASURED_MOVE,
+    MEASURED_PATH,
+    MEASURED_PATH_END,
     RobotLinkArm,
     arm_factory,
 )
@@ -400,6 +403,7 @@ def agent_hooks(
     timing: Any = None,
     measures: Measures | None = None,
     prompt_notes: Callable[[], list[str]] | None = None,
+    task_wait: Callable[[], AbstractContextManager[Any]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """APAI's demo.main, while this is open, runs on the robot link.
 
@@ -410,7 +414,8 @@ def agent_hooks(
     wait for each task line. With thor_batch_milestones in cfg the agent gets
     the experiment's milestone batching. measures gets what the arm's moves
     and jaw commands measured and every camera frame the camera returns.
-    prompt_notes() gives the lines to say before a task prompt.
+    prompt_notes() gives the lines to say before a task prompt. task_wait()
+    is open while the program waits in next_task for the operator's task line.
     """
     from apai.agent import orchestrator
     from apai.apps import demo
@@ -500,9 +505,16 @@ def agent_hooks(
                 bridge.verify(grid.status)
                 experiment["install_verification"](runtime, output)
             original_execute = runtime.execute
-            runtime.execute = lambda name, args: gate.execute(
-                original_execute, name, args
-            )
+            asked_by = getattr(adapter, "asked_by", None)
+
+            def execute(name: str, args: dict) -> dict:
+                if measures is None or asked_by is None:
+                    return gate.execute(original_execute, name, args)
+                # The move paths and the jaw lines name the tool that asked.
+                with asked_by(name, _trace_step(runtime)):
+                    return gate.execute(original_execute, name, args)
+
+            runtime.execute = execute
             gate.bind_arm(adapter, harness)
             built.update(runtime=runtime, adapter=adapter, harness=harness, grid=grid)
             if full:
@@ -574,18 +586,20 @@ def agent_hooks(
     def next_task(prompt: str = "") -> str:
         # APAI's task prompt ends at an empty line. Here an empty or blank
         # line is read again: only the end of the input (Ctrl+D) ends.
-        while True:
-            if gate.tell_end():
-                raise EOFError  # ends APAI's task prompt: no new task is taken
-            gate.return_late_ownership()
-            for line in prompt_notes() if prompt_notes is not None else ():
-                say(line)
-            if task_input is terminal_input:
-                line = terminal_input(prompt, idle=gate.return_late_ownership)
-            else:
-                line = task_input(prompt)
-            if line.strip():
-                return line
+        # The program is idle from here until a task line is returned.
+        with nullcontext() if task_wait is None else task_wait():
+            while True:
+                if gate.tell_end():
+                    raise EOFError  # ends APAI's task prompt: no new task is taken
+                gate.return_late_ownership()
+                for line in prompt_notes() if prompt_notes is not None else ():
+                    say(line)
+                if task_input is terminal_input:
+                    line = terminal_input(prompt, idle=gate.return_late_ownership)
+                else:
+                    line = task_input(prompt)
+                if line.strip():
+                    return line
 
     if timing is not None:
         # The span the experiment's timing gives the wait for a task line.
@@ -743,6 +757,12 @@ def _startup_files(
             _log.warning("%s was not written: %s", STATUS_FILE, problem)
 
 
+def _trace_step(runtime: Any) -> int | None:
+    """The step APAI's trace has ready for its next row; None when it shows none."""
+    step = getattr(getattr(runtime, "trace", None), "_step", None)
+    return step if type(step) is int else None
+
+
 def _motion_skills() -> frozenset[str]:
     from apai.skills.runtime import _MOTION_SKILLS
 
@@ -874,15 +894,23 @@ FEEDBACK_PERIOD_S = 0.1
 # motors: each single joint read once, the last target sent, the jaw reading.
 STATE_EVENT = "robot.state"
 
-# What a run measures, in its run folder. Each of the first five holds one
+# What a run measures, in its run folder. Each of the first six holds one
 # JSON object per line.
 MOVES_FILE = "moves.jsonl"  # one line per move
+MOVE_PATHS_FILE = move_paths.MOVE_PATHS_FILE  # one line per MOVE: its planned path
 JAWS_FILE = "jaw-commands.jsonl"  # one line per jaw command
 STATES_FILE = "robot-state.jsonl"  # what ROBOT_STATE reports of the motors
 CAMERA_FILE = "camera-deliveries.jsonl"  # one line per camera frame returned
 LATENCY_FILE = "link-latency.jsonl"  # the robot connection, once a second
 SUMMARY_FILE = "latency-summary.txt"  # written when the program ends
-MEASURE_FILES = (MOVES_FILE, JAWS_FILE, STATES_FILE, CAMERA_FILE, LATENCY_FILE)
+MEASURE_FILES = (
+    MOVES_FILE,
+    MOVE_PATHS_FILE,
+    JAWS_FILE,
+    STATES_FILE,
+    CAMERA_FILE,
+    LATENCY_FILE,
+)
 # The one thread that writes them.
 MEASURE_THREAD = "agent-measures"
 # What may wait for that thread; what comes on a full queue is dropped.
@@ -895,7 +923,8 @@ LATENCY_PERIOD_S = 1.0
 SAMPLES_KEPT = 65536
 # Readings kept of one jaw command, 30 s of ROBOT_STATEs at 20 a second.
 JAW_TRACE_KEPT = 600
-# Moves whose ROBOT_STATEs are counted at one time.
+# Moves whose ROBOT_STATEs are counted at one time, and MOVEs whose line of
+# MOVE_PATHS_FILE waits for the move's end.
 _MOVES_TRACKED = 8
 # How long close() waits for the thread, in s.
 _CLOSE_WAIT_S = 3.0
@@ -990,11 +1019,15 @@ class _Lines:
                 self._fail(problem)
 
     def write(self, row: dict[str, Any]) -> None:
+        self.write_text(lambda: json.dumps(row, default=str) + "\n")
+
+    def write_text(self, line: Callable[[], str]) -> None:
+        """Write the line line() gives; it is not made for a file that is shut."""
         self.open()
         if self._file is None:
             return
         try:
-            self._file.write(json.dumps(row, default=str) + "\n")
+            self._file.write(line())
             self.written += 1
         except (OSError, TypeError, ValueError) as problem:
             self._fail(problem)
@@ -1068,7 +1101,12 @@ class Measures:
     writes MEASURE_FILES. What comes on a full queue is dropped and counted.
     A file that cannot be written is logged once and left out. With the
     experiment's debug recorder the same thread gives it one robot.feedback
-    event per FEEDBACK_PERIOD_S and one STATE_EVENT per ROBOT_STATE.
+    event per FEEDBACK_PERIOD_S, one STATE_EVENT per ROBOT_STATE and one
+    move_paths.PATH_EVENT per MOVE.
+
+    A MOVE's line of MOVE_PATHS_FILE is written when the move has ended, with
+    its end; the adapter hands over the MOVE's own arrays, and the line is
+    made from them on MEASURE_THREAD.
     """
 
     def __init__(
@@ -1102,6 +1140,8 @@ class Measures:
         self._missed: float | None = None  # the Thor's running count
         self._moves: dict[str, dict[str, Any]] = {}  # move id -> what was seen
         self._jaw: dict[str, Any] | None = None  # the jaw command that runs
+        # Move id -> (its line without an end, its setpoints as JSON).
+        self._paths: dict[str, tuple[dict[str, Any], str]] = {}
         self._feedback_clock = -math.inf
         self._state_line_at = -math.inf
         self._state_reads = _Bulk()  # since the last line of STATES_FILE
@@ -1109,6 +1149,7 @@ class Measures:
         self._second = self._new_second()
         if recording is not None and hasattr(recording, "hooks"):
             recording.hooks.append(f"{__name__}.Measures.on_state")
+            recording.hooks.append(f"{RobotLinkArm.__module__}.RobotLinkArm._move")
         self._thread = threading.Thread(
             target=self._run, name=MEASURE_THREAD, daemon=True
         )
@@ -1249,6 +1290,9 @@ class Measures:
                 self._log_trouble()
         try:
             self._latency_line(self._clock)
+            # The MOVEs whose end was never handed over: their lines, without one.
+            while self._paths:
+                self._path_line(*self._paths.pop(next(iter(self._paths))))
         except Exception:
             self._log_trouble()
         for file in self._files.values():
@@ -1281,6 +1325,10 @@ class Measures:
             self._jaw = {"trace": [], "states": 0, "gap_max": None}
         elif kind == MEASURED_JAW:
             self._jaw_done(item[1], item[2])
+        elif kind == MEASURED_PATH:
+            self._path(item[2])
+        elif kind == MEASURED_PATH_END:
+            self._path_end(item[1], item[2])
 
     def _utc(self, mono_s: float) -> str:
         """A time of this machine's monotonic clock as UTC text."""
@@ -1597,12 +1645,48 @@ class Measures:
             row["after_last_progress_s"] = round(result - rose, 6)
         seen = self._moves.pop(str(facts.get("move_id")), None)
         row["thor"] = None if seen is None else self._thor_move(seen)
+        if facts.get("move_id"):
+            row["path_file"] = MOVE_PATHS_FILE  # the setpoints, by move_id
         for key in _MOVE_DURATIONS:
             self._add(key, row.get(key))
         accepted = _number(row.get("first_result_after_s"))
         if accepted is not None:
             self._second["first_result_after_s"].append(accepted)
         self._files[MOVES_FILE].write(row)
+
+    def _path(self, facts: dict[str, Any]) -> None:
+        """A MOVE has left, or could not: its line waits for the move's end."""
+        sent_at = _number(facts.get("sent_mono_s"))
+        utc = None if sent_at is None else self._utc(sent_at)
+        row = move_paths.path_row(facts, utc)
+        row["sent_mono_s"] = _rounded(sent_at)
+        if self._files[MOVE_PATHS_FILE].failed:
+            points = "[]"  # the file is shut: no line will be written
+        else:
+            points = move_paths.points_text(facts)
+        if row["sent"]:
+            self._paths[str(row["move_id"])] = (row, points)
+        else:
+            self._path_line(row, points)  # no end will come
+        while len(self._paths) > _MOVES_TRACKED:
+            self._path_line(*self._paths.pop(next(iter(self._paths))))
+        if self._recording is not None:
+            self._recording.record(
+                move_paths.PATH_EVENT, lambda: move_paths.path_event(facts)
+            )
+
+    def _path_end(self, noted_at: float, facts: dict[str, Any]) -> None:
+        """A MOVE has ended: its line is written, with how it ended."""
+        row, points = self._paths.pop(str(facts.get("move_id")), (None, ""))
+        if row is None:
+            return  # its line was dropped on a full queue, or is written
+        row["end"] = move_paths.end_row(facts, self._utc(noted_at), round(noted_at, 6))
+        self._path_line(row, points)
+
+    def _path_line(self, row: dict[str, Any], points: str) -> None:
+        self._files[MOVE_PATHS_FILE].write_text(
+            lambda: move_paths.line_text(row, points)
+        )
 
     def _thor_move(self, seen: dict[str, Any]) -> dict[str, Any]:
         """What the ROBOT_STATEs that named a move say of it, on the Thor's clock."""
@@ -1639,6 +1723,9 @@ class Measures:
     def _jaw_done(self, noted_at: float, facts: dict[str, Any]) -> None:
         running, self._jaw = self._jaw or {"trace": [], "states": 0}, None
         row: dict[str, Any] = {"utc": self._utc(noted_at), **facts}
+        sent_at = _number(facts.get("sent_mono_s"))
+        if sent_at is not None:
+            row["sent_utc"] = self._utc(sent_at)
         for key, value in facts.items():
             if isinstance(value, float):
                 row[key] = round(value, 6)
@@ -1721,6 +1808,8 @@ def experiment_sessions(
     map_hz: float = debug_recording.DEBUG_MAP_HZ,
     at_limit: str = debug_recording.AT_LIMIT_DROP,
     notice: debug_recording.FullNotice | None = None,
+    idle_map_s: float | None = debug_recording.DEBUG_IDLE_MAP_S,
+    task_wait: debug_recording.TaskWait | None = None,
 ) -> Iterator[tuple[Callable[[str], str], Any, Any]]:
     """The experiment's recordings around a run, in its own launcher's order.
 
@@ -1731,7 +1820,9 @@ def experiment_sessions(
     recorder stores map_hz map pictures a second (debug_recording.MapRate; 0:
     every one). At its size it drops its oldest map pictures
     (debug_recording.Keeper) or, with at_limit "stop", stops; notice says
-    which happened.
+    which happened. While task_wait.waiting() is open, the program waiting for
+    a task, it stores one map picture per idle_map_s seconds (0: none; None:
+    as at any other time).
     """
     parts = _TimedParts(ask)
     timing = None
@@ -1752,7 +1843,13 @@ def experiment_sessions(
             limit = int(options.debug_max_gib * 1024**3)
             recording = stack.enter_context(session(run_dir, max_bytes=limit))
             limits = stack.enter_context(
-                debug_recording.limited(recording, map_hz, at_limit)
+                debug_recording.limited(
+                    recording,
+                    map_hz,
+                    at_limit,
+                    idle_map_s=idle_map_s,
+                    task_wait=task_wait,
+                )
             )
             if notice is not None:
                 stack.enter_context(notice.watching(recording, limits.keeper))
@@ -1786,11 +1883,13 @@ def _option_lines(
     run_dir: Path,
     map_hz: float = debug_recording.DEBUG_MAP_HZ,
     at_limit: str = debug_recording.AT_LIMIT_DROP,
+    idle_map_s: float | None = debug_recording.DEBUG_IDLE_MAP_S,
 ) -> list[str]:
     """What this run records, and what it cannot; said at the start.
 
     map_hz is the map pictures a second the debug recording stores, at_limit
-    what it does at its size.
+    what it does at its size, idle_map_s the seconds between two map pictures
+    while the program waits for a task.
     """
     lines = []
     if options.timing:
@@ -1827,7 +1926,10 @@ def _option_lines(
             "mask.state_source), which are the robot app's on the Thor. Its "
             "joint feedback, robot.feedback, is what this program read from "
             "ROBOT_STATE, timed at receipt on this machine. The camera frames in "
-            "it are the ones APAI took on this machine"
+            "it are the ones APAI took on this machine. The joint path of each "
+            f"MOVE is in it as {move_paths.PATH_EVENT}: what was planned and sent "
+            "to the robot app, not what the motors were sent"
+            + debug_recording.idle_text(map_hz, idle_map_s)
         )
     if options.batch_milestones:
         lines.append(
@@ -1953,6 +2055,16 @@ def _parser() -> argparse.ArgumentParser:
         "page can show; 0: every one). The map itself is not changed",
     )
     parser.add_argument(
+        debug_recording.IDLE_OPTION,
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="while the program waits for a task at its prompt the debug "
+        "recording stores one picture of the obstacle map per this many seconds "
+        f"(default {debug_recording.DEBUG_IDLE_MAP_S:g}; 0: none while it "
+        "waits). What the arm did or was refused is stored as always",
+    )
+    parser.add_argument(
         "--log-level",
         default=None,
         type=str.lower,
@@ -2016,7 +2128,9 @@ def _check(
             speed_profile=args.speed_profile,
             mounting=args.mounting,
         )
-    report["run_options"] = _options_row(options, _map_hz(args), _at_limit(args))
+    report["run_options"] = _options_row(
+        options, _map_hz(args), _at_limit(args), _idle_map_s(args)
+    )
     say(json.dumps(report, indent=2, default=str))
     return EXIT_OK
 
@@ -2189,16 +2303,51 @@ def _at_limit(args: argparse.Namespace) -> str:
     return debug_recording.at_limit_of(getattr(args, "debug_at_limit", None))
 
 
+def _debug_idle_map_s(args: argparse.Namespace, settings: AgentSettings) -> float:
+    """--debug-idle-map-s of a run, or its default; ConfigError when refused."""
+    option = debug_recording.IDLE_OPTION
+    given = getattr(args, "debug_idle_map_s", None)
+    if given is not None and settings.minimal:
+        raise ConfigError(
+            f"{option} needs experiment.stack {agent_config.STACK_FULL} (it is "
+            f"{agent_config.STACK_MINIMAL}): the minimal stack loads none of "
+            "the experiment's modules"
+        )
+    try:
+        seconds = debug_recording.idle_map_s_of(given)
+    except ValueError as problem:
+        raise ConfigError(str(problem)) from None
+    if given is not None and _map_hz(args) == 0:
+        raise ConfigError(
+            f"{option} needs --debug-map-hz above 0: with 0 every map picture "
+            "is stored, also while the program waits for a task"
+        )
+    return seconds
+
+
+def _idle_map_s(args: argparse.Namespace) -> float | None:
+    """The seconds between two map pictures while the program waits for a task.
+
+    As main() took it; None with --debug-map-hz 0, which stores every one.
+    """
+    if _map_hz(args) == 0:
+        return None
+    return debug_recording.idle_map_s_of(getattr(args, "debug_idle_map_s", None))
+
+
 def _options_row(
     options: RunOptions,
     map_hz: float,
     at_limit: str = debug_recording.AT_LIMIT_DROP,
+    idle_map_s: float | None = debug_recording.DEBUG_IDLE_MAP_S,
 ) -> dict[str, Any]:
     """What a run takes, as run-options.json and --check name it."""
     row = asdict(options)
     if options.record_debug:
         row["debug_map_hz"] = map_hz
         row["debug_at_limit"] = at_limit
+        # None: no rule for the wait, every map picture is stored.
+        row["debug_idle_map_s"] = idle_map_s if map_hz > 0 else None
     return row
 
 
@@ -2225,6 +2374,7 @@ def main(
         options = _run_options(args, settings)
         args.debug_map_hz = _debug_map_hz(args, settings)
         args.debug_at_limit = _debug_at_limit(args, settings)
+        args.debug_idle_map_s = _debug_idle_map_s(args, settings)
         if settings.minimal and args.speed_profile is not None:
             agent_config.joint_speed(settings, args.speed_profile)  # refused
         invented = agent_config.invented_times(settings, args.camera)
@@ -2289,7 +2439,7 @@ def _program(
     if options != RunOptions():
         agent_config.write_json(
             run_dir / "run-options.json",
-            _options_row(options, _map_hz(args), _at_limit(args)),
+            _options_row(options, _map_hz(args), _at_limit(args), _idle_map_s(args)),
         )
     say(f"run folder {run_dir}; camera calibration {calibration or '(unnamed)'}")
     for line in told:
@@ -2316,10 +2466,14 @@ def _program(
             "declares a simulated driver"
         )
 
-    for line in _option_lines(options, run_dir, _map_hz(args), _at_limit(args)):
+    for line in _option_lines(
+        options, run_dir, _map_hz(args), _at_limit(args), _idle_map_s(args)
+    ):
         say(line)
     # Says what the debug recording did at its size, and again at the next prompt.
     notice = debug_recording.FullNotice(say, options.debug_max_gib)
+    # Tells the debug recording when the program waits for a task.
+    task_wait = debug_recording.TaskWait()
     # The recordings stand around the whole robot connection: a STOP and the
     # close of the link come before any of them writes its report.
     code = EXIT_FAILED
@@ -2333,6 +2487,8 @@ def _program(
                     map_hz=_map_hz(args),
                     at_limit=_at_limit(args),
                     notice=notice,
+                    idle_map_s=_idle_map_s(args),
+                    task_wait=task_wait,
                 )
                 ask, timing, recording = sessions.enter_context(recordings)
             except Exception as problem:
@@ -2360,6 +2516,7 @@ def _program(
                     timing,
                     measures,
                     notice.prompt_lines,
+                    task_wait.waiting,
                 )
             finally:
                 measures.close(say)
@@ -2385,12 +2542,14 @@ def _drive(
     timing: Any,
     measures: Measures | None = None,
     prompt_notes: Callable[[], list[str]] | None = None,
+    task_wait: Callable[[], AbstractContextManager[Any]] | None = None,
 ) -> int:
     """Attach to the robot link service, run APAI's command line, close the link.
 
     run is (APAI's configuration, the run folder, the camera calibration's
     name, whether the camera's capture times are invented). prompt_notes()
-    gives the lines to say before a task prompt.
+    gives the lines to say before a task prompt; task_wait() is open while
+    the program waits for the operator's task line.
     """
     cfg, run_dir, calibration, invented = run
     link: AgentLink | None = None
@@ -2461,6 +2620,7 @@ def _drive(
             timing=timing,
             measures=measures,
             prompt_notes=prompt_notes,
+            task_wait=task_wait,
         ):
             status = demo.main(arguments)
         if status == 0 and not gate.restart_told and not gate.wrong_robot_app:

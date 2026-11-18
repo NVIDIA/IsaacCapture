@@ -535,6 +535,38 @@ def test_two_tasks_run_end_to_end_and_every_setpoint_was_permitted(
 
 
 @apai
+def test_the_run_folder_holds_the_planned_path_of_every_move_the_driver_took(
+    any_scene: Scene,
+) -> None:
+    scene, trace = any_scene, any_scene.trace
+    scene.typed = [PICK]
+    scene.answers = ["yes"]
+    assert scene.run("--interactive") in (launcher.EXIT_OK, launcher.EXIT_FAILED)
+    text = (scene.run_dir / launcher.MOVE_PATHS_FILE).read_text()
+    lines = [json.loads(line) for line in text.splitlines()]
+    # One line per MOVE the agent's link sent, with as many setpoints.
+    assert {line["move_id"]: line["count"] for line in lines} == trace.moves
+    assert len(lines) == scene.motion.count("send_move") == 8
+    # How each ended is the robot app's own final RESULT.
+    for line in lines:
+        result = trace.results[line["move_id"]]
+        end = line["end"]
+        assert (end["status"], end["reason"]) == (result.status, result.reason)
+        assert end["sent"] == result.detail["sent"] == line["count"]
+        assert end["error"] is None and line["skill"] == "pick_and_place"
+        assert line["session_id"] == scene.h.app.snapshot().session_id
+    # Every joint target the driver on the Thor's side took, in order and
+    # value for value, is a setpoint of these lines, and none is left over.
+    planned = [setpoint for line in lines for setpoint in line["setpoints"]]
+    assert planned == scene.h.spy.targets and len(planned) == len(trace.targets) > 500
+    by_id = {line["move_id"]: line for line in lines}
+    assert [target.move_id for target in trace.targets] == [
+        line["move_id"] for line in lines for _ in line["setpoints"]
+    ]
+    assert set(by_id) == set(trace.moves)
+
+
+@apai
 def test_the_agent_plans_within_the_speed_limit_the_robot_app_names_in_its_welcome(
     make_realtime_apai: Callable[..., Any], tmp_path: Path
 ) -> None:

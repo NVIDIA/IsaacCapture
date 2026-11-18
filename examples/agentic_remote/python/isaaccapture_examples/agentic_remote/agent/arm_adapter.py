@@ -225,10 +225,14 @@ class _FreshReader:
 # MEASURED_JAW_BEGIN when a GRIPPER is about to be sent and MEASURED_JAW when
 # its wait has ended. The times in the facts are of this machine's monotonic
 # clock, in s. It is called on the skill thread and must only queue.
+# MEASURED_PATH when a MOVE has left, or could not: the MOVE's own start pose
+# and setpoints, not copied; MEASURED_PATH_END when that MOVE has ended.
 Measure = Callable[[str, dict[str, Any]], None]
 MEASURED_MOVE = "move"
 MEASURED_JAW_BEGIN = "jaw_begin"
 MEASURED_JAW = "jaw"
+MEASURED_PATH = "move_path"
+MEASURED_PATH_END = "move_path_end"
 # The points of a move's permit loop that RobotLinkArm._mark() is called at:
 # the first PERMIT has left, the Thor reports the first setpoint as sent, the
 # Thor reports the last one as sent (what follows is the settling).
@@ -361,6 +365,19 @@ class RobotLinkArm:
             yield
         finally:
             self._skill.depth = depth
+
+    @contextmanager
+    def asked_by(self, skill: str, trace_step: int | None = None) -> Iterator[None]:
+        """While open on this thread, a MOVE's and a jaw command's line name this skill.
+
+        trace_step is the step APAI's trace had ready for its next row.
+        """
+        before = getattr(self._skill, "asked", None)
+        self._skill.asked = {"skill": skill, "trace_step": trace_step}
+        try:
+            yield
+        finally:
+            self._skill.asked = before
 
     # The six methods of ArmBase
 
@@ -922,19 +939,29 @@ class RobotLinkArm:
             )
         except LinkLost as error:
             self._latched = True
+            self._note_path(
+                move_id, pinned, start, q, tol, region, evidence_wall_s, error
+            )
             raise RobotLinkError(str(error)) from error
         except (StaleState, ProtocolError, RuntimeError) as error:
+            self._note_path(
+                move_id, pinned, start, q, tol, region, evidence_wall_s, error
+            )
             raise violation(
                 f"the MOVE could not be sent: {error}; no motion sent"
             ) from None
+        # Behind the MOVE: its arrays are handed over as they are.
+        self._note_path(move_id, pinned, start, q, tol, region, evidence_wall_s)
         if region is not None:
             self._grasp_sent = True
         begun = getattr(self._check.harness, "motions_begun", None)
         try:
             self._await_armed(move_id, began)
             result, cause = self._permit_loop(move_id, pinned, start, q, approve, began)
-        except BaseException:
+        except BaseException as error:
+            kept = self._kept_result(move_id)
             link.forget(move_id)
+            self._note_path_end(move_id, kept, error, stats)
             raise
         if result is not None:
             link.wait_reflected(move_id, _REFLECT_S)
@@ -948,7 +975,13 @@ class RobotLinkArm:
             if result.status != "completed" and detail.get("sent") == 0 and approved:
                 self._uncount(approved, begun)
         link.forget(move_id)
-        return self._move_ending(result, cause, len(q), monitor)
+        try:
+            settled = self._move_ending(result, cause, len(q), monitor)
+        except BaseException as error:
+            self._note_path_end(move_id, result, error, stats)
+            raise
+        self._note_path_end(move_id, result, None, stats)
+        return settled
 
     def _await_armed(self, move_id: str, began: float) -> None:
         """Admission, then the wait until the robot app shows the move as armed.
@@ -1231,6 +1264,99 @@ class RobotLinkArm:
         if stats:
             stats["ended"] = ended
             self._note(MEASURED_MOVE, stats)
+
+    def _note_path(
+        self,
+        move_id: str,
+        pinned: Pinned,
+        start: np.ndarray,
+        q: list[np.ndarray],
+        tol: float,
+        region: GraspRegion | None,
+        evidence_wall_s: float,
+        not_sent: BaseException | None = None,
+    ) -> None:
+        """Hand over the path of a MOVE that has left, or that could not.
+
+        The start pose and the setpoints are the MOVE's own arrays: nothing
+        is copied or formatted on this thread.
+        """
+        if self._measure is None:
+            return
+        sent_at = time.monotonic()
+        try:
+            welcome = self._link.welcome
+            asked = getattr(self._skill, "asked", None) or {}
+            facts = {
+                "move_id": move_id,
+                "sent_mono_s": sent_at,
+                "not_sent": None
+                if not_sent is None
+                else f"{type(not_sent).__name__}: {not_sent}",
+                "session_id": pinned.session_id,
+                "owner_number": pinned.owner_number,
+                "stop_number": pinned.stop_number,
+                "period_s": None if welcome is None else welcome.setpoint_period_s,
+                "start_q": start,
+                "start_tol_rad": tol,
+                "setpoints": q,
+                "grasp_region": region,
+                "evidence_wall_s": evidence_wall_s,
+                "expires_in_s": self._settings.expires_in_s,
+                "skill": asked.get("skill"),
+                "trace_step": asked.get("trace_step"),
+            }
+        except Exception:
+            self._measure_trouble()
+            return
+        self._note(MEASURED_PATH, facts)
+
+    def _kept_result(self, move_id: str) -> Result | None:
+        """The final RESULT the link holds for a move; None without one."""
+        if self._measure is None:
+            return None
+        try:
+            return self._link.final_result(move_id)
+        except Exception:
+            return None
+
+    def _note_path_end(
+        self,
+        move_id: str,
+        result: Result | None,
+        cause: BaseException | None,
+        stats: dict[str, Any],
+    ) -> None:
+        """Hand over how a MOVE ended: its final RESULT, and the error APAI gets.
+
+        cause is None for a move that returns, settled or not.
+        """
+        if self._measure is None:
+            return
+        try:
+            facts: dict[str, Any] = {
+                "move_id": move_id,
+                "status": None,
+                "sent": None,
+                "reason": None,
+                "outcome": None,
+                "end_q": None,
+                "sent_seen": stats.get("sent_seen"),
+                "error": None if cause is None else f"{type(cause).__name__}: {cause}",
+            }
+            if result is not None:
+                detail = result.detail if isinstance(result.detail, dict) else {}
+                facts.update(
+                    status=result.status,
+                    sent=detail.get("sent"),
+                    reason=result.reason,
+                    outcome=detail.get("outcome"),
+                    end_q=result.end_q,
+                )
+        except Exception:
+            self._measure_trouble()
+            return
+        self._note(MEASURED_PATH_END, facts)
 
     def _note(self, kind: str, facts: dict[str, Any]) -> None:
         """Call `measure`; a failure there is logged once and costs nothing else."""
@@ -1572,6 +1698,14 @@ class RobotLinkArm:
             raise RobotLinkError(f"{told}; a STOP was sent") from None
         finally:
             facts["waited_s"] = time.monotonic() - began
+            # For a re-run: when it was sent, how long it was good for, who asked.
+            asked = getattr(self._skill, "asked", None) or {}
+            facts.update(
+                sent_mono_s=began,
+                timeout_s=timeout_s,
+                skill=asked.get("skill"),
+                trace_step=asked.get("trace_step"),
+            )
             self._note(MEASURED_JAW, facts)
 
     def _ownership_ended(self) -> bool:

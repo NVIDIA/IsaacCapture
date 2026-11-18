@@ -19,6 +19,11 @@ revision it made, a call of the grid bridge inside it that the map does not
 make on every refresh, and no newer map for a period of the rate or until the
 recording ends. What is recorded outside a tick is always stored.
 
+While the program waits for a task at its prompt (TaskWait) the rate passes
+one tick per --debug-idle-map-s seconds instead, and the first tick after a
+task is taken at once. The three things above store a held map refresh as at
+any other time.
+
 Keeper keeps the recording under its size: before the recorder's thread
 checks an event against the limit, the array files of the oldest ticks are
 removed, so the recording holds the newest stretch and that thread does not
@@ -57,6 +62,10 @@ _log = logging.getLogger("isaaccapture.examples.agentic_remote.debug_recording")
 # Map pictures stored a second without --debug-map-hz: what the viewer's page,
 # which asks for the state every 500 ms, can show.
 DEBUG_MAP_HZ = 2.0
+# Seconds between two map pictures stored while the program waits for a task,
+# without --debug-idle-map-s: the viewer still shows a current map.
+DEBUG_IDLE_MAP_S = 10.0
+IDLE_OPTION = "--debug-idle-map-s"
 # What one map picture takes on disk, in bytes, and how many the watcher takes
 # a second on the workstation. Measured on the rig's run of 2026-11-17 (camera
 # 1280 x 992): 17.17 GB for 3671 ticks in 554 s.
@@ -111,6 +120,14 @@ RATE_NOTE = (
     "recorded_late when it happened and what it was stored for. Events from "
     "outside a tick are all stored."
 )
+# What the rate's first event says of the wait for a task, with idle_map_s.
+IDLE_NOTE = (
+    "While the agent program waits for a task at its prompt, one tick per "
+    "idle_map_s seconds is stored (0: none), and the first tick after a task "
+    "is taken is stored at once. What an event names, a bridge call that is "
+    "not made on every refresh and every event from outside a tick are stored "
+    "as at any other time."
+)
 # The map refreshes of skipped ticks held for a refusal or a segment to name.
 HELD_TICKS = 3
 # The most one held tick may take in memory, in bytes.
@@ -161,6 +178,31 @@ def map_hz_of(value: float | None) -> float:
             f"--debug-map-hz must be a finite number, 0 or above, not {value!r}"
         )
     return rate
+
+
+def idle_map_s_of(value: float | None) -> float:
+    """--debug-idle-map-s as a number; ValueError when it cannot be used."""
+    if value is None:
+        return DEBUG_IDLE_MAP_S
+    seconds = float(value)
+    if not (0.0 <= seconds < float("inf")):
+        raise ValueError(
+            f"{IDLE_OPTION} must be a finite number, 0 or above, not {value!r}"
+        )
+    return seconds
+
+
+def idle_text(map_hz: float, idle_map_s: float | None) -> str:
+    """A sentence for the operator on the wait for a task; "" without the rule."""
+    if not map_hz > 0 or idle_map_s is None:
+        return ""
+    stored = "no map picture is stored"
+    if idle_map_s > 0:
+        stored = f"one map picture is stored every {idle_map_s:g} s"
+    return (
+        f". While the program waits for a task {stored}, which {IDLE_OPTION} "
+        "sets; what the arm did or was refused is stored as always"
+    )
 
 
 def at_limit_of(value: str | None) -> str:
@@ -281,6 +323,10 @@ class MapRate:
     the watcher's for a tick, any other for the rest. A held event is copied
     there as the recorder would copy it; nothing is written on that thread.
     An error in here passes the event on as it came.
+
+    With idle_map_s, between idle_begin() and idle_end() (the program waits
+    for a task) one tick per idle_map_s seconds of the clock is passed
+    instead, none with 0; the first tick after idle_end() is passed at once.
     """
 
     def __init__(
@@ -288,6 +334,7 @@ class MapRate:
         recording: Any,
         map_hz: float,
         clock: Callable[[], float] = time.monotonic,
+        idle_map_s: float | None = None,
     ) -> None:
         import numpy
 
@@ -305,8 +352,14 @@ class MapRate:
         self._commits = 0  # the map.commit events so far, stored or held
         self._stored_commit = 0  # the newest of them that is stored
         self._map_at = float("-inf")  # when a commit was last stored
+        self._picture_at = float("-inf")  # when a tick was last stored by its turn
         self._told = False
         self.map_hz = float(map_hz)
+        # The wait for a task. None: the rate knows no such wait.
+        self.idle_map_s = None if idle_map_s is None else float(idle_map_s)
+        self._idle_since: float | None = None  # the clock at idle_begin()
+        self._idle_total = 0.0  # seconds of the waits that have ended
+        self.idle_skipped = 0  # of the skipped ticks, those of a wait
         # ticks: those with a map event. stored: by the rate. rescued: stored
         # after all: for an event that named them, for a bridge call of their
         # own, or as the newest map. missing: named, and neither stored nor
@@ -333,6 +386,61 @@ class MapRate:
     def close(self) -> None:
         """The rate ends: the newest held map is stored when none newer is."""
         self._store_newest(LATE_END, when_due=False)
+
+    # The program's thread: the wait for a task.
+
+    def idle_begin(self) -> None:
+        """The program waits for a task from now on; never raises."""
+        if self.idle_map_s is None:
+            return
+        try:
+            now = self._clock()
+            with self._lock:
+                if self._idle_since is None:
+                    self._idle_since = now
+        except Exception:
+            self._trouble()
+
+    def idle_end(self) -> None:
+        """A task was taken, or the wait ended otherwise; never raises.
+
+        The next tick is stored at once.
+        """
+        if self.idle_map_s is None:
+            return
+        try:
+            now = self._clock()
+            with self._lock:
+                if self._idle_since is not None:
+                    self._idle_total += max(0.0, now - self._idle_since)
+                    self._idle_since = None
+                    self._due = float("-inf")
+        except Exception:
+            self._trouble()
+
+    def idle_seconds(self) -> float:
+        """How long the program has waited for a task so far, on the clock."""
+        with self._lock:
+            since, total = self._idle_since, self._idle_total
+        return total if since is None else total + max(0.0, self._clock() - since)
+
+    def rule(self) -> dict[str, Any]:
+        """What the rate's first event says: the rate, and the wait's rule."""
+        told: dict[str, Any] = {"map_hz": self.map_hz, "note": RATE_NOTE}
+        if self.idle_map_s is not None:
+            told.update(idle_map_s=self.idle_map_s, idle_note=IDLE_NOTE)
+        return told
+
+    def status(self) -> dict[str, Any]:
+        """The block RATE_BLOCK of recording-status.json: the numbers so far."""
+        block: dict[str, Any] = {"map_hz": self.map_hz, **self.counts}
+        if self.idle_map_s is not None:
+            block.update(
+                idle_map_s=self.idle_map_s,
+                idle_seconds=round(self.idle_seconds(), 3),
+                idle_skipped=self.idle_skipped,
+            )
+        return block
 
     # Any thread: the recorder's intake.
 
@@ -391,12 +499,21 @@ class MapRate:
     def _decide(self, tick: _Tick) -> None:
         now = self._clock()
         with self._lock:
-            tick.stored = now >= self._due
+            idle = self._idle_since is not None
+            if idle:
+                # One per idle_map_s since a map was last stored; none with 0.
+                last = max(self._picture_at, self._map_at)
+                tick.stored = 0 < self.idle_map_s <= now - last
+            else:
+                tick.stored = now >= self._due
             self.counts["ticks"] += 1
             self.counts["stored" if tick.stored else "skipped"] += 1
             if tick.stored:
                 due = self._due + self._period
                 self._due = due if due > now else now + self._period
+                self._picture_at = now
+            elif idle:
+                self.idle_skipped += 1
 
     def _hold(self, tick: _Tick, kind: str, data: dict[str, Any]) -> Any:
         """Keep a map event of a skipped tick; returns its stand-in id, or None."""
@@ -480,7 +597,10 @@ class MapRate:
             with self._lock:
                 if not self._held:
                     return
-                if when_due and now - self._map_at < self._period:
+                # While the program waits: no more often than its turn stores.
+                waiting = self._idle_since is not None
+                period = self.idle_map_s if waiting else self._period
+                if when_due and (period <= 0 or now - self._map_at < period):
                     return
                 key = next(reversed(self._held))
                 tick = self._held[key]
@@ -922,7 +1042,7 @@ def _status_with(recording: Any, gate: MapRate | None, keeper: Keeper | None) ->
     def status(finalized: bool) -> None:
         blocks: dict[str, Any] = {}
         if gate is not None:
-            blocks[RATE_BLOCK] = {"map_hz": gate.map_hz, **gate.counts}
+            blocks[RATE_BLOCK] = gate.status()
         if keeper is not None:
             blocks[DROPPED_BLOCK] = keeper.status()
         thinned = bool(
@@ -968,6 +1088,33 @@ def _has_writer(recording: Any) -> bool:
     )
 
 
+class TaskWait:
+    """Tells the rate when the agent program waits for a task at its prompt.
+
+    The program opens waiting() around its read of the operator's task line.
+    limited() binds its rate for as long as it is open; without one, waiting()
+    does nothing. A question in the middle of a task is no such wait.
+    """
+
+    def __init__(self) -> None:
+        self._gate: MapRate | None = None
+
+    def bind(self, gate: MapRate | None) -> None:
+        self._gate = gate
+
+    @contextmanager
+    def waiting(self) -> Iterator[None]:
+        """Open while the program waits for a task; never raises of its own."""
+        gate = self._gate
+        if gate is not None:
+            gate.idle_begin()
+        try:
+            yield
+        finally:
+            if gate is not None:
+                gate.idle_end()
+
+
 class Limits(NamedTuple):
     """What limited() put on the recorder; None for what it did not."""
 
@@ -981,9 +1128,15 @@ def limited(
     map_hz: float,
     at_limit: str = AT_LIMIT_DROP,
     clock: Callable[[], float] = time.monotonic,
+    *,
+    idle_map_s: float | None = None,
+    task_wait: TaskWait | None = None,
 ) -> Iterator[Limits]:
     """While open, the recorder stores map_hz map pictures a second of clock,
     and with at_limit AT_LIMIT_DROP it drops its oldest ones at its size.
+
+    With idle_map_s the rate stores one map picture per that many seconds
+    while task_wait.waiting() is open (0: none).
 
     Yields the MapRate and the Keeper. The first is None with map_hz 0, the
     second with AT_LIMIT_STOP; both without a recorder and with a recorder
@@ -1022,7 +1175,7 @@ def limited(
         )
     own_emit = vars(recording).get("emit", _PASS)
     keeper = Keeper(recording) if keep else None
-    gate = MapRate(recording, map_hz, clock) if rate else None
+    gate = MapRate(recording, map_hz, clock, idle_map_s) if rate else None
     # The rate first: what it stores at the end of a tick is inside the
     # keeper's marks of that tick.
     parts: list[Any] = [part for part in (gate, keeper) if part is not None]
@@ -1051,13 +1204,18 @@ def limited(
                 hooks.append(f"{__name__}.Keeper.get")
             hooks.append(f"{WorldWatcher.__module__}.WorldWatcher._tick")
         if gate is not None:
-            gate.emit(RATE_EVENT, map_hz=gate.map_hz, note=RATE_NOTE)
+            gate.emit(RATE_EVENT, **gate.rule())
+            if task_wait is not None:
+                task_wait.bind(gate)
         try:
             yield Limits(gate, keeper)
         finally:
             if gate is not None:
+                if task_wait is not None:
+                    task_wait.bind(None)
+                gate.idle_end()
                 gate.close()
-                gate.emit(RATE_EVENT, map_hz=gate.map_hz, **gate.counts)
+                gate.emit(RATE_EVENT, **gate.status())
             if own_emit is _PASS:
                 vars(recording).pop("emit", None)
             else:

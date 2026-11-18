@@ -335,6 +335,9 @@ def test_the_workstation_script_types_the_experiment_launchers_command(
     # So is what the debug recording does at its size.
     assert "--debug-at-limit" in ours and "debug-at-limit" not in source
     assert "--debug-at-limit" not in script
+    # And what it stores while the program waits for a task.
+    assert "--debug-idle-map-s" in ours and "debug-idle-map-s" not in source
+    assert "--debug-idle-map-s" not in script
 
 
 @experiment
