@@ -63,7 +63,9 @@ from isaaccapture_examples.agentic_remote.human.__main__ import (  # noqa: E402
 from isaaccapture_examples.agentic_remote.human.feed import ScriptFeed  # noqa: E402
 from isaaccapture_examples.agentic_remote.human.ik import Solver  # noqa: E402
 from isaaccapture_examples.agentic_remote.human.logic import (  # noqa: E402
+    JOINT_SPEED_SHARE,
     NOTE_TAKE_OVER,
+    UNNAMED_JOINT_SPEED,
     HumanLogic,
 )
 from isaaccapture_examples.agentic_remote.human.retarget import (  # noqa: E402
@@ -101,7 +103,7 @@ from isaaccapture_examples.agentic_remote.robot_app.human import (  # noqa: E402
 )
 from link_bench import Bench, FakeThor, until  # noqa: E402
 from test_apai_backend import RIG_REST_READINGS  # noqa: E402
-from test_human_logic import of, robot_state, welcome  # noqa: E402
+from test_human_logic import HUMAN_SPEED, of, robot_state, welcome  # noqa: E402
 from test_human_retarget import HOME, MID_Q, along  # noqa: E402
 from test_human_retarget import Bench as GraphBench  # noqa: E402
 
@@ -145,6 +147,8 @@ REPORT = re.compile(
     r"IK (?P<ik>\d+\.\d\d/\d+\.\d\d|-/-) ms; "
     r"ended: no solution \d+, jump \d+, solution ahead \d+, hand ahead \d+, "
     r"limiter \d+"
+    # While the arm follows a hand that is 5 cm or more ahead of it.
+    r"(; hand (?P<ahead>\d+) cm ahead: the arm is catching up)?"
     # While a takeover is open: the jaws, the gripper's fingers, under the
     # trigger. An opening is a share of the jaw travel, 1.00 fully open.
     r"(?P<jaws>; jaws follow the trigger (?P<following>yes|no), "
@@ -166,7 +170,13 @@ class Thor:
 
     It grants a takeover from nobody and a hand-back at rest, asks for a
     released grip after each grant, and follows an engaged joint target by at
-    most max_step on a joint per pass (None: at once).
+    most max_step on a joint per pass (None: at once). speed is the human
+    joint speed limit its WELCOME names. A drive is one stretch of engaged
+    targets; its first start_passes passes send nothing, as while the robot
+    app reads the arm. With a step_limit a target farther than that from the
+    measured pose at a drive's first step, and from the last joint target
+    sent after it, is refused: the arm holds and a released grip is asked
+    for. A joint in blocked does not follow.
     """
 
     def __init__(
@@ -175,6 +185,9 @@ class Thor:
         *,
         owner: str = "nobody",
         max_step: float | None = None,
+        speed: float | None = HUMAN_SPEED,
+        step_limit: float | None = None,
+        start_passes: int = 0,
     ) -> None:
         self.owner = owner
         self.owner_number, self.stop_number = 1, 0
@@ -186,7 +199,16 @@ class Thor:
         self.needs_release = False
         self.motion = "rest_hold" if tuple(q) == REST else "hold"
         self.max_step = max_step
+        self.speed = speed
+        self.step_limit = step_limit
+        self.start_passes = start_passes
+        self.blocked: set[int] = set()
         self.received: list[Message] = []
+        self.sent = 0  # setpoints the drive under way has sent
+        self.seq: int | None = None  # of the newest HUMAN_SETPOINT taken
+        self._reading = 0  # passes of the start read still to come
+        self.steps: list[float] = []  # how far each target it took lay away, rad
+        self.refused: list[float] = []  # the same for each target it refused
 
     def state(self) -> RobotState:
         return robot_state(
@@ -197,9 +219,11 @@ class Thor:
             q=self.q,
             target_q=self.target_q,
             motion=self.motion,
+            move_index=self.sent if self.driving else 0,
             takeover_open=self.takeover_open,
             driving=self.driving,
             needs_release=self.needs_release,
+            seq=self.seq,
         )
 
     def rest(self) -> None:
@@ -254,7 +278,8 @@ class Thor:
         return Result(message.command_id, "completed")
 
     def _setpoint(self, message: HumanSetpoint) -> None:
-        self.driving = False
+        was_driving, self.driving = self.driving, False
+        self.seq = message.seq
         if not self._quoted(message) or self.owner != "human":
             return
         if message.grip_released:
@@ -263,13 +288,26 @@ class Thor:
             if self.motion == "moving":
                 self.motion = "hold"
             return
-        last = self.q if self.target_q is None else self.target_q
+        if not was_driving:
+            self.sent, self._reading = 0, self.start_passes
+        self.driving, self.motion = True, "moving"
+        if self._reading > 0:
+            self._reading -= 1  # the start read: nothing is sent yet
+            return
+        last = self.q if self.sent == 0 or self.target_q is None else self.target_q
+        off = max(abs(goal - at) for at, goal in zip(last, message.q))
+        if self.step_limit is not None and off > self.step_limit:
+            self.refused.append(off)
+            self.needs_release, self.driving, self.motion = True, False, "hold"
+            return
+        self.steps.append(off)
         limit = math.inf if self.max_step is None else self.max_step
         self.target_q = [
-            at + min(limit, max(-limit, goal - at)) for at, goal in zip(last, message.q)
+            at if joint in self.blocked else at + min(limit, max(-limit, goal - at))
+            for joint, (at, goal) in enumerate(zip(last, message.q))
         ]
         self.q = list(self.target_q)
-        self.driving, self.motion = True, "moving"
+        self.sent += 1
 
 
 class Rig:
@@ -306,7 +344,7 @@ class Rig:
         self.logic = HumanLogic(
             self.graph, self.solver, self.settings, HUMAN_SOURCE_SYNTHETIC
         )
-        self.welcome = welcome()
+        self.welcome = welcome(human_max_joint_speed=thor.speed)
         self.now = T0
         self.results: list[Result] = []
         self.sent: list[Message] = []
@@ -315,8 +353,10 @@ class Rig:
         self.steps: list[GraphStep] = []
         # How far each engaged target ran ahead of what the Thor had sent, rad.
         self.ahead: list[float] = []
-        # The same against what the logic held it to: the joint target, or
-        # before a drive the measured pose, of the ROBOT_STATE it saw.
+        # The same as the logic measures it. Before the ROBOT_STATE it saw
+        # shows a drive that has sent a setpoint: against that state's
+        # measured pose. From then on: against its joint target, less what
+        # the Thor's speed clamp can have moved that target since.
         self.lead: list[float] = []
 
     def step(self) -> list[Message]:
@@ -329,14 +369,17 @@ class Rig:
         messages = logic.step(self.now, fed, self.welcome, seen, age_s, self.results)
         thor = self.thor
         reference = thor.target_q if thor.driving and thor.target_q else thor.q
-        held_to = [sample.value for sample in seen.joints]
-        if seen.health["human"]["driving"] and seen.target_q is not None:
+        held_to, nearer = [sample.value for sample in seen.joints], 0.0
+        moves = seen.health["human"]["driving"] and seen.move_index > 0
+        if moves and seen.target_q is not None:
             held_to = seen.target_q
+            nearer = age_s * SPEED_MARGIN * (thor.speed or UNNAMED_JOINT_SPEED)
         for message in of(messages, HumanSetpoint):
             if message.engaged:
                 gaps = [abs(a - b) for a, b in zip(message.q, reference)]
                 self.ahead.append(max(gaps))
-                self.lead.append(max(abs(a - b) for a, b in zip(message.q, held_to)))
+                lead = max(abs(a - b) for a, b in zip(message.q, held_to))
+                self.lead.append(lead - nearer)
         self.results = thor.take(messages)
         logic.log_pass()  # behind the link messages, as the program logs
         self._states.append(thor.state())
@@ -511,15 +554,15 @@ def test_right_b_is_a_stop_through_the_real_graph_while_the_pose_is_not_valid():
     assert [request.request for request in of(rig.sent, OwnerRequest)] == ["human"]
 
 
-# The rig's two files together. The human program of configs/human_rebot.yaml
-# ends an engagement whose solution lies more than ik.max_ahead_rad ahead of
-# the joint target of the ROBOT_STATE it sees. The Thor refuses a target that
-# lies more than limits.human.max_step_rad of configs/robot_app_rebot.yaml
-# from its own last joint target, and follows at 0.98 of that file's
-# limits.human.max_joint_speed. The Thor's joint target is never older than
-# the one the human program sees and lies between that one and the targets
-# sent since, so with the first limit below the second a hand too fast for
-# the arm ends the engagement in the human program, not as a refusal.
+# The rig's two files together. The Thor follows a person's joint target at
+# 0.98 of limits.human.max_joint_speed of configs/robot_app_rebot.yaml, which
+# its WELCOME names, and refuses a target that lies more than
+# limits.human.max_step_rad from the arm at a drive's first step and from its
+# own last joint target after it. The human program of
+# configs/human_rebot.yaml moves the joint target it sends at 0.9 of the
+# Thor's speed clamp, toward a hand that may be far ahead, so the Thor's own
+# joint target is never left behind: a hand at any speed is caught up with,
+# and no engagement ends for it.
 
 RIG_ROBOT_FILE = CONFIGS / "robot_app_rebot.yaml"
 # How many passes old the ROBOT_STATE is that the logic sees. The Thor sends
@@ -527,9 +570,16 @@ RIG_ROBOT_FILE = CONFIGS / "robot_app_rebot.yaml"
 # follows none of 0.2 s or more (state.max_age_s), so at most nine.
 STATE_PASSES = [1, 4, 9]
 START = (0.0, 0.6, 0.9, 0.0, 0.0, 0.0)
-by_direction = pytest.mark.parametrize(
-    "direction", [UP, AWAY, LEFT], ids=["up", "forward", "left"]
-)
+# The passes of a drive in which the Thor reads the arm and sends nothing
+# yet: about 0.06 s on the rig.
+START_READ = 3
+# Hand moves in the stage space by name; DOWN, BACK and RIGHT are the others.
+DOWN, BACK, RIGHT = (0.0, -1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0)
+WAYS = {"up": UP, "down": DOWN, "forward": AWAY, "back": BACK, "left": LEFT}
+WAYS["right"] = RIGHT
+every_way = pytest.mark.parametrize("way", list(WAYS))
+# The ends of an engagement the human program itself decides on.
+OWN_ENDS = ("no_solution", "jump", "solution_ahead", "hand_ahead", "limiter")
 
 
 def rig_settings(**retarget: float) -> HumanSettings:
@@ -537,6 +587,100 @@ def rig_settings(**retarget: float) -> HumanSettings:
     settings = load_human_settings(CONFIGS / "human_rebot.yaml")
     changed = dataclasses.replace(settings.retarget, **retarget)
     return dataclasses.replace(settings, retarget=changed)
+
+
+def tip_way(direction: Sequence[float]) -> np.ndarray:
+    """The way the gripper tip goes, in the robot's base axes, for a hand move."""
+    x, y, z = direction
+    return np.array([-z, -x, y])
+
+
+def moving(way: str, metres: float, speed: float, at: float = 0.4) -> list[dict]:
+    """A script: a squeeze at 0.2 s, then the hand moves metres at speed from `at`."""
+    goal = HAND + metres * np.array(WAYS[way])
+    rows = [BASE, {"t": 0.2, "squeeze": 1.0}]
+    if at > 0.2:
+        rows.append({"t": at})
+    return [*rows, {"t": at + metres / speed, "pos": list(goal)}]
+
+
+def turning(axis: int, angle: float, speed: float) -> list[dict]:
+    """A script: a squeeze at 0.2 s, then the hand turns by angle at speed from 0.4 s."""
+    rows = [BASE, {"t": 0.2, "squeeze": 1.0}]
+    passes = math.ceil(angle / speed / PASS_S)
+    for index in range(1, passes + 1):
+        half = 0.5 * angle * index / passes
+        quat = [0.0, 0.0, 0.0, math.cos(half)]
+        quat[axis] = math.sin(half)
+        rows.append({"t": 0.4 + index * PASS_S, "quat": quat})
+    return rows
+
+
+def turn_between(a: np.ndarray, b: np.ndarray) -> float:
+    """The angle between the orientations of two 4x4 poses, rad."""
+    cosine = 0.5 * (np.trace(a[:3, :3].T @ b[:3, :3]) - 1.0)
+    return math.acos(min(1.0, max(-1.0, cosine)))
+
+
+class Drive:
+    """What one run of a Rig on the rig's files showed."""
+
+    def __init__(self, rig: Rig, thor: Thor, start: Sequence[float]) -> None:
+        self.rig, self.thor = rig, thor
+        self.home = rig.solver.fk(rig.solver.inside(start))
+        self.targets = np.array([m.q for m in engaged(rig.sent)])
+        # How far a joint of the joint target moved from one pass to the next.
+        self.steps = np.abs(np.diff(self.targets, axis=0)).max(axis=1)
+        tips = np.array([rig.tip(q) for q in self.targets])
+        self.tip_speeds = np.linalg.norm(np.diff(tips, axis=0), axis=1) / PASS_S
+        self.ended = {key: count for key, count in rig.ended().items() if count}
+        self.counts = rig.logic.counts()
+
+    def healthy(self, off_the_arm: float = 0.0) -> None:
+        """One engagement that nothing ended, under a Thor that refused nothing.
+
+        off_the_arm is how far the squeeze's first target lay from the arm.
+        """
+        thor, settings = self.thor, self.rig.settings
+        assert self.ended == {} and self.counts["engagements"] == 1
+        assert thor.refused == [] and self.counts["needs_release"] == 0
+        # No joint of the joint target was faster than 0.9 of the Thor's clamp.
+        most = JOINT_SPEED_SHARE * thor.clamp
+        assert self.steps.max() <= most + 1e-9
+        # So no target lay further from the Thor's own last joint target than
+        # the first one of the squeeze, or than one such step: the Thor's
+        # joint target was never left behind, and its step limit never met.
+        assert max(thor.steps) <= max(off_the_arm, most) + 1e-9 < thor.step_limit
+        # The tip of the joint target was no faster than the hand speed limit.
+        assert self.tip_speeds.max() <= 1.02 * settings.retarget.max_linear_velocity
+        assert max(self.rig.lead) <= max(off_the_arm, 0.01) < settings.ik.max_ahead_rad
+
+    def at_the_cap(self) -> bool:
+        """Whether the fastest joint of the joint target reached its speed limit."""
+        return self.steps.max() == pytest.approx(JOINT_SPEED_SHARE * self.thor.clamp)
+
+    def off_the_hand(self) -> tuple[float, float]:
+        """How far the arm stands from the hand's pose: m and rad."""
+        arm = self.rig.solver.fk(self.thor.q)
+        hand = self.rig.logic.last.commanded_target
+        metres = float(np.linalg.norm(arm[:3, 3] - hand[:3, 3]))
+        return metres, turn_between(arm, hand)
+
+
+def drive_on_the_rig(
+    rows: list[dict],
+    seconds: float,
+    *,
+    start: Sequence[float] = START,
+    state_passes: int = 1,
+    settings: HumanSettings | None = None,
+    thor: Thor | None = None,
+) -> Drive:
+    """Run a script for this long on the rig's two files, from the pose start."""
+    thor = thor or RigThor(start, owner="human", start_passes=START_READ)
+    rig = Rig(rows, thor, settings or rig_settings(), state_passes=state_passes)
+    rig.run(seconds)
+    return Drive(rig, thor, start)
 
 
 class RigThor(Thor):
@@ -549,135 +693,145 @@ class RigThor(Thor):
 
     def __init__(self, q: Sequence[float], **keywords: Any) -> None:
         human = yaml.safe_load(RIG_ROBOT_FILE.read_text())["limits"]["human"]
-        self.speed, self.step_limit = human["max_joint_speed"], human["max_step_rad"]
-        clamp = SPEED_MARGIN * self.speed * PASS_S
-        super().__init__(q, max_step=clamp, **keywords)
-        self.steps: list[float] = []  # how far each target it took lay away, rad
-        self.refused: list[float] = []  # the same for each target it refused
-
-    def _setpoint(self, message: HumanSetpoint) -> None:
-        moves = self._quoted(message) and self.owner == "human" and message.engaged
-        if moves and message.q is not None and not self.needs_release:
-            last = self.target_q if self.driving and self.target_q else self.q
-            off = max(abs(goal - at) for at, goal in zip(last, message.q))
-            if off > self.step_limit:
-                self.refused.append(off)
-                self.needs_release = True
-            else:
-                self.steps.append(off)
-        super()._setpoint(message)
+        speed, step_limit = human["max_joint_speed"], human["max_step_rad"]
+        self.clamp = SPEED_MARGIN * speed * PASS_S  # the farthest step of a joint
+        super().__init__(
+            q, max_step=self.clamp, speed=speed, step_limit=step_limit, **keywords
+        )
 
 
-def test_the_rig_files_hold_the_human_programs_lead_under_the_thors_step_limit():
+def test_the_rig_files_name_the_speeds_and_the_limits_of_a_person():
     settings, thor = rig_settings(), RigThor(START)
     assert (thor.speed, thor.step_limit) == (0.8, 0.05)  # the owner's speed
-    assert settings.ik.max_ahead_rad == 0.045 < thor.step_limit
+    assert thor.clamp == pytest.approx(0.01568)
+    assert JOINT_SPEED_SHARE * thor.clamp == pytest.approx(0.014112)
+    # The tip's target may move at 25 cm a second and turn at 1 rad a second;
+    # a hand up to half a metre ahead of the arm is caught up with.
+    retarget, ik = settings.retarget, settings.ik
+    assert (retarget.max_linear_velocity, retarget.max_angular_velocity) == (0.25, 1.0)
+    assert ik.max_ahead_m == 0.5 and ik.max_ahead_rad == 0.045 < thor.step_limit
     assert settings.state_max_age_s == pytest.approx((max(STATE_PASSES) + 1) * PASS_S)
+    assert (settings.ik.apai_arm, Solver.from_apai("rebot_rs").n_joints) == (
+        "rebot_rs",
+        6,
+    )
 
 
-@by_direction
-@pytest.mark.parametrize("state_passes", STATE_PASSES[:2])
-def test_the_shipped_rig_speeds_keep_the_solution_under_the_ahead_limit(
-    direction, state_passes
+@every_way
+@pytest.mark.parametrize("speed", [0.05, 0.2, 0.5])
+@pytest.mark.parametrize("state_passes", STATE_PASSES)
+def test_a_hand_at_any_steady_speed_is_followed_to_where_it_stops(
+    way, speed, state_passes
 ):
-    settings = rig_settings()
-    speed = settings.retarget.max_linear_velocity
-    seconds = 3.0
-    goal = HAND + speed * seconds * np.array(direction)
-    rows = [
-        BASE,
-        {"t": 0.2, "squeeze": 1.0},
-        {"t": 0.4},
-        {"t": 0.4 + seconds, "pos": list(goal)},
-    ]
-    thor = RigThor(START, owner="human")
-    rig = Rig(rows, thor, settings, state_passes=state_passes)
-    assert (settings.ik.apai_arm, rig.solver.n_joints) == ("rebot_rs", 6)
-    home = rig.tip(rig.solver.inside(START))
-
-    sent = rig.run(0.4 + seconds + 0.6)
-    # The target moved at the limiter's speed and the arm came along.
-    assert len(engaged(sent)) > 50 * seconds and rig.logic.last.engaged
-    moved = rig.logic.last.ee_target[:3, 3] - home
-    expected = np.zeros(3)
-    expected[BASE_AXIS[direction]] = speed * seconds
-    np.testing.assert_allclose(moved, expected, atol=1e-3)
-    np.testing.assert_allclose(rig.tip(thor.q) - home, expected, atol=2e-3)
-    # No engagement ended, and no solution ran ahead of the Thor's target.
-    assert rig.logic.counts()["engagements"] == 1
-    assert not any(rig.ended().values())
-    assert max(rig.ahead) <= max(rig.lead) < settings.ik.max_ahead_rad / 3
-    # A steady drive at the hand speed limit: the Thor refused no target for
-    # its distance, and none lay a tenth of its step limit away.
-    assert thor.refused == [] and rig.logic.counts()["needs_release"] == 0
-    assert max(thor.steps) < thor.step_limit / 10
-    print(f"\n{rig.settings.ik.apai_arm} {direction}: ahead {max(rig.ahead):.4f} rad")
+    # 10 cm at 5, 20 and 50 cm a second; the hand then stays where it is.
+    metres = 0.10
+    seconds = 0.4 + metres / speed + 2.5
+    rows = moving(way, metres, speed)
+    drive = drive_on_the_rig(rows, seconds, state_passes=state_passes)
+    drive.healthy()
+    rig, thor = drive.rig, drive.thor
+    assert len(drive.targets) > 100 and rig.logic.last.engaged
+    # The arm arrived at the hand's pose and stands there: the hand's way,
+    # with the orientation it had at the squeeze.
+    moved = rig.tip(thor.q) - drive.home[:3, 3]
+    np.testing.assert_allclose(moved, metres * tip_way(WAYS[way]), atol=1e-3)
+    assert drive.off_the_hand() == pytest.approx((0.0, 0.0), abs=1e-3)
+    assert drive.steps[-25:].max() < 1e-6 and rig.logic.ahead_m < 1e-3
+    in_motion = drive.tip_speeds[drive.tip_speeds > 1e-4]
+    if speed >= 0.2:
+        # Faster than the joints allow here: the fastest joint ran at its
+        # limit, and the tip stayed behind the hand.
+        assert drive.at_the_cap() and drive.tip_speeds.max() < speed
+    else:
+        # The arm kept the hand's pace.
+        assert float(np.median(in_motion)) == pytest.approx(speed, rel=0.02)
+    print(
+        f"\n{way} at {speed} m/s, state {state_passes} passes old: tip up to "
+        f"{drive.tip_speeds.max():.3f} m/s, lead {max(rig.lead):.4f} rad"
+    )
 
 
 @pytest.mark.parametrize("axis", [0, 1, 2], ids=["x", "y", "z"])
-@pytest.mark.parametrize("state_passes", STATE_PASSES[:2])
-def test_a_hand_that_turns_at_the_rig_limit_is_followed_without_a_refusal(
-    axis, state_passes
+@pytest.mark.parametrize("speed", [0.3, 1.0, 3.0])
+@pytest.mark.parametrize("state_passes", STATE_PASSES[::2])
+def test_a_hand_that_turns_at_any_steady_speed_is_followed_to_where_it_stops(
+    axis, speed, state_passes
 ):
-    settings = rig_settings()
-    seconds = 3.0
-    # The hand turns at once by what the rate limiter lets through in 3 s.
-    angle = settings.retarget.max_angular_velocity * seconds
-    turned = [0.0, 0.0, 0.0, math.cos(angle / 2)]
-    turned[axis] = math.sin(angle / 2)
-    rows = [BASE, {"t": 0.2, "squeeze": 1.0}, {"t": 0.4, "quat": turned}]
-    thor = RigThor(START, owner="human")
-    rig = Rig(rows, thor, settings, state_passes=state_passes)
-    sent = rig.run(0.4 + seconds + 0.6)
-    assert len(engaged(sent)) > 50 * seconds and rig.logic.last.engaged
-    assert rig.logic.counts()["engagements"] == 1
-    assert not any(rig.ended().values())
-    assert thor.refused == [] and rig.logic.counts()["needs_release"] == 0
-    assert max(rig.lead) < settings.ik.max_ahead_rad / 3
-    assert 0.0 < max(thor.steps) < thor.step_limit / 10
+    angle = 0.6  # 34 degrees, at 0.3, 1 and 3 rad a second
+    seconds = 0.4 + angle / speed + 4.0
+    rows = turning(axis, angle, speed)
+    drive = drive_on_the_rig(rows, seconds, state_passes=state_passes)
+    drive.healthy()
+    rig, thor = drive.rig, drive.thor
+    # The arm turned its tool as the hand turned, about the tip, and stands.
+    arm = rig.solver.fk(thor.q)
+    assert turn_between(drive.home, arm) == pytest.approx(angle, abs=2e-3)
+    assert drive.off_the_hand() == pytest.approx((0.0, 0.0), abs=2e-3)
+    assert drive.steps[-25:].max() < 1e-6
+    # At 1 rad a second and more the fastest joint ran at its limit.
+    assert drive.at_the_cap() or speed < 1.0
+
+
+@pytest.mark.parametrize("way", ["forward", "back", "left", "right"])
+def test_a_hand_moved_30_cm_in_a_second_is_followed_and_the_arm_arrives(way):
+    drive = drive_on_the_rig(moving(way, 0.30, 0.30), 0.4 + 1.0 + 3.0, state_passes=4)
+    drive.healthy()
+    rig, thor = drive.rig, drive.thor
+    moved = rig.tip(thor.q) - drive.home[:3, 3]
+    np.testing.assert_allclose(moved, 0.30 * tip_way(WAYS[way]), atol=1e-3)
+    assert drive.at_the_cap() and drive.steps[-25:].max() < 1e-6
+    # The arm was behind the hand, and the note said so while it caught up.
+    said = [m.note for m in engaged(rig.sent)]
+    changes = [said[0]] + [b for a, b in zip(said, said[1:]) if a != b]
+    assert changes[0] == changes[-1] == ""
+    assert "hand 10 cm ahead: the arm is catching up" in changes
+    notes = (f"hand {cm} cm ahead: the arm is catching up" for cm in (5, 10, 20))
+    assert set(changes) <= {"", *notes}
+    # The hand was there after a second; the arm was on its way for about two.
+    on_its_way = int(np.sum(drive.steps > 1e-6)) * PASS_S
+    assert 1.5 < on_its_way < 3.0
+    print(f"\n30 cm {way} in 1 s: the arm was on its way for {on_its_way:.2f} s")
 
 
 @pytest.mark.parametrize("reading", RIG_REST_READINGS)
 @pytest.mark.parametrize("state_passes", STATE_PASSES)
-def test_a_squeeze_at_rest_and_a_lift_run_on_the_rig_files(reading, state_passes):
+def test_a_squeeze_at_rest_and_a_fast_lift_run_on_the_rig_files(reading, state_passes):
     # The arm lies folded on the stops of its second and third joint, as the
     # rig read it there. The squeeze's first solution lies inside the IK's
-    # margin from those stops, about 0.03 rad above the measured pose.
-    settings = rig_settings()
-    speed = settings.retarget.max_linear_velocity
-    seconds = 3.0
-    # The hand rises at the hand speed limit from the pass of the squeeze on,
-    # so the solution moves on while the logic still sees the arm at rest.
-    top = HAND + speed * seconds * np.array(UP)
-    rows = [
-        BASE,
-        {"t": 0.2, "squeeze": 1.0},
-        {"t": 0.2 + seconds, "pos": list(top)},
-        {"t": 0.6 + seconds, "squeeze": 0.0},
-    ]
-    thor = RigThor(reading, owner="human")
-    rig = Rig(rows, thor, settings, state_passes=state_passes)
+    # margin from those stops, about 0.03 rad above the measured pose. The
+    # hand rises at 20 cm a second from the pass of the squeeze on, while the
+    # Thor still reads the arm for the drive.
+    metres = 0.10
+    rows = moving("up", metres, 0.2, at=0.2)
+    rows.append({"t": 0.2 + 0.5 + 2.0, "squeeze": 0.0})
+    thor = RigThor(reading, owner="human", start_passes=START_READ)
+    drive = drive_on_the_rig(
+        rows, 0.2 + 0.5 + 2.6, start=reading, state_passes=state_passes, thor=thor
+    )
+    rig = drive.rig
     inside = rig.solver.inside(reading)
     off_the_stops = max(abs(a - b) for a, b in zip(inside, reading))
     assert 0.031 < off_the_stops < 0.033
-
-    rig.run(0.6 + seconds + 0.6)
     # One engagement, ended by the released grip; the Thor refused nothing.
-    counts = rig.logic.counts()
-    assert (counts["engagements"], counts["released"]) == (1, 1)
-    assert not any(rig.ended().values())
-    assert thor.refused == [] and counts["needs_release"] == 0
-    # The first target is the farthest the Thor was asked to go: off the stops.
-    assert thor.steps[0] == pytest.approx(off_the_stops, abs=1e-3)
-    assert max(thor.steps) == thor.steps[0] < thor.step_limit
-    # The logic's own lead grows while it sees the arm at rest, and stays
-    # under its limit with the oldest ROBOT_STATE it follows.
-    assert off_the_stops <= max(rig.lead) < settings.ik.max_ahead_rad
-    assert max(rig.lead) < off_the_stops + 0.001 * state_passes
-    # The gripper tip rose 3 cm.
+    assert (drive.counts["engagements"], drive.counts["released"]) == (1, 1)
+    drive.healthy(off_the_arm=off_the_stops)
+    # The first target is the farthest the Thor was asked to go: off the
+    # stops, as the logic measured it from the arm before the Thor drove. It
+    # stood until a ROBOT_STATE showed the Thor's drive following it.
+    assert thor.steps[0] == pytest.approx(off_the_stops, abs=1e-9)
+    assert max(rig.lead) == pytest.approx(off_the_stops, abs=1e-9)
+    # The Thor's first setpoint came START_READ passes after the squeeze and
+    # its second one brought its joint target within a step of the first
+    # target; the ROBOT_STATE with that came state_passes later.
+    held = int(np.argmax(drive.steps > 1e-9))
+    assert held == START_READ + state_passes
+    np.testing.assert_allclose(drive.targets[: held + 1], [inside] * (held + 1))
+    # The gripper tip rose with the hand, which was a pass on its way when
+    # the squeeze was read.
     rise = rig.tip(thor.q) - rig.tip(inside)
-    np.testing.assert_allclose(rise, [0.0, 0.0, speed * seconds], atol=2e-3)
-    print(f"\nrest {reading[1]:.4f}, {state_passes} passes: lead {max(rig.lead):.4f}")
+    assert rise[:2] == pytest.approx([0.0, 0.0], abs=1e-3)
+    assert metres - 0.2 * 2 * PASS_S <= rise[2] <= metres + 1e-3
+    print(f"\nrest {reading[1]:.4f}, {state_passes} passes: held {held} passes")
 
 
 @pytest.mark.parametrize(("reads", "lifted"), [(-0.015, True), (-0.03, False)])
@@ -710,70 +864,193 @@ def test_how_far_under_0_a_joint_on_its_stop_may_read_for_a_squeeze_at_rest(
     assert thor.refused == [] and rig.logic.counts()["needs_release"] == 0
 
 
-@by_direction
-@pytest.mark.parametrize("state_passes", STATE_PASSES[:2])
-def test_a_fast_hand_on_the_rig_files_ends_the_engagement_in_the_human_program(
-    direction, state_passes
-):
-    # 20 cm in 0.4 s: the rate limiter lets the target follow at 0.01 m/s, and
-    # the hand is soon ik.max_ahead_m ahead of it.
-    rows = [
-        BASE,
-        {"t": 0.2, "squeeze": 1.0},
-        {"t": 0.4},
-        {"t": 0.8, "pos": list(HAND + 0.2 * np.array(direction))},
+@pytest.mark.parametrize("way", ["forward", "left"])
+def test_a_hand_half_a_metre_ahead_of_the_arm_is_not_believed(way):
+    # 80 cm in 0.5 s, under the speed the rate limiter rejects: the arm goes
+    # after the hand until the hand is 50 cm ahead of it.
+    drive = drive_on_the_rig(moving(way, 0.8, 1.6), 2.0, state_passes=4)
+    rig, thor = drive.rig, drive.thor
+    assert drive.ended == {"hand_ahead": 1} and drive.counts["engagements"] == 1
+    assert thor.refused == [] and drive.counts["needs_release"] == 0
+    said = [m.note for m in of(rig.sent, HumanSetpoint)]
+    changes = [said[0]] + [b for a, b in zip(said, said[1:]) if a != b]
+    assert changes == [
+        "squeeze the grip to move",
+        "",
+        *(f"hand {cm} cm ahead: the arm is catching up" for cm in (5, 10, 20, 30, 40)),
+        "release the grip and squeeze again: the hand is 52 cm ahead of the arm, "
+        "over the 50 cm followed",
     ]
-    thor = RigThor(START, owner="human")
-    rig = Rig(rows, thor, rig_settings(), state_passes=state_passes)
-    home = rig.tip(rig.solver.inside(START))
-    rig.run(2.0)
-    ended = {key: count for key, count in rig.ended().items() if count}
-    assert ended == {"hand_ahead": 1} and rig.logic.counts()["engagements"] == 1
-    assert thor.refused == [] and rig.logic.counts()["needs_release"] == 0
-    # The arm holds where the engagement ended: 2 mm from its start at most.
+    # The arm holds where it was when the engagement ended, on its way.
     assert not thor.driving and thor.motion == "hold"
-    assert np.linalg.norm(rig.tip(thor.q) - home) < 0.002
-    assert max(thor.steps) < thor.step_limit / 10
+    travelled = float(np.linalg.norm(rig.tip(thor.q) - drive.home[:3, 3]))
+    assert 0.01 < travelled < 0.10
+    np.testing.assert_allclose(thor.q, drive.targets[-1], atol=1e-9)
 
 
-@by_direction
-@pytest.mark.parametrize("state_passes", STATE_PASSES[:2])
-def test_a_solution_too_fast_for_the_arm_ends_the_engagement_and_not_as_a_refusal(
-    direction, state_passes
+@pytest.mark.parametrize("state_passes", STATE_PASSES)
+def test_a_released_grip_stops_the_arm_on_its_pass_at_any_speed(state_passes):
+    # The hand is 30 cm ahead and the arm at its speed limit when the grip
+    # is released: no joint target follows the release.
+    rows = [*moving("forward", 0.30, 1.0), {"t": 1.2, "squeeze": 0.0}]
+    drive = drive_on_the_rig(rows, 2.0, state_passes=state_passes)
+    drive.healthy()
+    rig, thor = drive.rig, drive.thor
+    assert drive.counts["released"] == 1 and drive.at_the_cap()
+    assert drive.steps[-1] == pytest.approx(JOINT_SPEED_SHARE * thor.clamp)
+    sent = of(rig.sent, HumanSetpoint)
+    last = max(index for index, m in enumerate(sent) if m.engaged)
+    after = sent[last + 1]
+    assert (after.engaged, after.q, after.grip_released) == (False, None, True)
+    assert all(not m.engaged for m in sent[last + 1 :])
+    # The arm stands at the last joint target it was sent, short of the hand:
+    # it travelled one step of the Thor's, 0.9 degrees a joint, past the
+    # target of the pass before.
+    np.testing.assert_allclose(thor.q, drive.targets[-1], atol=1e-12)
+    assert not thor.driving and thor.motion == "hold"
+    short = 0.30 - float(np.linalg.norm(rig.tip(thor.q) - drive.home[:3, 3]))
+    assert short > 0.10
+
+
+@pytest.mark.parametrize("state_passes", STATE_PASSES)
+def test_right_b_stops_the_arm_on_its_pass_at_any_speed(state_passes):
+    rows = [*moving("forward", 0.30, 1.0), {"t": 1.2, "b": True}]
+    drive = drive_on_the_rig(rows, 2.0, state_passes=state_passes)
+    rig, thor = drive.rig, drive.thor
+    assert drive.ended == {} and thor.refused == [] and drive.at_the_cap()
+    # The STOP went out on the pass that read right B down, ahead of that
+    # pass's HUMAN_SETPOINT; the Thor followed no target after it.
+    [stop] = [index for index, m in enumerate(rig.sent) if isinstance(m, Stop)]
+    assert rig.sent[stop] == RIGHT_B
+    before = [m for m in rig.sent[:stop] if isinstance(m, HumanSetpoint)]
+    assert before[-1].engaged
+    np.testing.assert_allclose(thor.q, before[-1].q, atol=1e-12)
+    assert thor.owner == "nobody" and thor.stop_level == "stop" and not thor.driving
+    assert drive.counts["stop"] + drive.counts["not_owner"] == 1
+
+
+class Stuck(RigThor):
+    """The rig's stand-in with a joint that stops following after some setpoints."""
+
+    def __init__(self, joint: int, after: int, **keywords: Any) -> None:
+        super().__init__(START, owner="human", start_passes=START_READ, **keywords)
+        self.joint, self.after = joint, after
+        self.stuck_at: float | None = None  # where the joint stands
+        self.stuck_seq = 0  # the seq of the first HUMAN_SETPOINT it did not follow
+
+    def _setpoint(self, message: HumanSetpoint) -> None:
+        if self.sent >= self.after and self.stuck_at is None:
+            self.blocked.add(self.joint)
+            self.stuck_at, self.stuck_seq = self.q[self.joint], message.seq
+        super()._setpoint(message)
+
+    def ahead(self, sent: Sequence[Message]) -> np.ndarray:
+        """How far each joint target since then lay ahead of the joint, rad."""
+        since = [m.q[self.joint] for m in engaged(sent) if m.seq >= self.stuck_seq]
+        return np.abs(np.array(since) - self.stuck_at)
+
+
+@pytest.mark.parametrize("state_passes", STATE_PASSES)
+def test_a_joint_target_the_thor_does_not_follow_ends_the_drive_at_the_thors_step_limit(
+    state_passes,
 ):
-    # With the hand speed limit raised to 0.2 m/s the IK asks a joint for more
-    # than the Thor's 0.8 rad/s, and the solution runs away from the arm.
-    fast = rig_settings(max_linear_velocity=0.2)
-    rows = [
-        BASE,
-        {"t": 0.2, "squeeze": 1.0},
-        {"t": 0.4},
-        {"t": 1.9, "pos": list(HAND + 0.3 * np.array(direction))},
-    ]
+    # The first joint of the Thor's own joint target stands still from its
+    # 20th setpoint on, while the hand goes on to the left at 50 cm a second.
+    thor = Stuck(0, 20)
+    drive = drive_on_the_rig(
+        moving("left", 0.3, 0.5), 3.0, state_passes=state_passes, thor=thor
+    )
+    rig = drive.rig
+    # The Thor refused the first target that lay beyond its step limit from
+    # its own joint target, and the arm holds; the human program ended the
+    # engagement on the ROBOT_STATE that said so.
+    assert len(thor.refused) == 1 and thor.step_limit < thor.refused[0]
+    assert thor.refused[0] <= thor.step_limit + JOINT_SPEED_SHARE * thor.clamp
+    assert drive.ended == {} and drive.counts["needs_release"] == 1
+    assert not thor.driving and thor.motion == "hold" and not rig.logic.armed
+    # The joint target ran ahead of the joint that stood by the step limit
+    # and, until the ROBOT_STATE came, by one more step for each pass of its
+    # age; the Thor followed none of those.
+    ahead = thor.ahead(rig.sent).max()
+    most = thor.step_limit + (state_passes + 1) * JOINT_SPEED_SHARE * thor.clamp
+    assert thor.step_limit < ahead <= most
+    assert abs(thor.q[0] - thor.stuck_at) < 1e-12
 
-    def run(settings: HumanSettings) -> tuple[Rig, RigThor]:
-        thor = RigThor(START, owner="human")
-        rig = Rig(rows, thor, settings, state_passes=state_passes)
-        rig.run(2.5)
-        return rig, thor
 
-    rig, thor = run(fast)
-    ended = {key: count for key, count in rig.ended().items() if count}
-    assert ended == {"solution_ahead": 1} and rig.logic.counts()["engagements"] == 1
-    # The Thor refused nothing: every target it got lay nearer its own joint
-    # target than the logic's lead, and that under the logic's limit.
-    assert thor.refused == [] and rig.logic.counts()["needs_release"] == 0
-    assert max(thor.steps) <= max(rig.lead) <= fast.ik.max_ahead_rad
-    assert not thor.driving and thor.motion == "hold"
-    if state_passes > 1:
-        return
-    # With the lead of the one-machine file, above the Thor's step limit, the
-    # Thor is the one that ends it: the pair of limits is what this test holds.
-    wide = dataclasses.replace(fast.ik, max_ahead_rad=IkSettings().max_ahead_rad)
-    assert wide.max_ahead_rad == 0.08 > thor.step_limit
-    _, refusing = run(dataclasses.replace(fast, ik=wide))
-    assert len(refusing.refused) == 1 and refusing.refused[0] > thor.step_limit
-    assert refusing.needs_release and not refusing.driving
+@pytest.mark.parametrize("state_passes", STATE_PASSES)
+def test_without_the_thors_step_limit_the_lead_ends_a_drive_that_is_not_followed(
+    state_passes,
+):
+    # The same under a Thor that refuses no target for its distance: the human
+    # program's own lead is what is left to end the drive.
+    thor = Stuck(0, 20)
+    thor.step_limit = math.inf
+    settings = rig_settings()
+    drive = drive_on_the_rig(
+        moving("left", 0.3, 0.5), 3.0, state_passes=state_passes, thor=thor
+    )
+    rig = drive.rig
+    assert drive.ended == {"solution_ahead": 1} and thor.refused == []
+    assert not thor.driving and thor.motion == "hold" and not rig.logic.armed
+    # It ends once the joint target is ik.max_ahead_rad further ahead than
+    # the Thor's speed clamp could have brought the Thor's own joint target
+    # since the ROBOT_STATE: with the oldest state followed, 0.2 rad.
+    age_s = state_passes * PASS_S
+    most = settings.ik.max_ahead_rad + age_s * SPEED_MARGIN * thor.speed
+    ahead = thor.ahead(rig.sent)
+    assert settings.ik.max_ahead_rad < ahead.max() <= most + 1e-9 <= 0.2
+    sent = of(rig.sent, HumanSetpoint)
+    last = max(index for index, m in enumerate(sent) if m.engaged)
+    again = "release the grip and squeeze again: the solution is 0.0"
+    assert sent[last + 1].note.startswith(again)
+    # The drive ended within the time that lead takes at the speed of the
+    # first joint's target, and a pass.
+    speed = float(np.diff(ahead).max()) / PASS_S
+    assert len(ahead) * PASS_S <= most / speed + 2 * PASS_S
+    print(
+        f"\nstate {state_passes} passes old: ended {ahead.max():.3f} rad ahead, "
+        f"{len(ahead) * PASS_S:.2f} s after the joint stood, at {speed:.2f} rad/s"
+    )
+
+
+# Near a singular pose a short step of the tip asks a joint for a long one.
+# FOLDED: a little above the rest pose. From START the arm's reach ends 20 cm
+# higher: 19 cm up it is stretched out.
+FOLDED = (0.0, 0.1, 0.1, 0.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    "start, way, metres",
+    [(FOLDED, "forward", 0.05), (START, "up", 0.19)],
+    ids=["folded", "stretched out"],
+)
+def test_near_a_singular_pose_the_tip_slows_and_the_drive_goes_on(start, way, metres):
+    thor = RigThor(start, owner="human", start_passes=START_READ)
+    rig = Rig(moving(way, metres, 0.2), thor, rig_settings(), state_passes=4)
+    solves: list[str] = []
+    solve = rig.solver.solve
+
+    def counted(pose: np.ndarray, seed: Sequence[float]) -> Any:
+        solved = solve(pose, seed)
+        solves.append(solved.problem)
+        return solved
+
+    rig.solver.solve = counted
+    rig.run(0.4 + metres / 0.2 + 3.0)
+    drive = Drive(rig, thor, start)
+    drive.healthy()
+    # Some steps of the tip asked a joint for more than ik.max_jump_rad: they
+    # were halved, and no jump was left to end the engagement.
+    jumps = sum(problem.startswith("IK jump") for problem in solves)
+    assert jumps > 10 and drive.counts["jump"] == 0
+    # The joints ran at their limit and the tip came behind the hand, slower
+    # than in the open: at half the hand's 20 cm a second or less.
+    assert drive.at_the_cap()
+    moving_tip = drive.tip_speeds[drive.tip_speeds > 1e-4]
+    assert float(np.median(moving_tip)) < 0.10
+    moved = rig.tip(thor.q) - drive.home[:3, 3]
+    np.testing.assert_allclose(moved, metres * tip_way(WAYS[way]), atol=1e-3)
+    print(f"\n{way} from {start}: {jumps} of {len(solves)} solves were jumps")
 
 
 # The files
@@ -848,19 +1125,35 @@ def test_the_shipped_human_files_load():
         assert settings.teleop.connect_timeout_s < keep_s
 
 
-def test_the_rig_human_file_differs_from_the_shipped_one_in_seven_keys():
+def test_the_rig_human_file_differs_from_the_shipped_one_in_eight_keys():
     demo, rig = shipped("human.yaml"), shipped("human_rebot.yaml")
     differing = {key: (demo[key], rig[key]) for key in demo if demo[key] != rig[key]}
     assert differing == {
         "socket_path": ("", "~/.agentic_remote/human.sock"),
         "teleop.endpoint": ("127.0.0.1:47600", "192.0.2.1:47600"),
         "teleop.attempts": (720, 8640),
-        "retarget.max_linear_velocity": (0.10, 0.01),
-        "retarget.max_angular_velocity": (0.4, 0.03),
+        # The bounds of the tip's target: on the rig the joints decide how
+        # fast the arm follows, at 0.9 of the Thor's clamp of the owner's 0.8.
+        "retarget.max_linear_velocity": (0.10, 0.25),
+        "retarget.max_angular_velocity": (0.4, 1.0),
         "ik.apai_arm": ("mock", "rebot_rs"),
         # Below limits.human.max_step_rad of the rig's robot file, 0.05.
         "ik.max_ahead_rad": (0.08, 0.045),
+        # A hand up to half a metre ahead of the arm is caught up with.
+        "ik.max_ahead_m": (0.05, 0.5),
     }
+    text = (CONFIGS / "human_rebot.yaml").read_text(encoding="utf-8")
+    assert "It differs from configs/human.yaml in eight keys:" in text
+    # The file says in plain words what each of the new values does, and
+    # whose value the 0.8 rad/s is.
+    speed = comment_above(text, "max_linear_velocity")
+    assert "the owner's value of 2026-11-16" in speed and "0.8 rad/s a joint" in speed
+    assert "0.9 of the Thor's speed clamp, 0.71 rad/s" in speed
+    assert "The fastest the gripper tip's target moves" in speed
+    turn = comment_above(text, "max_angular_velocity")
+    assert turn == "The fastest the gripper tip's target turns."
+    ahead = comment_above(text, "max_ahead_m")
+    assert "the arm catches up with the hand and stops where the hand stopped" in ahead
 
 
 @pytest.mark.parametrize("key", ["loop_hz", "idle_hz"])
@@ -1145,12 +1438,22 @@ def write_config(folder: Path, socket_path: str, **blocks: Any) -> Path:
     return file
 
 
-def robot(bench: Bench, driver: str = "sim", joints: int = 6, **state: Any) -> FakeThor:
-    """A robot connection that has sent its WELCOME and one ROBOT_STATE."""
+def robot(
+    bench: Bench,
+    driver: str = "sim",
+    joints: int = 6,
+    speed: float | None = HUMAN_SPEED,
+    **state: Any,
+) -> FakeThor:
+    """A robot connection that has sent its WELCOME and one ROBOT_STATE.
+
+    speed is the human joint speed limit the WELCOME names; None: it names none.
+    """
     thor = bench.dial()
     until(lambda: bench.service._carrier is thor.service_end, "the robot connection")
     names = [f"j{index}" for index in range(1, joints + 1)]
-    thor.send(dataclasses.replace(welcome(), driver=driver, joint_names=names))
+    named = welcome(human_max_joint_speed=speed)
+    thor.send(dataclasses.replace(named, driver=driver, joint_names=names))
     show(bench, thor, **{"owner": "nobody", **state})
     return thor
 
@@ -1261,6 +1564,21 @@ class HeadsetScript(ScriptFeed):
     source = HUMAN_SOURCE_TELEOP
 
 
+# The program's second line, with the shipped file and the stand-in robot
+# app's WELCOME: how fast the arm follows the hand. The joint speed is 0.9 of
+# the robot app's speed clamp, 0.98 of the limit its WELCOME names.
+SPEED_LINE = (
+    "human program: the arm follows the hand at up to 1.32 rad/s a joint (the "
+    "robot app's limit for a person is 1.5 rad/s), its tip at up to 0.1 m/s and "
+    "0.4 rad/s"
+)
+SPEED_LINE_UNNAMED = (
+    "human program: the arm follows the hand at up to 0.09 rad/s a joint (the "
+    "robot app names no speed limit for a person), its tip at up to 0.1 m/s and "
+    "0.4 rad/s"
+)
+
+
 def test_the_start_line_names_the_feed_the_driver_and_the_model(
     bench, folder, start, caplog
 ):
@@ -1277,11 +1595,17 @@ def test_the_start_line_names_the_feed_the_driver_and_the_model(
         "arm model mock, 6 joints"
     )
     assert program.said[0] == line
+    # Then how fast the arm follows the hand under this robot app.
+    assert HUMAN_SPEED == 1.5
+    assert JOINT_SPEED_SHARE * SPEED_MARGIN * HUMAN_SPEED == pytest.approx(1.323)
+    assert program.wait_said("human program: the arm follows") == SPEED_LINE
+    assert program.said[1] == SPEED_LINE
     # Once: a second WELCOME of that robot app says nothing new.
     thor.send(dataclasses.replace(welcome(), driver="apai-mock"))
     program.wait_said("right controller seen")
     time.sleep(0.2)
     assert [text for text in program.said if "arm model" in text] == [line]
+    assert [text for text in program.said if "follows" in text] == [SPEED_LINE]
     assert program.end() == 0
     # A synthetic controller has no Teleop Session Server to speak of.
     assert not any("Teleop Session Server" in text for text in program.said)
@@ -1306,6 +1630,7 @@ def test_the_start_line_of_the_headset_path_and_its_stage_lines(bench, folder, s
     assert lines == [
         "human program: teleop; driver not declared (treated as real); "
         "arm model mock, 6 joints",
+        SPEED_LINE,
         "human program: Teleop Session Server ready",
         "human program: right controller seen",
         "human program: Teleop Session Server no_controller: "
@@ -1314,6 +1639,27 @@ def test_the_start_line_of_the_headset_path_and_its_stage_lines(bench, folder, s
         "human program: Teleop Session Server ready",
         "human program: right controller seen",
     ]
+
+
+def test_the_speed_line_follows_the_limit_each_robot_app_names(bench, folder, start):
+    # A robot app whose WELCOME names no human speed limit: the arm follows
+    # at 0.9 of the clamp of 0.1 rad/s.
+    thor = robot(bench, speed=None)
+    program = start(write_config(folder, bench.path), "--controller", "synthetic:idle")
+    assert program.wait_said("human program: the arm follows") == SPEED_LINE_UNNAMED
+    # The robot app starts again with the rig's limit: the line is said anew.
+    again = dataclasses.replace(welcome("s2", human_max_joint_speed=0.8), driver="sim")
+    thor.send(again)
+    show(bench, thor, owner="nobody", session_id="s2")
+    line = program.wait_said("human program: the arm follows the hand at up to 0.71")
+    assert line == (
+        "human program: the arm follows the hand at up to 0.71 rad/s a joint (the "
+        "robot app's limit for a person is 0.8 rad/s), its tip at up to 0.1 m/s and "
+        "0.4 rad/s"
+    )
+    assert program.end() == 0
+    said = [text for text in program.said if "the arm follows" in text]
+    assert said == [SPEED_LINE_UNNAMED, line]
 
 
 def test_each_button_edge_is_printed_once(bench, folder, start):
@@ -1493,6 +1839,25 @@ def test_the_words_of_the_report_line():
     assert refused.endswith("; refused by the Thor: no fresh controller data")
     # Without the robot app's jaw facts the line says nothing of the jaws.
     assert "jaws" not in line + nothing + refused
+
+    # While the arm follows a hand that is 5 cm or more ahead of it, the line
+    # says how far, in whole cm, ahead of what it says of the jaws.
+    def with_ahead(metres: float | None) -> str:
+        times = [0.0002, 0.0001, 0.0015]
+        ages = [0.012, 0.004, 0.0081], [0.03, 0.01, 0.02, 0.04]
+        return report_line("ready", *ages, state, last, times, counts, metres)
+
+    assert with_ahead(None) == with_ahead(0.0) == with_ahead(0.044) == line
+    assert with_ahead(float("nan")) == line
+    behind = with_ahead(0.1234)
+    assert behind == line + "; hand 12 cm ahead: the arm is catching up"
+    assert with_ahead(0.0496) == line + "; hand 5 cm ahead: the arm is catching up"
+    assert REPORT.fullmatch(behind)["ahead"] == "12" and REPORT.fullmatch(line)
+    jaws = robot_state(jaws=jaw_facts(), refusal="busy")
+    both = report_line("ready", [], [], jaws, last, [], counts, 0.2)
+    found = REPORT.fullmatch(both)
+    assert (found["ahead"], found["refused"]) == ("20", "; refused by the Thor: busy")
+    assert both.index("; hand 20 cm ahead") < both.index("; jaws follow the trigger")
 
 
 def jaw_facts(**facts: Any) -> dict[str, Any]:
@@ -1676,11 +2041,12 @@ def test_the_program_ends_with_exit_code_1_when_the_teleop_attempts_run_out(
     assert f"human program: no remote session at {endpoint}: 2 attempts in a" in error
     lines = [text for text in said if not is_report(text)]
     assert lines[0] == "human program: teleop; driver real; arm model mock, 6 joints"
-    assert lines[1].startswith(
+    assert lines[1] == SPEED_LINE
+    assert lines[2].startswith(
         "human program: Teleop Session Server no_server: Teleop Session Server "
         f"at {endpoint} was not ready after 0.3 s: server did not answer"
     )
-    assert len(lines) == 2
+    assert len(lines) == 3
     # Meanwhile the Thor was told the stage, for the operator console.
     status = seen.of(HumanSetpoint)[-1]
     assert (status.source, status.stage) == ("teleop", "no_server")
@@ -2701,7 +3067,8 @@ def test_an_endpoint_isaac_capture_cannot_use_ends_the_program_with_exit_code_2(
         f"human program: the settings cannot be used: teleop.endpoint {endpoint!r}: "
         f"invalid port in endpoint '{endpoint}'"
     ]
-    assert said == ["human program: teleop; driver real; arm model mock, 6 joints"]
+    start_line = "human program: teleop; driver real; arm model mock, 6 joints"
+    assert said == [start_line, SPEED_LINE]
     # This program drove nothing: no link message of it went to the Thor.
     until(lambda: not bench.service.roles().get("human"), "the program's leaving")
     assert thor.drain() == []
@@ -3034,6 +3401,94 @@ def test_a_squeeze_drives_an_arm_that_holds_short_of_its_last_joint_target(
         stack.close()
 
 
+def test_the_program_follows_a_hand_moved_20_cm_in_half_a_second_on_the_rig_files(
+    make_realtime_robot_app, folder, start
+):
+    """A hand faster than the arm, in real time, on the rig's two files.
+
+    The human program's main() and the robot app run on the machine's clock,
+    on the simulated arm raised over the table. The hand goes 20 cm to the
+    left in half a second and stays there for 3 s; then the grip is released.
+    Changed in memory as in the two tests above.
+    """
+    from link_stack import Stack
+
+    raised = [0.3, 1.2, 1.2, 0.2, 0.3, 0.1]
+    robot = load_config(RIG_ROBOT_FILE)
+    human = dataclasses.replace(
+        robot.human, enabled=True, require_live_view=False, sample_age_limit_s=1.0
+    )
+    config = dataclasses.replace(robot, human=human)
+    settings = yaml.safe_load((CONFIGS / "human_rebot.yaml").read_text())
+    metres = 0.20
+    rows = [
+        BASE,
+        {"t": 0.3, "b": True},
+        {"wait_for": "owner_human"},
+        {"t": 0.5, "b": False},
+        {"t": 1.0, "squeeze": 1.0},
+        {"t": 1.2},
+        {"t": 1.7, "pos": list(HAND + metres * np.array(LEFT))},
+        {"t": 4.7, "squeeze": 0.0},
+    ]
+    h = make_realtime_robot_app(config=config, pose=raised, connected=False)
+    stack = Stack(h, folder)
+    solver = Solver.from_apai(settings["ik"]["apai_arm"])
+    try:
+        stack.start_service()
+        stack.dial()
+        watcher = stack.client("tool")
+        stack.connected(watcher)
+        settings["socket_path"] = stack.path
+        settings["teleop"]["endpoint"] = NO_SERVER
+        settings["state"]["max_age_s"] = 1.0
+        file = folder / "human_fast.yaml"
+        file.write_text(yaml.safe_dump(settings), encoding="utf-8")
+        program = start(file, *("--report-s", "0.2"), feed=script(rows))
+        # The program says how fast the arm follows under this robot app.
+        assert program.wait_said("human program: the arm follows") == (
+            "human program: the arm follows the hand at up to 0.71 rad/s a joint "
+            "(the robot app's limit for a person is 0.8 rad/s), its tip at up to "
+            "0.25 m/s and 1 rad/s"
+        )
+        watcher.ws.wait_state(lambda s: s.owner == "human", WAIT_S)
+        program.wait_said("human program: grip down")
+        program.wait_said("human program: grip up")
+        watcher.ws.wait_state(
+            lambda s: not s.health["human"]["driving"] and s.motion == "hold", WAIT_S
+        )
+        # One human drive, ended by the released grip: the Thor refused no
+        # target, and the human program ended no engagement itself.
+        sent = [q for q, _ in h.arm.sent]
+        assert len(sent) > 150 and h.heard("human") == []
+        reports = [REPORT.fullmatch(text) for text in program.said if is_report(text)]
+        assert reports and None not in reports, program.said
+        assert all(found["refused"] is None for found in reports)
+        none_ended = (
+            "ended: no solution 0, jump 0, solution ahead 0, hand ahead 0, limiter 0"
+        )
+        assert all(none_ended in found.group(0) for found in reports)
+        # The fastest joint ran at 0.9 of the Thor's clamp, the human
+        # program's bound. The two loops are not in step in real time: where
+        # two passes of the human program fell between two setpoints, the
+        # Thor took the way at its clamp, and no joint was faster than that.
+        clamp = SPEED_MARGIN * robot.limits.human.max_joint_speed * PASS_S
+        own = JOINT_SPEED_SHARE * clamp
+        steps = np.abs(np.diff(np.array([raised, *sent]), axis=0)).max(axis=1)
+        assert steps.max() <= clamp + 1e-9
+        assert int(np.sum(steps > own - 1e-9)) > 25
+        # While the arm was behind, the report line said how far.
+        behind = [found["ahead"] for found in reports if found["ahead"]]
+        assert behind and all(5 <= int(cm) <= 20 for cm in behind)
+        # The arm stands where the hand stopped: 20 cm to the left.
+        moved = solver.fk(sent[-1])[:3, 3] - solver.fk(raised)[:3, 3]
+        np.testing.assert_allclose(moved, metres * tip_way(LEFT), atol=2e-3)
+        assert h.arm.torque_on() and h.arm.released_at == []
+        assert program.end() == 0
+    finally:
+        stack.close()
+
+
 def child_env(*paths: Path) -> dict[str, str]:
     """This process's environment with only these folders to import from."""
     drop = ("PYTHONPATH", "AGENTIC_REMOTE_APAI_SRC", "AGENTIC_REMOTE_ISAAC_CAPTURE_PY")
@@ -3299,7 +3754,7 @@ def imports(source: str, top_only: bool = False) -> list[tuple[str, tuple[str, .
 
 
 # The folders of the workstation's programs, and the test helpers.
-WORKSTATION_PROGRAMS = {"link_service", "console", "agent", "view", "testing"}
+WORKSTATION_PROGRAMS = {"link_service", "console", "agent", "viewer_live", "testing"}
 
 
 def programs_imported(source: str) -> set[str]:
@@ -3321,7 +3776,10 @@ def test_the_human_path_modules_import_no_workstation_program():
         ("from .. import console", "console"),
         ("import isaaccapture_examples.agentic_remote.agent.config", "agent"),
         ("def late():\n    from ..testing import client", "testing"),
-        ("if True:\n    from ..view.model import ViewModel", "view"),
+        (
+            "if True:\n    from ..viewer_live.view_model import ViewModel",
+            "viewer_live",
+        ),
     ):
         assert programs_imported(line) == {program}, line
     # Only the program itself attaches to the robot link service.

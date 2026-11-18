@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -497,6 +498,53 @@ def test_the_rate_limiters_speeds_are_the_settings():
     np.testing.assert_allclose(
         step.commanded_target, shifted(HOME, (0.0, 0.0, 0.10)), atol=PATH_TOL
     )
+
+
+def test_with_the_rig_file_the_target_goes_25_cm_and_turns_1_rad_in_a_second():
+    from isaaccapture_examples.agentic_remote.human import __main__ as program
+
+    configs = Path(program.__file__).resolve().parents[4] / "configs"
+    settings = program.load_human_settings(configs / "human_rebot.yaml").retarget
+    bounds = (settings.max_linear_velocity, settings.max_angular_velocity)
+    rejects = (settings.reject_linear_velocity, settings.reject_angular_velocity)
+    assert (bounds, rejects) == ((0.25, 1.0), (2.0, 10.0))
+    bench = Bench(settings)
+    bench.engage()
+    # A hand at 0.15 m/s, 3 mm a pass, is under the bound: the target is at it.
+    step = bench.step(along(HAND, UP, 0.003), squeeze=1.0)
+    assert step.limiter == "passed"
+    np.testing.assert_allclose(
+        step.ee_target, shifted(HOME, (0.0, 0.0, 0.003)), atol=PATH_TOL
+    )
+    # One at 1 m/s, 2 cm a pass, is ahead: the target comes at 5 mm a pass.
+    for i in range(1, 6):
+        step = bench.step(along(HAND, UP, 0.003 + 0.02 * i), squeeze=1.0)
+        assert step.engaged and step.limiter == "clamped"
+        np.testing.assert_allclose(
+            step.ee_target, shifted(HOME, (0.0, 0.0, 0.003 + 0.005 * i)), atol=PATH_TOL
+        )
+    ahead = step.commanded_target[2, 3] - step.ee_target[2, 3]
+    assert ahead == pytest.approx(5 * 0.015, abs=PATH_TOL)
+    # The hand stops: the target goes on to it at that speed and stands there.
+    hand = along(HAND, UP, 0.103)
+    for i in range(1, 18):
+        step = bench.step(hand, squeeze=1.0)
+        gone = min(0.103, 0.028 + 0.005 * i)
+        np.testing.assert_allclose(
+            step.ee_target, shifted(HOME, (0.0, 0.0, gone)), atol=PATH_TOL
+        )
+    assert step.limiter == "passed"
+    # 5 cm in one pass is 2.5 m/s: over the speed that is not followed at all.
+    thrown = bench.step(along(HAND, UP, 0.153), squeeze=1.0)
+    assert thrown.limiter == "rejected"
+    np.testing.assert_allclose(thrown.ee_target, step.ee_target, atol=POSE_TOL)
+
+    # A turn of 0.05 rad a pass is 2.5 rad/s: the target turns 0.02 rad a pass.
+    bench = Bench(settings)
+    bench.engage()
+    turned = bench.step(HAND, quat(Y, 0.05), squeeze=1.0)
+    assert turned.limiter == "clamped"
+    assert angle_between(HOME, turned.ee_target) == pytest.approx(0.02, abs=1e-5)
 
 
 @pytest.mark.parametrize("late_ms", [40, 100, 1000])

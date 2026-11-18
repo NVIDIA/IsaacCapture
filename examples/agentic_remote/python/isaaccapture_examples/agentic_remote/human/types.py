@@ -16,6 +16,18 @@ from typing import Any, NamedTuple, Protocol
 
 import numpy as np
 
+# The most time the rate limiter counts for one pass, s: the period of the
+# human program's passes. A late pass moves the target no further than a pass
+# on time, so what follows the graph never gets a larger step. The least it
+# counts is half of this: a rates.loop_hz (the human program's passes per
+# second) above 100 would raise both hand speed limits in proportion.
+LIMITER_PASS_S = 0.02
+
+# What HUMAN_SETPOINT.note and the report line say while the arm follows a
+# hand that is AHEAD_NOTE_CM or more ahead of the tip of the last joint target.
+NOTE_CATCHING_UP = "hand {cm} cm ahead: the arm is catching up"
+AHEAD_NOTE_CM = 5
+
 
 @dataclass(frozen=True)
 class RetargetSettings:

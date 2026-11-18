@@ -175,6 +175,9 @@ class Welcome(Message):
     # The joint speed limit of the agent's limit set, rad/s: a setpoint of the
     # agent that asks for more is refused. None: not declared.
     agent_max_joint_speed: float | None = None
+    # The joint speed limit of the human limit set, rad/s: the robot app follows
+    # a person's joint target at SPEED_MARGIN of it. None: not declared.
+    human_max_joint_speed: float | None = None
 
 
 @dataclass(frozen=True)

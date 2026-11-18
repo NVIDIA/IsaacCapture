@@ -52,6 +52,8 @@ from ..protocol.messages import (
     Welcome,
 )
 from .types import (
+    AHEAD_NOTE_CM,
+    NOTE_CATCHING_UP,
     ControllerFeed,
     FeedStep,
     GraphStep,
@@ -505,6 +507,7 @@ def report_line(
     last: GraphStep | None,
     ik_times_s: Sequence[float],
     counts: Mapping[str, int],
+    ahead_m: float | None = None,
 ) -> str:
     """The report line: the last pass, and the ages and times since the last line.
 
@@ -513,7 +516,9 @@ def report_line(
     is the right controller's position in the stage space, the space its poses
     are given in; tip target is the target of the gripper tip in the robot's
     base axes. round trip is the Thor's measure of the way of a ROBOT_STATE to
-    this program and of the HUMAN_SETPOINT back.
+    this program and of the HUMAN_SETPOINT back. ahead_m is how far the hand
+    is ahead of the tip of the last joint target while the arm follows it;
+    from AHEAD_NOTE_CM on the line says so.
     """
     human = _human_facts(state)
     tip = None if last is None else last.ee_target
@@ -537,6 +542,10 @@ def report_line(
         f"hand ahead {counts.get('hand_ahead', 0)}, "
         f"limiter {counts.get('limiter', 0)}"
     )
+    if ahead_m is not None and math.isfinite(ahead_m):
+        cm = round(100.0 * ahead_m)
+        if cm >= AHEAD_NOTE_CM:
+            line += "; " + NOTE_CATCHING_UP.format(cm=cm)
     line += _jaws_text(human.get("jaws"))
     refusal = human.get("refusal")
     if refusal:
@@ -695,11 +704,27 @@ class _Loop:
             f"{_plain(welcome.driver) or NOT_DECLARED}; arm model "
             f"{_plain(self._settings.ik.apai_arm)}, {self._solver.n_joints} joints"
         )
+        self._say(self._speed_line(welcome))
         self._feed.open()
         try:
             return self._passes()
         finally:
             self._feed.close()
+
+    def _speed_line(self, welcome: Welcome) -> str:
+        """How fast the arm follows the hand under a WELCOME: one line."""
+        named = welcome.human_max_joint_speed
+        if named is None or named <= 0.0:
+            limit = "the robot app names no speed limit for a person"
+        else:
+            limit = f"the robot app's limit for a person is {named:g} rad/s"
+        retarget = self._settings.retarget
+        return (
+            f"{PROGRAM}: the arm follows the hand at up to "
+            f"{_fixed(self._logic.joint_speed(welcome), 2)} rad/s a joint "
+            f"({limit}), its tip at up to {retarget.max_linear_velocity:g} m/s "
+            f"and {retarget.max_angular_velocity:g} rad/s"
+        )
 
     def _problem(self, welcome: Welcome) -> str | None:
         """Why this program must not drive a WELCOME's session; None: it may."""
@@ -804,6 +829,7 @@ class _Loop:
         self._log_feed()
         if new_session:
             _log.info(_NEW_SESSION, _plain(welcome.session_id))
+            self._say(self._speed_line(welcome))  # its limit may be another
         logic.log_pass()
         self._edges.note(feed_step, logic.last)
         self._stage = feed_step.stage
@@ -858,6 +884,7 @@ class _Loop:
                 self._logic.last,
                 self._solver.times_s,
                 self._logic.counts(),
+                self._logic.ahead_m,
             )
         )
         for samples in (self._tick_ages, self._state_ages, self._solver.times_s):

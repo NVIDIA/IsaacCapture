@@ -48,7 +48,7 @@ from isaaccapture.retargeting_engine.tensor_types import (
     TransformMatrix,
 )
 
-from .types import GraphStep, RetargetSettings
+from .types import LIMITER_PASS_S, GraphStep, RetargetSettings
 
 # The two leaves every step must be given besides the controllers.
 TO_BASE_LEAF = "controller_to_base"
@@ -63,13 +63,6 @@ COMMANDED_KEY = "commanded_target"  # the clutch's pose
 EE_KEY = "ee_target"  # the rate limiter's pose
 LIMITER_KEY = "limiter"  # the rate limiter's status
 CONTROLLER_KEY = "controller"  # the right controller, before the rotation
-
-# The most time the rate limiter counts for one pass, s: the period of the
-# human program's passes. A late pass moves the target no further than a pass
-# on time, so what follows the graph never gets a larger step. The least it
-# counts is half of this: a rates.loop_hz (the human program's passes per
-# second) above 100 would raise both hand speed limits in proportion.
-LIMITER_PASS_S = 0.02
 
 # As the clutch checks its home: wide enough for a matrix typed with 5 decimals.
 _ROTATION_ATOL = 1e-4

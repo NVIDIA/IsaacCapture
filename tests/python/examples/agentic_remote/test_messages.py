@@ -396,6 +396,7 @@ MESSAGE_FIELDS = {
         "camera_calibration_id": "",
         "driver": "",
         "agent_max_joint_speed": None,
+        "human_max_joint_speed": None,
     },
     Move: {
         "command_id": ...,
@@ -725,6 +726,21 @@ def test_welcome_carries_the_agents_speed_limit_and_an_old_welcome_declares_none
     assert old == WELCOME and messages.PROTOCOL_VERSION == 1
     with pytest.raises(ProtocolError, match=r"agent_max_joint_speed"):
         decode(Welcome.TYPE, _changed(WELCOME, ("agent_max_joint_speed",), "fast"))
+
+
+def test_welcome_carries_the_human_speed_limit_and_an_old_welcome_declares_none():
+    # The human program moves its joint target no faster than a share of it.
+    sent = dataclasses.replace(WELCOME, human_max_joint_speed=0.8)
+    assert json.loads(sent.to_payload())["human_max_joint_speed"] == 0.8
+    assert decode(Welcome.TYPE, sent.to_payload()) == sent
+    assert sent.agent_max_joint_speed is None  # each limit by itself
+    # A WELCOME from a robot app that knows no such field declares no limit,
+    # and the protocol version did not change for the field.
+    old = decode(Welcome.TYPE, _without(WELCOME, "human_max_joint_speed"))
+    assert old.human_max_joint_speed is None
+    assert old == WELCOME and messages.PROTOCOL_VERSION == 1
+    with pytest.raises(ProtocolError, match=r"human_max_joint_speed"):
+        decode(Welcome.TYPE, _changed(WELCOME, ("human_max_joint_speed",), "fast"))
 
 
 def test_human_setpoint_round_trips_and_is_newest_wins():

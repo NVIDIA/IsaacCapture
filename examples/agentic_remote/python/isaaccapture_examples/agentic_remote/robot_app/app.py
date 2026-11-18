@@ -3167,6 +3167,7 @@ class RobotApp:
             camera_calibration_id=config.camera_calibration_id,
             driver=self._driver,
             agent_max_joint_speed=limits.agent.max_joint_speed,
+            human_max_joint_speed=limits.human.max_joint_speed,
         )
 
     # The motion worker

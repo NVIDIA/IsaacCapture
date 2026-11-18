@@ -15,9 +15,9 @@
 # none was measured on the arm or with a headset. Times are in s, lengths in m,
 # angles in rad unless a key says deg.
 #
-# It differs from configs/human.yaml in seven keys: socket_path, teleop.endpoint,
+# It differs from configs/human.yaml in eight keys: socket_path, teleop.endpoint,
 # teleop.attempts, retarget.max_linear_velocity, retarget.max_angular_velocity,
-# ik.apai_arm and ik.max_ahead_rad.
+# ik.apai_arm, ik.max_ahead_rad and ik.max_ahead_m.
 #
 # The program refuses a key it does not know and a number outside the bound its
 # comment names; a number without a named bound must be above 0.
@@ -62,17 +62,19 @@ retarget:
   controller_pose: grip  # the controller pose that is followed: grip or aim
   position_scale: 1.0  # the target's motion per motion of the hand
   squeeze_threshold: 0.5  # the grip counts as squeezed above this; below 1
-  # The rate limiter's bounds on the target's speed. A pass that asks for more is
-  # clamped. Computed on the arm model, not measured on the arm: 1 m/s at the
-  # gripper tip asks a joint for 10 to 13 rad/s, and 1 rad/s of the tip's
-  # turning for up to 3 rad/s. So these two ask a joint for about 0.1 rad/s,
-  # and for more where the arm is stretched out or folded. The Thor follows a
-  # person's target at up to 0.8 rad/s (limits.human.max_joint_speed of
-  # configs/robot_app_rebot.yaml): these two, not that limit, decide how fast
-  # the arm follows the hand. About 0.06 m/s and 0.26 rad/s would ask a joint
-  # for 0.8 rad/s.
-  max_linear_velocity: 0.01  # m/s
-  max_angular_velocity: 0.03  # rad/s
+  # How fast the arm follows the hand is set by the joints, not by these two.
+  # The Thor follows a person at up to 0.8 rad/s a joint, the owner's value of
+  # 2026-11-16 (limits.human.max_joint_speed of configs/robot_app_rebot.yaml),
+  # and names that limit in WELCOME. This program moves the joint target it
+  # sends at 0.9 of the Thor's speed clamp, 0.71 rad/s on the fastest joint: 40
+  # degrees a second. Computed on the arm model, not measured on the arm: the
+  # gripper tip then moves at 7 to 19 cm a second with the arm raised, by its
+  # direction, and slower where the arm is stretched out or folded.
+  # The fastest the gripper tip's target moves, toward the hand and with the arm
+  # behind it: it binds only where the joints could move the tip faster.
+  max_linear_velocity: 0.25  # m/s
+  # The fastest the gripper tip's target turns.
+  max_angular_velocity: 1.0  # rad/s
   # A hand faster than this is not followed at all, and the arm holds until the
   # grip was released and squeezed again. Not below the bound above; null: none.
   reject_linear_velocity: 2.0  # m/s
@@ -96,18 +98,24 @@ ik:
   apai_arm: rebot_rs
   max_iter: 50  # iterations of one solve; a whole number
   tol: 0.0001  # a solve has converged below this error
-  # A solution further than this, on any joint, from the one before it is a jump
-  # and ends the engagement, the stretch in which the arm follows the hand.
+  # A solution further than this, on any joint, from the joint target before it
+  # is a jump. The step of the tip is then halved, up to three times; a jump
+  # that stays ends the engagement, the stretch in which the arm follows the
+  # hand.
   max_jump_rad: 0.05
-  # The farthest, on any joint, a solution may run ahead of the Thor's last joint
-  # target before the engagement ends. The Thor refuses a target 0.05 rad from
-  # its own last joint target (limits.human.max_step_rad of the rig's robot
-  # file), which is never older than the one seen here: 0.005 below that covers
-  # two readings of the holding arm at a squeeze. A squeeze at rest begins 0.033
-  # ahead, so not lower.
+  # The farthest, on any joint, the joint target may lie from where the arm, or
+  # the Thor's own joint target, can be: beyond it the arm does not follow and
+  # the engagement ends. At a squeeze it is measured from the arm; once the Thor
+  # drives, from its last joint target moved on by what its speed clamp allows
+  # since. 0.005 below the 0.05 rad at which the Thor refuses a target
+  # (limits.human.max_step_rad of the rig's robot file): that covers two
+  # readings of the holding arm at a squeeze. A squeeze at rest begins 0.033
+  # from the arm, so not lower.
   max_ahead_rad: 0.045
-  # The farthest the hand's target may run ahead of the rate-limited target.
-  max_ahead_m: 0.05
+  # The farthest the hand may be ahead of the arm's gripper tip. Up to it the
+  # arm catches up with the hand and stops where the hand stopped; a hand
+  # further ahead is not believed, and the engagement ends.
+  max_ahead_m: 0.5
   max_failures: 5  # failed solves in a row that end the engagement; a whole number
 
 buttons:

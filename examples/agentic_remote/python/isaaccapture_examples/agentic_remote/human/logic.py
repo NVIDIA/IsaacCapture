@@ -17,6 +17,17 @@ hold before the arm may follow the hand. Armed: the gates held on a pass with
 the grip released, so the next squeeze is a new one. Ahead: how far a target
 lies ahead of what follows it.
 
+Following. The Thor is the machine on the robot; its robot app follows a joint
+target at its speed clamp, a share of the human joint speed limit it names in
+WELCOME. An engagement's first joint target is the home, and it stands until a
+ROBOT_STATE shows the robot app's drive following it. From then on each pass
+solves for a pose at most one pass of the hand speed limits from the pose of
+the last joint target sent, toward the graph's target, and moves the joint
+target toward that solution by at most JOINT_SPEED_SHARE of what the clamp
+allows, every joint by the same share. A hand that is ahead is caught up
+with; the arm stops where the hand stopped, or at once when the grip is
+released.
+
 Buttons. A pass has known buttons when the feed gave the graph's outputs with
 a known sample age; the controller's pose need not be valid. Right B sends one
 STOP per stretch that it is down, on the stretch's first pass with known
@@ -64,9 +75,42 @@ from ..protocol.messages import (
     Stop,
     Welcome,
 )
-from .types import FeedStep, GraphPort, GraphStep, HumanSettings, SolverPort
+from .types import (
+    AHEAD_NOTE_CM,
+    LIMITER_PASS_S,
+    NOTE_CATCHING_UP,
+    FeedStep,
+    GraphPort,
+    GraphStep,
+    HumanSettings,
+    IkStep,
+    SolverPort,
+)
 
 _log = logging.getLogger("isaaccapture.examples.agentic_remote.human_logic")
+
+# The robot app's speed clamp as a share of the human joint speed limit it
+# names in WELCOME: SPEED_MARGIN of robot_app/human.py.
+THOR_SPEED_MARGIN = 0.98
+# The share of that clamp at which the joint target sent here moves, so that
+# the robot app's own last joint target does not fall behind it.
+JOINT_SPEED_SHARE = 0.9
+# The human joint speed limit, rad/s, taken for a robot app that names none.
+UNNAMED_JOINT_SPEED = 0.1
+# How long an engagement's first joint target stands with no ROBOT_STATE that
+# shows the robot app's drive following it; then the engagement ends.
+FOLLOW_WAIT_S = 1.0
+# A pose step whose solution is a jump is halved up to this often.
+STEP_HALVINGS = 3
+# The farthest the hand may be turned ahead of the last joint target's tip,
+# rad. Near a half turn the shorter way round is not the hand's way for sure.
+MAX_AHEAD_TURN_RAD = 2.0
+# The note NOTE_CATCHING_UP gives the distance as AHEAD_NOTE_CM, then in steps
+# of AHEAD_NOTE_STEP_CM, and stands until the hand is AHEAD_NOTE_SLACK_CM
+# outside its step: a note that changed on every pass would make a new line
+# on the console each time.
+AHEAD_NOTE_STEP_CM = 10
+AHEAD_NOTE_SLACK_CM = 2.0
 
 # The STOP that right B sends.
 STOP_REASON = "right B"
@@ -195,6 +239,8 @@ class _Pass:
     owns: bool  # the ROBOT_STATE shows the human as the control owner
     human: dict[str, Any]  # health["human"] of the ROBOT_STATE
     measured: tuple[float, ...] | None  # None: a joint has no valid reading
+    thor_speed: float  # the robot app's speed clamp on a person's joint, rad/s
+    thor_period_s: float  # the time from one of its setpoints to the next
 
     @property
     def takeover_open(self) -> bool:
@@ -266,12 +312,19 @@ class HumanLogic:
         self._settings = settings
         self._source = source
         self._idle_period = 1.0 / settings.idle_hz
+        self._period = 1.0 / settings.loop_hz
         self._armed = False
         self._last: GraphStep | None = None
         self._clutch_engaged = False  # after the graph's last pass
         self._engaged = False  # the last pass sent a joint target
         self._home_q: tuple[float, ...] | None = None  # the pose of the last home
         self._q_sent: tuple[float, ...] | None = None  # this engagement's last target
+        self._sent_at = 0.0  # when that target was computed
+        self._began_at = 0.0  # when this engagement's first target was computed
+        self._first_seq = 0  # the seq of the HUMAN_SETPOINT with that first target
+        self._followed = False  # a ROBOT_STATE showed the drive following it
+        self._ahead_m: float | None = None  # the hand ahead of the last target's tip
+        self._ahead_cm: int | None = None  # as the note gives it; None: no such note
         self._failures = 0  # failed solves in a row
         self._ended = ""  # why the workstation ended the last engagement
         self._moved = False  # an engagement ran while this takeover was open
@@ -309,6 +362,20 @@ class HumanLogic:
     def last(self) -> GraphStep | None:
         """The graph's result of the last pass; None when the feed gave none."""
         return self._last
+
+    @property
+    def ahead_m(self) -> float | None:
+        """How far the hand is ahead of the last joint target's tip, m.
+
+        None unless the last pass sent a joint target.
+        """
+        return self._ahead_m if self._engaged else None
+
+    def joint_speed(self, welcome: Welcome | None) -> float:
+        """The fastest a joint of the joint target moves under this WELCOME, rad/s."""
+        span = min(self._period, _named_period(welcome, self._period))
+        clamp = THOR_SPEED_MARGIN * _named_speed(welcome)
+        return JOINT_SPEED_SHARE * clamp * span / self._period
 
     def counts(self) -> dict[str, int]:
         """How often each of COUNT_KEYS happened so far."""
@@ -441,6 +508,8 @@ class HumanLogic:
             measured=(
                 None if state is None else _measured(state, self._solver.n_joints)
             ),
+            thor_speed=THOR_SPEED_MARGIN * _named_speed(welcome),
+            thor_period_s=_named_period(welcome, self._period),
         )
 
     def _take_results(self, results: Sequence[Result], p: _Pass) -> None:
@@ -611,12 +680,19 @@ class HumanLogic:
         step = p.step
         if not self._engaged:
             self._q_sent = None
+            self._followed = False
+            self._began_at = p.now_mono
+            # This pass's HUMAN_SETPOINT: one goes out on every pass while the
+            # person owns the arm.
+            self._first_seq = self._seq + 1
+            self._ahead_cm = None
             self._failures = 0
             self._moved = True
             self._refusal = None
             self._counts["engagements"] += 1
             self._later(logging.INFO, "engagement started")
         seed = self._q_sent
+        since = self._period if seed is None else max(0.0, p.now_mono - self._sent_at)
         if seed is None:
             seed = self._home_q
         if seed is None:
@@ -627,34 +703,135 @@ class HumanLogic:
         if step.ee_target is None or step.commanded_target is None:
             self._end("no_solution", "the retargeting graph gave no target")
             return None
-        hand = step.commanded_target[:3, 3] - step.ee_target[:3, 3]
-        ahead_m = float(np.linalg.norm(hand))
+        at = self._solver.fk(seed)  # the tip's pose at the last joint target
+        ahead_m = float(np.linalg.norm(step.commanded_target[:3, 3] - at[:3, 3]))
         if not ahead_m <= ik.max_ahead_m:
-            why = f"the hand is {ahead_m * 100.0:.1f} cm ahead of the arm's target"
+            # Short enough to stand whole behind NOTE_SQUEEZE_AGAIN, as below.
+            why = (
+                f"the hand is {ahead_m * 100.0:.0f} cm ahead of the arm, over "
+                f"the {ik.max_ahead_m * 100.0:.0f} cm followed"
+            )
             self._end("hand_ahead", why)
             return None
-        solved = self._solver.solve(step.ee_target, seed)
-        q = None if solved.problem else _joints(solved.q, len(seed))
-        if q is None:
-            problem = solved.problem or "no IK solution (no usable joint values)"
-            if problem.startswith(_JUMP):
-                self._end("jump", problem)
+        turned = _axis_angle(at[:3, :3].T @ step.commanded_target[:3, :3])[1]
+        if not turned <= MAX_AHEAD_TURN_RAD:
+            why = (
+                f"the hand is turned {math.degrees(turned):.0f} deg ahead of the "
+                f"arm ({math.degrees(MAX_AHEAD_TURN_RAD):.0f} are followed)"
+            )
+            self._end("hand_ahead", why)
+            return None
+        self._ahead_m = ahead_m
+        self._ahead_cm = _ahead_step(100.0 * ahead_m, self._ahead_cm)
+        if self._q_sent is not None and not self._thor_follows(p):
+            # The first target stands: the robot app measures the first step
+            # of its drive from the arm, and refuses a target that has moved
+            # on while it read the arm.
+            if p.now_mono - self._began_at > FOLLOW_WAIT_S + _EPS:
+                why = f"the arm did not follow the squeeze within {FOLLOW_WAIT_S:g} s"
+                self._end("solution_ahead", why)
                 return None
-            self._failures += 1
-            if self._failures >= ik.max_failures:
-                self._end("no_solution", problem)
-                return None
-            q = seed  # one failed pass sends the last joint values again
+            q = seed
         else:
-            self._failures = 0
-        reference = _reference(p.state, p.human, p.measured)
-        ahead = max(abs(a - b) for a, b in zip(q, reference))
+            solved = self._solve(step.ee_target, at, seed, since)
+            q = None if solved.problem else _joints(solved.q, len(seed))
+            if q is None:
+                problem = solved.problem or "no IK solution (no usable joint values)"
+                if problem.startswith(_JUMP):
+                    self._end("jump", problem)
+                    return None
+                self._failures += 1
+                if self._failures >= ik.max_failures:
+                    self._end("no_solution", problem)
+                    return None
+                q = seed  # one failed pass sends the last joint values again
+            else:
+                self._failures = 0
+                q = self._limited(seed, q, since, p)
+        # The robot app's joint target may have come this much nearer since
+        # the ROBOT_STATE: what is left is how far the arm does not follow.
+        reference, moves = _reference(p.state, p.human, p.measured)
+        nearer = p.state_age_s * p.thor_speed if moves else 0.0
+        ahead = max(abs(a - b) for a, b in zip(q, reference)) - nearer
         if not ahead <= ik.max_ahead_rad:
             why = f"the solution is {ahead:.3f} rad ahead of the arm"
             self._end("solution_ahead", why)
             return None
         self._q_sent = q
+        self._sent_at = p.now_mono
         return q
+
+    def _thor_follows(self, p: _Pass) -> bool:
+        """Whether a ROBOT_STATE has shown the robot app's drive following this engagement.
+
+        Its drive runs, has sent a setpoint, had this engagement's first joint
+        target, or a later one, as its newest, and its own joint target has
+        come within one of its steps of that first target. A robot app that
+        names no seq, or no joint target, is taken at the others.
+        """
+        if self._followed:
+            return True
+        seq = p.human.get("seq")
+        named = isinstance(seq, int) and not isinstance(seq, bool)
+        if not (
+            p.human.get("driving")
+            and p.state.move_index > 0
+            and (not named or seq >= self._first_seq)
+        ):
+            return False
+        reference, known = _reference(p.state, p.human, p.measured)
+        if known:
+            off = max(abs(a - b) for a, b in zip(self._q_sent, reference))
+            if not off <= p.thor_speed * p.thor_period_s + _EPS:
+                return False
+        self._followed = True
+        return True
+
+    def _solve(
+        self,
+        goal: np.ndarray,
+        at: np.ndarray,
+        seed: tuple[float, ...],
+        since: float,
+    ) -> IkStep:
+        """One solve on the way from the pose `at` to goal, seeded with seed.
+
+        The pose solved for lies at most one pass of the hand speed limits
+        from `at`, so the tip is no faster than those limits while it catches
+        up. Near a singular pose a short step of the tip asks a joint for a
+        long one: while the solution is a jump the step is halved, up to
+        STEP_HALVINGS times. since is the time since the last joint target.
+        """
+        retarget = self._settings.retarget
+        span = min(LIMITER_PASS_S, max(0.5 * LIMITER_PASS_S, since))  # as the limiter
+        metres = retarget.max_linear_velocity * span
+        rad = retarget.max_angular_velocity * span
+        slack = self._settings.ik.tol  # what a solve may leave of its pose
+        for _ in range(STEP_HALVINGS):
+            solved = self._solver.solve(_toward(at, goal, metres, rad, slack), seed)
+            if not solved.problem.startswith(_JUMP):
+                return solved
+            metres, rad = 0.5 * metres, 0.5 * rad
+        return self._solver.solve(_toward(at, goal, metres, rad, slack), seed)
+
+    def _limited(
+        self, seed: tuple[float, ...], q: tuple[float, ...], since: float, p: _Pass
+    ) -> tuple[float, ...]:
+        """q, or the joint values on the way to it from seed that the speed allows.
+
+        No joint moves faster than JOINT_SPEED_SHARE of the robot app's speed
+        clamp, over at most one pass and one of the robot app's setpoint
+        periods. Every joint moves by the same share of its way, so the
+        direction in joint space is kept.
+        """
+        span = min(since, self._period, p.thor_period_s)
+        most = JOINT_SPEED_SHARE * p.thor_speed * span
+        ways = [to - start for start, to in zip(seed, q)]
+        far = max(abs(way) for way in ways)
+        if far <= most:
+            return q
+        share = most / far
+        return tuple(start + share * way for start, way in zip(seed, ways))
 
     def _end(self, key: str, why: str) -> None:
         """End the engagement on the workstation; only a new squeeze starts one."""
@@ -731,6 +908,8 @@ class HumanLogic:
     def _note(self, p: _Pass, state: RobotState, gate: tuple[str, str] | None) -> str:
         """What the operator does next, or why the arm does not follow."""
         if p.owns and self._engaged:
+            if self._ahead_cm is not None:
+                return NOTE_CATCHING_UP.format(cm=self._ahead_cm)
             return self._jaw_note(p)  # behind every note about the arm
         if p.owns and self._ended:
             # The prefix stays whole: the reason alone is cut to what is left.
@@ -859,15 +1038,96 @@ def _human_facts(state: RobotState | None) -> dict[str, Any]:
 
 def _reference(
     state: RobotState, human: dict[str, Any], measured: tuple[float, ...]
-) -> tuple[float, ...]:
-    """What a solution may not run ahead of.
+) -> tuple[tuple[float, ...], bool]:
+    """What a joint target may not run ahead of, and whether that moves on.
 
     The robot app's last joint target once its drive for the person has sent a
-    setpoint, else the measured pose: before that the target is the last
-    owner's, which the arm may hold short of.
+    setpoint: the drive moves it on at the speed clamp. Else the measured
+    pose, which stands: before that the target is the last owner's, which the
+    arm may hold short of.
     """
     if human.get("driving") and state.move_index > 0 and state.target_q is not None:
         target = _joints(state.target_q, len(measured))
         if target is not None:
-            return target
-    return measured
+            return target, True
+    return measured, False
+
+
+def _named_speed(welcome: Welcome | None) -> float:
+    """The human joint speed limit a WELCOME names, rad/s; else UNNAMED_JOINT_SPEED."""
+    speed = None if welcome is None else _finite(welcome.human_max_joint_speed)
+    return speed if speed is not None and speed > 0.0 else UNNAMED_JOINT_SPEED
+
+
+def _named_period(welcome: Welcome | None, own_s: float) -> float:
+    """The setpoint period a WELCOME names, s; else this program's own period."""
+    period = None if welcome is None else _finite(welcome.setpoint_period_s)
+    return period if period is not None and period > 0.0 else own_s
+
+
+def _ahead_step(cm: float, shown: int | None) -> int | None:
+    """The distance the catching-up note gives for a hand cm ahead; None: no note.
+
+    shown is what the note of the pass before gave.
+    """
+    if shown is not None:
+        step = AHEAD_NOTE_STEP_CM
+        above = step if shown < step else shown + step
+        if shown - AHEAD_NOTE_SLACK_CM <= cm < above + AHEAD_NOTE_SLACK_CM:
+            return shown
+    if cm < AHEAD_NOTE_CM:
+        return None
+    if cm < AHEAD_NOTE_STEP_CM:
+        return AHEAD_NOTE_CM
+    return int(cm // AHEAD_NOTE_STEP_CM) * AHEAD_NOTE_STEP_CM
+
+
+def _axis_angle(rotation: np.ndarray) -> tuple[np.ndarray, float]:
+    """The unit axis and the angle, 0 to pi, of a 3x3 rotation."""
+    twice = np.array(
+        [
+            rotation[2, 1] - rotation[1, 2],
+            rotation[0, 2] - rotation[2, 0],
+            rotation[1, 0] - rotation[0, 1],
+        ]
+    )
+    sine = 0.5 * float(np.linalg.norm(twice))
+    cosine = 0.5 * (float(np.trace(rotation)) - 1.0)
+    angle = math.atan2(sine, cosine)
+    if sine > 1e-6:
+        return twice / (2.0 * sine), angle
+    if cosine > 0.0:
+        return np.array([1.0, 0.0, 0.0]), angle  # no turn: any axis
+    # A half turn: the axis is in the diagonal, its signs beside it.
+    axis = np.sqrt(np.clip(0.5 * (np.diag(rotation) + 1.0), 0.0, 1.0))
+    most = int(np.argmax(axis))
+    for index in range(3):
+        if index != most and rotation[most, index] + rotation[index, most] < 0.0:
+            axis[index] = -axis[index]
+    return axis / float(np.linalg.norm(axis)), angle
+
+
+def _turn(axis: np.ndarray, angle: float) -> np.ndarray:
+    """The 3x3 rotation by angle about a unit axis."""
+    x, y, z = axis
+    cross = np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]])
+    return np.eye(3) + math.sin(angle) * cross + (1.0 - math.cos(angle)) * cross @ cross
+
+
+def _toward(
+    at: np.ndarray, goal: np.ndarray, metres: float, rad: float, slack: float
+) -> np.ndarray:
+    """goal, or the pose on the way to it at most metres and rad from `at`.
+
+    The position and the turn are bounded each by itself, as the rate limiter
+    bounds them. A goal within slack of a bound is given as it is.
+    """
+    pose = np.array(goal, dtype=np.float64)
+    way = pose[:3, 3] - at[:3, 3]
+    far = float(np.linalg.norm(way))
+    if far > metres + slack:
+        pose[:3, 3] = at[:3, 3] + way * (metres / far)
+    axis, angle = _axis_angle(at[:3, :3].T @ pose[:3, :3])
+    if angle > rad + slack:
+        pose[:3, :3] = at[:3, :3] @ _turn(axis, rad)
+    return pose

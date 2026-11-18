@@ -426,6 +426,15 @@ def test_a_human_program_at_the_socket_gets_welcome_state_and_its_results(on_tho
     station = thor.attach()
     assert station.ws.welcome == h.client.welcome
     assert station.ws.welcome.session_id == h.app.session_id
+    # The WELCOME names the two numbers the human program limits its joint
+    # target with: the human joint speed limit, which the robot app follows a
+    # person at 0.98 of, and the period of its setpoints.
+    limits, period = h.config.limits, h.config.executor.period_s
+    named = station.ws.welcome
+    assert named.human_max_joint_speed == limits.human.max_joint_speed
+    assert named.human_max_joint_speed != limits.agent.max_joint_speed
+    assert named.agent_max_joint_speed == limits.agent.max_joint_speed
+    assert named.setpoint_period_s == period
     assert station.end.status.roles == {"human": 1}
     # Both ends of the robot app get the ROBOT_STATE that says who is attached.
     h.advance(0.1, 0.05)
