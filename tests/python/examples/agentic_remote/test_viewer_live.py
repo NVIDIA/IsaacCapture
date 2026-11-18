@@ -23,6 +23,12 @@ that the page loaded last has drawn and acknowledged. A takeover makes a person
 the control owner; a human drive is one stretch of a person's motion. The robot
 link service of these tests is one of their own, on a socket in a temporary
 folder: none attaches to a service of this machine.
+
+The viewer instance is one start of the viewer, to its end. A page that was
+open across a restart of the viewer, and a page that a newer load replaced,
+run under node and in headless Chrome on the launcher's real page: there the
+viewer is ended with every connection the browser has open and started again
+on the same port, one the system picked.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -105,6 +111,8 @@ from isaaccapture_examples.agentic_remote.viewer_live import (  # noqa: E402
 )
 from isaaccapture_examples.agentic_remote.viewer_live.live import (  # noqa: E402
     BOUNDARY,
+    INSTANCE_HEADER,
+    INSTANCE_PLACE,
     PICTURE_PATH,
     ROBOT_PATH,
     SHOWN_PATH,
@@ -149,6 +157,9 @@ PACKAGE = Path(live_module.__file__).resolve().parent
 BLOCK = live_module.PAGE_BLOCK_FILE.read_bytes()
 # How a served page names its view token: the secret of that load of the page.
 VIEW_TOKEN = re.compile(rb"const TOKEN = '([A-Za-z0-9_-]{32})';")
+# How a served page names the viewer instance that served it: one start of
+# the viewer, to its end.
+VIEWER_INSTANCE = re.compile(rb"const INSTANCE = '([0-9a-f]{16})';")
 # What only the block holds: it is in a served page once.
 BLOCK_MARK = f"const PICTURE = '{PICTURE_PATH}'".encode()
 NOT_LIVE = ViewStatus(live=False, age_s=AGE_WHEN_NOT_LIVE_S)
@@ -345,18 +356,31 @@ def showing(
         live.close()
 
 
+def block_in(body: bytes, view_token: bytes) -> bytes:
+    """The block as a served page holds it, with this view token.
+
+    The block holds the page's viewer instance where the file holds
+    INSTANCE_PLACE, and the view token where it holds TOKEN_PLACE.
+    """
+    assert BLOCK.count(TOKEN_PLACE) == 1 and BLOCK.count(BLOCK_MARK) == 1
+    assert BLOCK.count(INSTANCE_PLACE) == 1
+    found = VIEWER_INSTANCE.search(body)
+    assert found is not None, "the served page names no viewer instance"
+    return BLOCK.replace(TOKEN_PLACE, view_token).replace(
+        INSTANCE_PLACE, found.group(1)
+    )
+
+
 def served_block(body: bytes, page: bytes) -> str:
     """The view token of a served page.
 
     The body is `page` with the block before its </body>, and nothing else;
     the block holds that load's view token where the file holds TOKEN_PLACE.
     """
-    assert BLOCK.count(TOKEN_PLACE) == 1 and BLOCK.count(BLOCK_MARK) == 1
     found = VIEW_TOKEN.search(body)
     assert found is not None, "the served page holds no view token"
     at = page.rindex(b"</body>")
-    block = BLOCK.replace(TOKEN_PLACE, found.group(1))
-    assert body == page[:at] + block + page[at:]
+    assert body == page[:at] + block_in(body, found.group(1)) + page[at:]
     return found.group(1).decode()
 
 
@@ -981,6 +1005,137 @@ def test_only_the_page_loaded_last_gets_pictures_and_counts() -> None:
             two.close()
 
 
+def counting_page(tab: Tab) -> dict[str, bool]:
+    """What the viewer answers the page of this tab about the page that counts."""
+    connection = tab._http()
+    try:
+        headers = {TOKEN_HEADER: tab.token} if tab.token else {}
+        connection.request("GET", STATE_PATH, headers={**headers, **tab.headers})
+        reply = connection.getresponse()
+        body = reply.read()
+    finally:
+        connection.close()
+    assert reply.status == 200, reply.status
+    return json.loads(body)["counting_page"]
+
+
+def test_the_viewer_names_its_instance_and_tells_a_page_whether_it_counts() -> None:
+    # Of the page that counts: whether there is one, whether it is the page
+    # that asks, and whether it asks for pictures.
+    none = {"loaded": False, "is_this_page": False, "asks": False}
+    another, asking = {**none, "loaded": True}, {"asks": True}
+    counts = {**another, "is_this_page": True}
+    with showing(Camera(hz=60.0), fps=30.0, this_machine=only_127_0_0_1) as (
+        live,
+        port,
+    ):
+        model = live.model
+        until(lambda: live_state(port)["available"], "the live picture")
+        # The instance is one start of the viewer: a name in the answer about
+        # the live picture and in every page. No page was loaded: none counts.
+        state = live_state(port)
+        instance = state["instance"]
+        assert re.fullmatch(r"[0-9a-f]{16}", instance)
+        assert state["counting_page"] == none
+        first, second, watcher = Tab(port), Tab(port), Elsewhere(port)
+        for body in (first.page(), watcher.page()):
+            assert VIEWER_INSTANCE.findall(body) == [instance.encode()]
+        # A page loaded on the workstation counts, and has asked for no picture.
+        first.load()
+        assert counting_page(first) == counts
+        # Not for a request without its view token, or from another machine.
+        assert live_state(port)["counting_page"] == another
+        watcher.token = first.token
+        assert counting_page(watcher) == another
+        first.show()
+        until(lambda: status_now(model).live, "the first page's live view")
+        assert counting_page(first) == {**counts, **asking}
+        # A newer load: the first page is refused, by this viewer instance,
+        # and is told so when it asks about the live picture.
+        second.load()
+        until(lambda: first.replaced, "the first page's 403")
+        first.freeze()
+        one = first._http()
+        try:
+            one.request(
+                "GET", f"{PICTURE_PATH}?after=0", headers={TOKEN_HEADER: first.token}
+            )
+            reply = one.getresponse()
+            assert (reply.status, reply.read()) == (403, b"")
+            assert reply.getheader(INSTANCE_HEADER) == instance
+            assert counting_page(first) == another
+            assert counting_page(second) == counts
+            second.show()
+            until(lambda: status_now(model).live, "the second page's live view")
+            assert counting_page(first) == {**another, **asking}
+            # The replaced page goes on to watch, as the block's script does:
+            # pictures that count for nothing, and questions with its old
+            # view token. Nothing of it reaches the model.
+            seq = 0
+            for _ in range(10):
+                one.request(
+                    "GET",
+                    f"{PICTURE_PATH}?after={seq}&watch=1",
+                    headers={TOKEN_HEADER: first.token},
+                )
+                reply = one.getresponse()
+                seq = int(reply.getheader("X-Picture-Seq"))
+                assert reply.status == 200 and number_of(reply.read()) > 0
+                assert first.shown(one, seq) == 403
+                assert first.shown(one, seq, visible=False) == 403
+                assert counting_page(first)["is_this_page"] is False
+                assert model.is_current_page(second.token)
+            counts_on(second)
+            assert status_now(model).live and second.refused == []
+            # The page that counts is closed: the viewer says that it asks no
+            # more, and the replaced page still counts for nothing.
+            second.freeze()
+            began = time.monotonic()
+            until(lambda: not counting_page(first)["asks"], "the viewer's word")
+            assert time.monotonic() - began < live_module.FETCH_WATCH_S + 1.5
+            assert counting_page(first) == another
+            assert first.fetch(one)[0] == 403 and first.shown(one, seq) == 403
+            time.sleep(live_settings.ACK_TIMEOUT_S + 0.1)
+            assert status_now(model) == NOT_LIVE
+            assert model.is_current_page(second.token)
+            # Only a load of the page makes it the one that counts.
+            assert first.load() != second.token
+            status, seq, _ = first.fetch(one, after=0)
+            assert status == 200 and first.shown(one, seq) == 204
+            assert status_now(model).live and counting_page(first)["is_this_page"]
+            assert counting_page(second)["is_this_page"] is False
+        finally:
+            one.close()
+            second.close()
+        old_token = first.token
+    # Another start of the viewer is another instance: it refuses the view
+    # token of the one before and names itself.
+    with showing(Camera(hz=60.0)) as (live, port):
+        until(lambda: live_state(port)["available"], "the live picture")
+        later = live_state(port)["instance"]
+        assert re.fullmatch(r"[0-9a-f]{16}", later) and later != instance
+        status, _, body = get(port, PICTURE_PATH, **{TOKEN_HEADER: old_token})
+        assert (status, body) == (403, b"")
+        tab = Tab(port)
+        tab.token = old_token
+        connection = tab._http()
+        try:
+            connection.request(
+                "GET", f"{PICTURE_PATH}?after=0", headers={TOKEN_HEADER: old_token}
+            )
+            reply = connection.getresponse()
+            reply.read()
+            assert reply.status == 403 and reply.getheader(INSTANCE_HEADER) == later
+        finally:
+            connection.close()
+        # No page of this instance has a view token: a page that was open
+        # across the restart may load itself for one.
+        assert counting_page(tab) == none
+        Tab(port).load()
+        assert counting_page(tab) == another
+        assert status_now(live.model) == NOT_LIVE
+
+
 class Connection:
     """A stand-in for a request's connection: the two names a socket gives."""
 
@@ -1086,7 +1241,7 @@ def test_a_page_opened_from_another_machine_only_watches() -> None:
             # a view token: the operator's page is still the page loaded last.
             body = watcher.page()
             at = PAGE.rindex(b"</body>")
-            assert body == PAGE[:at] + BLOCK.replace(TOKEN_PLACE, b"") + PAGE[at:]
+            assert body == PAGE[:at] + block_in(body, b"") + PAGE[at:]
             watcher.load()
             assert model.is_current_page(operator.token)
             assert status_now(model).live and not operator.replaced
@@ -1419,13 +1574,24 @@ PAGE_HARNESS = r"""
 const fs = require('fs'), vm = require('vm');
 const scenario = process.argv[3];
 const block = fs.readFileSync(process.argv[2], 'utf8');
-// A page for another machine holds no view token.
+// A page for another machine holds no view token. The viewer instance that
+// served the page is 'aaaa'.
 const script = block.slice(block.indexOf('<script>') + 8, block.lastIndexOf('</script>'))
-  .replace('__VIEW_TOKEN__', scenario === 'watch' ? '' : 'token-of-this-load');
+  .replace('__VIEW_TOKEN__', scenario.startsWith('watch') ? '' : 'token-of-this-load')
+  .replace('__VIEWER_INSTANCE__', 'aaaa');
 const listeners = {}, windowListeners = {}, intervals = [], timeouts = [];
+// The tab's history entry, and how often the page loaded itself again. In the
+// scenario 'loaded again' the page has done so once, for the instance 'bbbb'.
+const history = {
+  state: scenario === 'loaded again' ? { liveInstance: 'bbbb' } : null,
+  replaceState(state) { this.state = state; },
+};
+let reloads = 0;
 // Every request, the picture requests that wait for their answer, the tokens
 // they carried, the acknowledgements, and the pictures drawn.
 const asked = [], waiting = [], tokens = [], posts = [], drawn = [];
+// The view token each question about the live picture carried.
+const stated = [];
 let clock = 1000000;
 // The share of the live picture's area inside the 1000 x 800 window while it
 // is on the page, and what the observer was last told.
@@ -1479,14 +1645,17 @@ const globals = {
     innerWidth: 1000, innerHeight: 800,
     addEventListener(kind, work) { (windowListeners[kind] ||= []).push(work); },
   },
+  history,
+  location: { reload() { reloads += 1; } },
   setInterval(work) { intervals.push(work); },
   setTimeout(work) { timeouts.push(work); },
   fetch(url, options) {
     asked.push(url);
     if (url.startsWith('/api/live.jpg')) {
       tokens.push((options.headers || {})['X-View-Token'] ?? null);
-      return new Promise(resolve => waiting.push({ url, resolve }));
+      return new Promise((resolve, reject) => waiting.push({ url, resolve, reject }));
     }
+    if (url === '/api/live.json') stated.push((options.headers || {})['X-View-Token'] ?? null);
     if (url === '/api/live/shown') {
       posts.push([options.method, JSON.parse(options.body)]);
       return Promise.resolve({ ok: true, status: 204 });
@@ -1522,6 +1691,15 @@ function give(seq) {
 function reply(status) {
   for (const request of waiting.splice(0)) request.resolve({ status, headers: { get: () => null } });
 }
+// The viewer instance `instance` refuses every waiting request: 403.
+function refuse(instance) {
+  const get = name => (name === 'X-Viewer-Instance' ? instance : null);
+  for (const request of waiting.splice(0)) request.resolve({ status: 403, headers: { get } });
+}
+// Every waiting request fails: the viewer cannot be reached.
+function fail() {
+  for (const request of waiting.splice(0)) request.reject(Error('refused'));
+}
 const settle = () => new Promise(done => setImmediate(done));
 // The browser has drawn the page: an observer hears of a change of the share
 // of the live picture that is inside the window. Off the page it has none.
@@ -1556,8 +1734,11 @@ function seen() {
     live_display: picture.style.display, photo_display: ids.photo.style.display,
     column: column.children.map(node => node.id), box: box.children.map(node => node.id),
     bar: bar.children.map(node => node.id), panel: panel.children.map(node => node.id),
-    style: picture.style, size: [picture.width, picture.height],
+    style: { ...picture.style }, size: [picture.width, picture.height],
     drawn: [...drawn], posts: [...posts], waiting: waiting.map(request => request.url),
+    // The note's colour, how often the page loaded itself again, and what
+    // the tab's history entry keeps.
+    color: note.style.color || '', reloads, kept: history.state && { ...history.state },
   };
 }
 (async () => {
@@ -1569,7 +1750,7 @@ function seen() {
   };
   const live = { attached: true, why: '', live: true, age_s: 0.0834 };
   const done = () => console.log(JSON.stringify({
-    steps: out, asked, tokens, observed: observing && [observing.nodes, observing.options],
+    steps: out, asked, tokens, stated, observed: observing && [observing.nodes, observing.options],
     window_listeners: Object.keys(windowListeners).sort(),
   }));
   if (scenario === 'no photo' || scenario === 'no switches') {
@@ -1593,6 +1774,165 @@ function seen() {
     await step('and the page asks again');
     answer = { available: false, reason: 'the camera source ended: gone' };
     await step('the camera is gone');
+    done();
+    return;
+  }
+  const pass = async turns => { for (let i = 0; i < turns; i++) await turn(); };
+  if (scenario === 'watch restart') {
+    // A page opened from another machine, across a restart of the viewer.
+    const elsewhere = { loaded: true, is_this_page: false, asks: true };
+    answer = { available: true, reason: '', view: live, instance: 'aaaa', counting_page: elsewhere };
+    await step('the live picture shows');
+    await step('picture 7 arrives', () => give(7));
+    answer = { ...answer, instance: 'bbbb' };
+    await step('the new viewer answers');
+    await pass(8);
+    out.push(['two seconds after that', seen()]);
+    done();
+    return;
+  }
+  // What the viewer instance that served the page says while the page counts;
+  // what a later instance says while none of its pages has a view token, and
+  // once one has.
+  const counts = { loaded: true, is_this_page: true, asks: true };
+  const vacant = { loaded: false, is_this_page: false, asks: false };
+  const taken = { loaded: true, is_this_page: false, asks: false };
+  const showing = { available: true, reason: '', view: live, instance: 'aaaa', counting_page: counts };
+  if (scenario === 'outage') {
+    // The viewer gives no answer for a while, and is the same one after it.
+    answer = showing;
+    await step('the live picture shows');
+    await step('picture 7 arrives', () => give(7));
+    answer = null;
+    await step('the viewer is gone', fail);
+    await pass(8);
+    out.push(['two seconds later', seen()]);
+    await step('the tab is hidden', () => visibility(true));
+    await step('the tab is shown', () => visibility(false));
+    answer = showing;
+    await step('the viewer answers again');
+    await step('picture 8 arrives', () => give(8));
+    await pass(9);
+    out.push(['no picture came for two seconds', seen()]);
+    await step('picture 9 arrives', () => give(9));
+    done();
+    return;
+  }
+  if (scenario === 'restart' || scenario === 'restart refused') {
+    // The viewer ends and another instance, 'bbbb', answers five seconds later.
+    answer = showing;
+    await step('the live picture shows');
+    await step('picture 7 arrives', () => give(7));
+    answer = null;
+    await step('the viewer is gone', fail);
+    await pass(20);
+    out.push(['down for five seconds', seen()]);
+    answer = { available: false, reason: 'the camera source is being opened', instance: 'bbbb', counting_page: vacant };
+    if (scenario === 'restart refused') {
+      // It refuses the old view token before the page's next question about
+      // the live picture is due: the page asks at once.
+      refuse('bbbb');
+      for (let i = 0; i < 8; i++) await settle();
+      out.push(['the new viewer refuses the view token', seen()]);
+    }
+    await step('the new viewer answers');
+    await pass(8);
+    out.push(['two seconds after that', seen()]);
+    done();
+    return;
+  }
+  if (scenario === 'loaded again') {
+    // The page that came out of a load for 'bbbb' is still not of that instance.
+    answer = { ...showing, instance: 'bbbb' };
+    await step('the live picture shows');
+    await step('picture 7 arrives', () => give(7));
+    await pass(4);
+    out.push(['a second later', seen()]);
+    answer = { ...answer, instance: 'cccc', counting_page: vacant };
+    await step('the viewer is restarted once more');
+    done();
+    return;
+  }
+  if (scenario === 'restart taken') {
+    // A page of the new viewer has its view token before this page hears of it.
+    answer = showing;
+    await step('the live picture shows');
+    await step('picture 7 arrives', () => give(7));
+    answer = { ...showing, instance: 'bbbb', counting_page: taken };
+    await step('the new viewer answers, and a page of it counts');
+    await step('picture 2 arrives to watch', () => give(2));
+    answer = { ...answer, counting_page: { ...taken, asks: true } };
+    await step('that page asks for pictures');
+    answer = { ...answer, instance: 'cccc', counting_page: vacant };
+    await pass(4);
+    out.push(['the viewer is restarted once more', seen()]);
+    done();
+    return;
+  }
+  if (scenario === 'hidden restart') {
+    answer = showing;
+    await step('the live picture shows');
+    await step('picture 7 arrives', () => give(7));
+    await step('the tab is hidden', () => visibility(true));
+    answer = { ...showing, instance: 'bbbb', counting_page: vacant };
+    await pass(8);
+    out.push(['the viewer was restarted meanwhile', seen()]);
+    // A minute in which the hidden tab's timers do not run, and at the end
+    // of which the new viewer is gone as well.
+    const restarted = answer;
+    answer = null;
+    clock += 60000;
+    await step('the tab is shown and the viewer is gone', () => visibility(false));
+    answer = restarted;
+    await step('the viewer answers');
+    done();
+    return;
+  }
+  if (scenario === 'map restart' || scenario === 'replay restart') {
+    // The operator left the live picture: for the map picture, or for a
+    // replay. The viewer is restarted meanwhile.
+    answer = showing;
+    await step('the live picture shows');
+    await step('picture 7 arrives', () => give(7));
+    if (scenario === 'map restart') {
+      await step('the operator leaves the live picture', () => made[1].click());
+    } else {
+      await step('the operator leaves the live picture', () => {
+        vm.runInContext('pageSwitches(false, false)', context);
+        for (const work of listeners.input) work();
+      });
+    }
+    answer = { ...showing, instance: 'bbbb', counting_page: vacant };
+    await pass(8);
+    out.push(['the viewer was restarted meanwhile', seen()]);
+    if (scenario === 'map restart') {
+      await step('the operator goes back to the live picture', () => made[1].click());
+    } else {
+      await step('the operator goes back to the live picture', () => ids.live.click());
+    }
+    done();
+    return;
+  }
+  if (scenario === 'replaced') {
+    // The viewer says that another page counts, while this one asks for no picture.
+    answer = showing;
+    await step('the live picture shows');
+    await step('picture 7 arrives', () => give(7));
+    await step('Map picture is pressed', () => made[1].click());
+    answer = { ...showing, counting_page: { ...taken, asks: true } };
+    await step('another page was loaded on the workstation');
+    await step('Live picture is pressed', () => made[1].click());
+    await step('picture 8 arrives', () => give(8));
+    await step('the picture is scrolled out of the window', () => scroll(0.2));
+    await step('the tab is hidden', () => visibility(true));
+    await step('the tab is shown', () => visibility(false));
+    answer = { ...answer, counting_page: taken };
+    await step('the page that counts asks no more');
+    // Another viewer instance answers, with its own pictures and with no
+    // page that has its view token: no load.
+    answer = { ...answer, instance: 'bbbb', counting_page: vacant };
+    await pass(8);
+    await step('the viewer was restarted', () => give(3));
     done();
     return;
   }
@@ -1630,7 +1970,14 @@ function seen() {
   answer = { available: true, reason: '', view: { attached: false, why: 'nobody listens', live: null, age_s: null } };
   await step('the viewer is back');
   await step('the page was loaded again elsewhere', () => reply(403));
-  await step('and stays replaced');
+  await step('picture 14 arrives to watch', () => give(14));
+  answer = { ...answer, counting_page: { is_this_page: false, asks: true } };
+  await step('the page that counts asks for pictures');
+  await step('Map picture is pressed again', () => made[1].click());
+  await step('Live picture is pressed again', () => made[1].click());
+  await step('the tab is hidden again', () => visibility(true));
+  await step('the tab is shown again', () => visibility(false));
+  await step('picture 15 arrives to watch', () => give(15));
   done();
 })();
 """
@@ -1652,6 +1999,27 @@ def run_page(tmp_path: Path, scenario: str) -> dict[str, Any]:
 
 STORED = {"live_display": "none", "photo_display": ""}
 LIVE = {"live_display": "block", "photo_display": "none"}
+# The colour of the page's note while its picture is not live or does not
+# count, and what the note then says.
+WARN = "#ffbd69"
+UNREACHED = "the viewer cannot be reached; trying again every second"
+RESTARTED = "the viewer was restarted: this page loads itself again"
+LOADS_LATER = (
+    "the viewer was restarted: this page loads itself again once Live picture is "
+    "pressed"
+)
+NOT_LOADED = (
+    "watch only: the viewer was restarted; reload this page to make it the live view"
+)
+ANOTHER_PAGE = (
+    "watch only: another page on the workstation is the live view; reload this "
+    "page to make it the live view"
+)
+NO_PAGE = (
+    "watch only: no page is the live view now; reload this page to make it the "
+    "live view"
+)
+WATCH_ONLY = "watch only: the live view is the page opened on the workstation"
 
 
 def page_shows(
@@ -1805,30 +2173,70 @@ def test_the_page_draws_and_acknowledges_pictures_only_while_the_live_picture_sh
     gone = shows("the camera is gone", stored, "no live picture", see_below)
     assert gone["note"] == "the camera source ended: gone"
     assert gone["posts"][11:] == [word(13, False)]
-    lost = shows("the viewer is gone", stored, "no live picture", see_below)
-    assert lost["note"] == "no answer from the viewer: refused"
+    # Up to here the note was in the warning colour only without a live picture.
+    names = [name for name, _ in told["steps"]]
+    for name, seen in told["steps"][: names.index("the viewer is gone")]:
+        warned = WARN if seen["button"] == "no live picture" else ""
+        assert seen["color"] == warned, name
+    # The viewer gives no answer: the page says so, and that it asks again.
+    not_reached = "viewer not reached: see below"
+    lost = shows("the viewer is gone", stored, "no live picture", not_reached)
+    assert (lost["note"], lost["color"]) == (UNREACHED, WARN)
     returned = shows(
         "the viewer is back", live, "Map picture", "robot not told: see below"
     )
     assert returned["note"].endswith(
         " The robot is not told of this live view: nobody listens."
     )
-    # A newer load of the page has the valid view token: this one says so,
-    # shows the stored picture and asks for no more pictures.
-    reload = "page loaded again: see below"
-    replaced = shows(
-        "the page was loaded again elsewhere", stored, "no live picture", reload
+    assert returned["color"] == "" and returned["waiting"][-1] == after(13)
+    # A newer load of the page has the valid view token: this page goes on
+    # showing the pictures, to watch, says so and tells the viewer nothing
+    # more, not even that its picture counts no longer.
+    watch_only = "watch only: see below"
+    sent = len(returned["posts"])
+
+    def watched(seq: int) -> str:
+        return f"{after(seq)}&watch=1"
+
+    def watches(step: str, expected: dict[str, str], button: str, line: str) -> Any:
+        seen = page_shows(steps, step, expected, button, watch_only)
+        assert seen["note"].startswith(f"{line}. ") and seen["color"] == WARN, step
+        assert len(seen["posts"]) == sent and seen["reloads"] == 0, step
+        return seen
+
+    replaced = watches(
+        "the page was loaded again elsewhere", live, "Map picture", NO_PAGE
     )
+    assert replaced["waiting"] == [watched(13)]
     assert replaced["note"] == (
-        "This page was loaded again, here or in another tab: reload it for the "
-        "live picture."
+        f"{NO_PAGE}. Live camera picture, 0 a second on this screen. Shown, not "
+        "stored: no mask and no markers. The robot is not told of a live view: "
+        "nobody listens."
     )
-    final = shows("and stays replaced", stored, "no live picture", reload)
-    assert final["waiting"] == [] and final["drawn"] == [7, 8, 10, 11, 12, 13]
-    assert final["note"] == replaced["note"]
-    # Every request for a picture carried this load's view token, and every
-    # other request is one of the block's three.
-    assert set(told["tokens"]) == {token} and len(told["tokens"]) >= 8
+    fourteen = watches("picture 14 arrives to watch", live, "Map picture", NO_PAGE)
+    assert fourteen["drawn"][-1] == 14 and fourteen["waiting"] == [watched(14)]
+    # The viewer says whether the page that counts asks for pictures.
+    watches("the page that counts asks for pictures", live, "Map picture", ANOTHER_PAGE)
+    # The button, a hidden tab and a tab that shows again leave it watching.
+    watches("Map picture is pressed again", stored, "Live picture", ANOTHER_PAGE)
+    watches("Live picture is pressed again", live, "Map picture", ANOTHER_PAGE)
+    watches("the tab is hidden again", stored, "Live picture", ANOTHER_PAGE)
+    watches("the tab is shown again", live, "Map picture", ANOTHER_PAGE)
+    final = watches("picture 15 arrives to watch", live, "Map picture", ANOTHER_PAGE)
+    assert final["drawn"] == [7, 8, 10, 11, 12, 13, 14, 15]
+    assert final["waiting"] == [watched(15)]
+    # Every request for a picture that counts carried this load's view token,
+    # and none after the page was replaced did: those are pictures to watch.
+    pictures = [url for url in told["asked"] if url.startswith(PICTURE_PATH)]
+    assert set(told["tokens"]) == {token, None}
+    for url, with_token in zip(pictures, told["tokens"], strict=True):
+        assert (with_token is None) is url.endswith("&watch=1"), url
+    first_watched = pictures.index(watched(13))
+    assert all(url.endswith("&watch=1") for url in pictures[first_watched:])
+    assert len(pictures[:first_watched]) >= 8
+    # Each question about the live picture carried it too: the viewer answers
+    # whether this page counts. Every other request is one of the block's three.
+    assert set(told["stated"]) == {token}
     paths = {url.split("?")[0] for url in told["asked"]}
     assert paths == {STATE_PATH, PICTURE_PATH, SHOWN_PATH}
 
@@ -1887,6 +2295,291 @@ def test_a_page_without_a_view_token_shows_the_pictures_and_tells_the_viewer_not
     paths = {url.split("?")[0] for url in told["asked"]}
     assert paths == {STATE_PATH, PICTURE_PATH}
     assert all(url.endswith("&watch=1") for url in told["asked"] if "jpg" in url)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_page_without_a_view_token_says_in_the_warning_colour_that_it_only_watches(
+    tmp_path: Path,
+) -> None:
+    told = run_page(tmp_path, "watch")
+    for name, seen in told["steps"]:
+        assert seen["note"].startswith(f"{WATCH_ONLY}. "), name
+        assert (seen["color"], seen["reloads"]) == (WARN, 0), name
+    # It asks the viewer about the live picture without a view token.
+    assert told["stated"] and set(told["stated"]) == {None}
+    # The viewer's word that another page counts does not make it a replaced
+    # page, and across a restart of the viewer it loads itself again, once:
+    # that takes no view token from anyone.
+    told = run_page(tmp_path, "watch restart")
+    steps = dict(told["steps"])
+    seven = steps["picture 7 arrives"]
+    assert seven["note"].startswith(f"{WATCH_ONLY}. Live camera picture, 1 a second")
+    assert (seven["reloads"], seven["kept"]) == (0, None)
+    for name in ("the new viewer answers", "two seconds after that"):
+        seen = page_shows(steps, name, LIVE, "Map picture", "watch only: see below")
+        assert (seen["reloads"], seen["kept"]) == (1, {"liveInstance": "bbbb"}), name
+        assert seen["note"].startswith(f"{WATCH_ONLY}. ") and seen["posts"] == []
+    assert set(told["tokens"]) == {None} and set(told["stated"]) == {None}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_while_the_viewer_gives_no_answer_the_page_keeps_its_picture_and_says_how_old(
+    tmp_path: Path,
+) -> None:
+    told = run_page(tmp_path, "outage")
+    steps = dict(told["steps"])
+    not_reached = "viewer not reached: see below"
+
+    def shows(step: str, expected: dict[str, str], button: str, why: str = "") -> Any:
+        return page_shows(steps, step, expected, button, why)
+
+    seven = shows("picture 7 arrives", LIVE, "Map picture")
+    assert seven["color"] == "" and "opacity" not in seven["style"]
+    # No answer: the last picture stays on the page, dimmed, and the note says
+    # in the warning colour that the viewer is asked again and how old it is.
+    gone = shows("the viewer is gone", LIVE, "Map picture", not_reached)
+    assert gone["note"] == f"{UNREACHED}; this picture is 0 s old"
+    assert (gone["color"], gone["style"]["opacity"]) == (WARN, "0.45")
+    later = shows("two seconds later", LIVE, "Map picture", not_reached)
+    assert later["note"] == f"{UNREACHED}; this picture is 2 s old"
+    assert (later["color"], later["style"]["opacity"]) == (WARN, "0.45")
+    # It asked for the next picture again, with its view token.
+    assert later["waiting"] == [f"{PICTURE_PATH}?after=7"]
+    assert later["drawn"] == [7] and later["posts"] == seven["posts"]
+    # A hidden tab shows the page's own picture, as ever; shown again, it has
+    # the old picture and its age.
+    hidden = shows("the tab is hidden", STORED, "Live picture", not_reached)
+    assert (hidden["note"], hidden["color"]) == (UNREACHED, WARN)
+    shown = shows("the tab is shown", LIVE, "Map picture", not_reached)
+    assert shown["note"] == f"{UNREACHED}; this picture is 3 s old"
+    # The same viewer instance answers again: the page counts as before.
+    back = shows("the viewer answers again", LIVE, "Map picture")
+    assert (back["color"], back["style"]["opacity"]) == ("", "")
+    assert back["note"].endswith(" The robot is told: live view, 0.08 s old.")
+    eight = shows("picture 8 arrives", LIVE, "Map picture")
+    word = {"seq": 8, "visible": True, "token": "token-of-this-load"}
+    assert eight["drawn"] == [7, 8] and eight["posts"][-1] == ["POST", word]
+    # A picture that no newer one follows for two seconds is called old too,
+    # whatever the viewer answers.
+    old = shows(
+        "no picture came for two seconds",
+        LIVE,
+        "Map picture",
+        "no new picture: see below",
+    )
+    assert old["note"] == "no new picture from the viewer; this picture is 2 s old"
+    assert (old["color"], old["style"]["opacity"]) == (WARN, "0.45")
+    nine = shows("picture 9 arrives", LIVE, "Map picture")
+    assert (nine["color"], nine["style"]["opacity"]) == ("", "")
+    assert nine["note"].startswith("Live camera picture, 1 a second on this screen.")
+    # The page never loaded itself again: the viewer was the same one.
+    for name, seen in told["steps"]:
+        assert (seen["reloads"], seen["kept"]) == (0, None), name
+    assert set(told["tokens"]) == {"token-of-this-load"}
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+@pytest.mark.parametrize("scenario", ["restart", "restart refused"])
+def test_a_page_that_hears_another_viewer_instance_loads_itself_again_once(
+    tmp_path: Path, scenario: str
+) -> None:
+    told = run_page(tmp_path, scenario)
+    steps = dict(told["steps"])
+    acknowledged = steps["picture 7 arrives"]["posts"]
+    # While the viewer cannot be reached the page loads nothing.
+    down = page_shows(
+        steps,
+        "down for five seconds",
+        LIVE,
+        "Map picture",
+        "viewer not reached: see below",
+    )
+    assert down["note"] == f"{UNREACHED}; this picture is 5 s old"
+    assert (down["reloads"], down["kept"]) == (0, None)
+    names = [name for name, _ in told["steps"]]
+    for name, seen in told["steps"][: names.index("down for five seconds")]:
+        assert (seen["reloads"], seen["kept"]) == (0, None), name
+    # The first answer of another instance about itself: it has given no page
+    # a view token. One load, and the instance it was made for is kept in the
+    # tab's history entry. The page asks for that answer every second or,
+    # sooner, at once on a 403 of another instance for its view token.
+    restarted = "viewer restarted: see below"
+    heard = "the new viewer answers"
+    if scenario == "restart refused":
+        heard = "the new viewer refuses the view token"
+    first = page_shows(steps, heard, STORED, "no live picture", restarted)
+    assert (first["reloads"], first["kept"]) == (1, {"liveInstance": "bbbb"})
+    assert first["note"].startswith(f"{RESTARTED}. ") and first["color"] == WARN
+    # While it loads, the same instance's answers start no second load, and
+    # the page tells the new viewer nothing.
+    for name in ("the new viewer answers", "two seconds after that"):
+        seen = page_shows(steps, name, STORED, "no live picture", restarted)
+        assert seen["note"] == f"{RESTARTED}. the camera source is being opened"
+        assert (seen["reloads"], seen["kept"]) == (1, {"liveInstance": "bbbb"}), name
+        assert seen["posts"] == acknowledged, name
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_page_loads_itself_again_once_for_each_viewer_instance_and_no_more(
+    tmp_path: Path,
+) -> None:
+    # The page that came out of its load for the instance 'bbbb' was served
+    # by another one still: it does not load itself a second time.
+    told = run_page(tmp_path, "loaded again")
+    steps = dict(told["steps"])
+    restarted = "viewer restarted: see below"
+    for name in ("the live picture shows", "picture 7 arrives", "a second later"):
+        seen = page_shows(steps, name, LIVE, "Map picture", restarted)
+        assert (seen["reloads"], seen["kept"]) == (0, {"liveInstance": "bbbb"}), name
+        # It shows the pictures to watch and says what to do.
+        assert seen["note"].startswith(f"{NOT_LOADED}. Live camera picture, "), name
+        assert seen["color"] == WARN and seen["posts"] == [], name
+    assert steps["picture 7 arrives"]["drawn"] == [7]
+    assert steps["a second later"]["waiting"] == [f"{PICTURE_PATH}?after=7&watch=1"]
+    assert set(told["tokens"]) == {None}
+    # A further instance: one load for that one.
+    again = steps["the viewer is restarted once more"]
+    assert (again["reloads"], again["kept"]) == (1, {"liveInstance": "cccc"})
+    assert again["note"].startswith(f"{RESTARTED}. ")
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_page_loads_itself_only_while_no_page_of_the_new_viewer_has_a_view_token(
+    tmp_path: Path,
+) -> None:
+    # A load that a page makes by itself takes the live view from no page:
+    # another page was loaded on the restarted viewer first.
+    told = run_page(tmp_path, "restart taken")
+    steps = dict(told["steps"])
+    acknowledged = steps["picture 7 arrives"]["posts"]
+
+    def watches(step: str, line: str) -> Any:
+        seen = page_shows(steps, step, LIVE, "Map picture", "watch only: see below")
+        assert seen["note"].startswith(f"{line}. ") and seen["color"] == WARN, step
+        assert (seen["reloads"], seen["kept"]) == (0, None), step
+        assert seen["posts"] == acknowledged, step
+        return seen
+
+    # This page watches from then on, as a page that was replaced.
+    watches("the new viewer answers, and a page of it counts", NO_PAGE)
+    two = watches("picture 2 arrives to watch", NO_PAGE)
+    assert two["drawn"] == [7, 2]
+    assert two["waiting"] == [f"{PICTURE_PATH}?after=2&watch=1"]
+    watches("that page asks for pictures", ANOTHER_PAGE)
+    # And it stays one: a further restart does not make it load itself,
+    # though no page of that viewer has a view token.
+    watches("the viewer is restarted once more", NO_PAGE)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_hidden_tab_loads_itself_again_only_once_it_shows(tmp_path: Path) -> None:
+    told = run_page(tmp_path, "hidden restart")
+    steps = dict(told["steps"])
+    restarted = "viewer restarted: see below"
+    # Hidden, it would take the view token from the page a person looks at.
+    hidden = page_shows(
+        steps, "the viewer was restarted meanwhile", STORED, "Live picture", restarted
+    )
+    assert (hidden["reloads"], hidden["kept"]) == (0, None)
+    assert hidden["note"].startswith(f"{RESTARTED}. ") and hidden["color"] == WARN
+    # It shows a minute later, when that viewer is gone too: what it heard
+    # while hidden is old, and a load now would leave no page. It asks first.
+    gone = page_shows(
+        steps,
+        "the tab is shown and the viewer is gone",
+        LIVE,
+        "Map picture",
+        "viewer not reached: see below",
+    )
+    assert (gone["reloads"], gone["kept"]) == (0, None)
+    assert gone["note"].startswith(f"{RESTARTED}. {UNREACHED}; this picture is ")
+    # The viewer's answer: one load.
+    shown = steps["the viewer answers"]
+    assert (shown["reloads"], shown["kept"]) == (1, {"liveInstance": "bbbb"})
+    # Hidden or shown, it told the new viewer nothing.
+    assert shown["posts"] == steps["the tab is hidden"]["posts"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+@pytest.mark.parametrize("scenario", ["map restart", "replay restart"])
+def test_a_page_off_the_live_picture_loads_itself_only_once_it_is_back_on_it(
+    tmp_path: Path, scenario: str
+) -> None:
+    told = run_page(tmp_path, scenario)
+    steps = dict(told["steps"])
+    left = steps["the operator leaves the live picture"]["posts"]
+    # A load would end the map picture or the replay and make the view live
+    # with nobody at the page: it waits, and the note says for what.
+    waits = page_shows(
+        steps,
+        "the viewer was restarted meanwhile",
+        STORED,
+        "Live picture",
+        "viewer restarted: see below",
+    )
+    assert (waits["reloads"], waits["kept"]) == (0, None)
+    assert waits["note"].startswith(f"{LOADS_LATER}. ") and waits["color"] == WARN
+    assert waits["posts"] == left
+    # Back on the live picture, by the block's button or by "Follow live":
+    # one load, and nothing was told to the new viewer.
+    back = steps["the operator goes back to the live picture"]
+    assert (back["reloads"], back["kept"]) == (1, {"liveInstance": "bbbb"})
+    assert back["posts"] == left
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_page_that_the_viewer_calls_replaced_watches_from_then_on(
+    tmp_path: Path,
+) -> None:
+    told = run_page(tmp_path, "replaced")
+    steps = dict(told["steps"])
+    mapped = page_shows(
+        steps, "Map picture is pressed", STORED, "Live picture", "Map picture showing"
+    )
+    sent = mapped["posts"]
+    assert [word["visible"] for _, word in sent] == [True, False]
+
+    def watches(step: str, expected: dict[str, str], button: str, line: str) -> Any:
+        seen = page_shows(steps, step, expected, button, "watch only: see below")
+        assert seen["note"].startswith(f"{line}. ") and seen["color"] == WARN, step
+        # Not a word to the viewer, and no load of the page.
+        assert seen["posts"] == sent and seen["reloads"] == 0, step
+        assert seen["kept"] is None, step
+        return seen
+
+    def watched(seq: int) -> str:
+        return f"{PICTURE_PATH}?after={seq}&watch=1"
+
+    # The page asks for no picture: the viewer's answer about the live
+    # picture says that another page counts.
+    watches(
+        "another page was loaded on the workstation",
+        STORED,
+        "Live picture",
+        ANOTHER_PAGE,
+    )
+    pressed = watches("Live picture is pressed", LIVE, "Map picture", ANOTHER_PAGE)
+    assert pressed["waiting"][-1] == watched(7)
+    eight = watches("picture 8 arrives", LIVE, "Map picture", ANOTHER_PAGE)
+    assert eight["drawn"] == [7, 8] and eight["waiting"] == [watched(8)]
+    assert eight["note"].endswith(" The robot is told: live view, 0.08 s old.")
+    # Out of the window, hidden and shown again: it watches, and counts never.
+    watches(
+        "the picture is scrolled out of the window", LIVE, "Map picture", ANOTHER_PAGE
+    )
+    watches("the tab is hidden", STORED, "Live picture", ANOTHER_PAGE)
+    watches("the tab is shown", LIVE, "Map picture", ANOTHER_PAGE)
+    # The page that counts asks for no more pictures: it was closed or hidden.
+    watches("the page that counts asks no more", LIVE, "Map picture", NO_PAGE)
+    # A restart of the viewer does not make a replaced page load itself: it
+    # would take the view token. It watches the new instance's pictures.
+    after_restart = watches("the viewer was restarted", LIVE, "Map picture", NO_PAGE)
+    assert after_restart["drawn"] == [7, 8, 3]
+    assert after_restart["waiting"] == [watched(3)]
+    # Only the requests from before it was replaced carried the view token.
+    pictures = [url for url in told["asked"] if url.startswith(PICTURE_PATH)]
+    for url, with_token in zip(pictures, told["tokens"], strict=True):
+        assert (with_token is None) is url.endswith("&watch=1"), url
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -2692,9 +3385,10 @@ RIG_WAIT_S = 15.0
 class Launched:
     """The viewer's launcher, viewer_live's main(), on a thread of the test.
 
-    It runs the experiment's viewer on a port the system picks, on a stand-in
-    camera, with --link-socket at the test's robot link service; `attach`
-    stands in for the attachment to one. end() ends it as Ctrl+C does.
+    It runs the experiment's viewer on `port` (0: one the system picks), on a
+    stand-in camera, with --link-socket at the test's robot link service;
+    `attach` stands in for the attachment to one. end() ends it as Ctrl+C
+    does; die() ends it as the end of its process does.
     """
 
     def __init__(
@@ -2706,21 +3400,28 @@ class Launched:
         camera: Any,
         monkeypatch: pytest.MonkeyPatch,
         attach: Any = connect_local,
+        port: int = 0,
     ) -> None:
         self.lines: list[str] = []
         self.code: int | None = None
         self._attach = attach
         servers = self._servers = []
+        connections = self._connections = []
 
         class Server(viewer.ThreadingHTTPServer):  # type: ignore[misc, name-defined]
             def __init__(inner, *args: Any, **kwargs: Any) -> None:
                 super().__init__(*args, **kwargs)
                 servers.append(inner)
 
+            def get_request(inner) -> Any:
+                request, address = super().get_request()
+                connections.append(request)
+                return request, address
+
         # The viewer's own server class, kept so that the test can end it.
         monkeypatch.setattr(viewer, "ThreadingHTTPServer", Server)
         argv = ["--experiment-dir", str(experiment_dir), "--link-socket", link_socket]
-        argv += ["--runs", str(runs), "--port", "0", "--no-auth"]
+        argv += ["--runs", str(runs), "--port", str(port), "--no-auth"]
         self._thread = threading.Thread(
             target=self._run, args=(argv, camera), daemon=True
         )
@@ -2743,6 +3444,22 @@ class Launched:
             self._thread.join(WAIT_S)
         assert not self._thread.is_alive(), "the viewer did not end"
         return self.code
+
+    def die(self) -> int | None:
+        """End the viewer with every connection a browser has open to it.
+
+        A process that ends closes them; on a thread of the test the viewer's
+        request threads would go on answering on them.
+        """
+        self._cut()
+        code = self.end()
+        self._cut()
+        return code
+
+    def _cut(self) -> None:
+        for connection in list(self._connections):
+            with suppress(OSError):
+                connection.shutdown(socket.SHUT_RDWR)
 
 
 def human(state: Any) -> dict[str, Any]:
@@ -3259,6 +3976,546 @@ def test_in_a_real_browser_a_page_from_another_machine_watches_and_says_so(
     assert not any(method == "POST" for method, _ in browsed.asked)
     pictures = [path for _, path in browsed.asked if path.startswith(PICTURE_PATH)]
     assert len(pictures) >= 30 and all(path.endswith("&watch=1") for path in pictures)
+
+
+# Goes behind the block in the pages of the browser tests that start and end
+# the viewer themselves. Five times a second it tells the test's own server,
+# which is not the viewer, what is on the page: the page reports while the
+# viewer is gone. `load` names this load of the page, `draws` counts the live
+# pictures drawn since it.
+REPORT = rb"""
+<script>
+(function () {
+  const id = name => document.getElementById(name);
+  const load = Math.random().toString(36).slice(2);
+  let draws = 0;
+  const draw = CanvasRenderingContext2D.prototype.drawImage;
+  CanvasRenderingContext2D.prototype.drawImage = function (...what) {
+    if (this.canvas === id('livePhoto')) draws += 1;
+    return draw.apply(this, what);
+  };
+  function report() {
+    const canvas = id('livePhoto'), note = id('livePictureNote');
+    if (!canvas || !note) return;
+    const told = {
+      load, draws, button: id('livePicture').textContent, why: id('livePictureWhy').textContent,
+      note: note.textContent, color: note.style.color, display: canvas.style.display,
+      opacity: canvas.style.opacity, hidden: document.hidden,
+      // The viewer instance the tab's history entry keeps.
+      kept: (history.state && history.state.liveInstance) || '',
+    };
+    fetch('http://127.0.0.1:REPORT_PORT/?' + encodeURIComponent(JSON.stringify(told)),
+      {mode: 'no-cors', cache: 'no-store'}).catch(() => {});
+  }
+  setInterval(report, 200);
+  report();
+})();
+</script>
+"""
+# The warning colour as a browser names it.
+WARN_RGB = "rgb(255, 189, 105)"
+PICTURES_A_SECOND = re.compile(r"Live camera picture, (\d+) a second on this screen\.")
+ROBOT_TOLD_LIVE = re.compile(r" The robot is told: live view, 0\.\d\d s old\.$")
+
+
+def free_port() -> int:
+    """A port of 127.0.0.1 that the system picked, and that is free again."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+class Reporting:
+    """Headless Chrome on the page of a viewer that the test starts and ends.
+
+    The viewer is the launcher's, on one port of 127.0.0.1 that the system
+    picked, on a stand-in camera of the rig's shape. Each start of it has a
+    stand-in for the robot link service of its own, which hands it a Thor's
+    ROBOT_STATE ten times a second and keeps each VIEW_STATUS with its time.
+    The page reports to a server of the test's. The browser's profile lies
+    under tmp_path.
+    """
+
+    def __init__(
+        self,
+        viewer: Any,
+        experiment_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._viewer, self._experiment_dir = viewer, experiment_dir
+        self._tmp_path, self._monkeypatch = tmp_path, monkeypatch
+        self.reports: list[tuple[float, dict[str, Any]]] = []  # of REPORT
+        # (when, method, path and query, whether the browser asked).
+        self.asked: list[tuple[float, str, str, bool]] = []
+        self.port = free_port()
+        self.launched: Launched | None = None
+        self.wire: Stamped | None = None  # of the viewer that runs now
+        self.first_state_at = 0.0  # when that viewer got its first ROBOT_STATE
+        self._chrome: subprocess.Popen[bytes] | None = None
+        self._ended = threading.Event()
+        (tmp_path / "runs").mkdir()
+        reports, asked = self.reports, self.asked
+
+        class Reports(BaseHTTPRequestHandler):
+            def log_message(inner, *args: Any) -> None:
+                pass
+
+            def do_GET(inner) -> None:
+                told = json.loads(unquote(urlsplit(inner.path).query))
+                reports.append((time.monotonic(), told))
+                inner.send_response(204)
+                inner.end_headers()
+
+        self._reports = serving(Reports)
+        report_port = str(self._reports.__enter__()).encode()
+        # What goes into the viewer's page: the block, then REPORT.
+        self.block = block = BLOCK + REPORT.replace(b"REPORT_PORT", report_port)
+        monkeypatch.setattr(live_module, "page_block", lambda: block)
+        real_handler = live_main.live_handler
+
+        def recorded(*args: Any, **kwargs: Any) -> type:
+            class Recorded(real_handler(*args, **kwargs)):  # type: ignore[misc]
+                def _note(inner, method: str) -> None:
+                    browser = "Chrome" in inner.headers.get("User-Agent", "")
+                    asked.append((time.monotonic(), method, inner.path, browser))
+
+                def do_GET(inner) -> None:
+                    inner._note("GET")
+                    super().do_GET()
+
+                def do_POST(inner) -> None:
+                    inner._note("POST")
+                    super().do_POST()
+
+            return Recorded
+
+        monkeypatch.setattr(live_main, "live_handler", recorded)
+        threading.Thread(target=self._feed, daemon=True).start()
+
+    def _feed(self) -> None:
+        seq, fed = 0, None
+        while not self._ended.wait(0.1):
+            wire = self.wire
+            if wire is None or not wire.alive:
+                continue
+            seq += 1
+            now, wall = time.monotonic(), time.time()
+            if wire is not fed:
+                fed, self.first_state_at = wire, now
+            wire.give(
+                dataclasses.replace(
+                    robot_state(seq), clock_mono_s=now, clock_wall_s=wall
+                )
+            )
+
+    def start_viewer(self) -> float:
+        """Start the viewer on the port; when its server was there."""
+        self.wire = Stamped()
+        self.launched = Launched(
+            self._viewer,
+            self._experiment_dir,
+            self._tmp_path / "runs",
+            str(self._tmp_path / "no-service.sock"),
+            Camera(hz=60.0, size=(1280, 992)),
+            self._monkeypatch,
+            attach=Attaching(self.wire),
+            port=self.port,
+        )
+        assert self.launched.port == self.port
+        return time.monotonic()
+
+    def stop_viewer(self) -> float:
+        """End the viewer as the end of its process does; when it was gone."""
+        assert self.launched is not None
+        assert self.launched.die() == 0
+        return time.monotonic()
+
+    def open(self) -> None:
+        """Start the browser on the viewer's page."""
+        self._chrome = subprocess.Popen(
+            [
+                CHROME,
+                "--headless=new",
+                "--disable-gpu",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-background-networking",
+                "--disable-component-update",
+                "--disable-sync",
+                "--disable-extensions",
+                "--disable-default-apps",
+                "--password-store=basic",
+                "--remote-debugging-port=0",
+                f"--user-data-dir={self._tmp_path / 'chrome'}",
+                "--window-size=1920,1080",
+                f"http://127.0.0.1:{self.port}/",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def close(self) -> None:
+        if self._chrome is not None:
+            self._chrome.terminate()
+            try:
+                self._chrome.wait(15)
+            except subprocess.TimeoutExpired:
+                self._chrome.kill()
+                self._chrome.wait(15)
+        self._ended.set()
+        if self.launched is not None:
+            self.launched.end()
+        self._reports.__exit__(None, None, None)
+
+    def live(self) -> bool:
+        """Whether the viewer that runs now told its robot link service "live" last."""
+        sent = self.wire.stamped if self.wire is not None else []
+        return bool(sent) and sent[-1][1].live
+
+    def sent(self, since: float) -> list[ViewStatus]:
+        """Each VIEW_STATUS the viewer that runs now sent from `since` on."""
+        assert self.wire is not None
+        return [status for at, status in list(self.wire.stamped) if at >= since]
+
+    def told(self, since: float, until_: float | None = None) -> list[dict[str, Any]]:
+        """The page's reports from `since` on, before until_."""
+        end = time.monotonic() if until_ is None else until_
+        return [told for at, told in list(self.reports) if since <= at < end]
+
+    def wait(
+        self,
+        holds: Callable[[dict[str, Any]], Any],
+        what: str,
+        since: float = 0.0,
+        within_s: float = WAIT_S,
+    ) -> tuple[float, dict[str, Any]]:
+        """The page's first report from `since` on that holds, with its time."""
+        end = time.monotonic() + within_s
+        while True:
+            assert self._chrome is not None and self._chrome.poll() is None
+            for at, told in list(self.reports):
+                if at >= since and holds(told):
+                    return at, told
+            assert time.monotonic() < end, f"{what} did not come"
+            time.sleep(0.05)
+
+    def loads(self) -> list[float]:
+        """When the browser asked for the page, each time."""
+        return [
+            at
+            for at, method, path, browser in list(self.asked)
+            if browser and method == "GET" and urlsplit(path).path == "/"
+        ]
+
+    def browser_asked(self, since: float) -> list[tuple[str, str]]:
+        """(method, path and query) of the browser's requests from `since` on."""
+        return [
+            (method, path)
+            for at, method, path, browser in list(self.asked)
+            if browser and at >= since
+        ]
+
+
+@pytest.fixture
+def reporting(
+    viewer: Any, experiment_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Reporting]:
+    page = Reporting(viewer, experiment_dir, tmp_path, monkeypatch)
+    try:
+        yield page
+    finally:
+        page.close()
+
+
+def shows_live(told: dict[str, Any]) -> bool:
+    """Whether a report of the page says: live picture, and the robot is told so."""
+    return (
+        told["display"] == "block"
+        and told["why"] == ""
+        and ROBOT_TOLD_LIVE.search(told["note"]) is not None
+    )
+
+
+@experiment
+@pytest.mark.skipif(CHROME is None, reason="no Chrome is installed")
+def test_in_a_real_browser_a_page_open_across_a_restart_of_the_viewer_is_the_live_view_again(
+    reporting: Reporting,
+) -> None:
+    page = reporting
+    page.start_viewer()
+    # Past the quiet time after the viewer's first ROBOT_STATE.
+    time.sleep(CLOCK_STEP_QUIET_S + 0.5)
+    page.open()
+    until(page.live, "the page's live view")
+    began, first = page.wait(shows_live, "the page's word that the robot is told")
+    time.sleep(2.0)
+    assert all(status.live for status in page.sent(began + 0.5))
+    assert len(page.loads()) == 1 and first["kept"] == ""
+    measured = []
+
+    def restart(down_s: float) -> str:
+        """End the viewer, start it again down_s later; the new load's name."""
+        before = page.reports[-1][1]["load"]
+        ended = page.stop_viewer()
+        time.sleep(down_s)
+        # While the viewer is gone the page keeps its last picture, dimmed,
+        # and says in the warning colour how old it is and that it asks again.
+        answered = page.start_viewer()
+        down = page.told(ended + 1.5, answered)
+        assert len(down) >= (down_s - 1.5) * 3, len(down)
+        ages = []
+        for told in down:
+            # The same load of the page: it did not load itself again.
+            assert told["load"] == before, told
+            assert (told["display"], told["opacity"]) == ("block", "0.45"), told
+            assert told["why"] == "viewer not reached: see below", told
+            assert told["color"] == WARN_RGB, told
+            found = re.fullmatch(
+                rf"{re.escape(UNREACHED)}; this picture is (\d+) s old", told["note"]
+            )
+            assert found is not None, told
+            ages.append(int(found.group(1)))
+        assert ages == sorted(ages), ages
+        if down:
+            assert 1 <= ages[0] <= 3 and down_s - 1 <= ages[-1] <= down_s + 2, ages
+            assert len({told["draws"] for told in down}) == 1
+        # The new viewer answers: the page loads itself again, once, and
+        # shows the live picture within about 3 s.
+        shown_at, shown = page.wait(
+            lambda told: (
+                told["load"] != before
+                and told["display"] == "block"
+                and told["draws"] >= 3
+                and told["note"].startswith("Live camera picture, ")
+            ),
+            "the live picture of the new viewer",
+            since=answered,
+        )
+        assert shown_at - answered < 3.0, shown_at - answered
+        # The tab's history entry keeps, across the load, the viewer instance
+        # the page loaded itself for: the one that answers now.
+        assert shown["kept"] == live_state(page.port)["instance"]
+        # Without any input it is the live view again: the new viewer tells
+        # its robot link service so once its quiet time is over.
+        until(page.live, "the live view of the new viewer")
+        live_at = next(at for at, status in list(page.wire.stamped) if status.live)
+        assert live_at - page.first_state_at < CLOCK_STEP_QUIET_S + 2.0
+        told_at, _ = page.wait(
+            lambda told: told["load"] == shown["load"] and shows_live(told),
+            "the new load's word that the robot is told",
+            since=answered,
+        )
+        measured.append(
+            (down_s, shown_at - answered, live_at - answered, told_at - answered)
+        )
+        return shown["load"]
+
+    # Down for five seconds, then down as briefly as a restart is.
+    second = restart(5.0)
+    time.sleep(2.0)
+    third = restart(0.0)
+    time.sleep(2.0)
+    # One load of the page for each restart, and none else.
+    assert len({first["load"], second, third}) == 3
+    assert {told["load"] for _, told in page.reports} == {first["load"], second, third}
+    loads = page.loads()
+    assert len(loads) == 3, loads
+    # After it the page is as a page that was loaded by hand: live, its
+    # note in no warning colour, and every picture it asks for counts.
+    steady = page.told(time.monotonic() - 1.5)
+    sent = page.sent(time.monotonic() - 1.5)
+    assert len(steady) >= 5
+    for told in steady:
+        assert shows_live(told) and told["load"] == third, (told, sent)
+        assert (told["color"], told["opacity"]) == ("", ""), told
+    assert len(sent) >= 5 and all(status.live for status in sent)
+    assert max(status.age_s for status in sent) < 0.5
+    asked = page.browser_asked(loads[2])
+    pictures = [path for _, path in asked if path.startswith(PICTURE_PATH)]
+    assert len(pictures) >= 30 and not any("watch=1" in path for path in pictures)
+    assert any(method == "POST" for method, _ in asked)
+    for down_s, shown_s, live_s, told_s in measured:
+        print(
+            f"measured (the viewer down for {down_s:g} s): the live picture showed "
+            f"again {shown_s:.2f} s after the new viewer's server was there; "
+            f"VIEW_STATUS was live again after {live_s:.2f} s (the new viewer's "
+            f"quiet time is {CLOCK_STEP_QUIET_S:g} s) and the page said so after "
+            f"{told_s:.2f} s"
+        )
+
+
+@experiment
+@pytest.mark.skipif(CHROME is None, reason="no Chrome is installed")
+def test_in_a_real_browser_a_page_loads_itself_once_for_a_viewer_instance_and_no_more(
+    reporting: Reporting, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    page = reporting
+    # A viewer whose every page names another instance than the one that
+    # answers: what a load that brought an old page back would be. For this
+    # viewer no browser runs on its machine: a watch-only page loads itself
+    # whether or not a page has a view token.
+    stale = page.block.replace(INSTANCE_PLACE, b"0" * 16)
+    monkeypatch.setattr(live_module, "page_block", lambda: stale)
+    monkeypatch.setattr(live_module, "on_this_machine", lambda connection: False)
+    page.start_viewer()
+    time.sleep(CLOCK_STEP_QUIET_S + 0.5)
+    page.open()
+    instance = live_state(page.port)["instance"]
+    # The page loads itself again, once: the load after it finds the instance
+    # it was made for in the tab's history entry, and makes no further one.
+    again_at, again = page.wait(
+        lambda told: told["kept"] == instance and told["draws"] >= 3,
+        "the page after its one load",
+    )
+    time.sleep(6.0)
+    loads = page.loads()
+    assert len(loads) == 2, loads
+    assert len({told["load"] for _, told in page.reports}) == 2
+    seen = page.told(again_at + 1.0)
+    assert len(seen) >= 15
+    for told in seen:
+        assert (told["load"], told["kept"]) == (again["load"], instance), told
+        # It shows the pictures to watch.
+        assert told["display"] == "block", told
+        assert told["why"] == "watch only: see below", told
+        assert told["note"].startswith(f"{WATCH_ONLY}. Live camera picture, "), told
+        assert told["color"] == WARN_RGB, told
+    assert seen[-1]["draws"] - seen[0]["draws"] >= 50
+    # It never counted: no picture it asked for did, it sent no
+    # acknowledgement, and the robot was never told "live".
+    asked = page.browser_asked(0.0)
+    pictures = [path for _, path in asked if path.startswith(PICTURE_PATH)]
+    assert len(pictures) >= 50 and all(path.endswith("&watch=1") for path in pictures)
+    assert not any(method == "POST" for method, _ in asked)
+    sent = page.sent(0.0)
+    assert len(sent) >= 20 and not any(status.live for status in sent)
+
+
+@experiment
+@pytest.mark.skipif(CHROME is None, reason="no Chrome is installed")
+def test_in_a_real_browser_a_page_takes_no_view_token_by_a_load_of_its_own(
+    reporting: Reporting, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    page = reporting
+    # A page on the workstation that names another instance than the viewer
+    # that answers, one of whose pages has its view token: a load of its own
+    # would take it.
+    stale = page.block.replace(INSTANCE_PLACE, b"0" * 16)
+    monkeypatch.setattr(live_module, "page_block", lambda: stale)
+    page.start_viewer()
+    time.sleep(CLOCK_STEP_QUIET_S + 0.5)
+    page.open()
+    began, first = page.wait(lambda told: told["draws"] >= 3, "the pictures")
+    time.sleep(6.0)
+    # It did not load itself: it watches, and says what makes it the live view.
+    assert len(page.loads()) == 1
+    assert {told["load"] for _, told in page.reports} == {first["load"]}
+    seen = page.told(began + 1.0)
+    assert len(seen) >= 15
+    for told in seen:
+        assert (told["display"], told["kept"]) == ("block", ""), told
+        assert told["why"] == "watch only: see below", told
+        assert told["note"].startswith(f"{NO_PAGE}. Live camera picture, "), told
+        assert told["color"] == WARN_RGB, told
+    asked = page.browser_asked(0.0)
+    pictures = [path for _, path in asked if path.startswith(PICTURE_PATH)]
+    assert len(pictures) >= 50 and all(path.endswith("&watch=1") for path in pictures)
+    assert not any(method == "POST" for method, _ in asked)
+    sent = page.sent(0.0)
+    assert len(sent) >= 20 and not any(status.live for status in sent)
+
+
+@experiment
+@pytest.mark.skipif(CHROME is None, reason="no Chrome is installed")
+def test_in_a_real_browser_a_replaced_page_keeps_its_pictures_and_never_counts(
+    reporting: Reporting,
+) -> None:
+    page = reporting
+    page.start_viewer()
+    time.sleep(CLOCK_STEP_QUIET_S + 0.5)
+    page.open()
+    until(page.live, "the page's live view")
+    began, first = page.wait(shows_live, "the page's word that the robot is told")
+    time.sleep(2.0)
+    counted = page.told(began + 1.0)
+    rate = min(int(PICTURES_A_SECOND.search(told["note"]).group(1)) for told in counted)
+    assert rate >= 10, rate
+
+    def watches(line: str, since: float, seconds: float) -> list[dict[str, Any]]:
+        """The page's reports of a stretch in which it watches and says `line`."""
+        time.sleep(max(0.0, since + seconds - time.monotonic()))
+        seen = page.told(since, since + seconds)
+        assert len(seen) >= seconds * 3, len(seen)
+        for told in seen:
+            # The same load of the page, with the live picture on it.
+            assert (told["load"], told["display"]) == (first["load"], "block"), told
+            assert told["button"] == "Map picture", told
+            assert told["why"] == "watch only: see below", told
+            assert told["note"].startswith(f"{line}. Live camera picture, "), told
+            assert (told["color"], told["opacity"]) == (WARN_RGB, ""), told
+        # It draws pictures at the rate it had while it counted.
+        rates = [int(PICTURES_A_SECOND.search(told["note"]).group(1)) for told in seen]
+        assert min(rates[2:]) >= 0.7 * rate, (rates, rate)
+        assert seen[-1]["draws"] - seen[0]["draws"] >= 0.7 * rate * (seconds - 0.5)
+        # Every picture is one to watch, and the viewer is told nothing.
+        asked = [
+            (method, path)
+            for at, method, path, browser in list(page.asked)
+            if browser and since <= at < since + seconds
+        ]
+        pictures = [path for _, path in asked if path.startswith(PICTURE_PATH)]
+        assert len(pictures) >= 0.7 * rate * (seconds - 0.5), len(pictures)
+        assert all(path.endswith("&watch=1") for path in pictures)
+        assert not any(method == "POST" for method, _ in asked)
+        assert not any(urlsplit(path).path == "/" for _, path in asked)
+        return seen
+
+    # Another page is loaded on the workstation, and shows the live picture:
+    # a stand-in for a tab that does over HTTP what the block's script does.
+    other = Tab(page.port)
+    other.show()
+    try:
+        replaced_at, _ = page.wait(
+            lambda told: told["note"].startswith(f"{ANOTHER_PAGE}. "),
+            "the page's word that another page is the live view",
+            since=began,
+            within_s=5.0,
+        )
+        watches(ANOTHER_PAGE, replaced_at, 3.0)
+        # The robot is told what the newest page shows: live, by that page.
+        sent = page.sent(replaced_at + 1.0)
+        assert len(sent) >= 8 and all(status.live for status in sent)
+        assert counting_page(other) == {
+            "loaded": True,
+            "is_this_page": True,
+            "asks": True,
+        }
+        assert other.refused == [] and not other.replaced
+        # The page that counts is closed: the page says that no page is the
+        # live view now, and it does not become it by itself.
+        other.freeze()
+        closed_at = time.monotonic()
+        alone_at, _ = page.wait(
+            lambda told: told["note"].startswith(f"{NO_PAGE}. "),
+            "the page's word that no page is the live view",
+            since=closed_at,
+            within_s=live_module.FETCH_WATCH_S + 3.0,
+        )
+        watches(NO_PAGE, alone_at, 3.0)
+        after = page.sent(closed_at + live_settings.ACK_TIMEOUT_S + 0.3)
+        assert len(after) >= 8 and not any(status.live for status in after)
+        assert counting_page(other)["is_this_page"] is True
+    finally:
+        other.close()
+    assert len(page.loads()) == 1
+    assert {told["load"] for _, told in page.reports} == {first["load"]}
+    last = PICTURES_A_SECOND.search(page.reports[-1][1]["note"]).group(1)
+    print(
+        f"measured: the replaced page drew {rate} and more pictures a second "
+        f"while it counted and {last} a second at the end, watching"
+    )
 
 
 # The launcher's settings and its camera frame bridge

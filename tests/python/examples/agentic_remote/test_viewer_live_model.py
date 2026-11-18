@@ -327,6 +327,37 @@ def test_a_new_page_takes_the_token_and_forgets_what_the_page_before_did(model):
     assert status(model, T0) == ViewStatus(live=True, age_s=near(0.1))
 
 
+def test_the_model_says_whether_the_page_loaded_last_asks_for_pictures(model):
+    began = T0 - 20.0
+    # Before a page is loaded, and for a page that has not asked: no.
+    assert not model.page_asks(began, 2.0) and not model.has_page()
+    assert not model.note_asked("", began) and not model.note_asked("a guess", began)
+    assert not model.has_page()
+    first = Page(model)
+    assert not model.page_asks(began, 2.0) and model.has_page()
+    # It asks: yes, for less than the time the caller names.
+    assert model.note_asked(first.token, began)
+    assert model.page_asks(began, 2.0) and model.page_asks(began + 1.999, 2.0)
+    assert not model.page_asks(began + 2.0, 2.0)
+    assert not model.page_asks(began + 0.5, 0.5)
+    # Two requests can come in against the order of their times.
+    assert model.note_asked(first.token, began + 3.0)
+    assert model.note_asked(first.token, began + 2.5)
+    assert model.page_asks(began + 4.9, 2.0) and not model.page_asks(began + 5.0, 2.0)
+    # A new page: what the page before asked is forgotten, and its requests
+    # are not the new page's.
+    second = Page(model, began + 4.0)
+    assert not model.page_asks(began + 4.0, 2.0) and model.has_page()
+    assert not model.note_asked(first.token, began + 4.1)
+    assert not model.page_asks(began + 4.1, 2.0)
+    assert model.note_asked(second.token, began + 4.2)
+    assert model.page_asks(began + 4.3, 2.0)
+    # Asking makes no view live, and a live view does not need it.
+    assert status(model, T0) == NOT_LIVE
+    shown(second)
+    assert status(model, T0).live and not model.page_asks(T0, 2.0)
+
+
 def test_tokens_are_compared_in_constant_time(model, monkeypatch):
     page = Page(model)
     compared: list[tuple[bytes, bytes]] = []

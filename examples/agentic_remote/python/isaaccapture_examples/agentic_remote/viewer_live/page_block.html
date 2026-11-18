@@ -15,7 +15,19 @@ The viewer serves each load of the page on its own machine with a view token:
 a secret that goes out with every request for a picture and with every
 acknowledgement. Only the page loaded last has the valid one. A page opened
 from another machine gets no view token: it shows the pictures to watch and
-tells the viewer nothing.
+tells the viewer nothing. So does, from then on, a page that a newer load
+replaced: only a load of the page makes it the live view again.
+
+The viewer instance is one start of the viewer, to its end; each page is
+served with its name. A page that hears another instance was open across a
+restart of the viewer: it loads itself again, once for each instance, and so
+gets a view token of the viewer that runs now. It does so only while that
+viewer has given no page a view token: a load that a page makes by itself
+takes the live view from no page. While the viewer gives no answer the page
+keeps its last picture, says how old it is and asks again every second.
+
+The note under the button says, in the warning colour, why the picture is not
+live or does not count.
 
 The live arm: while the page follows the newest run, the second part of the
 script asks the viewer for each ROBOT_STATE as it arrives and hands the arm of
@@ -41,14 +53,28 @@ half of the page's time.
   const PICTURE = '/api/live.jpg', SHOWN = '/api/live/shown', STATE = '/api/live.json';
   // The view token of this load of the page; the viewer puts it in here.
   const TOKEN = '__VIEW_TOKEN__';
-  // Without one this is a watch-only page: it was opened from another machine.
-  const WATCH = TOKEN === '';
+  // The viewer instance that served this page; the viewer puts it in here.
+  const INSTANCE = '__VIEWER_INSTANCE__';
+  // Without a view token this page was opened from another machine.
+  const REMOTE = TOKEN === '';
   // The share of the live picture's area that must lie inside the window.
   const SHARE = 0.75;
   // A request that failed is made again after this long.
   const RETRY_MS = 1000;
-  const REPLACED = 'This page was loaded again, here or in another tab: reload it for the live picture.';
+  // A request without an answer for this long has failed.
+  const SILENT_MS = 4000;
+  // A picture that has been on the page for longer than this is called old.
+  const OLD_MS = 2000;
+  // The page loads itself again only on an answer of the viewer this young.
+  const HEARD_MS = 1500;
+  const WARN = '#ffbd69';
   const WATCH_ONLY = 'watch only: the live view is the page opened on the workstation';
+  const ANOTHER_PAGE = 'watch only: another page on the workstation is the live view; reload this page to make it the live view';
+  const NO_PAGE = 'watch only: no page is the live view now; reload this page to make it the live view';
+  const RESTARTED = 'the viewer was restarted: this page loads itself again';
+  const LOADS_LATER = 'the viewer was restarted: this page loads itself again once Live picture is pressed';
+  const NOT_LOADED = 'watch only: the viewer was restarted; reload this page to make it the live view';
+  const UNREACHED = 'the viewer cannot be reached';
   const runs = document.getElementById('run');
   const bar = document.createElement('div');
   const button = document.createElement('button');
@@ -62,7 +88,7 @@ half of the page's time.
   bar.className = 'bar';
   button.id = 'livePicture';
   reason.id = 'livePictureWhy';
-  reason.style.color = '#ffbd69';
+  reason.style.color = WARN;
   note.id = 'livePictureNote';
   note.className = 'muted';
   note.style.padding = '0 14px 12px';
@@ -83,16 +109,39 @@ half of the page's time.
   else photo.parentNode.insertBefore(box, photo);
 
   // wanted: the operator's choice. available, why: the viewer's answer.
-  // shown: the live picture is on the page. replaced: a newer load of the page
-  // has the valid view token. turn: counts the changes of shown.
+  // shown: the live picture is on the page, since shownAt. turn: counts the
+  // changes of shown.
   let wanted = true, available = false, why = 'asking the viewer';
-  let shown = false, replaced = false, turn = 0;
+  let shown = false, shownAt = 0, turn = 0;
+  // replaced: another load of the page has the valid view token, and this
+  // page only watches from now on. other: the viewer instance that answers,
+  // when it is not the one that served this page. vacantFor: the instance
+  // that said that none of its pages has a view token. countingAsks: the page
+  // whose pictures count asks the viewer for them.
+  let replaced = false, other = '', vacantFor = '', countingAsks = false;
+  // failed: why the viewer's last answer did not come; '' when it came.
+  // heardAt: when its last answer came. loading: this page loads itself again.
+  let failed = '', heardAt = 0, loading = false;
   // inWindow: most of the live picture lies inside the browser window.
   // counted: a picture drawn now is acknowledged as one the person sees.
   let inWindow = false, counted = false;
-  // The number of the picture drawn last, when the last ones were drawn, and
-  // what the viewer tells the robot of the live view.
-  let drawnSeq = 0, drawnAt = [], view = null;
+  // The number of the picture drawn last, when the last ones were drawn, when
+  // the last one was, and what the viewer tells the robot of the live view.
+  let drawnSeq = 0, drawnAt = [], drawnLast = 0, view = null;
+  // The viewer instance this tab loaded itself again for. It is kept in the
+  // tab's history entry, which outlives the load: one load for each instance.
+  let loadedFor = '';
+  try { loadedFor = (history.state && history.state.liveInstance) || ''; } catch (error) { loadedFor = ''; }
+
+  // Whether the operator's choice is the live picture: not the map picture,
+  // a replay or an older run.
+  const chosen = () => wanted && follow && !playing && (!runs || runs.value === 'latest');
+  // Whether this page only watches: its pictures count for nothing, and it
+  // tells the viewer nothing.
+  const watching = () => REMOTE || replaced || other !== '';
+  // Ends a request that has no answer after SILENT_MS, where the browser can.
+  const limit = () => (typeof AbortSignal === 'function' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(SILENT_MS) : undefined);
 
   // The browser says how much of the live picture is inside the window.
   const observer = typeof IntersectionObserver === 'function'
@@ -113,6 +162,7 @@ half of the page's time.
   }
 
   function acknowledge(seq, visible) {
+    if (watching()) return;
     fetch(SHOWN, {method: 'POST', cache: 'no-store',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({seq: seq, visible: visible, token: TOKEN})}).catch(() => {});
@@ -122,7 +172,7 @@ half of the page's time.
   // viewer is told at once that the picture drawn last shows no longer.
   function recount() {
     if (!observer) inWindow = shown && boxInWindow();
-    const count = !WATCH && shown && inWindow && !document.hidden;
+    const count = !watching() && shown && inWindow && !document.hidden;
     if (count !== counted) {
       counted = count;
       if (!count && drawnSeq) acknowledge(drawnSeq, false);
@@ -130,20 +180,55 @@ half of the page's time.
     return counted;
   }
 
+  // The viewer was restarted: load this page again, for a view token of the
+  // viewer that runs now. Once for each viewer instance, and only on an
+  // answer of the viewer that has just come: a load that fails leaves no
+  // page. A load of this kind takes the view token from no page: it is made
+  // only while the viewer says that none of its pages has one, not in a
+  // hidden tab, which loads once it shows, not on the map picture, in a
+  // replay or on an older run, which a load would end, and not by a page
+  // that was replaced, which stays a watch-only page.
+  function fresh() {
+    if (!other || replaced || loading || failed || document.hidden || loadedFor === other) return;
+    if (!chosen()) return;
+    if (!REMOTE && vacantFor !== other) return;
+    if (Date.now() - heardAt > HEARD_MS) return;
+    try {
+      history.replaceState(Object.assign({}, history.state, {liveInstance: other}), '');
+      location.reload();
+      loading = true;
+    } catch (error) {
+      // No load from here: the note says to reload.
+      loadedFor = other;
+    }
+  }
+
   // Fetch and draw picture after picture while the live picture is on the
   // page, and acknowledge each one the person sees. The viewer answers each
-  // request once it has a newer picture.
+  // request once it has a newer picture. A page that only watches asks for
+  // pictures that count for nothing.
   async function pictures(mine) {
     while (shown && mine === turn) {
       let wait = 0;
+      const watch = watching();
       try {
-        const answer = await fetch(`${PICTURE}?after=${drawnSeq}${WATCH ? '&watch=1' : ''}`,
-          WATCH ? {cache: 'no-store'} : {cache: 'no-store', headers: {'X-View-Token': TOKEN}});
-        if (answer.status === 403 && !WATCH) {
-          // This page's token is valid no longer, and never will be again.
-          replaced = true;
+        const answer = await fetch(`${PICTURE}?after=${drawnSeq}${watch ? '&watch=1' : ''}`,
+          watch ? {cache: 'no-store', signal: limit()}
+            : {cache: 'no-store', signal: limit(), headers: {'X-View-Token': TOKEN}});
+        if (answer.status === 403 && !watch) {
+          // This page's view token is valid no longer, and never will be
+          // again: the viewer is another instance, which is asked about
+          // itself at once, or a newer load of the page counts. The pictures
+          // go on, to watch.
+          const instance = answer.headers.get('X-Viewer-Instance');
+          if (instance && instance !== INSTANCE) {
+            other = instance;
+            ask();
+          } else {
+            replaced = true;
+          }
           sync();
-          return;
+          continue;
         }
         if (answer.status === 200) {
           const seq = Number(answer.headers.get('X-Picture-Seq'));
@@ -156,7 +241,8 @@ half of the page's time.
           picture.getContext('2d').drawImage(bitmap, 0, 0);
           bitmap.close();
           drawnSeq = seq;
-          drawnAt.push(Date.now());
+          drawnLast = Date.now();
+          drawnAt.push(drawnLast);
           if (recount()) acknowledge(seq, true);
         } else if (answer.status !== 204) {
           wait = RETRY_MS;
@@ -169,33 +255,47 @@ half of the page's time.
   }
 
   // In a few words, beside the button: why this page does not tell the robot
-  // "live". '' when it does.
-  function whyNot() {
-    if (WATCH) return 'watch only: see below';
-    if (replaced) return 'page loaded again: see below';
+  // "live". '' when it does. old: the picture on the page is an old one.
+  function whyNot(old) {
+    if (failed) return 'viewer not reached: see below';
+    if (REMOTE || replaced) return 'watch only: see below';
+    if (other) return 'viewer restarted: see below';
     if (!available) return 'no live picture: see below';
     if (document.hidden) return 'tab hidden';
     if (!shown) return 'Map picture showing';
+    if (old) return 'no new picture: see below';
     if (!counted) return 'scroll the live picture into view';
     if (view && !view.attached) return 'robot not told: see below';
     if (view && !view.live) return 'robot told: no live view';
     return '';
   }
 
+  // Before the rest of the note: why this page only watches, and what makes
+  // it the live view. '' for a page whose pictures count.
+  function watchOnly() {
+    if (REMOTE) return WATCH_ONLY;
+    if (replaced) return countingAsks ? ANOTHER_PAGE : NO_PAGE;
+    if (other) return loadedFor === other ? NOT_LOADED : chosen() || document.hidden ? RESTARTED : LOADS_LATER;
+    return '';
+  }
+
   function told() {
     if (!view) return '';
-    if (!view.attached) return ` The robot is not told of ${WATCH ? 'a' : 'this'} live view: ${view.why}.`;
-    if ((WATCH || counted) && view.live && typeof view.age_s === 'number') {
+    if (!view.attached) return ` The robot is not told of ${watching() ? 'a' : 'this'} live view: ${view.why}.`;
+    if ((watching() || counted) && view.live && typeof view.age_s === 'number') {
       return ` The robot is told: live view, ${view.age_s.toFixed(2)} s old.`;
     }
     return ' The robot is told: no live view.';
   }
 
   function sync() {
-    const newest = !runs || runs.value === 'latest';
-    const show = wanted && available && !replaced && follow && !playing && newest && !document.hidden;
+    fresh();
+    // Without an answer the viewer's last one stands: the picture stays.
+    const show = chosen() && available && !document.hidden;
+    const now = Date.now();
     if (show !== shown) {
       shown = show;
+      shownAt = now;
       turn += 1;
       drawnAt = [];
       picture.style.display = show ? 'block' : 'none';
@@ -204,29 +304,54 @@ half of the page's time.
       if (show) pictures(turn);
     }
     recount();
-    const now = Date.now();
     drawnAt = drawnAt.filter(at => now - at <= 1000);
-    button.disabled = !available || replaced;
+    // The picture on the page is an old one: the viewer gives no answer, or
+    // no picture came for OLD_MS.
+    const old = shown && drawnLast > 0 && (failed !== '' || now - Math.max(drawnLast, shownAt) > OLD_MS);
+    const age = `${Math.round((now - drawnLast) / 1000)} s`;
+    const dim = old ? '0.45' : '';
+    if ((picture.style.opacity || '') !== dim) picture.style.opacity = dim;
+    button.disabled = !available;
     button.classList.toggle('active', shown);
-    button.textContent = !available || replaced ? 'no live picture' : shown ? 'Map picture' : 'Live picture';
-    reason.textContent = whyNot();
-    note.textContent = (WATCH ? `${WATCH_ONLY}. ` : '') + (replaced ? REPLACED
+    button.textContent = !available ? 'no live picture' : shown ? 'Map picture' : 'Live picture';
+    reason.textContent = whyNot(old);
+    const first = watchOnly();
+    note.textContent = (first ? `${first}. ` : '') + (
+      failed ? `${failed}; trying again every second${old ? `; this picture is ${age} old` : ''}`
       : !available ? why
-      : shown ? `Live camera picture, ${drawnAt.length} a second on this screen. Shown, not stored: no mask and no markers.${told()}`
-      : `The stored picture of the obstacle map. Live picture shows the camera as it is now.${told()}`);
+      : !shown ? `The stored picture of the obstacle map. Live picture shows the camera as it is now.${told()}`
+      : old ? `no new picture from the viewer; this picture is ${age} old`
+      : `Live camera picture, ${drawnAt.length} a second on this screen. Shown, not stored: no mask and no markers.${told()}`);
+    // In the warning colour whenever the picture is not live or does not count.
+    note.style.color = first || failed || !available || old ? WARN : '';
   }
 
+  // Ask the viewer about its live picture, about itself and about this page.
   async function ask() {
+    let state = null, problem = '';
     try {
-      const answer = await fetch(STATE, {cache: 'no-store'});
-      if (!answer.ok) throw Error(`the viewer answered ${answer.status}`);
-      const state = await answer.json();
+      const answer = await fetch(STATE, {cache: 'no-store', signal: limit(),
+        headers: REMOTE ? {} : {'X-View-Token': TOKEN}});
+      if (answer.ok) state = await answer.json();
+      else problem = `the viewer answered ${answer.status}`;
+    } catch (error) {
+      problem = UNREACHED;
+    }
+    failed = state ? '' : problem || UNREACHED;
+    if (state) {
+      heardAt = Date.now();
+      const instance = typeof state.instance === 'string' && state.instance ? state.instance : INSTANCE;
+      other = instance === INSTANCE ? '' : instance;
+      const counting = state.counting_page || {};
+      vacantFor = other && counting.loaded === false ? other : '';
+      // Another page counts: so says the viewer that served this page, or a
+      // later instance, one of whose pages has a view token.
+      const taken = other ? !vacantFor && loadedFor !== other : counting.is_this_page === false;
+      if (taken && !REMOTE && !loading) replaced = true;
+      countingAsks = counting.asks === true;
       available = state.available === true;
       why = state.reason || 'the viewer has no live picture';
       view = state.view || null;
-    } catch (error) {
-      available = false;
-      why = `no answer from the viewer: ${error.message || error}`;
     }
     sync();
   }
@@ -246,7 +371,8 @@ half of the page's time.
   for (const kind of ['click', 'input', 'change']) {
     document.addEventListener(kind, () => setTimeout(sync, 0), true);
   }
-  document.addEventListener('visibilitychange', sync);
+  // A tab that shows again asks at once: its timers ran slowly while hidden.
+  document.addEventListener('visibilitychange', () => { sync(); if (!document.hidden) ask(); });
   if (observer) {
     observer.observe(picture);
   } else {

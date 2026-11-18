@@ -10,11 +10,15 @@ newest picture. live_handler() adds to the viewer's request handler:
 GET /api/live.mjpg    the newest picture again and again, as one
                       multipart/x-mixed-replace response
 GET /api/live.json    whether there is a live picture, how many a second, how
-                      old, and what the robot is told of the live view
+                      old, and what the robot is told of the live view; the
+                      viewer instance that answers; whether a page has its
+                      view token, whether the page that asks (X-View-Token) is
+                      that one, and whether that one asks for pictures
 GET /api/live.jpg     the newest picture once it is newer than ?after=N, for
                       the page that sends the valid view token as X-View-Token;
                       its number in X-Picture-Seq (204 without a newer one in
-                      PICTURE_WAIT_S, 403 without the valid token). With
+                      PICTURE_WAIT_S; 403 without the valid token, with the
+                      viewer instance in X-Viewer-Instance). With
                       &watch=1 it needs no view token and counts for nothing
 POST /api/live/shown  {"seq": N, "visible": true|false, "token": "..."}: the
                       page has drawn picture N (403 when it does not count)
@@ -37,6 +41,13 @@ a view token and fetches its pictures with &watch=1. It replaces no page, and a
 request from another machine for a counted picture or with an acknowledgement
 is refused, whatever token it names.
 
+The viewer instance is one start of the viewer, to its end: a name made at the
+start, which every page is served with. A page that hears another one knows
+that the viewer was restarted and that its view token is of no use: it loads
+itself again, while that viewer says that none of its pages has a view token
+yet. A page that hears its own one with a 403 was replaced by a newer load: it
+goes on with &watch=1.
+
 Every live path follows the viewer's access rule. No picture and no ROBOT_STATE
 is written to disk, and none but the newest is kept.
 """
@@ -51,6 +62,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import select
 import socket
 import threading
@@ -95,15 +107,21 @@ PAGE_BLOCK_FILE = Path(__file__).with_name("page_block.html")
 PAGE_END = b"</body>"
 # The text in page_block.html that each GET / replaces with that page's view token.
 TOKEN_PLACE = b"__VIEW_TOKEN__"
-# The request header in which the page sends its view token with GET /api/live.jpg.
+# The request header in which the page sends its view token with GET /api/live.jpg
+# and GET /api/live.json.
 TOKEN_HEADER = "X-View-Token"
+# The text in page_block.html that each GET / replaces with the viewer instance.
+INSTANCE_PLACE = b"__VIEWER_INSTANCE__"
+# The response header in which a 403 of GET /api/live.jpg names the viewer instance.
+INSTANCE_HEADER = "X-Viewer-Instance"
 # The longest body of POST /api/live/shown.
 MAX_SHOWN_BYTES = 4096
 # Pictures a second while no browser has the stream open or asks for pictures.
 IDLE_FPS = 1.0
 # How long GET /api/live.jpg waits for a newer picture.
 PICTURE_WAIT_S = 1.0
-# A page counts as asking for pictures this long after its last request.
+# A page counts as asking for pictures this long after its last request: for
+# the camera's rate, and for what the other pages are told of the page that counts.
 FETCH_WATCH_S = 2.0
 # A longer body of POST /api/live/shown than MAX_SHOWN_BYTES is read and
 # dropped up to this size; above it the connection is closed instead.
@@ -564,6 +582,8 @@ def live_handler(
     monotonic: Callable[[], float] = time.monotonic,
     this_machine: ThisMachine | None = None,
     robot: LiveRobot | None = None,
+    *,
+    instance: str | None = None,
 ) -> type:
     """The viewer's request handler class `base` with the live picture added.
 
@@ -574,8 +594,11 @@ def live_handler(
     this_machine(connection) says whether a request comes from this machine;
     None: on_this_machine(). robot holds the newest ROBOT_STATE, for
     /api/live/robot.json; None: that path says that there is none.
+    instance names this viewer instance; None: a new name.
     """
-    block = page_block()
+    if instance is None:
+        instance = secrets.token_hex(8)
+    block = page_block().replace(INSTANCE_PLACE, instance.encode())
     model = live.model
     own_paths = (STREAM_PATH, STATE_PATH, PICTURE_PATH, ROBOT_PATH)
     if this_machine is None:
@@ -709,6 +732,19 @@ def live_handler(
         def _state(self, page: str) -> None:
             told = live.state(page)
             told["view"] = dict(NOT_REPORTED) if view is None else view()
+            told["instance"] = instance
+            asking = self.headers.get(TOKEN_HEADER, "")
+            told["counting_page"] = {
+                # Whether a page was loaded on this machine since the start:
+                # one page has the valid view token from then on.
+                "loaded": model.has_page(),
+                # Whether the page that asks is the one whose pictures count.
+                "is_this_page": bool(
+                    this_machine(self.connection) and model.is_current_page(asking)
+                ),
+                # Whether the page that counts asked for a picture just now.
+                "asks": model.page_asks(monotonic(), FETCH_WATCH_S),
+            }
             body = json.dumps(told, allow_nan=False).encode()
             self._short(200, body, "application/json")
 
@@ -726,10 +762,13 @@ def live_handler(
             """
             view_token = self.headers.get(TOKEN_HEADER, "")
             counted = not watch
+            # The page hears which viewer instance refuses its view token.
+            refused = {INSTANCE_HEADER: instance}
             if counted and not (
-                this_machine(self.connection) and model.is_current_page(view_token)
+                this_machine(self.connection)
+                and model.note_asked(view_token, monotonic())
             ):
-                self._short(403)
+                self._short(403, headers=refused)
                 return
             live.note_fetch()
             picture = live.next_picture(after, PICTURE_WAIT_S)
@@ -739,7 +778,7 @@ def live_handler(
                 seq, jpeg = picture
                 self._short(200, jpeg, "image/jpeg", {"X-Picture-Seq": str(seq)})
             else:  # the page was loaded again meanwhile
-                self._short(403)
+                self._short(403, headers=refused)
 
         def _shown(self) -> None:
             """The page's word that it has drawn a picture.

@@ -84,6 +84,8 @@ class ViewModel:
         # The valid view token and when its page was loaded; None before a load.
         self._token: bytes | None = None
         self._page_at: float | None = None
+        # When the page of the valid token last asked for a picture that counts.
+        self._asked_at: float | None = None
         # Picture number -> when it last went to the page of the valid token.
         self._served: OrderedDict[int, float] = OrderedDict()
         # The newest acknowledgement: picture number, tab visible, when.
@@ -158,6 +160,7 @@ class ViewModel:
         with self._lock:
             self._token = token.encode()
             self._page_at = now_mono
+            self._asked_at = None
             self._served.clear()
             self._ack = None
             self._hidden_at = None
@@ -167,6 +170,32 @@ class ViewModel:
         """Whether `token` is the view token of the page loaded last."""
         with self._lock:
             return self._is_valid(token)
+
+    def has_page(self) -> bool:
+        """Whether a page was loaded: a view token is valid, and stays one."""
+        with self._lock:
+            return self._token is not None
+
+    def note_asked(self, token: str, now_mono: float) -> bool:
+        """The page of `token` asks now for a picture that counts.
+
+        False, and nothing is remembered, when the token is not the valid one.
+        """
+        with self._lock:
+            if not self._is_valid(token):
+                return False
+            if self._asked_at is None or now_mono > self._asked_at:
+                self._asked_at = now_mono
+            return True
+
+    def page_asks(self, now_mono: float, within_s: float) -> bool:
+        """Whether the page loaded last asked for a picture less than within_s ago.
+
+        What the other pages are told of it: VIEW_STATUS does not depend on it.
+        """
+        with self._lock:
+            asked_at = self._asked_at
+            return asked_at is not None and now_mono - asked_at < within_s
 
     def note_served(self, seq: int, token: str, now_mono: float) -> bool:
         """Picture `seq` goes to the page of `token` now.
