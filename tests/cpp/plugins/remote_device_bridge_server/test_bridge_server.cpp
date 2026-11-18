@@ -444,7 +444,7 @@ public:
     bool send_hand_sample(uint16_t channel_id, int64_t capture_ns)
     {
         const std::array<XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT> joints{};
-        return send_frame(protocol::encode_hand_sample_frame(channel_id, joints.data(), capture_ns));
+        return send_frame(protocol::encode_hand_sample_frame(channel_id, joints, capture_ns));
     }
 
     //! Next frame of `type`; frames of other types are counted and skipped.
