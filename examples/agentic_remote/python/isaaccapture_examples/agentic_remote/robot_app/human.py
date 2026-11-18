@@ -491,24 +491,20 @@ class HumanDrive:
         )
 
     def _clamped(self, q: Sequence[float], q_prev: Sequence[float]) -> list[float]:
-        """One step from q_prev toward q, each joint within the speed clamp.
-
-        The clamp stays SPEED_MARGIN under the limit, because a checker may
-        refuse a step that rounding put above its speed limit by any amount.
-        """
+        """q, or the point on the line from q_prev to q that the speed clamp allows."""
         speed = self._config.limits.human.max_joint_speed
+        # SPEED_MARGIN under the limit: a checker may refuse a step that
+        # rounding put above its speed limit by any amount.
         most = SPEED_MARGIN * speed * self._config.executor.period_s
-        q_next: list[float] = []
-        clipped = False
-        for at, to in zip(q_prev, q):
-            if abs(to - at) > most:
-                clipped = True
-                q_next.append(at + math.copysign(most, to - at))
-            else:
-                q_next.append(float(to))
-        if clipped and self._note_clamped is not None:
+        far = max(abs(to - at) for at, to in zip(q_prev, q))
+        if far <= most:
+            return [float(to) for to in q]
+        if self._note_clamped is not None:
             self._note_clamped()
-        return q_next
+        # Every joint by the same share of its way: a joint cut by itself
+        # takes the step off the line, and the gripper tip off its way.
+        share = most / far
+        return [at + share * (to - at) for at, to in zip(q_prev, q)]
 
     def _feed(self, drive: _Drive, target: HumanTarget) -> None:
         """Feed the checker's watchdog once per seq, with the controller data's time."""

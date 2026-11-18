@@ -899,13 +899,12 @@ def test_a_drive_follows_the_target_one_speed_limited_step_per_period(rig):
     rig.hold_grip(GOAL, sends=6)
     end = rig.run()
     assert (end.status, end.sent) == ("released", 6)
-    rows = [
-        [STEP, -STEP, 0.02, 0.0, 0.0, 0.0],
-        [2 * STEP, -2 * STEP, 0.02, 0.0, 0.0, 0.0],
-        [3 * STEP, -0.06, 0.02, 0.0, 0.0, 0.0],
-    ]
-    for q, row in zip(rig.sent(), rows):
-        assert q == approx(row, abs=1e-12)
+    # Three steps along the line to the target, each as long as the speed
+    # clamp lets the joint with the farthest to go move.
+    share = STEP / max(abs(offset) for offset in GOAL)
+    assert 3 * share < 1.0 < 4 * share
+    for count, q in enumerate(rig.sent()[:3], start=1):
+        assert q == approx([count * share * offset for offset in GOAL], abs=1e-12)
     # At the target the setpoint is the target itself, period after period.
     assert rig.sent()[3:] == [GOAL] * 3
     first = began + START_READ_S
@@ -937,8 +936,8 @@ def test_each_setpoint_is_checked_against_the_one_before_it_over_one_period(rig)
 def test_a_clamped_step_is_counted(rig):
     rig.hold_grip(GOAL, sends=6)
     rig.run()
-    # Joint index 0 needs four steps and joint index 1 three: one count per
-    # setpoint the clamp cut, not per joint.
+    # Three setpoints lie short of the target on joint indexes 0, 1 and 2:
+    # one count per setpoint the clamp cut, not per joint.
     assert len(rig.clamped) == 3
     assert [step[0] for step in rig.steps()[:3]] == approx([STEP] * 3)
     assert STEP == approx(0.98 * 1.5 * 0.02)
@@ -952,6 +951,47 @@ def test_a_clamped_step_is_counted(rig):
     moved = [later - earlier for earlier, later in zip(after, after[1:])]
     assert moved == approx([-SPEED_MARGIN * 0.5 * PERIOD] * 2)
     assert len(rig.clamped) == 3
+
+
+@pytest.mark.parametrize(
+    "offsets",
+    [
+        (0.09, -0.06, 0.02, 0.0, 0.045, -0.001),
+        (0.0, 0.031, 0.0, 0.0, 0.0, 0.0),
+        (-AHEAD, AHEAD, -AHEAD, AHEAD, -AHEAD, AHEAD),
+    ],
+    ids=["every joint its own way", "one joint", "every joint as far"],
+)
+def test_a_cut_step_lies_on_the_line_to_the_target_and_is_one_clamp_step_long(
+    rig, offsets
+):
+    config = rig.config
+    most = SPEED_MARGIN * config.limits.human.max_joint_speed * config.executor.period_s
+    rig.place(RAISED)
+    rig.hold_grip(rig.near(*offsets), sends=1)
+    assert rig.run().status == "released"
+    (step,) = rig.steps()
+    # Every joint went the same share of its way to the target.
+    share = most / max(abs(offset) for offset in offsets)
+    assert 0.0 < share < 1.0
+    assert step == approx([share * offset for offset in offsets], abs=1e-12)
+    # The joint with the farthest to go moved by the clamp's step, none by more.
+    assert max(abs(moved) for moved in step) == approx(most, rel=1e-9)
+    assert max(abs(moved) for moved in step) / config.executor.period_s < (
+        config.limits.human.max_joint_speed
+    )
+    assert len(rig.clamped) == 1
+
+
+def test_a_target_within_the_clamps_step_is_the_setpoint_itself(rig):
+    config = rig.config
+    most = SPEED_MARGIN * config.limits.human.max_joint_speed * config.executor.period_s
+    rig.place(RAISED)
+    target = rig.near(0.9 * most, -0.5 * most, 0.0, 0.25 * most)
+    rig.hold_grip(target, sends=1)
+    assert rig.run().status == "released"
+    assert rig.sent() == [target]
+    assert rig.clamped == []
 
 
 @pytest.mark.apai

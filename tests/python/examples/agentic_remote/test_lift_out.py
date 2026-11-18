@@ -14,7 +14,10 @@ agent's last grasp was allowed to go down in; a return to rest does not start
 inside it. A takeover makes a person the control owner; a human drive is one
 stretch of human motion toward human targets, the joint targets of
 HUMAN_SETPOINT link messages. A typed rest is the operator's return to rest.
-An arm settles low when it comes to rest under its joint target.
+An arm settles low when it comes to rest under its joint target. The floor is
+where the human program stops a person's tip: TIP_FLOOR_MARGIN_M over their
+table clearance. The speed clamp's step is the most a joint moves in one
+setpoint of a human drive.
 
 On APAI's mock arm and its checkers, as test_apai_app.py sets them up; the
 last test is on the simulated arm's checkers.
@@ -29,10 +32,9 @@ from collections.abc import Callable, Iterator, Sequence
 
 import numpy as np
 import pytest
-from isaaccapture_examples.agentic_remote.protocol.messages import (
-    GraspRegion,
-    HumanSetpoint,
-)
+from isaaccapture_examples.agentic_remote.human.logic import JOINT_SPEED_SHARE
+from isaaccapture_examples.agentic_remote.human.types import TIP_FLOOR_MARGIN_M
+from isaaccapture_examples.agentic_remote.protocol.messages import GraspRegion
 from isaaccapture_examples.agentic_remote.robot_app.app import (
     DRIVE_ENDED,
     LOW_TIP,
@@ -103,6 +105,16 @@ LINK_COMPLAINT = r"link/joint 7 at z=0\.008 would hit the table"
 # rad: about 3 mm at the gripper tip.
 SAG = 0.008
 SLOW = 0.1  # rad/s: one setpoint moves the gripper tip by less than 1 mm
+# Slides of the gripper tip over the table, m, in the robot's base axes (x
+# forward, y left), and how finely a slide's way is solved for joint values.
+SLIDES = {
+    "away from the base": (0.10, 0.0, 0.0),
+    "toward the base": (-0.12, 0.0, 0.0),
+    "toward the base and to the right": (-0.10, -0.15, 0.0),
+}
+FINE_M = 0.00025
+# Of this many joint targets in a row one does not reach the robot app.
+LOST_EVERY = 10
 
 
 def person_config(profile, **human_limits: object) -> RobotAppConfig:
@@ -211,42 +223,92 @@ def told_plainly(h: ApaiHarness, result) -> None:
 class PacedHand:
     """A hand as the human program sends it: one HUMAN_SETPOINT per pass.
 
-    A pass is one period of a human drive. While the hand squeezes, its
-    target is the pose the squeeze began at with the second joint `rise` rad
-    further up at every pass; then it lets go.
+    A pass is one period of a human drive. While the hand squeezes, each pass
+    has the next of its joint targets; None stands for one that is lost on its
+    way to the robot app. After the last the hand lets go.
     """
 
     def __init__(self, h: ApaiHarness) -> None:
         self.h = h
-        self.at: list[float] = []
-        self.rise = 0.0
-        self.left = 0  # passes it still squeezes
+        self.targets: list[list[float] | None] = []
         sleep = h.clock.sleep
 
         def fed(seconds: float) -> None:
             sleep(seconds)
             worker = threading.current_thread().name == MOTION_WORKER
             if worker and h.app._human_drive.progress() is not None:
-                feed(h, self())
+                self.one_pass()
 
         h.clock.sleep = fed
 
-    def __call__(self) -> HumanSetpoint:
-        if self.left <= 0:
-            return setpoint(self.h)
-        self.left -= 1
-        self.at[1] -= self.rise
-        return setpoint(self.h, self.at)
+    def one_pass(self) -> None:
+        """This pass's HUMAN_SETPOINT reaches the robot app, unless it is lost."""
+        if not self.targets:
+            feed(self.h)
+            return
+        q = self.targets.pop(0)
+        if q is not None:
+            feed(self.h, setpoint(self.h, q))
+
+    def follow(self, targets: Sequence[Sequence[float] | None]) -> None:
+        """Let go, then squeeze through targets; the human drive has ended on return."""
+        h = self.h
+        self.targets = []
+        feed(h)
+        self.targets = [None if q is None else [float(v) for v in q] for q in targets]
+        self.one_pass()
+        h.idle()
 
     def squeeze(self, rise: float, passes: int) -> None:
-        """Let go, then squeeze for `passes`; the human drive has ended on return."""
-        h = self.h
-        self.left = 0
-        feed(h)
-        self.at = h.spy.pose()  # where the human program takes the hand's home
-        self.rise, self.left = rise, passes
-        feed(h, self())
-        h.idle()
+        """follow() from where the arm is, the second joint `rise` rad further up per pass."""
+        at = self.h.spy.pose()  # where the human program takes the hand's home
+        targets = []
+        for _ in range(passes):
+            at[1] -= rise
+            targets.append(list(at))
+        self.follow(targets)
+
+
+def clamp_step(config: RobotAppConfig) -> float:
+    """The most a joint moves in one setpoint of a person's drive, rad."""
+    human = config.limits.human
+    return SPEED_MARGIN * human.max_joint_speed * config.executor.period_s
+
+
+def slide_on_the_floor(
+    profile, config: RobotAppConfig, way: Sequence[float]
+) -> list[list[float]]:
+    """Joint targets, one per pass, that slide the tip `way` over the table and back.
+
+    The tip keeps the height the human program stops it at, TIP_FLOOR_MARGIN_M
+    over a person's table clearance, and the gripper its angle. The fastest
+    joint moves at most JOINT_SPEED_SHARE of the speed clamp's step per pass,
+    as the human program's joint target does. The first is the pose the slide
+    begins at.
+    """
+    kinematics = profile.kinematics
+    q = np.array(BELOW, dtype=float)
+    begin = np.array(kinematics.fk(q), dtype=float)
+    begin[2, 3] = config.limits.human.table_clearance_m + TIP_FLOOR_MARGIN_M
+    count = round(float(np.linalg.norm(way)) / FINE_M)
+    fine = []
+    for index in range(count + 1):
+        pose = begin.copy()
+        pose[:3, 3] += np.array(way, dtype=float) * index / count
+        solved = kinematics.ik(pose, q, tol=1e-7)
+        assert solved.success, f"no joint values for the tip at {pose[:3, 3]}"
+        q = solved.q
+        fine.append(q)
+    fine += fine[-2::-1]
+    pace = JOINT_SPEED_SHARE * clamp_step(config)
+    targets, at = [fine[0]], 0
+    while at < len(fine) - 1:
+        at += 1
+        while at + 1 < len(fine) and np.abs(fine[at + 1] - targets[-1]).max() <= pace:
+            at += 1
+        assert np.abs(fine[at] - targets[-1]).max() <= pace
+        targets.append(fine[at])
+    return [target.tolist() for target in targets]
 
 
 def settles_low(h: ApaiHarness) -> None:
@@ -431,6 +493,44 @@ def test_an_arm_that_settles_under_its_targets_is_followed_on_every_pass(
     state = state_now(h)
     assert (state.owner, state.motion, state.torque_on) == ("human", "hold", True)
     assert h.checkers.human.harness.violations == []
+
+
+@apai
+@pytest.mark.parametrize("slide", list(SLIDES))
+def test_a_slide_on_the_floor_stays_there_when_joint_targets_are_lost_on_the_way(
+    make_app: Callable[..., ApaiHarness], profile, slide: str
+) -> None:
+    # A person's joints as fast as the mock profile lets them be.
+    fastest = profile.apai_cfg.safety.max_joint_vel
+    config = person_config(profile, max_joint_speed=fastest)
+    h = make_app(config)
+    targets = slide_on_the_floor(profile, config, SLIDES[slide])
+    floor = PERSON_CLEARANCE_M + TIP_FLOOR_MARGIN_M
+    heights = [tip_z(profile, q) for q in targets]
+    assert heights == pytest.approx([floor] * len(targets), abs=1e-5)
+    h.hold_at(targets[0])
+    take_over(h)
+    ends = drives(h)
+    hand = PacedHand(h)
+    before, cut = len(h.sent()), state_now(h).health["clamped"]
+
+    # The robot app misses one joint target in LOST_EVERY: the next lies
+    # further from its last setpoint than the speed clamp's step.
+    arriving = [
+        None if index % LOST_EVERY == 0 else q
+        for index, q in enumerate(targets[1:], start=1)
+    ]
+    assert arriving.count(None) >= 3
+    hand.follow(arriving)
+    went = h.sent()[before:]
+    assert state_now(h).health["clamped"] > cut
+    # APAI's checker took every setpoint, and the drive ran to the release.
+    assert [end.status for end in ends] == ["released"]
+    assert h.heard("human") == []
+    assert h.checkers.human.harness.violations == []
+    # No setpoint has the tip more than 0.1 mm under the lowest joint target's.
+    assert min(tip_z(profile, q) for q in went) > min(heights) - 1e-4
+    holds_for_the_person(h, went[-1])
 
 
 # The takeover with the tip under a person's table clearance
