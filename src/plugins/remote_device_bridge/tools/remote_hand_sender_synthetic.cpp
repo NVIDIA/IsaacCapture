@@ -343,7 +343,7 @@ try
         {
             pull_channel->update();
         }
-        const int64_t sample_time_ns = core::os_monotonic_now_ns();
+        const int64_t sample_time_local_common_clock_ns = core::os_monotonic_now_ns();
         // Slow sine (4 s period) so a viewer sees the fingers open and close.
         const float curl = 0.5f + 0.5f * static_cast<float>(std::sin(elapsed_s * 2.0 * std::numbers::pi / 4.0));
 
@@ -351,7 +351,8 @@ try
         for (const bool is_left : { true, false })
         {
             core::WristTrackingSample& sample = wrist[is_left ? 0 : 1];
-            sample = wrist_source ? wrist_source->query(is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT, sample_time_ns) :
+            sample = wrist_source ? wrist_source->query(is_left ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT,
+                                                        sample_time_local_common_clock_ns) :
                                     core::WristTrackingSample{};
             if (!options.hands)
             {
@@ -362,7 +363,7 @@ try
                                      sample.pose :
                                      XrPosef{ { 0.0f, 0.0f, 0.0f, 1.0f }, { is_left ? -0.15f : 0.15f, 1.2f, -0.4f } };
             generate_hand(joints, pose, is_left, curl);
-            (is_left ? left_pusher : right_pusher)->push(joints, sample_time_ns);
+            (is_left ? left_pusher : right_pusher)->push(joints, sample_time_local_common_clock_ns);
         }
         frames_sent += options.hands ? 1 : 0;
 
