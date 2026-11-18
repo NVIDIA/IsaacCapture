@@ -3,8 +3,4 @@
 
 cmake_minimum_required(VERSION 3.20)
 
-if(WIN32)
-    return()
-endif()
-
 add_subdirectory(session)
