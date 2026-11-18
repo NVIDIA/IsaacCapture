@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <remote_plugin_session/protocol_frame.hpp>
 #include <remote_plugin_session/tcp_transport.hpp>
 #include <sys/socket.h>
@@ -71,6 +72,16 @@ TEST_CASE("TcpTransport delimits frames by the header and reports broken peers",
         sent[0] ^= 0xFF;
         raw_send(peer, sent);
         REQUIRE(transport.receive(frame, kWait) == ReceiveResult::Malformed);
+    }
+    SECTION("a frame of another protocol version is delivered; the decoder names the version")
+    {
+        std::vector<uint8_t> sent = frame_of_size(protocol::kHeaderSize + 8);
+        sent[protocol::kVersionOffset] = 0;
+        raw_send(peer, sent);
+        REQUIRE(transport.receive(frame, kWait) == ReceiveResult::Ok);
+        REQUIRE(frame == sent);
+        REQUIRE_THROWS_WITH(
+            protocol::split_frame(frame), Catch::Matchers::ContainsSubstring("peer speaks protocol version 0"));
     }
     SECTION("a header whose payload never arrives counts as closed")
     {

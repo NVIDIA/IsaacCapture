@@ -30,7 +30,9 @@ enum class ReceiveResult
  * A frame is one complete wire message (protocol kHeaderSize header + payload)
  * as built by protocol::encode_frame. send() and receive() may run concurrently on two
  * threads; shutdown() unblocks both. Framing (TCP is a stream) lives in the
- * implementation, not in the callers.
+ * implementation, not in the callers. Framing checks only magic and size
+ * (protocol::frame_payload_size): version and type are the decoder's, so a peer
+ * on another protocol version is reported by split_frame with a readable reason.
  */
 class ITransport
 {

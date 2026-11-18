@@ -33,7 +33,7 @@ ReceiveResult TcpTransport::receive(std::vector<uint8_t>& frame, std::chrono::mi
     uint32_t payload_size = 0;
     try
     {
-        payload_size = protocol::decode_header(frame).payload_size;
+        payload_size = protocol::frame_payload_size(frame);
     }
     catch (const protocol::DecodeError&)
     {

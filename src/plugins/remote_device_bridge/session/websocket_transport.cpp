@@ -427,7 +427,7 @@ ReceiveResult WebSocketTransport::receive(std::vector<uint8_t>& frame, std::chro
         try
         {
             return frame.size() >= protocol::kHeaderSize &&
-                           frame.size() == protocol::kHeaderSize + protocol::decode_header(frame).payload_size ?
+                           frame.size() == protocol::kHeaderSize + protocol::frame_payload_size(frame) ?
                        ReceiveResult::Ok :
                        ReceiveResult::Malformed;
         }

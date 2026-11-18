@@ -214,6 +214,14 @@ TEST_CASE("WebSocketTransport server role handles control frames and fragments",
         raw_send(raw, raw_frame(0x2, true, { 0x01 }));
         REQUIRE(server->receive(frame, kWait) == ReceiveResult::Malformed);
     }
+    SECTION("a frame of another protocol version is delivered; the decoder names the version")
+    {
+        std::vector<uint8_t> sent = frame_of_size(protocol::kHeaderSize + 8);
+        sent[protocol::kVersionOffset] = 0;
+        raw_send(raw, raw_frame(0x2, true, sent));
+        REQUIRE(server->receive(frame, kWait) == ReceiveResult::Ok);
+        REQUIRE(frame == sent);
+    }
     SECTION("TCP EOF is reported as closed")
     {
         raw.shutdown();
