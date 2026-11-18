@@ -61,13 +61,22 @@ platforms refuse to initialise rather than fall back to non-atomic access. This
 holds for a plain copy and for a kernel that reads the slot, provided each has
 finished before the load.
 
-CUDA's memory model treats an unsynchronized read and write of the same bytes as a
-data race and does not specify what the reader then observes. This design relies
-on the race affecting only the contents of the reader's private copy, which the
-marker check discards; CUDA does not document a stronger guarantee for it, so the
-check is validated by tests rather than proven from the memory model. A reader
-needing a documented guarantee needs the writer to exclude overlapping access
-instead of detecting it.
+## Status: interim protection
+
+CUDA's memory model makes an unsynchronized read and write of the same bytes a
+data race with undefined behavior, and CUDA documents no bound on the effect for
+a copy or kernel whose source is modified concurrently. This design relies on
+the race only changing the reader's private copy, which the marker check
+discards. The tests exercise that and the check has never accepted a mismatched
+picture in them, but it is not proven from the memory model.
+
+It is an interim measure: it makes every detected overlap visible and drops the
+picture, and it narrows the window a reader can be hurt in, but it is not a
+documented guarantee. The proper fix is for the writer to exclude overlapping
+access, for example short reader reservations that the writer honours before
+reusing a slot; that is planned as follow-up work and would replace the marker
+check. Until then, treat a picture that passed the check as very likely intact,
+not as proven intact.
 
 ## Build
 
