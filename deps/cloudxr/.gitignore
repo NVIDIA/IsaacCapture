@@ -1,5 +1,7 @@
 # CloudXR runtime and SDK tarballs
 *.tar.gz
+# Download provenance sidecars
+*.tar.gz.source
 *.tgz
 
 # CloudXR environment files

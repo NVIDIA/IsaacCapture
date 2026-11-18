@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=joint_space/index.html
+
 Generic Joint-Space Device
 ==========================
 

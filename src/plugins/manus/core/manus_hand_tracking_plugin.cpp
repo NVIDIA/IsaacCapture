@@ -105,11 +105,12 @@ std::vector<unsigned char> read_calibration_file(const std::string& path)
     return data;
 }
 
-constexpr core::WristTrackingSourceConfig kWristSourceConfig{
-    .mode = core::WristTrackingSourceMode::Auto,
-    .left_aim_to_wrist = { { -0.70710678f, -0.5f, 0.0f, 0.5f }, { -0.1f, 0.02f, -0.02f } },
-    .right_aim_to_wrist = { { -0.70710678f, 0.5f, 0.0f, 0.5f }, { 0.1f, 0.02f, -0.02f } }
-};
+core::WristTrackingSourceConfig wrist_source_config(const ManusPluginConfig& config)
+{
+    return { .mode = core::WristTrackingSourceMode::Auto,
+             .left_aim_to_wrist = config.left_aim_to_wrist,
+             .right_aim_to_wrist = config.right_aim_to_wrist };
+}
 
 } // anonymous namespace
 
@@ -354,10 +355,10 @@ ManusTracker::ManusTracker(const ConstructionArgs& args) noexcept(false) : m_con
         }
 
         m_plugin_session = plugin_session_factory(
-            core::PluginSessionRequirements{ .schema_push = m_config.sensors || monitoring_enabled,
-                                             .hand_tracking_push = m_config.human,
-                                             .wrist_tracking_pull =
-                                                 m_config.human ? std::optional(kWristSourceConfig) : std::nullopt },
+            core::PluginSessionRequirements{
+                .schema_push = m_config.sensors || monitoring_enabled,
+                .hand_tracking_push = m_config.human,
+                .wrist_tracking_pull = m_config.human ? std::optional(wrist_source_config(m_config)) : std::nullopt },
             std::move(trackers));
         if (!m_plugin_session)
         {

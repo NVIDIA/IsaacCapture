@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Installed on the camera board by deploy_argus_sender.sh.
+#
+# The AGX RTC does not hold time across a reboot: chrony steps CLOCK_REALTIME by
+# minutes once the host answers (camera-chrony-agx.conf: iburst, makestep). Every
+# AVS1 frame carries CLOCK_REALTIME stamps, so services that stamp frames must not
+# start before that step. This oneshot blocks until chrony reports the clock within
+# 0.1 s of its source (up to 60 tries x 2 s); on timeout it fails and dependents
+# that only Want= it start anyway, with the failure visible in the journal.
+[Unit]
+Description=Wait for chrony to discipline the AGX clock before frame-stamping services start
+After=chrony.service network-online.target
+Wants=chrony.service
+Before=time-sync.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/chronyc waitsync 60 0.1 0.0 2
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,100 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Pico + Manus Glove Data Recording Configuration
+# Records video from OAK camera(s), controller poses from Pico VR, and the Manus
+# hand skeleton for human data collection.
+#
+# NOTE (2026-07-29): recorded numeric sources use the ``pico``/``manus`` frame
+# contracts originally produced by the in-process native Pico robotics service
+# and Manus .so. The web interface backend never opens these devices itself --
+# CaptureServer does, forwarding tracking samples over its own protocol -- but
+# the backend's recording config must still declare these sources under the
+# same names/frame types/latencies so the saved config.yaml and episode
+# metadata stay readable by the existing alignment and training-data
+# conversion pipeline. The CloudXR ``manus_xr``
+# path reconstructs the 25-joint skeleton via a different rotation
+# (``_OXR_TO_CASADI_R``) than the native ManusDevice (-90° Y) and must not be
+# used as a drop-in source for this frame contract without a verified mapping.
+
+# General recording settings
+recording:
+  data_dir: "~/egocap_data/pico_manus_recordings"
+  record_fps: 60
+  stream_fps: 60
+  # Explicit x264 settings: the repo default became crf 12 / preset medium
+  # (2026-08-26), whose encode cost overruns the 16.7 ms/frame budget on
+  # station CPUs at 3x640x480@60 and drops frames. crf 23 + veryfast is the
+  # pre-regression quality at ~1/3 the CPU.
+  video_encoder_options:
+    crf: 23
+    preset: veryfast
+  verbose: false
+  video_frame_type: RGBCameraFrame
+  numeric_frame_type: TrackingFrame
+
+meta:
+  task_description: ''
+
+# Video sources -- declares the recorded dataset's source names/rates, read by
+# the downstream data loader and the conversion pipeline. CaptureServer owns actually
+# opening these cameras; no oak_device_name/native SDK handle is recorded here.
+video_sources:
+  - type: oak_camera
+    name: head_human_camera
+    frame_type: RGBCameraFrame
+    latency: 0.0875
+    params:
+      camera_resolution: [640, 480]
+      fps: 60
+      enable_color: true
+      enable_mono_cameras: false
+  - type: oak_camera
+    name: wrist_human_camera_left
+    frame_type: RGBCameraFrame
+    latency: 0.0875
+    params:
+      camera_resolution: [640, 480]
+      fps: 60
+      enable_color: true
+      enable_mono_cameras: false
+  - type: oak_camera
+    name: wrist_human_camera_right
+    frame_type: RGBCameraFrame
+    latency: 0.0875
+    params:
+      camera_resolution: [640, 480]
+      fps: 60
+      enable_color: true
+      enable_mono_cameras: false
+
+# Numeric sources -- declares the recorded dataset's tracking source names/
+# rates, read by the downstream data loader and the conversion pipeline. CaptureServer
+# owns actually reading the Pico/Manus hardware; no native service-launcher
+# path is recorded here.
+numeric_sources:
+  # Pico VR controller — left/right/head tracking poses + controller
+  # analog/button inputs.
+  - type: pico
+    name: pico_controller
+    record_fps: 60
+    stream_fps: 60
+    frame_type: PicoTrackingFrame
+    latency: 0.05
+
+  # Manus glove — 25-joint hand skeleton (25,4,4), native rotation frame (see
+  # the module note above on the CloudXR manus_xr rotation mismatch).
+  - type: manus
+    name: manus_glove
+    record_fps: 60
+    stream_fps: 60
+    frame_type: ManusFrame
+    latency: 0.05
+    params:
+      # Flex-sensor fingertip correction is not implemented
+      # in this package (out of scope for this phase).
+      # Disabled upstream too: the masking introduced unnecessary bend/
+      # distortion in the recorded fingertips, so the raw IMU skeleton is
+      # recorded instead.
+      mask_with_sensors: false

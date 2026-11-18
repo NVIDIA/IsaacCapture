@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../../integrations/lerobot/training_groot.html
+
 Model Training with GR00T
 =========================
 

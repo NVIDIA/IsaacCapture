@@ -14,8 +14,8 @@ import tty
 
 import pytest
 
-import keyboard_terminal_example
-from keyboard_terminal_example import TerminalKeySource
+from isaaccapture_examples.teleop import keyboard_terminal_example
+from isaaccapture_examples.teleop.keyboard_terminal_example import TerminalKeySource
 
 KITTY_REPLY = (
     b"\x1b[?1u\x1b[?62c"  # kitty protocol flags, then the primary device attributes

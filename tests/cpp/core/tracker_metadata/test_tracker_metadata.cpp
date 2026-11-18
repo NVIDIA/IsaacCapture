@@ -14,21 +14,28 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <live_trackers/live_tactile_tracker_impl.hpp>
 #include <live_trackers/schema_metadata_tracker.hpp>
 #include <mcap/reader.hpp>
 #include <mcap/recording_traits.hpp>
 #include <mcap/writer.hpp>
+#include <replay_trackers/replay_tactile_tracker_impl.hpp>
+#include <schema/metadata_validation.hpp>
 #include <schema/pedals_generated.h>
+#include <schema/tactile_array_generated.h>
+#include <schema/tactile_metadata_generated.h>
 #include <schema/test_tracker_metadata_generated.h>
 #include <schema/tracker_metadata.hpp>
 
 #include <XR_NVX1_tensor_data.h>
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
@@ -265,7 +272,117 @@ TEST_CASE("Replay withholds data recorded without metadata", "[unit][tracker_met
     CHECK_FALSE(replay->get_data());
 }
 
+TEST_CASE("Replay tactile metadata is semantically verified before force data is published", "[unit][tracker_metadata]")
+{
+    constexpr std::string_view base_name = "tactile";
+    const auto path = temp_mcap_path("test_tactile_replay_metadata");
+    const TempFileCleanup cleanup(path);
+    std::array<uint32_t, 4> indices{};
+    std::array<float, 4> weights{ 1.0f, 0.0f, 0.0f, 0.0f };
+    std::string reason;
+    SECTION("valid metadata")
+    {
+    }
+    SECTION("segment index outside the single segment")
+    {
+        indices[0] = 7;
+        reason = "taxel_segment_indices[0][0]: segment index 7 is outside segment_bind_poses (size 1)";
+    }
+    SECTION("all four weights are zero")
+    {
+        weights = {};
+        reason = "taxel_segment_weights[0]: weights must sum to one";
+    }
+
+    core::HandSkeletonRefT hand;
+    hand.joint_ids = { core::HandJoint_WRIST };
+    core::LBST lbs;
+    lbs.segment_bind_poses.emplace_back(core::Point(0, 0, 0), core::Quaternion(0, 0, 0, 1));
+    lbs.taxel_bind_poses = lbs.segment_bind_poses;
+    lbs.taxel_segment_indices.emplace_back(flatbuffers::span<const uint32_t, 4>(indices.data(), 4));
+    lbs.taxel_segment_weights.emplace_back(flatbuffers::span<const float, 4>(weights.data(), 4));
+    core::TactileMetadataT native;
+    native.geometry_mapping.Set(std::move(lbs));
+    native.segment_source.Set(std::move(hand));
+    const auto metadata = core::pack<core::TactileMetadata>(native);
+    flatbuffers::Verifier verifier(metadata.buffer().data(), metadata.buffer().size());
+    REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
+
+    auto writer = open_writer(path);
+    auto channels = core::LiveTactileTrackerImpl::create_mcap_channels(*writer, base_name);
+    channels->metadata.write(0, metadata, 5);
+    core::TactileDataArrayT forces;
+    forces.taxel_forces.emplace_back(0.0f, 0.0f, 1.0f);
+    channels->data.write(
+        1, core::pack_record<core::TactileDataArrayRecord>(&forces, core::DeviceDataTimestamp(10, 10, 10)));
+    writer->close();
+
+    const auto recorded = recorded_schemas(path);
+    if (!reason.empty())
+    {
+        REQUIRE_THROWS_WITH(core::verify_metadata(*metadata), Catch::Matchers::ContainsSubstring(reason));
+        CHECK_THROWS_WITH(core::ReplayTactileTrackerImpl::read_metadata(open_reader(path), base_name, recorded),
+                          Catch::Matchers::StartsWith(std::string(base_name) + ": TactileMetadata." + reason));
+        return;
+    }
+
+    REQUIRE_NOTHROW(core::verify_metadata(*metadata));
+    auto loaded = core::ReplayTactileTrackerImpl::read_metadata(open_reader(path), base_name, recorded);
+    core::ReplayTactileTrackerImpl replay(open_reader(path), base_name, recorded, std::move(loaded));
+    REQUIRE(replay.get_metadata());
+    replay.update(0);
+    REQUIRE(replay.get_data());
+    REQUIRE(replay.get_data()->taxel_forces()->size() == 1);
+    CHECK(replay.get_data()->taxel_forces()->Get(0)->z() == 1.0f);
+}
+
 #if defined(XR_USE_TIMESPEC)
+
+TEST_CASE("Live tactile metadata is semantically verified before adoption and recording", "[unit][tracker_metadata]")
+{
+    const auto path = temp_mcap_path("test_tactile_metadata");
+    const TempFileCleanup cleanup(path);
+    {
+        FakeTensorRuntime runtime;
+        auto writer = open_writer(path);
+        core::McapTrackerChannels<core::TactileMetadata> channels(*writer, BASE_NAME, { "metadata" });
+        core::SchemaMetadataTracker<core::TactileMetadata> tracker(runtime.handles(), DATA_COLLECTION, &channels);
+        runtime.create(METADATA_COLLECTION, core::TRACKER_METADATA_MAX_SIZE);
+
+        core::HandSkeletonRefT hand;
+        hand.joint_ids = { core::HandJoint_WRIST };
+        core::LBST lbs;
+        lbs.segment_bind_poses.emplace_back(core::Point(0, 0, 0), core::Quaternion(0, 0, 0, 1));
+        lbs.taxel_bind_poses = lbs.segment_bind_poses;
+        const std::array<uint32_t, 4> indices{};
+        const std::array<float, 4> zero_weights{};
+        lbs.taxel_segment_indices.emplace_back(flatbuffers::span<const uint32_t, 4>(indices.data(), 4));
+        lbs.taxel_segment_weights.emplace_back(flatbuffers::span<const float, 4>(zero_weights.data(), 4));
+        core::TactileMetadataT native;
+        native.geometry_mapping.Set(std::move(lbs));
+        native.segment_source.Set(std::move(hand));
+        const auto invalid = core::pack<core::TactileMetadata>(native);
+        flatbuffers::Verifier verifier(invalid.buffer().data(), invalid.buffer().size());
+        REQUIRE(core::VerifyTactileMetadataBuffer(verifier));
+
+        runtime.push(METADATA_COLLECTION, invalid.buffer(), 1);
+        CHECK_THROWS_WITH(tracker.update(),
+                          Catch::Matchers::StartsWith(METADATA_COLLECTION + ": TactileMetadata.") &&
+                              Catch::Matchers::ContainsSubstring("taxel_segment_weights[0]: weights must sum to one"));
+        CHECK_FALSE(tracker.get());
+
+        const std::array<float, 4> weights = { 1.0f, 0.0f, 0.0f, 0.0f };
+        native.geometry_mapping.AsLBS()->taxel_segment_weights[0] =
+            core::Float4(flatbuffers::span<const float, 4>(weights.data(), 4));
+        const auto valid = core::pack<core::TactileMetadata>(native);
+        runtime.push(METADATA_COLLECTION, valid.buffer(), 2);
+        CHECK(tracker.update());
+        REQUIRE(tracker.get());
+        CHECK(tracker.get()->geometry_mapping_as_LBS()->taxel_segment_weights()->Get(0)->values()->Get(0) == 1.0f);
+        writer->close();
+    }
+    CHECK(read_channel<core::TactileMetadata>(path, "metadata").size() == 1);
+}
 
 TEST_CASE("Live publishes and records data only once the producer's metadata arrives", "[unit][tracker_metadata]")
 {
@@ -341,6 +458,41 @@ TEST_CASE("A restarted producer's data waits for its metadata, however it is pad
     live.push_metadata(metadata);
     live.push_data(0.3f);
     CHECK(live.step() == 0.3f);
+}
+
+TEST_CASE("A recreated metadata collection is rechecked at the same list index", "[unit][tracker_metadata]")
+{
+    LiveSession live;
+    live.start_data();
+    live.start_metadata();
+    live.push_metadata(make_metadata("glove"));
+    live.push_data(0.1f);
+    REQUIRE(live.step() == 0.1f);
+    const auto first = live.impl->get_metadata();
+
+    // No polling between destruction and recreation: the list position is reused.
+    live.runtime.destroy(METADATA_COLLECTION);
+    live.start_metadata();
+    live.push_data(0.2f);
+
+    SECTION("the original metadata is accepted")
+    {
+        live.push_metadata(make_metadata("glove"));
+        CHECK(live.step() == 0.2f);
+        CHECK(live.impl->get_metadata().buffer().data() == first.buffer().data());
+    }
+    SECTION("data waits for the recreated collection's sample")
+    {
+        CHECK_FALSE(live.step());
+        live.push_metadata(make_metadata("glove"));
+        live.push_data(0.3f);
+        CHECK(live.step() == 0.3f);
+    }
+    SECTION("different metadata is rejected")
+    {
+        live.push_metadata(make_metadata("other"));
+        CHECK_THROWS_WITH(live.step(), Catch::Matchers::ContainsSubstring("differs"));
+    }
 }
 
 TEST_CASE("Different metadata is an error naming its collection", "[unit][tracker_metadata]")

@@ -12,7 +12,8 @@ SPDX-License-Identifier: Apache-2.0
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Isaac Lab](https://img.shields.io/badge/Isaac%20Lab-3.0.0-orange.svg)](https://isaac-sim.github.io/IsaacLab/develop)
 [![numpy](https://img.shields.io/badge/numpy-1.23%2B-lightgrey.svg)](https://numpy.org/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+[![Default: Apache-2.0](https://img.shields.io/badge/Default-Apache--2.0-blue.svg)](LICENSE.md)
+[![EgoPost: OpenMDW-1.1](https://img.shields.io/badge/EgoPost-OpenMDW--1.1-blue.svg)](LICENSES/LicenseRef-OpenMDW-1.1.txt)
 
 
 </div>
@@ -57,7 +58,7 @@ functionality preserved.
 
 - Capture egocentric data without a robot in the loop.
 - Reconstruct hand and camera poses from egocentric video with the
-  [Ego Post Processing pipeline](https://nvidia.github.io/IsaacCapture/main/references/egocentric_hand_reconstruction.html).
+  [Ego Post Processing pipeline](https://nvidia.github.io/IsaacCapture/main/ego_post_processing/egohand.html).
 
 ## Quick Start
 
@@ -68,7 +69,16 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 - [Architecture](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html)
 - [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
 - [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
+- [OVXR installation](docs/source/getting_started/ovxr.rst)
 
+### Check a Device Integration
+
+The CTS records one scripted take from a hand-tracking or full-body device and checks it against the data a retargeter needs; start with the [hand](src/python/isaaccapture/cts/hand/README.md) or [full-body](src/python/isaaccapture/cts/full_body/README.md) guide.
+
+
+### Synthetic XR Teleoperation (Preview)
+
+Try desktop controller input without an XR headset using the [Synthetic XR example](examples/synthetic_xr/README.md). Build this checkout's WebXR client to enable the controls. Host CloudXR requirements still apply.
 
 ### Install & Run Isaac Lab
 
@@ -79,5 +89,19 @@ To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.git
 ## Licensing
 
 The default license is [Apache-2.0](LICENSE.md).
-EgoPost is licensed under [OpenMDW-1.1](src/python/isaaccapture_egopost/LICENSE.md).
+EgoPost is licensed under [OpenMDW-1.1](LICENSES/LicenseRef-OpenMDW-1.1.txt).
 Third-party materials may carry their own licenses.
+
+### Separately retrieved optional materials
+
+The optional `isaaccapture[ovxr]` extra retrieves OVXR and its OVRTX/OVStage
+dependencies. The separate `isaaccapture[desktop-mirror]` extra retrieves OVUI.
+These packages are downloaded separately, rather than bundled in the Isaac Capture
+wheel. Their licenses apply independently of Isaac Capture's Apache-2.0 license.
+OVXR, OVRTX and OVStage are NVIDIA proprietary software. OVUI is Apache-2.0.
+See [package sources and license details](docs/source/getting_started/ovxr.rst#optional-packages-and-licenses).
+Review the applicable package licenses and terms before installing or using these
+optional dependencies.
+
+Existing CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
+to their separate NVIDIA license and EULA acceptance.

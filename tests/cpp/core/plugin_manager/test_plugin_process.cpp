@@ -1,11 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include "temporary_directory.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 #include <plugin_manager/plugin.hpp>
+#include <plugin_manager/plugin_manager.hpp>
 
 #include <chrono>
 #include <csignal>
+#include <filesystem>
+#include <fstream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -143,6 +149,70 @@ TEST_CASE("explicit stop is cached and non-failing", "[plugin_manager][process]"
     const core::ProcessSnapshot second = plugin.get_process_snapshot();
     REQUIRE(second.state == first.state);
     REQUIRE(second.reason == first.reason);
+}
+
+TEST_CASE("stop uses the shutdown timeout from plugin.yaml", "[plugin_manager][process]")
+{
+    TemporaryDirectory search_directory;
+    const std::filesystem::path plugin_directory = search_directory.path() / "finalizing";
+    std::filesystem::create_directory(plugin_directory);
+    const std::filesystem::path marker = search_directory.path() / "finalized";
+
+    const auto start = [&](const std::string& timeout_seconds, int finalize_milliseconds)
+    {
+        std::ofstream metadata(plugin_directory / "plugin.yaml");
+        metadata << "name: finalizing_plugin\n"
+                 << "command: \"" << PLUGIN_MANAGER_TEST_PROCESS << "\"\n"
+                 << "shutdown_timeout_seconds: " << timeout_seconds << "\n";
+        metadata.close();
+        core::PluginManager manager({ search_directory.path().string() });
+        auto plugin = manager.start(
+            "finalizing_plugin", "test-root", { "finalize", marker.string(), std::to_string(finalize_milliseconds) });
+
+        const std::filesystem::path ready = marker.string() + ".ready";
+        const auto deadline = std::chrono::steady_clock::now() + PROCESS_TIMEOUT;
+        while (!std::filesystem::exists(ready) && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        REQUIRE(std::filesystem::exists(ready));
+        return plugin;
+    };
+
+    SECTION("a plugin that finishes within its timeout is not killed")
+    {
+        const std::unique_ptr<core::Plugin> plugin = start("5", 300);
+        REQUIRE_NOTHROW(plugin->stop());
+        REQUIRE(std::filesystem::exists(marker));
+        REQUIRE(plugin->get_process_snapshot().state == core::ProcessState::STOPPED);
+    }
+
+    SECTION("a concurrent stop waits for the shutdown already in progress")
+    {
+        const std::unique_ptr<core::Plugin> plugin = start("5", 500);
+        std::thread second_caller(
+            [&]
+            {
+                // Let the first stop's SIGINT reach the plugin before this one starts.
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                plugin->stop();
+            });
+        REQUIRE_NOTHROW(plugin->stop());
+        second_caller.join();
+        REQUIRE(std::filesystem::exists(marker));
+        REQUIRE(plugin->get_process_snapshot().state == core::ProcessState::STOPPED);
+    }
+
+    SECTION("a plugin that outlives its timeout is killed when it expires")
+    {
+        const std::unique_ptr<core::Plugin> plugin = start("0.2", 5000);
+        const auto stop_started = std::chrono::steady_clock::now();
+        REQUIRE_NOTHROW(plugin->stop());
+        // Well below the 2 s default, so the manifest value was used.
+        REQUIRE(std::chrono::steady_clock::now() - stop_started < std::chrono::milliseconds(1500));
+        REQUIRE_FALSE(std::filesystem::exists(marker));
+        REQUIRE(plugin->get_process_snapshot().state == core::ProcessState::STOPPED);
+    }
 }
 
 TEST_CASE("pre-exec failures are reported by the parent", "[plugin_manager][process]")

@@ -122,9 +122,13 @@ def example(request, monkeypatch, tmp_path):
         HandsSource=MagicMock(),
         ControllersSource=MagicMock(),
     )
-    directory = repo_root() / "examples" / "teleop" / "python"
-    monkeypatch.syspath_prepend(str(directory))
-    spec = importlib.util.spec_from_file_location(name, directory / f"{name}.py")
+    # python/ is the namespace root, so the relative `._example_loop` import resolves.
+    namespace_root = repo_root() / "examples" / "teleop" / "python"
+    monkeypatch.syspath_prepend(str(namespace_root))
+    package = namespace_root / "isaaccapture_examples" / "teleop"
+    spec = importlib.util.spec_from_file_location(
+        f"isaaccapture_examples.teleop.{name}", package / f"{name}.py"
+    )
     loaded = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loaded)
     monkeypatch.setattr(
@@ -142,8 +146,9 @@ def example(request, monkeypatch, tmp_path):
     )
     if hasattr(loaded, "time"):
         monkeypatch.setattr(loaded, "time", clock)
-    if "_example_loop" in sys.modules:
-        monkeypatch.setattr(sys.modules["_example_loop"], "time", clock)
+    example_loop = sys.modules.get("isaaccapture_examples.teleop._example_loop")
+    if example_loop is not None:
+        monkeypatch.setattr(example_loop, "time", clock)
 
     def run(*args):
         monkeypatch.setattr(sys, "argv", [f"{name}.py", *args])

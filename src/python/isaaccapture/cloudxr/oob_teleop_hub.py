@@ -13,8 +13,10 @@ HTTP API:  ``GET /api/oob/v1/state``, ``GET /api/oob/v1/config``
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -23,6 +25,11 @@ from typing import Any, Literal
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_hub")
 
 OOB_WS_PATH = "/oob/v1/ws"
+
+# Metrics and status frames are small JSON; anything larger is not a headset.
+# Checked after websockets has received the whole message, so this saves parsing
+# but does not bound receive memory (that needs a transport-level max_size).
+MAX_FRAME_BYTES = 256 * 1024
 
 
 @dataclass
@@ -38,6 +45,7 @@ class _HeadsetState:
     streaming_since: float | None = None
     last_seen_at: float | None = None
     last_metrics_at: float | None = None
+    xr_received_at: float | None = None
     stream_phase: str = "idle"
     stream_detail: str | None = None
     terminal_event_id: str | None = None
@@ -78,6 +86,15 @@ class OOBControlHub:
                 if not isinstance(raw, str):
                     await self._send_error(ws, "BAD_REQUEST", "Expected text frame")
                     continue
+
+                # Reject before json.loads so an oversized frame costs no parsing.
+                # Characters never outnumber UTF-8 bytes, so the cheap length test
+                # rejects huge frames without encoding them; the encode catches
+                # multi-byte text that is under the limit in characters only.
+                if len(raw) > MAX_FRAME_BYTES or len(raw.encode()) > MAX_FRAME_BYTES:
+                    await self._send_error(ws, "BAD_REQUEST", "Frame too large")
+                    await ws.close(1009, "Frame too large")
+                    return
 
                 try:
                     msg = json.loads(raw)
@@ -141,6 +158,7 @@ class OOBControlHub:
                     "terminalEventId": s.terminal_event_id,
                     "terminalDetail": s.terminal_detail,
                     "metricsByCadence": s.metrics_by_cadence,
+                    "xrPresence": self._xr_presence(s),
                 }
                 for s in self._headsets.values()
             ]
@@ -152,10 +170,34 @@ class OOBControlHub:
                 "lifecycle": dict(self._lifecycle) if self._lifecycle else None,
             }
 
+    @staticmethod
+    def _xr_presence(state: _HeadsetState) -> dict | None:
+        if state.xr_received_at is None:
+            return None
+        metrics = state.metrics_by_cadence.get("xr", {}).get("metrics", {})
+        elapsed = max(0.0, (time.monotonic() - state.xr_received_at) * 1000)
+        result = dict(metrics)
+        result["heartbeatAgeMs"] = elapsed
+        for source in ("frame", "head", "left", "right"):
+            age = metrics.get(f"{source}AgeMs", -1)
+            result[f"{source}AgeMs"] = age + elapsed if age >= 0 else None
+        return result
+
     async def set_lifecycle_snapshot(self, snapshot: dict) -> None:
         """Publish the lifecycle's already redacted status in the HTTP state."""
         async with self._lock:
             self._lifecycle = dict(snapshot)
+            targets = list(self._headsets)
+        presence = snapshot.get("presenceRecovery")
+        if isinstance(presence, dict):
+            # Send only operator state, never host/ADB diagnostics or identifiers.
+            payload = {
+                key: presence[key]
+                for key in ("state", "presence", "wakefulness", "attempts")
+                if key in presence
+            }
+            for ws in targets:
+                await self._send(ws, "presenceRecovery", payload)
 
     async def probe_browser(
         self,
@@ -213,10 +255,16 @@ class OOBControlHub:
             await asyncio.sleep(poll_seconds)
 
     def check_token(self, token: str | None) -> bool:
-        """Return True if token satisfies the hub's auth requirement."""
-        if not self._token:
-            return True
-        return token == self._token
+        """Return True only if *token* matches the hub's control token.
+
+        Fails closed: a hub built without a token rejects every caller.
+        """
+        # No configured token or a non-string payload value (JSON can carry ints,
+        # lists) is never a match; compare_digest would raise on non-str input.
+        if not self._token or not isinstance(token, str):
+            return False
+        # Constant-time compare so response timing does not leak the token.
+        return hmac.compare_digest(token.encode(), self._token.encode())
 
     async def http_oob_set_config(self, payload: dict) -> tuple[int, dict]:
         """Merge stream config; for OOB HTTP ``GET /api/oob/v1/config``."""
@@ -260,7 +308,7 @@ class OOBControlHub:
 
     async def _handle_register(self, ws: Any, client_id: str, payload: dict) -> bool:
         """Validate and register a headset. Returns True on success."""
-        if self._token and payload.get("token") != self._token:
+        if not self.check_token(payload.get("token")):
             await self._send_error(ws, "UNAUTHORIZED", "Invalid or missing token")
             try:
                 await ws.close(1008, "Unauthorized")
@@ -399,8 +447,28 @@ class OOBControlHub:
             if state is None:
                 return
             state.last_seen_at = time.time()
-            state.last_metrics_at = state.last_seen_at
+            # Legacy senders have no observation age and retain receipt-time semantics.
             cadence = str(payload.get("cadence", "unknown"))
+            sample_age_ms = payload.get("sampleAgeMs", 0)
+            if (
+                cadence != "xr"
+                and isinstance(sample_age_ms, (int, float))
+                and not isinstance(sample_age_ms, bool)
+                and math.isfinite(sample_age_ms)
+                and sample_age_ms >= 0
+            ):
+                # Age uses the client's monotonic clock, so device wall-clock skew
+                # cannot make cached observations appear newer than their receipt.
+                observed_at = state.last_seen_at - sample_age_ms / 1000
+                state.last_metrics_at = max(
+                    state.last_metrics_at
+                    if state.last_metrics_at is not None
+                    else observed_at,
+                    observed_at,
+                )
+            # XR heartbeat must not refresh streaming metric readiness.
+            if cadence == "xr":
+                state.xr_received_at = time.monotonic()
             raw_metrics = payload.get("metrics", {})
             if not isinstance(raw_metrics, dict):
                 raw_metrics = {}

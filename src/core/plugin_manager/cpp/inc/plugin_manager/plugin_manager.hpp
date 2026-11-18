@@ -30,6 +30,7 @@ struct PluginInfo
     std::string working_dir;
     std::vector<std::string> args;
     std::vector<DeviceInfo> devices;
+    double shutdown_timeout_seconds = DEFAULT_PLUGIN_SHUTDOWN_TIMEOUT_SECONDS;
 };
 
 class PluginManager
@@ -66,7 +67,8 @@ public:
      * @param plugin_name The name of the plugin to start.
      * @param plugin_root_id The root ID for the plugin.
      * @param plugin_args Optional arguments appended after plugin.yaml args.
-     * @return A unique pointer to the Plugin instance (stops on destruction).
+     * @return A unique pointer to the Plugin instance (stops on destruction), with the
+     *         shutdown timeout from plugin.yaml.
      */
     std::unique_ptr<Plugin> start(const std::string& plugin_name,
                                   const std::string& plugin_root_id,

@@ -1621,14 +1621,16 @@ limitations under the License.
                   class="ui-input config-input"
                   aria-label="When to reload the page after the XR session ends"
                 >
-                  <option value="never">Never refresh</option>
-                  <option value="clean" selected>Refresh on clean session end</option>
+                  <option value="never" selected>Never refresh</option>
+                  <option value="clean">Refresh on clean session end</option>
                   <option value="any">Refresh on any session end (including errors)</option>
                 </select>
                 <div class="config-text">
                   Reload the page after the XR session ends to return to a fresh state. Choose to
                   refresh only on a clean end (Disconnect, headset exit, server stop), on any end
-                  including a streaming error, or never.
+                  including a connection error, or never. Defaults to any end for PICO 4 Ultra and
+                  never for other profiles. Errors remain visible after refresh until a connection
+                  succeeds.
                 </div>
               </div>
             </div>

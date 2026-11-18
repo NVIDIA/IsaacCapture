@@ -1,2 +1,9 @@
 # Optional UI dependencies for parameter tuning
 imgui[glfw]>=2.0.0
+numpy>=1.23.0
+# Dockable panels and Trimesh 5 compatibility require Viser >=1.1.1.
+# https://github.com/viser-project/viser/pull/769
+viser>=1.1.1
+yourdfpy
+trimesh
+rtree

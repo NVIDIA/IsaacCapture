@@ -24,6 +24,7 @@ add_subdirectory(xsens_full_body)
 add_subdirectory(so101_leader)
 add_subdirectory(rebot_devarm_leader)
 add_subdirectory(manus)
+add_subdirectory(manus_calibration)
 add_subdirectory(haptikos)
 
 if(BUILD_PLUGIN_NOITOM_MOCAP)

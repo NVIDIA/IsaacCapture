@@ -3,6 +3,9 @@
 
 :orphan:
 
+.. meta::
+   :http-equiv=refresh: 0; url=../teleop/teleop_session.html
+
 Teleop Session
 ==============
 

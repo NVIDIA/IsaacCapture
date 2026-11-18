@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
+
+FROM pytorch/pytorch:2.13.0-cuda13.0-cudnn9-runtime
+
+# libgl1/libglib for headless opencv import; no ffmpeg/gcc/pyrender -- this image
+# runs detection only, not EgoHand inference or mesh rendering.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# inference/hand_detector_2d/rtdetr (+ scripts/run_hand_detector.py) needs only
+# these six packages -- no torch, no rest of the EgoHand requirements.txt. torch is
+# already present in the base image but unused here; it is not imported.
+# huggingface_hub is only actually imported when rtdetr_config sets no weights
+# path (the HF-download fallback, see rtdetr/detector.py:hf_download) --
+# unpinned here, matching the main requirements.txt's own unpinned entry.
+RUN pip install --no-cache-dir --break-system-packages \
+        numpy==2.4.4 pillow>=13.0.0 pyyaml==6.0.3 opencv-python==4.11.0.86 onnxruntime-gpu==1.28.0 huggingface_hub
+
+# Self-contained by design (see inference/hand_detector_2d/scripts/run_hand_detector.py's
+# module docstring): only this folder is baked in, not the rest of the EgoHand repo.
+COPY inference/hand_detector_2d /workspace/inference/hand_detector_2d
+
+# Optional bundled weight. Populated by detector.sh build --weight /...; detector.sh run
+# falls back to this path when --weight is omitted at run time. Always created so the
+# COPY is valid even when nothing is bundled.
+COPY weights/ /workspace/weights/
+
+# Run as a non-root user. HOME is fixed rather than left to the runtime UID, and
+# made writable by any UID, so the HF cache (the rtdetr weight fallback) works
+# both as app and as the caller's UID passed by detector.sh run via
+# docker run --user.
+RUN useradd --create-home --home-dir /home/app --shell /usr/sbin/nologin app \
+    && chmod -R a+rwX /home/app
+ENV HOME=/home/app
+
+WORKDIR /workspace
+USER app

@@ -10,13 +10,14 @@ scipy>=1.15.0
 torch>=2.7.0
 trimesh
 viser
-pin>=2.7.0
+pin>=4.1
 pin-pink>=4.0.0
 loop-rate-limiters>=1.0.0
 daqp>=0.5.0
-# pin (Pinocchio) 3.9.0's compiled bindings link against specific cmeel sonames
-# (liburdfdom_sensor.so.4.0, libtinyxml2.so.10) but declare only `>=` floors on
-# their cmeel packages. Major bumps cmeel-urdfdom 6.0.0 and cmeel-tinyxml2 11.0.0
-# (both 2026-05-21) ship newer sonames and break `import pinocchio` at runtime.
-cmeel-urdfdom<5
-cmeel-tinyxml2<11
+# pin>=4.1 parses URDF 1.2 (emitted by the Isaac Sim URDF exporter). Its compiled
+# bindings link against specific cmeel sonames (liburdfdom 6, libtinyxml2.so.11),
+# but cmeel-urdfdom 6.0.0 declares no bound on cmeel-tinyxml2: tinyxml2 10.x
+# breaks `import pinocchio` at runtime. Cap both at the next major for the same
+# reason.
+cmeel-urdfdom>=6,<7
+cmeel-tinyxml2>=11,<12

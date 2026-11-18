@@ -25,8 +25,10 @@ dependencies = [
 # must stay without an __init__.py. `only-include` + `sources`, not `packages`:
 # the latter keeps only the last path component and would root the wheel at a
 # bare top-level `mcap_record_replay/`.
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/mcap_record_replay"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]
 
 [tool.uv.sources]

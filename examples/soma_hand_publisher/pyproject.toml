@@ -16,8 +16,10 @@ dependencies = [
     "py-soma-x==0.3.1",
 ]
 
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/soma_hand_publisher"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]
 
 [tool.uv.sources]

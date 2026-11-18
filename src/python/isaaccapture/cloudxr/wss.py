@@ -22,8 +22,10 @@ from ..logging_config._core import DATE_FORMAT, LINE_FORMAT, logging_enabled
 from .env_config import get_env_config
 from .oob_teleop_env import (
     client_ui_fields_from_env,
+    control_token_is_generated,
     default_initial_stream_config,
     redact_control_token,
+    resolve_control_token,
     wss_proxy_port,
 )
 from .oob_teleop_hub import OOB_WS_PATH
@@ -36,39 +38,10 @@ try:
     from websockets.http11 import Response
 except ImportError:
     sys.exit(
-        "Missing dependency: websockets >= 14\n"
-        f"Install with: uv pip install --python {sys.executable} 'websockets>=14'"
+        "Missing dependency: websockets >= 17.3\n"
+        f"Install with: uv pip install --python {sys.executable} 'websockets>=17.3'"
     )
 
-
-def _patch_request_parser_for_cors():
-    """Allow HTTP OPTIONS through the websockets request parser.
-
-    ``websockets >= 14`` rejects non-GET methods in ``Request.parse`` before
-    ``process_request`` fires.  This wraps the parser so that OPTIONS requests
-    (CORS preflight) are surfaced as a normal ``Request`` — the existing
-    ``process_request`` hook in ``_make_http_handler`` already returns the
-    correct 200 + CORS-headers response for them.
-    """
-    from websockets.http11 import Request, parse_headers
-
-    _orig_parse = Request.parse.__func__
-
-    @classmethod
-    def _cors_aware_parse(cls, read_line):
-        """Monkey-patched ``Request.parse`` that maps OPTIONS requests to a synthetic CORS path."""
-        try:
-            return (yield from _orig_parse(cls, read_line))
-        except ValueError as exc:
-            if "got OPTIONS" not in str(exc):
-                raise
-            headers = yield from parse_headers(read_line)
-            return cls("/__cors_preflight__", headers)
-
-    Request.parse = _cors_aware_parse
-
-
-_patch_request_parser_for_cors()
 
 log = logging.getLogger("isaaccapture.cloudxr.wss")
 
@@ -237,6 +210,7 @@ def _is_oob_hub_http_path(path: str) -> bool:
     return path in (
         "/api/oob/v1/state",
         "/api/oob/v1/config",
+        "/api/oob/v1/connect",
     )
 
 
@@ -294,17 +268,23 @@ def _oob_token(request, q: dict[str, str]) -> str | None:
 
 
 def _json_response(status: int, phrase: str, body: dict) -> Response:
-    """Build a JSON :class:`Response` with CORS headers."""
+    """Build a JSON :class:`Response` for the OOB hub API (no CORS headers)."""
     return Response(
         status,
         phrase,
-        Headers({"Content-Type": "application/json", **CORS_HEADERS}),
+        Headers({"Content-Type": "application/json"}),
         json.dumps(body).encode(),
     )
 
 
-def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
-    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, cert page)."""
+def _make_http_handler(
+    backend_host, backend_port, hub=None, static_dir=None, connect_requested=None
+):
+    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, cert page).
+
+    *connect_requested* is the gate a service started with ``defer_oob_connect``
+    holds headset setup behind; ``/api/oob/v1/connect`` opens it.
+    """
 
     async def handle_http_request(connection, request):
         """Dispatch non-WebSocket HTTP: CORS preflight, OOB APIs, static client, or cert HTML."""
@@ -334,7 +314,7 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                 return Response(
                     200,
                     "OK",
-                    Headers({"Content-Type": "application/json", **CORS_HEADERS}),
+                    Headers({"Content-Type": "application/json"}),
                     json.dumps(snapshot).encode(),
                 )
 
@@ -360,11 +340,33 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                 }.get(status, "Error")
                 return _json_response(status, phrase, body)
 
+            if path == "/api/oob/v1/connect":
+                if not hub.check_token(token):
+                    return _json_response(
+                        401, "Unauthorized", {"error": "Unauthorized"}
+                    )
+                # No gate: headset setup already began with the service.
+                if connect_requested is None:
+                    return _json_response(
+                        409,
+                        "Conflict",
+                        {"error": "headset setup is not deferred on this service"},
+                    )
+                already = connect_requested.is_set()
+                if not already:
+                    log.info("OOB headset setup released by /api/oob/v1/connect")
+                connect_requested.set()
+                return _json_response(
+                    200,
+                    "OK",
+                    {"connectRequested": True, "alreadyRequested": already},
+                )
+
         if hub is None and _is_oob_hub_http_path(path):
             return Response(
                 404,
                 "Not Found",
-                Headers({"Content-Type": "text/plain", **CORS_HEADERS}),
+                Headers({"Content-Type": "text/plain"}),
                 b"Not found",
             )
 
@@ -436,7 +438,12 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
 
 
 def add_cors_headers(connection, request, response):
-    """``process_response`` hook: inject CORS headers into every WebSocket upgrade response."""
+    """``process_response`` hook: inject CORS headers into every response except hub API ones."""
+    # websockets runs this hook on process_request responses too. The hub API
+    # returns headset state, so it must not be readable cross-origin; the web
+    # client only needs CORS for the cert page and static files.
+    if _is_oob_hub_http_path(_normalize_request_path(request.path or "/")):
+        return
     response.headers.update(CORS_HEADERS)
 
 
@@ -656,6 +663,7 @@ async def run(
     try:
         resolved_port = wss_proxy_port() if proxy_port is None else proxy_port
 
+        # Wire DEBUG logs include headers and query strings containing tokens.
         logging.getLogger("websockets").setLevel(logging.WARNING)
         cert_paths = default_cert_paths()
 
@@ -666,7 +674,7 @@ async def run(
         if setup_oob:
             from .oob_teleop_hub import OOBControlHub  # noqa: PLC0415
 
-            control_token = os.environ.get("CONTROL_TOKEN") or None
+            control_token = resolve_control_token()
             initial = {
                 **default_initial_stream_config(resolved_port),
                 **client_ui_fields_from_env(),
@@ -674,7 +682,7 @@ async def run(
             hub = OOBControlHub(control_token=control_token, initial_config=initial)
             log.info(
                 "Teleop control hub enabled (token=%s) OOB_WS=%s initial_stream=%s",
-                "set" if control_token else "none",
+                "generated" if control_token_is_generated() else "set",
                 OOB_WS_PATH,
                 initial,
             )
@@ -712,7 +720,11 @@ async def run(
             )
 
         http_handler = _make_http_handler(
-            backend_host, backend_port, hub=hub, static_dir=_host_client_static_dir
+            backend_host,
+            backend_port,
+            hub=hub,
+            static_dir=_host_client_static_dir,
+            connect_requested=connect_requested,
         )
 
         async with ws_serve(

@@ -38,7 +38,8 @@ Components
 Build
 -----
 
-Linux only (BlueZ). The plugin is off by default.
+Linux only (BlueZ). The plugin is off by default. Complete the
+:doc:`source-build prerequisites </development/build_from_source/index>` first, then:
 
 .. code-block:: bash
 

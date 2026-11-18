@@ -1,0 +1,40 @@
+# CMake build trees and generated files
+/build/
+/build-*/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+_deps/
+
+# Compiled artifacts
+*.o
+*.a
+*.so
+*.so.*
+*.d
+
+# Camera and encoded stream dumps
+*.hvs2
+*.avs1
+*.h265
+*.hevc
+*.yuv
+*.nv12
+*.raw
+
+# Runtime and crash output
+*.log
+core
+core.*
+
+# Editor and operating-system files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
