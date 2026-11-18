@@ -19,6 +19,11 @@ namespace
 {
 
 constexpr size_t kWristSamplePayloadSize = sizeof(int64_t) + 3 * sizeof(uint8_t) + protocol::kPoseSize;
+//! WRIST_SAMPLE payload: sample_time i64, then the hand byte, then `valid`.
+constexpr size_t kWristHandOffset = sizeof(int64_t);
+constexpr size_t kWristValidOffset = kWristHandOffset + sizeof(uint8_t);
+//! SCHEMA_SAMPLE payload: two i64 sample times, then the u32 byte count.
+constexpr size_t kSchemaByteCountOffset = 2 * sizeof(int64_t);
 
 bool same_pose(const XrPosef& a, const XrPosef& b)
 {
@@ -109,17 +114,17 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
     }
     SECTION("unknown type is rejected")
     {
-        bytes[4] = 200;
+        bytes[protocol::kTypeOffset] = 200;
         REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
     SECTION("other protocol versions are rejected")
     {
-        bytes[5] = 1;
+        bytes[protocol::kVersionOffset] = 1;
         REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
     SECTION("oversized payloads are rejected")
     {
-        std::memset(bytes + 12, 0xFF, 4);
+        std::memset(bytes + protocol::kPayloadSizeOffset, 0xFF, sizeof(uint32_t));
         REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
 }
@@ -151,7 +156,7 @@ TEST_CASE("Wire contract is 13 frame types in a 24-byte header", "[remote_device
 
     for (const uint8_t type : { 0, 6, 15 })
     {
-        bytes[4] = type;
+        bytes[protocol::kTypeOffset] = type;
         REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
 }
@@ -282,7 +287,7 @@ TEST_CASE("SCHEMA_SAMPLE round-trips bytes and timestamps", "[remote_device_brid
     REQUIRE(empty.bytes.empty());
 
     std::vector<uint8_t> lying = schema_payload(sample);
-    lying[16] = 0xFF; // declared size larger than the remaining bytes
+    lying[kSchemaByteCountOffset] = 0xFF; // declared size larger than the remaining bytes
     REQUIRE_THROWS_AS(protocol::decode_schema_sample(lying), protocol::DecodeError);
 }
 
@@ -297,7 +302,7 @@ TEST_CASE("WRIST_SAMPLE round-trips", "[remote_device_bridge][unit]")
 
     const std::vector<uint8_t> bytes = protocol::encode_wrist_sample(sample);
     REQUIRE(bytes.size() == kWristSamplePayloadSize);
-    REQUIRE(bytes[8] == 0); // hand byte: 1 = left, 0 = right
+    REQUIRE(bytes[kWristHandOffset] == 0); // 1 = left, 0 = right
     const protocol::WristSample decoded = protocol::decode_wrist_sample(bytes);
     REQUIRE(decoded.sample_time_ns == -5);
     REQUIRE(decoded.hand == XR_HAND_RIGHT_EXT);
@@ -306,7 +311,7 @@ TEST_CASE("WRIST_SAMPLE round-trips", "[remote_device_bridge][unit]")
     REQUIRE(same_pose(decoded.sample.pose, sample.sample.pose));
 
     std::vector<uint8_t> bad_bool = bytes;
-    bad_bool[9] = 2;
+    bad_bool[kWristValidOffset] = 2;
     REQUIRE_THROWS_AS(protocol::decode_wrist_sample(bad_bool), protocol::DecodeError);
 }
 
@@ -375,13 +380,12 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
         REQUIRE(frame == golden);
 
         protocol::stamp_header(frame, 0x11223344u, 0x0807060504030201LL);
-        REQUIRE(std::vector<uint8_t>(frame.begin() + 8, frame.begin() + 12) ==
+        REQUIRE(std::vector<uint8_t>(frame.begin() + protocol::kSeqOffset, frame.begin() + protocol::kPayloadSizeOffset) ==
                 std::vector<uint8_t>{ 0x44, 0x33, 0x22, 0x11 });
-        REQUIRE(std::vector<uint8_t>(frame.begin() + 16, frame.begin() + protocol::kHeaderSize) ==
+        REQUIRE(std::vector<uint8_t>(frame.begin() + protocol::kSendTimeOffset, frame.begin() + protocol::kHeaderSize) ==
                 std::vector<uint8_t>{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 });
-        REQUIRE(std::equal(
-            frame.begin() + protocol::kHeaderSize, frame.end(), golden.begin() + protocol::kHeaderSize)); // payload
-                                                                                                          // untouched
+        // payload untouched
+        REQUIRE(std::equal(frame.begin() + protocol::kHeaderSize, frame.end(), golden.begin() + protocol::kHeaderSize));
 
         const protocol::Frame split = protocol::split_frame(frame);
         REQUIRE(split.header.type == protocol::FrameType::SchemaSample);

@@ -20,9 +20,14 @@ namespace remote_plugin_protocol
 
 constexpr uint32_t kMagic = 0x30535052u; // "RPS0"
 constexpr uint8_t kProtocolVersion = 0;
-//! magic u32, type u8, version u8, channel u16, seq u32, payload size u32, t_send i64.
-constexpr size_t kHeaderSize =
-    sizeof(uint32_t) + 2 * sizeof(uint8_t) + sizeof(uint16_t) + 2 * sizeof(uint32_t) + sizeof(int64_t);
+//! Header byte offsets: magic u32, type u8, version u8, channel u16, seq u32, payload size u32, t_send i64.
+constexpr size_t kTypeOffset = sizeof(kMagic);
+constexpr size_t kVersionOffset = kTypeOffset + sizeof(uint8_t);
+constexpr size_t kChannelOffset = kVersionOffset + sizeof(uint8_t);
+constexpr size_t kSeqOffset = kChannelOffset + sizeof(uint16_t);
+constexpr size_t kPayloadSizeOffset = kSeqOffset + sizeof(uint32_t);
+constexpr size_t kSendTimeOffset = kPayloadSizeOffset + sizeof(uint32_t);
+constexpr size_t kHeaderSize = kSendTimeOffset + sizeof(int64_t);
 constexpr uint16_t kSessionChannelId = 0;
 constexpr uint32_t kMaxPayloadSize = 16u * 1024u * 1024u; // large tactile/sensor payloads; still bounded
 

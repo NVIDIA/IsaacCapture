@@ -136,10 +136,6 @@ std::vector<uint8_t> encode_schema_sample_frame(uint16_t channel_id,
                                                 int64_t sample_time_local_common_clock_ns,
                                                 int64_t sample_time_raw_device_clock_ns)
 {
-    if (size > kMaxPayloadSize)
-    {
-        throw std::invalid_argument("protocol: schema sample too large");
-    }
     return build_frame(FrameType::SchemaSample, channel_id, 2 * sizeof(int64_t) + sizeof(uint32_t) + size,
                        [&](Writer& writer)
                        {

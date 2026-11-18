@@ -20,17 +20,6 @@ using detail::Writer;
 namespace
 {
 
-constexpr size_t kTypeOffset = 4;
-constexpr size_t kVersionOffset = 5;
-constexpr size_t kChannelOffset = 6;
-constexpr size_t kSeqOffset = 8;
-constexpr size_t kPayloadSizeOffset = 12;
-constexpr size_t kSendTimeOffset = 16;
-static_assert(kTypeOffset == sizeof(kMagic) && kVersionOffset == kTypeOffset + 1 && kChannelOffset == kVersionOffset + 1 &&
-              kSeqOffset == kChannelOffset + sizeof(uint16_t) && kPayloadSizeOffset == kSeqOffset + sizeof(uint32_t) &&
-              kSendTimeOffset == kPayloadSizeOffset + sizeof(uint32_t) &&
-              kHeaderSize == kSendTimeOffset + sizeof(int64_t));
-
 bool is_frame_type(uint8_t value)
 {
     switch (static_cast<FrameType>(value))
@@ -83,10 +72,6 @@ void stamp_header(std::vector<uint8_t>& frame, uint32_t seq, int64_t t_send_mono
 
 Frame split_frame(std::vector<uint8_t> message)
 {
-    if (message.size() < kHeaderSize)
-    {
-        throw DecodeError("protocol: message shorter than a header");
-    }
     Frame frame;
     frame.header = decode_header(message);
     if (message.size() != kHeaderSize + frame.header.payload_size)
@@ -106,11 +91,7 @@ std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, const std
 
 FrameHeader decode_header(std::span<const uint8_t> in)
 {
-    if (in.size() < kHeaderSize)
-    {
-        throw DecodeError("protocol: header: truncated");
-    }
-    Reader reader(in.data(), kHeaderSize, "header");
+    Reader reader(in.data(), in.size(), "header");
     if (reader.u32() != kMagic)
     {
         throw DecodeError("protocol: bad frame magic");
