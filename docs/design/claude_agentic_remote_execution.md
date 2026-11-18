@@ -1457,14 +1457,19 @@ drive.
   arm has settled more than 1 mm under it, the Thor's drive waits and sends nothing until the target is back within
   1 mm of it. The human program lifts such an arm only on the hand's own rising way. Once ROBOT_STATE has shown for
   0.15 s (`LIFT_AFTER_S`) a drive that has this engagement's joint target and has sent no setpoint, the joint target
-  follows the hand and stays within `ik.max_ahead_rad` less 0.005 rad (`LIFT_SLACK_RAD`) of the measured arm. Under
-  the height that WELCOME names in `human_tip_floor` the joint target moves only where every step of the robot app
-  lifts the tip, and while the drive waits only where the robot app's first step also keeps the tip inside the hand
-  speed limit. A hand that rises lifts the gripper out with that squeeze. While the drive waits, a hand that stands
-  still, goes sideways or sinks moves nothing, and the engagement ends 1 s after the joint target's tip last rose
-  (`FOLLOW_WAIT_S`). An arm that has settled further under its highest point than the robot app reaches with steps
-  that all rise is not lifted by a squeeze: the person presses right B, takes the arm over again, which starts the
-  height at the measured tip, and then squeezes and lifts.
+  goes toward the hand's pose, no further than the robot app reaches from the measured arm in one step: no joint
+  further from the arm than 0.9 of one step of the robot app (`JOINT_SPEED_SHARE`; 0.014 rad on the rig), and the
+  tip no further than the hand speed limit allows in one setpoint period (5 mm on the rig). This holds wherever the
+  tip is, so the robot app's first setpoint is that joint target and is not cut by its speed clamp. Under the height
+  that WELCOME names in `human_tip_floor` the joint target moves only where the hand's pose is more than twice
+  `ik.tol` above the last joint target's tip (`LIFT_ASKED_TOLS`) and every step of the robot app lifts the tip. A
+  hand that rises lifts the gripper out with that squeeze where that one step brings the target within 1 mm of the
+  highest tip. While the drive waits, a hand that stands still, goes sideways or sinks moves nothing, and the
+  engagement ends 1 s after the joint target's tip last rose (`FOLLOW_WAIT_S`). An arm that has settled deeper than
+  1 mm plus the rise of that one step is not lifted by a squeeze (in tests on the rig files about 3.6 mm at 0.8 rad/s,
+  less in a folded pose and at a lower `limits.human.max_joint_speed`): the person presses right B, takes the arm
+  over again, which starts the height at the measured tip, and then squeezes and lifts. A start of the robot app's
+  drive that takes 0.2 s or more is taken for such a wait and costs one ordinary step on the hand's way.
 - What ends an engagement. A wall of the workspace box, the table clearance, the human joint box and the end of the
   arm's reach end none: the arm stops there and follows again. Each of the following ends the engagement in a hold,
   and the grip is released and squeezed again. In the human program: a hand more than `ik.max_ahead_m` from the
