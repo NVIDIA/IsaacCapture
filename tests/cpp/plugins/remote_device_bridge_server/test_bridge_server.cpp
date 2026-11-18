@@ -107,13 +107,13 @@ public:
     {
         log_event(std::string("close hand ") + side(m_hand));
     }
-    void push(const XrHandJointLocationEXT*, int64_t sample_time_ns) override
+    void push(const XrHandJointLocationEXT*, int64_t sample_time_local_common_clock_ns) override
     {
         if (m_pushes++ == 0 && g_fake.first_push_delay_ms > 0)
         {
             std::this_thread::sleep_for(Ms(g_fake.first_push_delay_ms));
         }
-        log_event(std::string("push hand ") + side(m_hand) + " t=" + std::to_string(sample_time_ns));
+        log_event(std::string("push hand ") + side(m_hand) + " t=" + std::to_string(sample_time_local_common_clock_ns));
     }
 
 private:

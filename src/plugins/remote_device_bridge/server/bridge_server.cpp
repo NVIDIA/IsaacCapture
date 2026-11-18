@@ -547,7 +547,7 @@ private:
                     throw std::runtime_error("HAND_SAMPLE on unknown channel " + std::to_string(header.channel_id));
                 }
                 const protocol::HandSample sample = protocol::decode_hand_sample(payload);
-                const int64_t t_ns = m_clock.remote_to_local(sample.sample_time_ns);
+                const int64_t t_ns = m_clock.remote_to_local(sample.sample_time_local_common_clock_ns);
                 const int64_t now_ns = core::os_monotonic_now_ns();
                 if (stale(t_ns, now_ns))
                 {
@@ -557,9 +557,9 @@ private:
                 ++it->second.pushes;
                 ++m_counts.applied;
                 if (m_csv &&
-                    !m_csv->write({ core::os_monotonic_now_ns(), received.t_recv_ns, sample.sample_time_ns, t_ns,
-                                    now_ns - t_ns, hand_side(it->second.hand), header.seq,
-                                    index_curl_m(sample.joints.data()) }) &&
+                    !m_csv->write({ core::os_monotonic_now_ns(), received.t_recv_ns,
+                                    sample.sample_time_local_common_clock_ns, t_ns, now_ns - t_ns,
+                                    hand_side(it->second.hand), header.seq, index_curl_m(sample.joints.data()) }) &&
                     !m_csv_failed)
                 {
                     m_csv_failed = true;
@@ -717,7 +717,7 @@ private:
                 for (const XrHandEXT hand : { XR_HAND_LEFT_EXT, XR_HAND_RIGHT_EXT })
                 {
                     protocol::WristSample sample;
-                    sample.sample_time_ns = now_ns;
+                    sample.sample_time_local_common_clock_ns = now_ns;
                     sample.hand = hand;
                     sample.sample = wrist->query(hand, now_ns);
                     send(protocol::FrameType::WristSample, m_pull->id, protocol::encode_wrist_sample(sample));
