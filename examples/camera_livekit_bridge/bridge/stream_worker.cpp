@@ -6,12 +6,14 @@
 #include <gpu_ops/box_downscale.hpp>
 #include <ipc_client/cuda_ipc_client.hpp>
 #include <nvenc/nvenc_encoder.hpp>
+#include <video_types/slot_age.hpp>
 #include <video_types/video_types.hpp>
 
 #include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <cuda_runtime_api.h>
+#include <iostream>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -22,6 +24,36 @@ namespace camera_bridge
 
 namespace
 {
+
+constexpr auto kOverwriteReportInterval = std::chrono::seconds(5);
+
+/// The loud error for a picture that may mix two frames. Rate limited per stream; the stats line keeps the totals.
+void report_slot_overwrite_risk(const WorkerConfig& config,
+                                const FrameNotice& notice,
+                                std::size_t slot_count,
+                                bool newer_notice,
+                                bool late_copy,
+                                int64_t age_ns,
+                                int64_t deadline_ns,
+                                uint64_t dropped_total)
+{
+    std::cerr << "\n!!!!!!!!!! SLOT OVERWRITE RISK on stream '" << config.stream << "': picture DROPPED !!!!!!!!!!\n"
+              << "  The receiver's ring (" << slot_count << " slots) may have rewritten slot " << notice.slot
+              << " (generation " << notice.slot_generation << ") while this bridge was still reading it, so the\n"
+              << "  pixels could be a mix of two frames under the first frame's ID and timestamp.\n";
+    if (newer_notice)
+        std::cerr << "  Evidence: a newer notice for the same slot, or a full ring of newer notices, arrived.\n";
+    if (late_copy)
+        std::cerr << "  Evidence: the copy finished " << static_cast<double>(age_ns) / 1e6
+                  << " ms after the notice; the ring wraps in " << static_cast<double>(deadline_ns) / 1e6 << " ms at "
+                  << config.fps << " fps.\n";
+    std::cerr
+        << "  Cause: this consumer is reading too slowly (starved GPU or CPU), or the receiver is delivering frames\n"
+        << "  faster than " << config.fps << " fps. Fix the stall; do not trust recordings of this period.\n"
+        << "  Pictures dropped for this reason so far: " << dropped_total << " (reported at most every "
+        << kOverwriteReportInterval.count() << " s)\n\n"
+        << std::flush;
+}
 
 struct PlaneLayout
 {
@@ -134,6 +166,10 @@ struct StreamWorker::Impl
 
         const IpcStream& stream = client.streams().front();
         bool need_idr = true;
+        const int64_t deadline_ns = config.max_notice_age_ms != 0 ?
+                                        static_cast<int64_t>(config.max_notice_age_ms) * 1'000'000 :
+                                        slot_read_deadline_ns(config.fps, stream.slots.size());
+        auto last_overwrite_report = std::chrono::steady_clock::now() - kOverwriteReportInterval;
         uint32_t own_frame_id = 0;
         uint64_t last_session = 0;
         FrameNotice notice;
@@ -209,10 +245,28 @@ struct StreamWorker::Impl
                 }
                 if (stream.slots.size() > 1 && newer_count + 1 >= stream.slots.size())
                     overwritten = true;
-                if (overwritten)
+                // The copy is done. If it finished later than the publisher needs to wrap its ring, the slot may have
+                // been overwritten during it, whether or not the replacement notice has arrived yet.
+                const int64_t copy_done_ns = monotonic_ns();
+                const SlotAge age = classify_slot_age(notice.timestamp_ns, copy_done_ns, deadline_ns);
+                if (age == SlotAge::Unknown && deadline_ns > 0)
+                    ++stats.unchecked_slot_reads;
+                const bool stale = age == SlotAge::Stale;
+                if (overwritten || stale)
                 {
                     encoder.release(surface);
-                    ++stats.slot_overruns;
+                    if (overwritten)
+                        ++stats.slot_overruns;
+                    else
+                        ++stats.stale_slot_reads;
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now - last_overwrite_report >= kOverwriteReportInterval)
+                    {
+                        last_overwrite_report = now;
+                        report_slot_overwrite_risk(config, notice, stream.slots.size(), overwritten, stale,
+                                                   copy_done_ns - static_cast<int64_t>(notice.timestamp_ns),
+                                                   deadline_ns, stats.slot_overruns + stats.stale_slot_reads);
+                    }
                     continue;
                 }
             }

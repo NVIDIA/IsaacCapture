@@ -33,7 +33,7 @@ void usage()
 {
     std::cerr
         << "usage: camera_livekit_bridge --livekit-url URL --livekit-token-file FILE --stream NAME=TRACK[:DIV] [--stream ...]\n"
-           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--gpu N] [--source-full-range]\n         [--timestamp-basis monotonic_us|capture_monotonic_us|capture_unix_us]\n"
+           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--max-notice-age-ms N] [--gpu N] [--source-full-range]\n         [--timestamp-basis monotonic_us|capture_monotonic_us|capture_unix_us]\n"
            "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects;\n  DIV shrinks the picture on the GPU by that integer factor before encoding.\n";
 }
 
@@ -91,6 +91,8 @@ int main(int argc, char** argv)
             defaults.bitrate_bps = static_cast<uint32_t>(std::atof(next().c_str()) * 1e6);
         else if (arg == "--source-full-range")
             defaults.source_full_range = true;
+        else if (arg == "--max-notice-age-ms")
+            defaults.max_notice_age_ms = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (arg == "--idr-period")
             defaults.idr_period = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (arg == "--timestamp-basis")
@@ -198,9 +200,12 @@ int main(int argc, char** argv)
                     std::cerr << "[stats] " << workers[i]->config().track << ": " << (frames - last_frames[i]) / seconds
                               << " fps, " << frames << " frames, " << stats.keyframes.load() << " keyframes, "
                               << stats.skipped.load() << " skipped, " << stats.rejected.load() << " rejected, "
-                              << stats.slot_overruns.load() << " slot overruns, encode " << mean_ms
-                              << " ms mean, bitrate " << stats.bitrate_bps.load() / 1000 << " kbps (transport target "
+                              << stats.slot_overruns.load() << " slot overruns, " << stats.stale_slot_reads.load()
+                              << " stale slot reads, encode " << mean_ms << " ms mean, bitrate "
+                              << stats.bitrate_bps.load() / 1000 << " kbps (transport target "
                               << stats.target_bps.load() / 1000 << " kbps, " << stats.rate_changes.load() << " changes)";
+                    if (const uint64_t unchecked = stats.unchecked_slot_reads.load(); unchecked > 0)
+                        std::cerr << ", " << unchecked << " slot reads without a notice time to check";
                     const uint64_t ready_samples = stats.capture_to_ready_samples.load();
                     if (ready_samples > 0)
                     {
