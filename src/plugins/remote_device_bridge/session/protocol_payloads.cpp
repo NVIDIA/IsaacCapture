@@ -146,7 +146,7 @@ std::vector<uint8_t> encode_schema_sample_frame(uint16_t channel_id,
                                                 int64_t sample_time_local_common_clock_ns,
                                                 int64_t sample_time_raw_device_clock_ns)
 {
-    return build_frame(FrameType::SchemaSample, channel_id, 2 * sizeof(int64_t) + sizeof(uint32_t) + size,
+    return build_frame(FrameType::SchemaSample, channel_id, kSchemaSampleFixedSize + size,
                        [&](Writer& writer)
                        {
                            writer.i64(sample_time_local_common_clock_ns);
@@ -281,12 +281,7 @@ HelloAck decode_hello_ack(const std::vector<uint8_t>& payload)
 
 XrHandEXT decode_open_hand(const std::vector<uint8_t>& payload)
 {
-    return parse_payload(payload, "OPEN_HAND",
-                         [](Reader& reader)
-                         {
-                             const XrHandEXT hand = from_wire_hand(reader.u8());
-                             return hand;
-                         });
+    return parse_payload(payload, "OPEN_HAND", [](Reader& reader) { return from_wire_hand(reader.u8()); });
 }
 
 core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload)
@@ -352,22 +347,12 @@ WristSample decode_wrist_sample(const std::vector<uint8_t>& payload)
 
 std::string decode_error(const std::vector<uint8_t>& payload)
 {
-    return parse_payload(payload, "ERROR",
-                         [](Reader& reader)
-                         {
-                             std::string message = reader.str();
-                             return message;
-                         });
+    return parse_payload(payload, "ERROR", [](Reader& reader) { return reader.str(); });
 }
 
 int64_t decode_ping(const std::vector<uint8_t>& payload)
 {
-    return parse_payload(payload, "PING",
-                         [](Reader& reader)
-                         {
-                             const int64_t t1_ns = reader.i64();
-                             return t1_ns;
-                         });
+    return parse_payload(payload, "PING", [](Reader& reader) { return reader.i64(); });
 }
 
 Pong decode_pong(const std::vector<uint8_t>& payload)

@@ -70,9 +70,12 @@ struct Pong
 constexpr size_t kPoseSize = 7 * sizeof(float);
 constexpr size_t kJointSize = sizeof(uint64_t) + kPoseSize + sizeof(float);
 constexpr size_t kHandSamplePayloadSize = sizeof(int64_t) + XR_HAND_JOINT_COUNT_EXT * kJointSize;
+//! SCHEMA_SAMPLE payload before the schema bytes: two sample times (i64) and the byte count (u32).
+constexpr size_t kSchemaSampleFixedSize = 2 * sizeof(int64_t) + sizeof(uint32_t);
 
 static_assert(kJointSize == 40);
 static_assert(kHandSamplePayloadSize == 1048);
+static_assert(kSchemaSampleFixedSize == 20);
 
 std::vector<uint8_t> encode_hello(const Hello& value);
 std::vector<uint8_t> encode_hello_ack(const HelloAck& value);
