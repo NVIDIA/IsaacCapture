@@ -502,7 +502,7 @@ export default function App() {
   // is derived from change: the backend's own readiness reason, the station in use and the saved count. The
   // control token goes with it, so the reply says which address the headset connects to.
   const [setupGeneration, refreshSetup] = useReducer((n: number) => n + 1, 0);
-  const setup = useSetup(`${setupGeneration}|${recordingSnapshot?.notReadyReason ?? ""}|${response?.station_label ?? ""}|${recordingSnapshot?.savedCount ?? 0}`, { controlToken });
+  const setup = useSetup(`${setupGeneration}|${recordingSnapshot?.notReadyReason ?? ""}|${response?.station_label ?? ""}|${recordingSnapshot?.savedCount ?? 0}`, { controlToken, scope: response?.station_label ?? "" });
   /** Open Settings on the given tab, as a fresh dialog. */
   const openSettings = (tab: SettingsTab) => {
     setSettingsTab(tab);

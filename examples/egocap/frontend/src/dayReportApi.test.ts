@@ -23,14 +23,14 @@ describe("the day report", () => {
     const fn = stubFetch(200, DAY_REPORT_FIXTURE);
     const signal = new AbortController().signal;
     await expect(fetchDayReport("tok", signal)).resolves.toEqual(DAY_REPORT_FIXTURE);
-    expect(fn).toHaveBeenLastCalledWith("/api/day-report", { signal, headers: { "X-Control-Token": "tok" } });
+    expect(fn).toHaveBeenLastCalledWith("/api/day-report", { signal: expect.any(AbortSignal), headers: { "X-Control-Token": "tok" } });
   });
 
   it("is saved with an empty body and answers with the files written", async () => {
     const saved = { ...DAY_REPORT_FIXTURE, saved: { report: "bench_a_2026-03-09_report.json", activity_log: "bench_a_2026-03-09_activity.json" } };
     const fn = stubFetch(200, saved);
     await expect(saveDayReport("tok")).resolves.toEqual(saved);
-    expect(fn).toHaveBeenCalledWith("/api/day-report/save", { method: "POST", headers: JSON_AUTH, body: "{}" });
+    expect(fn).toHaveBeenCalledWith("/api/day-report/save", { signal: expect.any(AbortSignal), method: "POST", headers: JSON_AUTH, body: "{}" });
   });
 
   it("sends a correction of only the session, the takes and the task, and returns what it changed", async () => {
@@ -38,7 +38,7 @@ describe("the day report", () => {
     const fn = stubFetch(200, reply);
     const correction = { session: "session_a", episodes: "0-1", task: "Place the cup on the shelf." };
     await expect(correctSession("tok", correction)).resolves.toEqual(reply);
-    expect(fn).toHaveBeenCalledWith("/api/day-report/correct", { method: "POST", headers: JSON_AUTH, body: JSON.stringify(correction) });
+    expect(fn).toHaveBeenCalledWith("/api/day-report/correct", { signal: expect.any(AbortSignal), method: "POST", headers: JSON_AUTH, body: JSON.stringify(correction) });
   });
 
   it("surfaces the backend's reason, or the status when it gave none", async () => {

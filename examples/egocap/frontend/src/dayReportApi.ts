@@ -8,6 +8,7 @@
  * recording. Every call carries the run's control token: the report names operators and tasks, and a
  * correction rewrites recorded labels.
  */
+import { CHANGE_TIMEOUT_MS, withTimeout } from "./requestTimeout";
 import { SettingsHttpError, SettingsParseError } from "./settingsApi";
 import { parseUptime, type StationUptime } from "./stationsApi";
 
@@ -113,24 +114,31 @@ function jsonHeaders(controlToken: string): Record<string, string> {
 }
 
 /** Read today's report for the station in use. */
-export async function fetchDayReport(controlToken: string, signal?: AbortSignal): Promise<DayReportReply> {
-  const response = await fetch("/api/day-report", { signal, headers: { "X-Control-Token": controlToken } });
-  if (!response.ok) throw await failureOf(response);
-  return parseReply(await response.json());
+export function fetchDayReport(controlToken: string, signal?: AbortSignal): Promise<DayReportReply> {
+  // Given a change's bound: the report walks every session of the day on disk.
+  return withTimeout(signal, CHANGE_TIMEOUT_MS, async (bounded) => {
+    const response = await fetch("/api/day-report", { signal: bounded, headers: { "X-Control-Token": controlToken } });
+    if (!response.ok) throw await failureOf(response);
+    return parseReply(await response.json());
+  });
 }
 
 /** Save today's report on the station and bring its activity log up to date. */
-export async function saveDayReport(controlToken: string): Promise<DayReportReply> {
-  const response = await fetch("/api/day-report/save", { method: "POST", headers: jsonHeaders(controlToken), body: "{}" });
-  if (!response.ok) throw await failureOf(response);
-  return parseReply(await response.json());
+export function saveDayReport(controlToken: string): Promise<DayReportReply> {
+  return withTimeout(undefined, CHANGE_TIMEOUT_MS, async (signal) => {
+    const response = await fetch("/api/day-report/save", { method: "POST", signal, headers: jsonHeaders(controlToken), body: "{}" });
+    if (!response.ok) throw await failureOf(response);
+    return parseReply(await response.json());
+  });
 }
 
 /** Correct the task of a range of a session's episodes. */
-export async function correctSession(controlToken: string, correction: Correction): Promise<CorrectionReply> {
-  const response = await fetch("/api/day-report/correct", { method: "POST", headers: jsonHeaders(controlToken), body: JSON.stringify(correction) });
-  if (!response.ok) throw await failureOf(response);
-  const body = (await response.json()) as Partial<CorrectionReply>;
-  if (!Array.isArray(body.updated) || !Array.isArray(body.missing)) throw new SettingsParseError("correction reply is malformed");
-  return body as CorrectionReply;
+export function correctSession(controlToken: string, correction: Correction): Promise<CorrectionReply> {
+  return withTimeout(undefined, CHANGE_TIMEOUT_MS, async (signal) => {
+    const response = await fetch("/api/day-report/correct", { method: "POST", signal, headers: jsonHeaders(controlToken), body: JSON.stringify(correction) });
+    if (!response.ok) throw await failureOf(response);
+    const body = (await response.json()) as Partial<CorrectionReply>;
+    if (!Array.isArray(body.updated) || !Array.isArray(body.missing)) throw new SettingsParseError("correction reply is malformed");
+    return body as CorrectionReply;
+  });
 }

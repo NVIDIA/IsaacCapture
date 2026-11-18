@@ -356,6 +356,9 @@ def _station_change_blocked(coordinator: RecordingSessionCoordinator) -> str | N
 INTERRUPTED_TAKE = "an interrupted take needs recovery"
 #: Why a change that would start a new batch is refused while an interrupted take waits.
 RESOLVE_INTERRUPTED_TAKE = "recover or discard the interrupted take first"
+#: Why a station change is refused while the recording session cannot end its batch, by what stopped it.
+STATION_CHANGE_BUSY = "the recording session is busy; finish the current take before changing stations"
+STATION_CHANGE_REFUSED = "the recording session cannot change stations in its current state"
 
 #: How often the station's state is asked for the uptime log; a take's start and end are logged this late at most.
 _UPTIME_SAMPLE_SECONDS = 2.0
@@ -405,11 +408,19 @@ async def _remember_headset_address(
 async def _every(seconds: float, duty: Callable[[], Any], what: str) -> None:
     """Run a background duty at an interval for as long as the application runs. One failed pass is logged
     and the next still runs: these duties keep records, and must never take the application down."""
+    failure: str | None = None
     while True:
         try:
             await duty()
-        except Exception:  # noqa: BLE001 -- see the docstring
-            logger.exception("%s failed", what)
+            # Said once, so the log shows when a fault that was reported ended.
+            if failure is not None:
+                logger.info("%s is working again", what)
+            failure = None
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            # Logged when the cause changes, not at every pass, or a disk that stays full would fill the log.
+            if repr(exc) != failure:
+                failure = repr(exc)
+                logger.exception("%s failed", what)
         await asyncio.sleep(seconds)
 
 
@@ -423,8 +434,13 @@ async def _rotate_batch_for_station(coordinator: RecordingSessionCoordinator) ->
         raise StationError(RESOLVE_INTERRUPTED_TAKE)
     try:
         await coordinator.new_batch()
-    except (CoordinatorBusyError, StateError) as exc:
-        raise StationError(f"the recording session cannot change stations now: {exc}") from exc
+    except CoordinatorBusyError as exc:
+        # The cause stays in the log: its text is the coordinator's own and not written for the page.
+        logger.info("A station change was refused while the recording session was busy: %s", exc)
+        raise StationError(STATION_CHANGE_BUSY) from exc
+    except StateError as exc:
+        logger.info("A station change was refused by the recording session's state: %s", exc)
+        raise StationError(STATION_CHANGE_REFUSED) from exc
 
 
 @asynccontextmanager

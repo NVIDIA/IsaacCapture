@@ -19,9 +19,13 @@ import type { StationChange, StationListing, StationRecord } from "./stationsApi
 
 /** The registry calls the card makes; the dialog passes the real ones and tests pass fakes. */
 export interface StationsBackend {
+  /** Adds a station and answers with the registry as it then stands, as every call here does. */
   addStation: (controlToken: string, fields: StationChange) => Promise<StationListing>;
+  /** Changes a station's name or cameras. */
   updateStation: (controlToken: string, id: string, changes: StationChange) => Promise<StationListing>;
+  /** Removes a station; the one in use leaves no station in use. */
   deleteStation: (controlToken: string, id: string) => Promise<StationListing>;
+  /** Puts a station in use, or none with a null id. */
   selectStation: (controlToken: string, id: string | null) => Promise<StationListing>;
 }
 

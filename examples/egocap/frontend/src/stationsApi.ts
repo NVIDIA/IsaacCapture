@@ -8,6 +8,7 @@
  * Reading either needs nothing, though the uptime's notes are left empty for a read without the run's control
  * token; every change carries that token, as recording commands do.
  */
+import { CHANGE_TIMEOUT_MS, READ_TIMEOUT_MS, withTimeout } from "./requestTimeout";
 import { SettingsHttpError, SettingsParseError } from "./settingsApi";
 
 /** One station as the backend lists it. */
@@ -65,10 +66,14 @@ function parseListing(value: unknown): StationListing {
 }
 
 /** Sends one request and parses the listing every station route answers with. */
-async function listingFrom(path: string, init: RequestInit): Promise<StationListing> {
-  const response = await fetch(path, init);
-  if (!response.ok) throw await failureOf(response);
-  return parseListing(await response.json());
+function listingFrom(path: string, init: RequestInit): Promise<StationListing> {
+  // A change is given longer than a read: putting another station in use ends the recording batch first.
+  const bound = init.method === undefined ? READ_TIMEOUT_MS : CHANGE_TIMEOUT_MS;
+  return withTimeout(init.signal ?? undefined, bound, async (signal) => {
+    const response = await fetch(path, { ...init, signal });
+    if (!response.ok) throw await failureOf(response);
+    return parseListing(await response.json());
+  });
 }
 
 /** The headers of a change: the credential, and the JSON type when a body follows. */
@@ -105,11 +110,13 @@ export type UptimeState = "ready" | "recording" | "down";
 
 /** One stretch of the day in which the station could not record. */
 export interface UptimeBlocker {
+  /** Why the station could not record, as it was first observed. */
   reason: string;
   /** Epoch seconds the stretch began. */
   start: number;
   /** Epoch seconds it ended; null while it is still open. */
   end: number | null;
+  /** How long the stretch lasted inside the span the totals cover, up to now while it is open. */
   seconds: number;
 }
 
@@ -119,15 +126,21 @@ export interface UptimeBlocker {
  * last take of the day, so they are zero and empty before the first take.
  */
 export interface StationUptime {
+  /** The station these figures are for. */
   station: string;
+  /** The local day they cover, as an ISO date. */
   date: string;
+  /** What the station is doing now. */
   state: UptimeState;
   /** Why the station cannot record; set only while it is down. */
   reason: string | null;
   /** Epoch seconds the current state began; without it no elapsed time is shown. */
   since: number | null;
+  /** Seconds the station could record or was recording, between the day's first and last take. */
   active_seconds: number;
+  /** Seconds it could not, over the same span. */
   down_seconds: number;
+  /** Each stretch it could not record in, oldest first. */
   blockers: UptimeBlocker[];
   /** The operator's notes for the day; empty in a reply to a read that carried no control token. */
   notes: string;
@@ -149,16 +162,20 @@ export function parseUptime(value: unknown): StationUptime {
 
 /** Load today's uptime for the station in use. No credential is sent, so the reply's notes are empty: the
  * end-of-day dialog reads them from the day report instead. */
-export async function fetchStationUptime(signal?: AbortSignal): Promise<StationUptime> {
-  const response = await fetch("/api/station-uptime", { signal });
-  if (!response.ok) throw await failureOf(response);
-  return parseUptime(await response.json());
+export function fetchStationUptime(signal?: AbortSignal): Promise<StationUptime> {
+  return withTimeout(signal, READ_TIMEOUT_MS, async (bounded) => {
+    const response = await fetch("/api/station-uptime", { signal: bounded });
+    if (!response.ok) throw await failureOf(response);
+    return parseUptime(await response.json());
+  });
 }
 
 /** Save the day's notes for `station`, the one they were written for; the backend refuses them with 409 when
  * another station is in use by now. Notes are all that can be set: the state is the backend's own. */
-export async function saveStationNotes(controlToken: string, station: string, notes: string): Promise<StationUptime> {
-  const response = await fetch("/api/station-uptime", { method: "POST", headers: changeHeaders(controlToken, true), body: JSON.stringify({ station, notes }) });
-  if (!response.ok) throw await failureOf(response);
-  return parseUptime(await response.json());
+export function saveStationNotes(controlToken: string, station: string, notes: string): Promise<StationUptime> {
+  return withTimeout(undefined, CHANGE_TIMEOUT_MS, async (signal) => {
+    const response = await fetch("/api/station-uptime", { method: "POST", signal, headers: changeHeaders(controlToken, true), body: JSON.stringify({ station, notes }) });
+    if (!response.ok) throw await failureOf(response);
+    return parseUptime(await response.json());
+  });
 }

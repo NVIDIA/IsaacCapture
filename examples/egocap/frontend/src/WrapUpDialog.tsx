@@ -40,8 +40,11 @@ import { formatActivity, formatTotal } from "./stationTime";
 
 /** The calls the dialog makes; the page uses the real ones and tests pass fakes. */
 export interface WrapUpBackend {
+  /** Reads today's report for the station in use. */
   load: (controlToken: string, signal: AbortSignal) => Promise<DayReportReply>;
+  /** Writes the report as a file on the station and answers with it and the files written. */
   save: (controlToken: string) => Promise<DayReportReply>;
+  /** Corrects the task of a session's takes and answers with which were changed and which were not found. */
   correct: (controlToken: string, correction: Correction) => Promise<CorrectionReply>;
   /** Saves the day's notes for `station`; rejects with a 409 `SettingsHttpError` when that is no longer the station in use. */
   saveNotes: (controlToken: string, station: string, notes: string) => Promise<StationUptime>;
@@ -49,10 +52,13 @@ export interface WrapUpBackend {
 
 /** Notes as typed, with the station whose day they were typed for. */
 interface NotesDraft {
+  /** The station in use when the notes were typed. */
   station: string;
+  /** The notes as typed. */
   text: string;
 }
 
+/** The backend's own routes; the dialog uses these unless a test passes fakes. */
 export const REAL_WRAP_UP_BACKEND: WrapUpBackend = { load: fetchDayReport, save: saveDayReport, correct: correctSession, saveNotes: saveStationNotes };
 
 /** The longest notes the backend accepts, so the field stops where a save would be refused. */
@@ -90,10 +96,13 @@ function clockTime(epochSeconds: number): string {
 }
 
 export interface WrapUpDialogProps {
+  /** Whether the dialog is shown; closed, it renders nothing and reads nothing. */
   open: boolean;
+  /** Asked for when the operator closes the dialog, after any question about unsaved input. */
   onClose: () => void;
   /** The run's control token; the report is not readable without it. */
   controlToken: string | null;
+  /** The calls the dialog makes; the real routes unless a test passes fakes. */
   backend?: WrapUpBackend;
 }
 
@@ -547,7 +556,8 @@ function CorrectionForm({
     <fieldset className="settings-fieldset wrap-up-correction">
       <legend>Correct a task</legend>
       {holders.length > 1 && (
-        <select className="settings-input" aria-label="Recorded under" value={holder} disabled={busy} onChange={(e) => setHolder(e.target.value)}>
+        // Held, not disabled, while a correction is sent: disabling the focused field would drop focus out of the dialog.
+        <select className="settings-input" aria-label="Recorded under" value={holder} aria-disabled={busy} onChange={(e) => !busy && setHolder(e.target.value)}>
           {holders.map((name) => (
             <option key={name} value={name}>
               {name}
@@ -556,9 +566,9 @@ function CorrectionForm({
         </select>
       )}
       <div className="settings-actions">
-        <input className="settings-input wrap-up-range" aria-label="Takes to correct" placeholder="Take or range, e.g. 3 or 2-7" value={episodes} disabled={busy} onChange={(e) => setEpisodes(e.target.value)} />
-        <input className="settings-input wrap-up-task" aria-label="Correct task" placeholder="The task these takes actually show" value={task} maxLength={1000} disabled={busy} onChange={(e) => setTask(e.target.value)} />
-        <button type="button" className="settings-quiet" disabled={!ready} onClick={apply}>
+        <input className="settings-input wrap-up-range" aria-label="Takes to correct" placeholder="Take or range, e.g. 3 or 2-7" value={episodes} readOnly={busy} aria-disabled={busy} onChange={(e) => setEpisodes(e.target.value)} />
+        <input className="settings-input wrap-up-task" aria-label="Correct task" placeholder="The task these takes actually show" value={task} maxLength={1000} readOnly={busy} aria-disabled={busy} onChange={(e) => setTask(e.target.value)} />
+        <button type="button" className="settings-quiet" disabled={!ready && !busy} aria-disabled={busy} aria-busy={busy} onClick={() => !busy && apply()}>
           {busy ? "Correcting…" : "Correct"}
         </button>
       </div>

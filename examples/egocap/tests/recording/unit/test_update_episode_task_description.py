@@ -321,3 +321,46 @@ def test_the_config_is_replaced_whole_and_keeps_non_ascii_text(tmp_path):
     assert _update_session_config_yaml(tmp_path, task_description="Café table", task_name="", studio="") is True
     assert "Café table" in cfg.read_text(encoding="utf-8")
     assert sorted(path.name for path in tmp_path.iterdir()) == ["config.yaml"]
+
+
+def _make_rootless_session(tmp_path: Path, n_episodes: int = 2) -> Path:
+    """A session as the recording service leaves it: each episode a group of its own, none at the root."""
+    session = tmp_path / "session"
+    for i in range(n_episodes):
+        zarr.open_group(str(session / f"episode_{i}"), mode="w").attrs["episode_length"] = 10
+    return session
+
+
+def test_a_session_without_a_root_group_is_corrected_without_gaining_one(tmp_path):
+    session = _make_rootless_session(tmp_path)
+    (session / "config.yaml").write_text("meta:\n  task_description: before\n")
+    result = update_episode_task_description(session, "0-2", task_description="pour cereal", studio="Kitchen")
+    assert (result.updated_episodes, result.missing_episodes) == (["episode_0", "episode_1"], ["episode_2"])
+    assert result.aggregates_refreshed is False and result.config_yaml_updated is True
+    assert zarr.open_group(str(session / "episode_1"), mode="r").attrs["task_description"] == "pour cereal"
+    assert zarr.open_group(str(session / "episode_1"), mode="r").attrs["studio"] == "Kitchen"
+    assert not (session / "zarr.json").exists()
+
+
+def test_a_correction_that_reaches_no_episode_writes_nothing(tmp_path):
+    _make_session(tmp_path, 1)
+    (tmp_path / "config.yaml").write_text("meta:\n  task_description: before\n")
+    before = (tmp_path / "zarr.json").read_bytes()
+    result = update_episode_task_description(tmp_path, "4", task_description="x", studio="Kitchen")
+    assert (result.updated_episodes, result.missing_episodes) == ([], ["episode_4"])
+    assert result.config_yaml_updated is False and result.aggregates_refreshed is False
+    assert (tmp_path / "zarr.json").read_bytes() == before
+    assert yaml.safe_load((tmp_path / "config.yaml").read_text())["meta"]["task_description"] == "before"
+
+
+def test_a_linked_episode_is_not_followed_and_a_plain_directory_is_not_made_an_aligned_copy(tmp_path):
+    session = _make_rootless_session(tmp_path, 1)
+    outside = tmp_path / "elsewhere"
+    zarr.open_group(str(outside), mode="w").attrs["task_description"] = "untouched"
+    (session / "episode_1").symlink_to(outside, target_is_directory=True)
+    aligned = tmp_path / "session_aligned"
+    aligned.mkdir()
+    result = update_episode_task_description(session, "0-1", task_description="x")
+    assert (result.updated_episodes, result.missing_episodes) == (["episode_0"], ["episode_1"])
+    assert zarr.open_group(str(outside), mode="r").attrs["task_description"] == "untouched"
+    assert list(aligned.iterdir()) == []

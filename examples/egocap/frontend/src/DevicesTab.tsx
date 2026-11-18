@@ -28,6 +28,8 @@ const OUTCOMES: Record<CheckStatus, { mark: string; word: string }> = {
   // A finding that does not hold recording, so it must not read as a failure or as a pass.
   warn: { mark: "!", word: "advisory" },
   skip: { mark: "–", word: "not needed" },
+  // An outcome a newer backend sent that this page has no name for; it may be what holds a take.
+  unknown: { mark: "?", word: "outcome not recognised by this page" },
 };
 
 /** The groups of the checklist, in the order they are listed. */

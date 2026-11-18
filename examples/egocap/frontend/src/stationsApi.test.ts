@@ -23,19 +23,19 @@ describe("the station registry", () => {
   it("is read without a credential", async () => {
     const fn = stubFetch(200, STATIONS_FIXTURE);
     await expect(fetchStations()).resolves.toEqual(STATIONS_FIXTURE);
-    expect(fn).toHaveBeenLastCalledWith("/api/stations", { signal: undefined });
+    expect(fn).toHaveBeenLastCalledWith("/api/stations", { signal: expect.any(AbortSignal) });
   });
 
   it("sends every change with the control token and returns the new listing", async () => {
     const fn = stubFetch(200, STATIONS_FIXTURE);
     await addStation("tok", { name: "Bench A" });
-    expect(fn).toHaveBeenLastCalledWith("/api/stations", { method: "POST", headers: JSON_AUTH, body: JSON.stringify({ name: "Bench A" }) });
+    expect(fn).toHaveBeenLastCalledWith("/api/stations", { signal: expect.any(AbortSignal), method: "POST", headers: JSON_AUTH, body: JSON.stringify({ name: "Bench A" }) });
     await updateStation("tok", "st 1", { camera_roles: { ego: "cam_head" } });
-    expect(fn).toHaveBeenLastCalledWith("/api/stations/st%201", { method: "PUT", headers: JSON_AUTH, body: JSON.stringify({ camera_roles: { ego: "cam_head" } }) });
+    expect(fn).toHaveBeenLastCalledWith("/api/stations/st%201", { signal: expect.any(AbortSignal), method: "PUT", headers: JSON_AUTH, body: JSON.stringify({ camera_roles: { ego: "cam_head" } }) });
     await deleteStation("tok", "st_1");
-    expect(fn).toHaveBeenLastCalledWith("/api/stations/st_1", { method: "DELETE", headers: { "X-Control-Token": "tok" } });
+    expect(fn).toHaveBeenLastCalledWith("/api/stations/st_1", { signal: expect.any(AbortSignal), method: "DELETE", headers: { "X-Control-Token": "tok" } });
     await expect(selectStation("tok", null)).resolves.toEqual(STATIONS_FIXTURE);
-    expect(fn).toHaveBeenLastCalledWith("/api/stations/select", { method: "POST", headers: JSON_AUTH, body: JSON.stringify({ id: null }) });
+    expect(fn).toHaveBeenLastCalledWith("/api/stations/select", { signal: expect.any(AbortSignal), method: "POST", headers: JSON_AUTH, body: JSON.stringify({ id: null }) });
   });
 
   it("surfaces the backend's reason for a refusal, or the status when it gave none", async () => {
@@ -58,14 +58,14 @@ describe("station uptime", () => {
     const withheld = { ...UPTIME_FIXTURE, notes: "" };
     const fn = stubFetch(200, withheld);
     await expect(fetchStationUptime()).resolves.toEqual(withheld);
-    expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { signal: undefined });
+    expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { signal: expect.any(AbortSignal) });
   });
 
   it("saves the day's notes for the station they were written for, with the control token, and sets nothing else", async () => {
     const saved = { ...UPTIME_FIXTURE, notes: "left glove battery; replaced at 14:10" };
     const fn = stubFetch(200, saved);
     await expect(saveStationNotes("tok", "Bench A", "left glove battery; replaced at 14:10")).resolves.toEqual(saved);
-    expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { method: "POST", headers: JSON_AUTH, body: JSON.stringify({ station: "Bench A", notes: "left glove battery; replaced at 14:10" }) });
+    expect(fn).toHaveBeenLastCalledWith("/api/station-uptime", { signal: expect.any(AbortSignal), method: "POST", headers: JSON_AUTH, body: JSON.stringify({ station: "Bench A", notes: "left glove battery; replaced at 14:10" }) });
   });
 
   it("reports a refusal and a malformed body", async () => {

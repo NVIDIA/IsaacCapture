@@ -17,7 +17,7 @@ from egocap_web.config import CaptureStatusConfig
 from egocap_web.recording_session import CoordinatorBusyError
 from egocap_web.station_service import TAKE_IN_PROGRESS
 from egocap_web.stations import StationError
-from recording_service import RecordingPhase
+from recording_service import RecordingPhase, StateError
 
 
 def _coordinator(phase: RecordingPhase | None, operation=None, refusal: Exception | None = None, episode=None):
@@ -62,7 +62,12 @@ async def test_a_station_change_rotates_the_batch_and_a_refused_rotation_says_wh
     busy = _coordinator(RecordingPhase.IDLE, refusal=CoordinatorBusyError("an episode is active"))
     with pytest.raises(StationError) as refused:
         await app_module._rotate_batch_for_station(busy)
-    assert refused.value.public_message == "the recording session cannot change stations now: an episode is active"
+    # The page is told the outcome in fixed words; the coordinator's own text stays in the log.
+    assert refused.value.public_message == app_module.STATION_CHANGE_BUSY
+    state = _coordinator(RecordingPhase.IDLE, refusal=StateError("no pending episode 'session_1/episode_3'"))
+    with pytest.raises(StationError) as refused:
+        await app_module._rotate_batch_for_station(state)
+    assert refused.value.public_message == app_module.STATION_CHANGE_REFUSED
 
 
 async def test_a_change_that_would_start_a_new_batch_is_refused_while_an_interrupted_take_waits():
@@ -234,3 +239,22 @@ async def test_a_background_duty_keeps_running_after_a_failed_pass(caplog):
     with pytest.raises(asyncio.CancelledError):
         await app_module._every(0, duty, "the uptime sample")
     assert passes == [0, 1, 2] and caplog.text.count("the uptime sample failed") == 1
+
+
+async def test_a_fault_that_lasts_is_logged_once_and_its_end_is_said(caplog):
+    import asyncio
+    import logging
+
+    passes: list[int] = []
+
+    async def duty() -> None:
+        passes.append(len(passes))
+        if len(passes) <= 3:
+            raise OSError("disk full")
+        if len(passes) == 5:
+            raise asyncio.CancelledError  # the application is shutting down
+
+    with caplog.at_level(logging.INFO), pytest.raises(asyncio.CancelledError):
+        await app_module._every(0, duty, "the uptime sample")
+    assert caplog.text.count("the uptime sample failed") == 1
+    assert caplog.text.count("the uptime sample is working again") == 1

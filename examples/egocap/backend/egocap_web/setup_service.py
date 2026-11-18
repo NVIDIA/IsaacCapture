@@ -144,6 +144,8 @@ class SetupService:
         self._refreshing = asyncio.Lock()
         self._finished = 0
         self._last_failure: str | None = None
+        # Evaluations under way, held here because the event loop keeps only weak references to tasks.
+        self._evaluations: set[asyncio.Task[Evaluation]] = set()
 
     def _roles(self) -> dict[str, str | None] | None:
         """The camera each role of the station in use is filled by, or None with no station in use."""
@@ -162,10 +164,21 @@ class SetupService:
     async def refresh(self) -> Evaluation:
         """Judge the checklist now and keep the result for the synchronous readers.
 
+        The evaluation is a task of its own: a caller that goes away (a page that closed its request) leaves it
+        running to keep its result, and still holding its turn, so the worker thread it waits on stays the
+        only one.
+        """
+        task = asyncio.ensure_future(self._evaluate(self._finished))
+        self._evaluations.add(task)
+        task.add_done_callback(self._evaluations.discard)
+        return await asyncio.shield(task)
+
+    async def _evaluate(self, asked: int) -> Evaluation:
+        """One evaluation, asked for when ``asked`` evaluations had finished.
+
         A caller that waited for another evaluation takes that one's result when it is for the same station:
         it finished after this caller asked, so it is as fresh as its own would be.
         """
-        asked = self._finished
         async with self._refreshing:
             latest = self._latest
             if latest is not None and self._finished > asked and latest.key == self._key():

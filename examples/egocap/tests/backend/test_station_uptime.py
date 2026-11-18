@@ -807,3 +807,41 @@ def test_a_daily_log_still_owed_follows_a_rename(tmp_path, monkeypatch):
     log.observe("Bench A", READY, None)
     assert _activity(tmp_path, "2026-03-09")["station"] == "Bench A"
     assert not (tmp_path / "station_status" / "bnech_a_2026-03-09_activity.json").exists()
+
+
+# --- a clock that steps back, and a take a silence cut short -----------------------------------------------------
+
+
+def test_a_clock_stepped_back_holds_the_log_at_its_last_sample(tmp_path):
+    log, clock = _log(tmp_path)
+    _run(log, clock, [(RECORDING, None, 120), (READY, None, 60)])
+    log.observe("Bench A", READY, None)
+    held = clock.now
+    clock.now -= 600
+    log.observe("Bench A", DOWN, "headset disconnected")
+    # No segment ends before it began, and the report's time does not run backwards.
+    segments = _day_file(tmp_path)["stations"]["Bench A"]["segments"]
+    assert all(s["end"] is None or s["end"] >= s["start"] for s in segments)
+    assert (segments[-1]["start"], log.report("Bench A")["as_of"]) == (held, held)
+
+
+def test_a_clock_stepped_back_across_midnight_never_rewrites_the_day_already_closed(tmp_path):
+    late = _Clock(datetime.datetime(2026, 3, 9, 23, 50, 0).timestamp())
+    log, clock = _log(tmp_path, late)
+    _run(log, clock, [(RECORDING, None, 300), (READY, None, 600)])  # ends at 00:05 the next day
+    log.observe("Bench A", READY, None)
+    closed = _day_file(tmp_path)
+    clock.now = datetime.datetime(2026, 3, 9, 23, 55, 0).timestamp()
+    log.observe("Bench A", DOWN, "headset disconnected")
+    assert log.report("Bench A")["date"] == "2026-03-10"
+    assert _day_file(tmp_path) == closed
+
+
+def test_a_take_cut_short_by_a_silence_reaches_the_daily_log(tmp_path):
+    log, clock = _log(tmp_path)
+    _run(log, clock, [(READY, None, 60), (RECORDING, None, 120)])
+    log.observe("Bench A", RECORDING, None)
+    # The backend's host sleeps mid-take; the take ends where it was last seen.
+    clock.advance(1800)
+    log.observe("Bench A", READY, None)
+    assert _activity(tmp_path, "2026-03-09")["active_station_time_seconds"] == 120.0

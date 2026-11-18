@@ -769,7 +769,9 @@ button.step:hover {
 }
 
 .check-row--warn .check-mark,
-.check-row--warn .check-detail {
+.check-row--warn .check-detail,
+.check-row--unknown .check-mark,
+.check-row--unknown .check-detail {
   color: var(--warning);
 }
 

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { SetupStatus } from "./setupApi";
 import { SETUP_HELD, SETUP_READY } from "./setupTestDoubles";
-import { SETUP_REFRESH_MS, useSetup } from "./useSetup";
+import { SETUP_REFRESH_MS, SETUP_RETRY_MS, useSetup } from "./useSetup";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -36,9 +36,37 @@ describe("useSetup", () => {
     expect(result.current).toEqual(SETUP_READY);
     await settle(SETUP_REFRESH_MS);
     expect(result.current).toBeNull(); // a failed load shows no flow rather than a stale one
-    await settle(SETUP_REFRESH_MS);
+    // A failed read is tried again sooner than the timer, so one refusal is not ten seconds without a flow.
+    await settle(SETUP_RETRY_MS);
     expect(result.current).toEqual(SETUP_READY);
     expect(load).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not show one station's flow as another's while the new one is read", async () => {
+    const pending: Array<(value: SetupStatus) => void> = [];
+    const load = vi.fn(() => new Promise<SetupStatus>((resolve) => pending.push(resolve)));
+    const { result, rerender } = renderHook(({ scope }) => useSetup("a", { scope, load }), { initialProps: { scope: "Bench A" } });
+    pending[0](SETUP_HELD);
+    await settle();
+    expect(result.current).toEqual(SETUP_HELD);
+    rerender({ scope: "Cart B" });
+    expect(result.current).toBeNull();
+    pending[1](SETUP_READY);
+    await settle();
+    expect(result.current).toEqual(SETUP_READY);
+  });
+
+  it("stops showing the headset address once the credential it was given for is gone", async () => {
+    const withHeadset = { ...SETUP_READY, headset: { address: "192.0.2.10", saved: null, changed: false } };
+    const pending: Array<(value: SetupStatus) => void> = [];
+    const load = vi.fn(() => new Promise<SetupStatus>((resolve) => pending.push(resolve)));
+    const { result, rerender } = renderHook(({ controlToken }) => useSetup("a", { controlToken, load }), { initialProps: { controlToken: "tok" as string | null } });
+    pending[0](withHeadset);
+    await settle();
+    expect(result.current?.headset?.address).toBe("192.0.2.10");
+    rerender({ controlToken: null });
+    // The rest of the flow stays on screen while it is read again; only what the credential bought is withheld.
+    expect(result.current).toEqual({ ...withHeadset, headset: null });
   });
 
   it("sends the control token with each read and reads again when it is entered", async () => {

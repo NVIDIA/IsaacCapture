@@ -72,23 +72,24 @@ def _state(request: Request) -> tuple[Any, Any, Any, Path] | None:
     return None if any(item is None for item in found) else found  # type: ignore[return-value]
 
 
-def _active_episode_id(context: Any) -> str | None:
+def _active_episode_id(snapshot: Any) -> str | None:
     """The take being recorded now, so the report does not call it interrupted. A take that was interrupted
     is not one: it is still the service's episode, and the report shows it as pending."""
-    service = context.coordinator.snapshot().service
+    service = snapshot.service
     if service is None or service.episode is None or interrupted_take(service):
         return None
     return service.episode.episode_id
 
 
-def _gather(state: tuple[Any, Any, Any, Path]) -> dict[str, Any]:
-    """Today's report for the station in use, with its time; runs in a worker thread, since it walks the disk."""
-    context, stations, uptime, root = state
+def _gather(state: tuple[Any, Any, Any, Path], snapshot: Any) -> dict[str, Any]:
+    """Today's report for the station in use, with its time; runs in a worker thread, since it walks the disk.
+    ``snapshot`` is the recording coordinator's, taken on the event loop that owns its state."""
+    _context, stations, uptime, root = state
     today = datetime.date.fromtimestamp(time.time()).isoformat()
     station = stations.label()
     # A station renamed today recorded its earlier takes under the old name; they are still its day.
     report = build_day_report(
-        root, today, stations=uptime.names(station), active_episode_id=_active_episode_id(context)
+        root, today, stations=uptime.names(station), active_episode_id=_active_episode_id(snapshot)
     )
     return {
         "report": {**report, "station": station},
@@ -106,13 +107,13 @@ async def read_day_report(request: Request) -> JSONResponse:
         return _reply({"detail": "the report is not available yet"}, 503)
     if not control_token_valid(request.headers.get("x-control-token"), state[0].control_token):
         return _reply({"detail": "control token rejected"}, 403)
-    return _reply(await asyncio.to_thread(_gather, state))
+    return _reply(await asyncio.to_thread(_gather, state, state[0].coordinator.snapshot()))
 
 
-def _save(state: tuple[Any, Any, Any, Path]) -> dict[str, Any]:
+def _save(state: tuple[Any, Any, Any, Path], snapshot: Any) -> dict[str, Any]:
     """Write the report beside the daily log and refresh that log's recorded time; in a worker thread."""
     _context, _stations, uptime, _root = state
-    gathered = _gather(state)
+    gathered = _gather(state, snapshot)
     station = gathered["station_in_use"]
     saved = {**gathered, "generated_at": datetime.datetime.now().isoformat(timespec="seconds")}
     name = uptime.save_report(station, saved)
@@ -132,7 +133,7 @@ async def save_day_report(request: Request) -> JSONResponse:
     if body is None:
         return refused  # type: ignore[return-value]
     try:
-        return _reply(await asyncio.to_thread(_save, state))
+        return _reply(await asyncio.to_thread(_save, state, state[0].coordinator.snapshot()))
     except OSError:
         logger.exception("Could not save the day report")
         return _reply({"detail": "could not save the report"}, 503)
@@ -187,6 +188,9 @@ def _recorded_session(base: Path, raw: str) -> Path:
     aligned = target.with_name(f"{target.name}_aligned")
     if aligned.is_symlink() or (aligned.exists() and base not in aligned.resolve().parents):
         raise DayReportError("the session's aligned copy is outside the recording output")
+    # An episode is written through its own directory, so one that is a link would lead the write elsewhere.
+    if any(episode.is_symlink() for tree in (target, aligned) for episode in tree.glob("episode_*")):
+        raise DayReportError("the session holds a linked episode and cannot be corrected here")
     return target
 
 
@@ -202,9 +206,13 @@ def _owned_by(session: Any, directory: Path) -> bool:
     return stamp is not None and stamp.startswith(f"{session.session_id}|")
 
 
-def _refuse_while_recording(context: Any, target: Path) -> None:
-    """Refuse a correction while a take is being written, or to the session still open for recording."""
-    snapshot = context.coordinator.snapshot()
+def _refuse_while_recording(snapshot: Any, target: Path) -> None:
+    """Refuse a correction while a take is being written, or to the session still open for recording.
+
+    ``snapshot`` is from the moment the request was admitted. A take that starts after it cannot reach the
+    target: a take is written to the session open then, which is refused here, or to a session opened later,
+    which is always a new directory with route stamps of its own.
+    """
     service = snapshot.service
     # An interrupted take is not being written; its session is still open, which the check below refuses.
     writing = service is not None and service.episode is not None and not interrupted_take(service)
@@ -224,11 +232,14 @@ _HELD = {
 }
 
 
-def _correct(state: tuple[Any, Any, Any, Path], body: dict[str, Any], locks: SessionLocks) -> dict[str, Any]:
-    """Apply one task correction; runs in a worker thread. ``locks`` is shared with the background aligner."""
-    context, _stations, _uptime, root = state
+def _correct(
+    state: tuple[Any, Any, Any, Path], snapshot: Any, body: dict[str, Any], locks: SessionLocks
+) -> dict[str, Any]:
+    """Apply one task correction; runs in a worker thread. ``snapshot`` is the recording coordinator's, taken
+    on the event loop that owns its state, and ``locks`` is shared with the background aligner."""
+    _context, _stations, _uptime, root = state
     target = _confined_session(root, body.get("session"))
-    _refuse_while_recording(context, target)
+    _refuse_while_recording(snapshot, target)
     task, episodes = body.get("task"), body.get("episodes")
     if not isinstance(task, str) or task.strip() == "" or len(task) > MAX_TASK_DETAILS_CHARS:
         raise DayReportError(f"task must be text of 1 to {MAX_TASK_DETAILS_CHARS} characters")
@@ -267,6 +278,9 @@ async def correct_session(request: Request) -> JSONResponse:
     if body is None:
         return refused  # type: ignore[return-value]
     try:
-        return _reply(await asyncio.to_thread(_correct, state, body, locks))
+        # Read here, not in the worker: the coordinator's state changes on this loop, so a thread could see
+        # its fields part-way through a change.
+        snapshot = state[0].coordinator.snapshot()
+        return _reply(await asyncio.to_thread(_correct, state, snapshot, body, locks))
     except DayReportError as exc:
         return _reply({"detail": str(exc)}, 400)

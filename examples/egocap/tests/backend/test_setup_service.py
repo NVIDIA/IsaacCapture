@@ -11,6 +11,8 @@ import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from capture_server import protocol as p
 from egocap_web.config import CaptureStatusConfig
 from egocap_web.setup_checks import CameraFact, CaptureFacts, DeviceFact
@@ -454,3 +456,25 @@ def test_capture_facts_report_livekit_cameras_and_why_they_cannot_be_recorded():
     assert (facts.livekit_cameras, facts.livekit_blocked) == (frozenset({"lk_head"}), None)
     remote = CaptureStatusConfig(capture_server_url="ws://192.168.1.50:8082")
     assert capture_facts(_monitor(streams=(_livekit("lk_head"),)), remote).livekit_blocked is not None
+
+
+async def test_an_evaluation_outlives_a_caller_that_went_away(tmp_path):
+    setup, _, world = await _with_station_in_use(tmp_path)
+    world.disk_gate, world.free = threading.Event(), 1024**3
+    world.disk_entered.clear()
+    gone = asyncio.create_task(setup.refresh())
+    while not world.disk_entered.is_set():
+        await asyncio.sleep(0.01)
+    # A page that closes its request cancels the caller, not the evaluation it asked for.
+    gone.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await gone
+    # A caller that arrives while the disk still hangs waits its turn instead of taking a second thread.
+    reads = len(world.free_reads_on)
+    waiting = asyncio.create_task(setup.refresh())
+    await asyncio.sleep(0.05)
+    assert len(world.free_reads_on) == reads and not waiting.done()
+    world.disk_gate.set()
+    await waiting
+    assert len(world.free_reads_on) == reads
+    assert setup.block_reason() == "Free disk space: 1.0 GB free; 10 GB needed"

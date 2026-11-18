@@ -69,6 +69,18 @@ describe("the verdict", () => {
   });
 });
 
+describe("a check whose outcome this page does not know", () => {
+  it("is shown as unrecognised with its reason, never as passed or not needed", async () => {
+    const [first, ...rest] = SETUP_READY.checks.filter((check) => check.group === "system");
+    await renderTab({ ...SETUP_READY, checks: [{ ...first, status: "unknown", detail: "waiting for the vendor service" }, ...rest] });
+    const row = within(screen.getByRole("region", { name: "System" })).getAllByRole("listitem")[0];
+    expect(row.className).toBe("check-row check-row--unknown");
+    expect(row.querySelector(".check-mark")?.textContent).toBe("?");
+    expect(row.querySelector(".visually-hidden")?.textContent).toBe(" outcome not recognised by this page");
+    expect(row.querySelector(".check-detail")?.textContent).toBe("Waiting for the vendor service");
+  });
+});
+
 describe("a check that only warns", () => {
   it("has its own mark, colour class and spoken outcome, and its reason", async () => {
     await renderTab(SETUP_ADVISED);

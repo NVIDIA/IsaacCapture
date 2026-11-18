@@ -507,3 +507,57 @@ def test_manifests_are_not_touched_by_a_correction(tmp_path):
     before = manifest_path(session, 0).read_text()
     assert _correct(client, session=SESSION, episodes="0", task="Place the cup.").status_code == 200
     assert manifest_path(session, 0).read_text() == before
+
+
+def test_a_correction_never_gives_a_session_a_root_group_it_did_not_have(tmp_path):
+    client, _ = _client(tmp_path)
+    session = _day(tmp_path)
+    response = _correct(client, session=SESSION, episodes="0", task="Place the cup on the shelf.")
+    assert response.status_code == 200 and response.json()["updated"] == ["episode_0"]
+    assert not (session / "zarr.json").exists()
+
+
+def test_a_session_with_no_finalized_take_is_left_exactly_as_it_was(tmp_path):
+    client, _ = _client(tmp_path)
+    _session(tmp_path, takes=(_manifest(0, "DISCARDED"),))
+    before = sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*"))
+    response = _correct(client, session=SESSION, episodes="0", task="x")
+    assert response.status_code == 200
+    assert (response.json()["updated"], response.json()["missing"]) == ([], ["episode_0"])
+    assert sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*")) == before
+
+
+def test_a_session_holding_a_linked_episode_is_refused_and_the_link_is_not_followed(tmp_path):
+    root = tmp_path / "recordings"
+    root.mkdir()
+    client, _ = _client(root)
+    session = _day(root)
+    outside = tmp_path / "elsewhere"
+    group = zarr.open_group(str(outside), mode="w")
+    group.attrs["task_description"] = "untouched"
+    os.symlink(outside, session / "episode_7")
+    refused = _correct(client, session=SESSION, episodes="7", task="x")
+    assert (refused.status_code, refused.json()["detail"]) == (
+        400,
+        "the session holds a linked episode and cannot be corrected here",
+    )
+    assert zarr.open_group(str(outside), mode="r").attrs["task_description"] == "untouched"
+
+
+def test_the_recording_state_is_read_on_the_event_loop_not_in_the_worker(tmp_path):
+    import threading
+
+    client, recorder = _client(tmp_path)
+    _day(tmp_path)
+    readers: list[str] = []
+    real = recorder.snapshot
+
+    def snapshot():
+        readers.append(threading.current_thread().name)
+        return real()
+
+    recorder.snapshot = snapshot
+    assert _correct(client, session=SESSION, episodes="0", task="x").status_code == 200
+    assert client.get("/api/day-report", headers=AUTH).status_code == 200
+    assert client.post("/api/day-report/save", json={}, headers=AUTH).status_code == 200
+    assert len(readers) == 3 and not any("asyncio_" in name for name in readers)

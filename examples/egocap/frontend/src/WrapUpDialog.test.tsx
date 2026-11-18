@@ -5,7 +5,7 @@
 /** The end-of-day dialog: the day's takes and their outcomes, the station's time and notes, correcting a task, saving. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { DayReportReply } from "./dayReportApi";
+import type { CorrectionReply, DayReportReply } from "./dayReportApi";
 import { DAY_REPORT_FIXTURE, UPTIME_FIXTURE } from "./dayReportTestDoubles";
 import { SettingsHttpError } from "./settingsApi";
 import { WrapUpDialog, type WrapUpBackend, type WrapUpDialogProps } from "./WrapUpDialog";
@@ -619,5 +619,30 @@ describe("keyboard focus in the end-of-day dialog", () => {
     expect(document.activeElement).toBe(open);
     fireEvent.keyDown(open, { key: "Tab", shiftKey: true });
     expect(document.activeElement).toBe(collapsed);
+  });
+
+  it("keeps focus in the correction form while a correction is being sent, and sends it once", async () => {
+    const backend = fakeBackend();
+    let answer: (reply: CorrectionReply) => void = () => {};
+    backend.correct = vi.fn(() => new Promise<CorrectionReply>((resolve) => (answer = resolve)));
+    renderDialog({}, backend);
+    const sessions = await region("Sessions");
+    const takes = within(sessions).getByLabelText("Takes to correct") as HTMLInputElement;
+    const task = within(sessions).getByLabelText("Correct task") as HTMLInputElement;
+    fireEvent.change(takes, { target: { value: "0" } });
+    fireEvent.change(task, { target: { value: "Wash the cup." } });
+    task.focus();
+    const button = within(sessions).getByRole("button", { name: "Correct" }) as HTMLButtonElement;
+    fireEvent.click(button);
+    const busy = (await within(sessions).findByRole("button", { name: "Correcting…" })) as HTMLButtonElement;
+    // A disabled field cannot hold focus, so the fields are held read-only and the button only marked busy.
+    expect(document.activeElement).toBe(task);
+    expect([takes.disabled, takes.readOnly, task.disabled, task.readOnly]).toEqual([false, true, false, true]);
+    expect([busy.disabled, busy.getAttribute("aria-busy"), busy.getAttribute("aria-disabled")]).toEqual([false, "true", "true"]);
+    fireEvent.click(busy);
+    expect(backend.correct).toHaveBeenCalledTimes(1);
+    await act(async () => answer({ session: "s", updated: ["episode_0"], missing: [], config_updated: true }));
+    await within(sessions).findByText(/^Corrected episode_0/);
+    expect(task.readOnly).toBe(false);
   });
 });

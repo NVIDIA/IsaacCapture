@@ -20,9 +20,9 @@ SPDX-License-Identifier: Apache-2.0
     <p class="sign-in-help">Recordings need the control token the backend printed when it started.</p>
     <div class="sign-in-row">
       <input id="sign-in-token" type="password" autocomplete="off" placeholder="Enter control token" />
-      <button type="submit">Browse recordings</button>
+      <button type="submit" id="sign-in-submit">Browse recordings</button>
     </div>
-    <p class="sign-in-error" id="sign-in-error" hidden></p>
+    <p class="sign-in-error" id="sign-in-error" role="alert" hidden></p>
   </form>
   <nav class="breadcrumbs" id="breadcrumbs"></nav>
   <div id="error" hidden></div>

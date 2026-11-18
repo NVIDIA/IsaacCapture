@@ -175,16 +175,26 @@ class UptimeLog:
             isinstance(s, dict) and {"state", "reason", "start", "end"} <= set(s) for s in record["segments"]
         )
 
-    def _today(self, now: float) -> dict[str, Any]:
-        """Today's timeline, loaded on first use and rolled over when the local day changes."""
-        day = _day(now)
+    def _today(self) -> tuple[dict[str, Any], float]:
+        """Today's timeline and the time now, loaded on first use and rolled over when the local day changes.
+
+        The time is the wall clock held at the last sample while it reads earlier than that: a clock stepped
+        back would otherwise end a segment before it began, or roll the log to a day already closed and
+        replace that day's file.
+        """
+        now = self._clock()
         if self._payload is None:
+            day = _day(now)
             self._payload = self._unfinished_before(day) or self._load(day)
+        last = self._payload["last_sample"]
+        if isinstance(last, (int, float)):
+            now = max(now, last)
         # Before a rollover, so a silence that crossed midnight is down time on the day it began.
         self._bridge_gap(self._payload, now)
-        if self._payload["date"] != day:
-            self._payload = self._rolled(self._payload, day)
-        return self._payload
+        # Only ever forward: a day file earlier than the one in hand is finished and must not be rewritten.
+        if self._payload["date"] < _day(now):
+            self._payload = self._rolled(self._payload, _day(now))
+        return self._payload, now
 
     def _unfinished_before(self, day: str) -> dict[str, Any] | None:
         """The most recent earlier day's timeline when the backend stopped with a segment still open in it
@@ -213,13 +223,12 @@ class UptimeLog:
         payload = self._load(earlier[-1])
         return payload if any(_open(record) is not None for record in payload["stations"].values()) else None
 
-    @staticmethod
-    def _bridge_gap(payload: dict[str, Any], now: float) -> None:
+    def _bridge_gap(self, payload: dict[str, Any], now: float) -> None:
         """Account for time nothing was sampled (the backend stopped, or its host was suspended): each open
         segment ends at the last sample and the silence since is logged as down."""
         last = payload["last_sample"]
         bridged = False
-        for record in payload["stations"].values():
+        for name, record in payload["stations"].items():
             segment = _open(record)
             # A full day takes no further segment; its open one is left as it is.
             if segment is None or _full(record):
@@ -229,6 +238,9 @@ class UptimeLog:
             if now - seen <= _GAP_SECONDS:
                 continue
             segment["end"] = max(seen, segment["start"])
+            # A take the silence cut short has ended like any other, so the daily log is owed its time.
+            if segment["state"] == RECORDING:
+                self._owed_logs.add(name)
             record["segments"].append(
                 {"state": DOWN, "reason": BACKEND_NOT_RUNNING, "start": segment["end"], "end": None}
             )
@@ -317,8 +329,7 @@ class UptimeLog:
         """Log what the station in use is doing now. A new segment starts only when the state changes; a down
         period keeps the reason it began with, however the cause shifts while it lasts."""
         with self._lock:
-            now = self._clock()
-            payload = self._today(now)
+            payload, now = self._today()
             changed = False
             # One station is in use at a time: whatever another station was doing has ended.
             for name, other in payload["stations"].items():
@@ -365,8 +376,7 @@ class UptimeLog:
         """Move today's timeline of a station to its new name, remembering the old one so the day's takes,
         recorded under either name, are reported together."""
         with self._lock:
-            now = self._clock()
-            payload = self._today(now)
+            payload, now = self._today()
             self._carry_files(previous, name, payload["date"])
             record = payload["stations"].pop(previous, None)
             if record is None:
@@ -414,8 +424,7 @@ class UptimeLog:
         if problem is not None:
             raise UptimeError(problem)
         with self._lock:
-            now = self._clock()
-            payload = self._today(now)
+            payload, now = self._today()
             self._record(payload, station)["notes"] = notes
             self._write(payload)
             return self._report(station, payload, now)
@@ -425,8 +434,8 @@ class UptimeLog:
     def report(self, station: str) -> dict[str, Any]:
         """The station's state now and its time today."""
         with self._lock:
-            now = self._clock()
-            return self._report(station, self._today(now), now)
+            payload, now = self._today()
+            return self._report(station, payload, now)
 
     def _report(self, station: str, payload: dict[str, Any], now: float) -> dict[str, Any]:
         """The wire form of one station's day; the caller holds the lock."""
@@ -453,12 +462,12 @@ class UptimeLog:
     def took_today(self, station: str) -> bool:
         """Whether the station has recorded a take today, under this name or one it was renamed from."""
         with self._lock:
-            return _took(self._today(self._clock())["stations"].get(station))
+            return _took(self._today()[0]["stations"].get(station))
 
     def names(self, station: str) -> frozenset[str]:
         """Every name the station has had today, so takes recorded before a rename are still its own."""
         with self._lock:
-            record = self._today(self._clock())["stations"].get(station)
+            record = self._today()[0]["stations"].get(station)
             return frozenset({station, *(record["aliases"] if record is not None else ())})
 
     # --- the daily log and the saved report ------------------------------------------------------------------
@@ -515,9 +524,9 @@ class UptimeLog:
     def write_log(self, station: str, *, data_seconds: float | None, valid_seconds: float | None) -> str:
         """Rewrite the daily log with freshly measured recorded time; returns the log's file name."""
         with self._lock:
-            now = self._clock()
+            payload, now = self._today()
             measured = {"data_seconds": data_seconds, "valid_seconds": valid_seconds}
-            return self._write_log(station, self._today(now), now, measured).name
+            return self._write_log(station, payload, now, measured).name
 
     def save_report(self, station: str, report: dict[str, Any]) -> str:
         """Write the day's report beside the daily log, atomically; returns the file's name."""
