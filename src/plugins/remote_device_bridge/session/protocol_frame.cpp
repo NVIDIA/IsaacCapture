@@ -49,13 +49,13 @@ namespace detail
 
 void encode_header(const FrameHeader& header, uint8_t* out)
 {
-    store_le(out, kMagic, sizeof(uint32_t));
+    store_le(out, kMagic);
     out[kTypeOffset] = static_cast<uint8_t>(header.type);
     out[kVersionOffset] = kProtocolVersion;
-    store_le(out + kChannelOffset, header.channel_id, sizeof(uint16_t));
-    store_le(out + kSeqOffset, header.seq, sizeof(uint32_t));
-    store_le(out + kPayloadSizeOffset, header.payload_size, sizeof(uint32_t));
-    store_le(out + kSendTimeOffset, static_cast<uint64_t>(header.t_send_monotonic_ns), sizeof(int64_t));
+    store_le(out + kChannelOffset, header.channel_id);
+    store_le(out + kSeqOffset, header.seq);
+    store_le(out + kPayloadSizeOffset, header.payload_size);
+    store_le(out + kSendTimeOffset, header.t_send_monotonic_ns);
 }
 
 } // namespace detail
@@ -66,8 +66,8 @@ void stamp_header(std::vector<uint8_t>& frame, uint32_t seq, int64_t t_send_mono
     {
         throw std::invalid_argument("protocol: frame shorter than a header");
     }
-    store_le(frame.data() + kSeqOffset, seq, sizeof(uint32_t));
-    store_le(frame.data() + kSendTimeOffset, static_cast<uint64_t>(t_send_monotonic_ns), sizeof(int64_t));
+    store_le(frame.data() + kSeqOffset, seq);
+    store_le(frame.data() + kSendTimeOffset, t_send_monotonic_ns);
 }
 
 Frame split_frame(std::vector<uint8_t> message)
@@ -91,7 +91,7 @@ std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, const std
 
 FrameHeader decode_header(std::span<const uint8_t> in)
 {
-    Reader reader(in.data(), in.size(), "header");
+    Reader reader(in, "header");
     if (reader.u32() != kMagic)
     {
         throw DecodeError("protocol: bad frame magic");

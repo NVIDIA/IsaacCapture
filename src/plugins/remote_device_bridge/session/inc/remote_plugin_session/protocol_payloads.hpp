@@ -22,8 +22,7 @@ namespace remote_plugin_protocol
  * XrPosef order (orientation x,y,z,w then position x,y,z).
  */
 
-//! HELLO version: the requirements carry the wrist source config, and the client answers PING with PONG.
-//! decode_hello accepts only this version.
+//! HELLO payload format version, the payload's first field; decode_hello accepts only this version.
 constexpr uint16_t kHelloVersion = 2;
 
 struct Hello

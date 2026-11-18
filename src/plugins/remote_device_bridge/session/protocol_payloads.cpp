@@ -243,7 +243,7 @@ void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns)
     {
         throw std::invalid_argument("protocol: not an encoded PONG frame");
     }
-    detail::store_le(pong_frame.data() + kPongSentOffset, static_cast<uint64_t>(pong_sent_ns), sizeof(int64_t));
+    detail::store_le(pong_frame.data() + kPongSentOffset, pong_sent_ns);
 }
 
 Hello decode_hello(const std::vector<uint8_t>& payload)

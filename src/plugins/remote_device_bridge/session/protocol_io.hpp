@@ -9,8 +9,10 @@
 
 #include <cstring>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace remote_plugin_protocol
@@ -18,24 +20,30 @@ namespace remote_plugin_protocol
 namespace detail
 {
 
-//! Stores the low `size` bytes of `value` little-endian at `out`.
-inline void store_le(uint8_t* out, uint64_t value, size_t size)
+//! Stores `value` little-endian at `out`; the byte count is sizeof(T).
+template <typename T>
+inline void store_le(uint8_t* out, T value)
 {
-    for (size_t i = 0; i < size; ++i)
+    static_assert(std::is_integral_v<T>);
+    const auto bits = static_cast<std::make_unsigned_t<T>>(value);
+    for (size_t i = 0; i < sizeof(T); ++i)
     {
-        out[i] = static_cast<uint8_t>(value >> (8 * i));
+        out[i] = static_cast<uint8_t>(bits >> (8 * i));
     }
 }
 
-//! Loads `size` little-endian bytes from `in`.
-inline uint64_t load_le(const uint8_t* in, size_t size)
+//! Loads a little-endian T from the sizeof(T) bytes at `in`.
+template <typename T>
+inline T load_le(const uint8_t* in)
 {
-    uint64_t value = 0;
-    for (size_t i = 0; i < size; ++i)
+    static_assert(std::is_integral_v<T>);
+    using Bits = std::make_unsigned_t<T>;
+    Bits bits = 0;
+    for (size_t i = 0; i < sizeof(T); ++i)
     {
-        value |= static_cast<uint64_t>(in[i]) << (8 * i);
+        bits = static_cast<Bits>(bits | (static_cast<Bits>(in[i]) << (8 * i)));
     }
-    return value;
+    return static_cast<T>(bits);
 }
 
 //! Writes the header into the first kHeaderSize bytes of `out`.
@@ -61,17 +69,17 @@ public:
 
     void u16(uint16_t value)
     {
-        append(value, sizeof(value));
+        append(value);
     }
 
     void u32(uint32_t value)
     {
-        append(value, sizeof(value));
+        append(value);
     }
 
     void u64(uint64_t value)
     {
-        append(value, sizeof(value));
+        append(value);
     }
 
     void i64(int64_t value)
@@ -113,11 +121,12 @@ public:
     }
 
 private:
-    void append(uint64_t value, size_t size)
+    template <typename T>
+    void append(T value)
     {
         const size_t at = m_out.size();
-        m_out.resize(at + size);
-        store_le(m_out.data() + at, value, size);
+        m_out.resize(at + sizeof(T));
+        store_le(m_out.data() + at, value);
     }
 
     std::vector<uint8_t>& m_out;
@@ -127,11 +136,7 @@ class Reader
 {
 public:
     //! `what` names the frame or header being read in DecodeError messages.
-    Reader(const uint8_t* data, size_t size, const char* what) : m_data(data), m_size(size), m_what(what)
-    {
-    }
-
-    Reader(const std::vector<uint8_t>& payload, const char* what) : Reader(payload.data(), payload.size(), what)
+    Reader(std::span<const uint8_t> data, const char* what) : m_data(data.data()), m_size(data.size()), m_what(what)
     {
     }
 
@@ -153,17 +158,17 @@ public:
 
     uint16_t u16()
     {
-        return static_cast<uint16_t>(take(sizeof(uint16_t)));
+        return take<uint16_t>();
     }
 
     uint32_t u32()
     {
-        return static_cast<uint32_t>(take(sizeof(uint32_t)));
+        return take<uint32_t>();
     }
 
     uint64_t u64()
     {
-        return take(sizeof(uint64_t));
+        return take<uint64_t>();
     }
 
     int64_t i64()
@@ -219,11 +224,12 @@ public:
     }
 
 private:
-    uint64_t take(size_t size)
+    template <typename T>
+    T take()
     {
-        need(size);
-        const uint64_t value = load_le(m_data + m_pos, size);
-        m_pos += size;
+        need(sizeof(T));
+        const T value = load_le<T>(m_data + m_pos);
+        m_pos += sizeof(T);
         return value;
     }
 
