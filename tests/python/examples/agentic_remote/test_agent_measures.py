@@ -182,9 +182,14 @@ def scripted_state(k: int, seq: int, at_ms: int | None = None) -> RobotState:
 class Stream:
     """The scripted stream on a link whose clocks the test sets, into a Measures."""
 
-    def __init__(self, folder: Path, recording: Any = None) -> None:
+    def __init__(
+        self,
+        folder: Path,
+        recording: Any = None,
+        arm_seen: Callable[..., None] | None = None,
+    ) -> None:
         self.rig = LinkRig()
-        self.measures = Measures(folder, recording)
+        self.measures = Measures(folder, recording, arm_seen=arm_seen)
         self.measures.attach(self.rig.link)
         self.folder = folder
         self.sent = 0  # ROBOT_STATEs delivered
@@ -666,6 +671,170 @@ def test_the_debug_recorder_gets_ten_poses_a_second_and_each_read_once(
     assert moving["target_q"] == [0.001, 0.0] and moving["missed_deadlines"] == 3
     assert moving["arrived_mono_s"] == pytest.approx(arrived[12])
     assert states[25]["jaw"]["opening"] == pytest.approx(0.8)
+
+
+# The debug recording's rule for the wait: who owns the arm, and whether it moves
+
+
+def test_the_measuring_thread_tells_what_each_robot_state_shows_of_the_arm(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    told: list[tuple[Any, ...]] = []
+
+    def arm_seen(*shown: Any) -> None:
+        told.append((threading.current_thread().name, *shown))
+
+    made = Stream(tmp_path, arm_seen=arm_seen)
+    arrived = {}
+    try:
+        for k in range(31):
+            arrived[k] = made.arrive(k)
+        # A person owns the arm; then a ROBOT_STATE without a whole pose and
+        # without a valid jaw reading.
+        driven = dataclasses.replace(scripted_state(31, 32), owner="human")
+        made.rig.arrive(driven, at=HERE_0 + 1.6)
+        blind = dataclasses.replace(
+            scripted_state(32, 33),
+            owner="nobody",
+            motion="rest_unpowered",
+            joints=[JointSample(0, 0.25, THOR_0 + 1.6, THOR_0 + 1.6, False)],
+            gripper=GripperState(None, None, False, False, None, False, "unknown"),
+        )
+        made.rig.arrive(blind, at=HERE_0 + 1.65)
+        made.sent += 2
+        made.settled()
+    finally:
+        made.close()
+    # One call per ROBOT_STATE, in their order, all on the measuring thread:
+    # the owner, the motion word, the measured joints, the jaw opening and
+    # the arrival on the workstation's clock.
+    assert len(told) == 33 and {call[0] for call in told} == {launcher.MEASURE_THREAD}
+    for k in range(31):
+        _, owner, motion, joints, jaw, at = told[k]
+        assert (owner, motion) == ("agent", "moving" if k in MOVE_STATES else "hold")
+        assert joints == pytest.approx([0.01 * 2 * k, 0.01 * (2 * k - 1)])
+        assert jaw == pytest.approx(scripted_state(k, k + 1).gripper.opening)
+        assert at == arrived[k]
+    assert told[31][1:3] == ("human", "hold") and told[31][5] == HERE_0 + 1.6
+    assert told[32][1:] == ("nobody", "rest_unpowered", None, None, HERE_0 + 1.65)
+    # A rule that fails costs no line of the measurements, and is logged once.
+    caplog.clear()
+
+    def broken(*shown: Any) -> None:
+        raise RuntimeError("no rule")
+
+    (tmp_path / "failing").mkdir()
+    failing = Stream(tmp_path / "failing", arm_seen=broken)
+    try:
+        with caplog.at_level(logging.WARNING):
+            for k in range(10, 14):  # the arm moves: a line per ROBOT_STATE
+                failing.arrive(k)
+            failing.settled()
+    finally:
+        failing.close()
+    assert len(failing.lines(launcher.STATES_FILE)) == 4
+    warned = [r for r in caplog.records if "a measurement failed" in r.getMessage()]
+    assert len(warned) == 1
+
+
+def map_tick(gate: Any) -> bool:
+    """One tick of APAI's watcher with a map picture; whether the rate stored it."""
+    before = gate.counts["stored"]
+    mark = gate.begin()
+    gate.emit("map.frame", map_id=1)
+    gate.end(mark)
+    return gate.counts["stored"] > before
+
+
+def test_a_takeover_during_a_wait_reaches_the_recordings_rate_through_the_measures(
+    tmp_path: Path,
+) -> None:
+    """ROBOT_STATEs 0.25 s apart, through the link and the measuring thread."""
+    from isaaccapture_examples.agentic_remote.agent import debug_recording
+
+    recorder = SimpleNamespace(
+        emit=lambda kind, **data: 1, local=SimpleNamespace(), disabled=False
+    )
+    wait = debug_recording.TaskWait()
+    made = Stream(tmp_path, arm_seen=wait.arm_state)
+    # The rate reads the clock the link stamps the arrivals with.
+    gate = debug_recording.MapRate(recorder, 2.0, made.rig.now, 10.0)
+    wait.bind(gate)
+    seq = 0
+
+    def arrive(at: float, owner: str, motion: str = "rest_hold") -> None:
+        nonlocal seq
+        seq += 1
+        state = a_state(seq, THOR_0 + at, owner=owner, motion=motion)
+        made.rig.arrive(state, at=HERE_0 + at)
+        made.sent += 1
+
+    def until_at(end: float, owner: str, motion: str = "rest_hold") -> None:
+        """ROBOT_STATEs every 0.25 s up to `end`, each counted by the thread."""
+        at = made.rig.now.t - HERE_0 + 0.25
+        while at <= end:
+            arrive(at, owner, motion)
+            at += 0.25
+        made.settled()
+
+    try:
+        arrive(0.0, "nobody")
+        made.settled()
+        with wait.waiting():
+            # Nobody owns the arm and it lies at rest: thinned after 5 s.
+            until_at(4.75, "nobody")
+            assert gate.waits() == (4.75, 0.0, 0.0)
+            until_at(6.0, "nobody")
+            assert gate.waits() == (6.0, 1.0, 0.0)
+            assert [map_tick(gate), map_tick(gate)] == [True, False]
+            # The first ROBOT_STATE with a person as owner, 0.25 s after that
+            # map picture: the next one is stored at once.
+            until_at(6.25, "human", "hold")
+            assert map_tick(gate) is True and gate.idle_skipped == 1
+            until_at(36.0, "human", "moving")
+            assert map_tick(gate) is True
+            assert gate.waits() == (36.0, 1.25, 29.75)
+            # The hand-back: thinned again 5 s after its first ROBOT_STATE.
+            until_at(41.0, "nobody")
+            assert map_tick(gate) is True and gate.waits() == (41.0, 1.25, 34.75)
+            until_at(41.25, "nobody")
+            assert map_tick(gate) is False and gate.waits() == (41.25, 1.25, 35.0)
+            # No ROBOT_STATE for more than 2 s: stored at once again.
+            made.rig.now.t = HERE_0 + 43.5
+            assert map_tick(gate) is True
+        told = gate.status()
+    finally:
+        made.close()
+    assert told["idle_interrupted_by"] == {"owner": 1, "motion": 0, "no_state": 1}
+    assert told["wait_seconds"] == 43.5 and told["idle_seconds"] == 3.25
+    assert told["idle_interrupted_seconds"] == 35.25
+
+
+def test_telling_the_arm_asks_the_link_nothing_and_no_thread_of_the_arm_does_it() -> (
+    None
+):
+    import ast
+    import inspect
+    import textwrap
+
+    source = textwrap.dedent(inspect.getsource(Measures._tell_arm))
+    called = {
+        node.func.attr
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert called == {"_arm_seen", "_log_trouble"}
+    # The thread that takes the queue calls it, for a ROBOT_STATE; the link's
+    # receive thread, the skill thread and the camera's thread never do.
+    whole = inspect.getsource(Measures)
+    assert whole.count("self._tell_arm(") == 1
+    assert "self._tell_arm(" in inspect.getsource(Measures._state)
+    for name in ("on_state", "note", "note_frame", "_put"):
+        assert "_arm" not in inspect.getsource(getattr(Measures, name)), name
+    # The arm adapter, which sends the MOVEs and the PERMITs, knows none of it.
+    adapter = inspect.getsource(arm_adapter)
+    assert "arm_state" not in adapter and "arm_seen" not in adapter
+    assert "TaskWait" not in adapter and "debug_recording" not in adapter
 
 
 # Camera deliveries

@@ -1107,13 +1107,23 @@ class Measures:
     A MOVE's line of MOVE_PATHS_FILE is written when the move has ended, with
     its end; the adapter hands over the MOVE's own arrays, and the line is
     made from them on MEASURE_THREAD.
+
+    arm_seen(owner, motion, joints, jaw opening, arrival) is told what each
+    ROBOT_STATE shows of the arm, on MEASURE_THREAD
+    (debug_recording.TaskWait.arm_state).
     """
 
     def __init__(
-        self, run_dir: Path, recording: Any = None, *, queue_size: int = MEASURE_QUEUE
+        self,
+        run_dir: Path,
+        recording: Any = None,
+        *,
+        queue_size: int = MEASURE_QUEUE,
+        arm_seen: Callable[..., None] | None = None,
     ) -> None:
         self.run_dir = Path(run_dir)
         self._recording = recording
+        self._arm_seen = arm_seen
         self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue(maxsize=queue_size)
         self._count_lock = threading.Lock()
         self.dropped = 0  # what a full queue turned away
@@ -1408,6 +1418,8 @@ class Measures:
             self._missed = missed
         pose = _pose_of(state)
         jaw = _jaw_row(state.gripper)
+        if self._arm_seen is not None:
+            self._tell_arm(arrival, state, pose, jaw)
         if self._jaw is not None:
             self._jaw_seen(state, jaw)
         busy = bool(state.move_id) or state.motion == "moving" or self._jaw is not None
@@ -1420,6 +1432,25 @@ class Measures:
             self._latency_at = arrival.at_s
         elif arrival.at_s - self._latency_at >= LATENCY_PERIOD_S:
             self._latency_line(arrival)
+
+    def _tell_arm(
+        self,
+        arrival: Arrival,
+        state: Any,
+        pose: tuple[list[float], float] | None,
+        jaw: dict[str, Any],
+    ) -> None:
+        """Tell arm_seen who owns the arm and whether it moves; never raises."""
+        try:
+            self._arm_seen(
+                state.owner,
+                state.motion,
+                None if pose is None else pose[0],
+                _number(jaw["opening"]) if jaw["valid"] else None,
+                arrival.at_s,
+            )
+        except Exception:
+            self._log_trouble()
 
     def _new_reads(self, state: Any) -> list[Any]:
         """The single joint reads this ROBOT_STATE reports for the first time.
@@ -1821,8 +1852,9 @@ def experiment_sessions(
     every one). At its size it drops its oldest map pictures
     (debug_recording.Keeper) or, with at_limit "stop", stops; notice says
     which happened. While task_wait.waiting() is open, the program waiting for
-    a task, it stores one map picture per idle_map_s seconds (0: none; None:
-    as at any other time).
+    a task, and task_wait.arm_state() shows an arm nobody owns or moves, it
+    stores one map picture per idle_map_s seconds (0: none; None: as at any
+    other time).
     """
     parts = _TimedParts(ask)
     timing = None
@@ -1889,7 +1921,7 @@ def _option_lines(
 
     map_hz is the map pictures a second the debug recording stores, at_limit
     what it does at its size, idle_map_s the seconds between two map pictures
-    while the program waits for a task.
+    while the program waits for a task and nothing happens at the arm.
     """
     lines = []
     if options.timing:
@@ -2059,10 +2091,12 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="SECONDS",
-        help="while the program waits for a task at its prompt the debug "
-        "recording stores one picture of the obstacle map per this many seconds "
-        f"(default {debug_recording.DEBUG_IDLE_MAP_S:g}; 0: none while it "
-        "waits). What the arm did or was refused is stored as always",
+        help="while the program waits for a task at its prompt and nobody owns "
+        "or moves the arm, the debug recording stores one picture of the "
+        "obstacle map per this many seconds (default "
+        f"{debug_recording.DEBUG_IDLE_MAP_S:g}; 0: none then). A person who "
+        "takes the arm over in that wait is recorded as a task is. What the "
+        "arm did or was refused is stored as always",
     )
     parser.add_argument(
         "--log-level",
@@ -2472,7 +2506,8 @@ def _program(
         say(line)
     # Says what the debug recording did at its size, and again at the next prompt.
     notice = debug_recording.FullNotice(say, options.debug_max_gib)
-    # Tells the debug recording when the program waits for a task.
+    # Tells the debug recording when the program waits for a task, and what
+    # each ROBOT_STATE shows of the arm meanwhile.
     task_wait = debug_recording.TaskWait()
     # The recordings stand around the whole robot connection: a STOP and the
     # close of the link come before any of them writes its report.
@@ -2501,7 +2536,7 @@ def _program(
             # It ends before the link is closed, so before the debug recording,
             # which takes its events; its summary is said behind the close.
             say(_measure_line(run_dir))
-            measures = Measures(run_dir, recording)
+            measures = Measures(run_dir, recording, arm_seen=task_wait.arm_state)
             try:
                 code = _drive(
                     demo,

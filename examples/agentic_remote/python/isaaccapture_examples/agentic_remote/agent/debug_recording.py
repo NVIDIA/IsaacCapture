@@ -19,10 +19,15 @@ revision it made, a call of the grid bridge inside it that the map does not
 make on every refresh, and no newer map for a period of the rate or until the
 recording ends. What is recorded outside a tick is always stored.
 
-While the program waits for a task at its prompt (TaskWait) the rate passes
-one tick per --debug-idle-map-s seconds instead, and the first tick after a
-task is taken at once. The three things above store a held map refresh as at
-any other time.
+While the program waits for a task at its prompt (TaskWait) and nothing
+happens at the arm, the rate passes one tick per --debug-idle-map-s seconds
+instead. Nothing happens at the arm while ROBOT_STATE shows nobody as its
+control owner and no motion; the thread that measures every ROBOT_STATE tells
+the rate (MapRate.arm_state). An owner, motion, or no ROBOT_STATE for
+ARM_STATE_AGE_S brings the rate back, the next tick at once, until the arm has
+been without both for ARM_QUIET_S: a person who takes the arm over during the
+wait is recorded as a task is. The first tick after a task is taken at once.
+The three things above store a held map refresh as at any other time.
 
 Keeper keeps the recording under its size: before the recorder's thread
 checks an event against the limit, the array files of the oldest ticks are
@@ -62,10 +67,33 @@ _log = logging.getLogger("isaaccapture.examples.agentic_remote.debug_recording")
 # Map pictures stored a second without --debug-map-hz: what the viewer's page,
 # which asks for the state every 500 ms, can show.
 DEBUG_MAP_HZ = 2.0
-# Seconds between two map pictures stored while the program waits for a task,
-# without --debug-idle-map-s: the viewer still shows a current map.
+# Seconds between two map pictures stored while the program waits for a task
+# and nothing happens at the arm, without --debug-idle-map-s: the viewer still
+# shows a current map.
 DEBUG_IDLE_MAP_S = 10.0
 IDLE_OPTION = "--debug-idle-map-s"
+# ROBOT_STATE.owner of an arm nobody owns; any other word is an owner.
+ARM_NOBODY = "nobody"
+# ROBOT_STATE.motion of an arm that stands; any other word is motion.
+ARM_STILL = frozenset({"idle", "hold", "rest_hold", "rest_unpowered", "release_failed"})
+# How far a joint may be from the pose the arm last stood at before that is
+# motion, in rad. On the rig's run 20261118T022210Z-3147525 the readings of the
+# standing arm spread over 0.00065 rad in 346 s at rest with the motors on;
+# with the motors off no joint is read and the last reading stands. In six
+# of its seven holds behind a move no joint went further than 0.0040 rad from
+# where the hold began; in the seventh 0.028 rad, in its first 0.6 s.
+ARM_TRAVEL_RAD = 0.005
+# The same for the jaw opening, 0 closed to 1 open; that run's spread: 0.00007.
+ARM_JAW_TRAVEL = 0.02
+# How long the arm has to be without an owner and without motion before a
+# wait is thinned, in s.
+ARM_QUIET_S = 5.0
+# A newest ROBOT_STATE older than this says nothing of the arm, in s: the
+# robot connection is down, and the wait is not thinned. They come 0.05 s
+# apart; the longest gap of that run was 0.18 s.
+ARM_STATE_AGE_S = 2.0
+# Why a wait is not thinned, as RATE_BLOCK counts it.
+ARM_OWNER, ARM_MOTION, ARM_NO_STATE = "owner", "motion", "no_state"
 # What one map picture takes on disk, in bytes, and how many the watcher takes
 # a second on the workstation. Measured on the rig's run of 2026-11-17 (camera
 # 1280 x 992): 17.17 GB for 3671 ticks in 554 s.
@@ -122,11 +150,19 @@ RATE_NOTE = (
 )
 # What the rate's first event says of the wait for a task, with idle_map_s.
 IDLE_NOTE = (
-    "While the agent program waits for a task at its prompt, one tick per "
-    "idle_map_s seconds is stored (0: none), and the first tick after a task "
-    "is taken is stored at once. What an event names, a bridge call that is "
-    "not made on every refresh and every event from outside a tick are stored "
-    "as at any other time."
+    "While the agent program waits for a task at its prompt and nothing "
+    "happens at the arm, one tick per idle_map_s seconds is stored (0: none). "
+    "Nothing happens at the arm while ROBOT_STATE shows nobody as its control "
+    "owner and no motion. Motion is a motion word other than those of an arm "
+    "that stands, a joint further than arm_travel_rad from the pose the arm "
+    "last stood at, or a jaw opening further than arm_jaw_travel from it. From "
+    "the first ROBOT_STATE that shows an owner or motion, and when none came "
+    "for arm_state_age_s seconds, map_hz ticks a second are stored again, the "
+    "next one at once, until the arm was without an owner and without motion "
+    "for arm_quiet_s seconds. The first tick after a task is taken is stored "
+    "at once. What an event names, a bridge call that is not made on every "
+    "refresh and every event from outside a tick are stored as at any other "
+    "time."
 )
 # The map refreshes of skipped ticks held for a refusal or a segment to name.
 HELD_TICKS = 3
@@ -199,9 +235,12 @@ def idle_text(map_hz: float, idle_map_s: float | None) -> str:
     stored = "no map picture is stored"
     if idle_map_s > 0:
         stored = f"one map picture is stored every {idle_map_s:g} s"
+    many = "picture" if map_hz == 1 else "pictures"
     return (
-        f". While the program waits for a task {stored}, which {IDLE_OPTION} "
-        "sets; what the arm did or was refused is stored as always"
+        ". While the program waits for a task and nobody owns or moves the "
+        f"arm, {stored}, which {IDLE_OPTION} sets; a person who takes the arm "
+        f"over in that wait is recorded at {map_hz:g} map {many} a second, and "
+        "what the arm did or was refused is stored as always"
     )
 
 
@@ -325,8 +364,12 @@ class MapRate:
     An error in here passes the event on as it came.
 
     With idle_map_s, between idle_begin() and idle_end() (the program waits
-    for a task) one tick per idle_map_s seconds of the clock is passed
-    instead, none with 0; the first tick after idle_end() is passed at once.
+    for a task) and while arm_state() has shown an arm without an owner and
+    without motion for ARM_QUIET_S, one tick per idle_map_s seconds of the
+    clock is passed instead, none with 0: the wait is thinned. The first tick
+    after idle_end(), and after an owner, motion or ARM_STATE_AGE_S without
+    arm_state() ended the thinning, is passed at once. Without arm_state()
+    no wait is thinned.
     """
 
     def __init__(
@@ -359,7 +402,22 @@ class MapRate:
         self.idle_map_s = None if idle_map_s is None else float(idle_map_s)
         self._idle_since: float | None = None  # the clock at idle_begin()
         self._idle_total = 0.0  # seconds of the waits that have ended
-        self.idle_skipped = 0  # of the skipped ticks, those of a wait
+        self.idle_skipped = 0  # of the skipped ticks, those of a thinned wait
+        # The arm, as arm_state() was told. _arm_at: the newest ROBOT_STATE's
+        # arrival. _arm_quiet: since when each one showed nobody and no motion;
+        # None while the newest shows one of them or is too old.
+        self._arm_at: float | None = None
+        self._arm_quiet: float | None = None
+        self._arm_pose: list[float] | None = None  # where the arm last stood
+        self._arm_jaw: float | None = None
+        self._arm_failed = False
+        # The thinned part of the waits, and the part an owner, motion or a
+        # missing ROBOT_STATE took from them after the arm had been quiet.
+        self._thin_since: float | None = None
+        self._thin_total = 0.0
+        self._broken_since: float | None = None
+        self._broken_total = 0.0
+        self.idle_interrupted = dict.fromkeys((ARM_OWNER, ARM_MOTION, ARM_NO_STATE), 0)
         # ticks: those with a map event. stored: by the rate. rescued: stored
         # after all: for an event that named them, for a bridge call of their
         # own, or as the newest map. missing: named, and neither stored nor
@@ -412,33 +470,178 @@ class MapRate:
             now = self._clock()
             with self._lock:
                 if self._idle_since is not None:
+                    self._thinned(now)
                     self._idle_total += max(0.0, now - self._idle_since)
+                    self._thin_ends(now)
+                    if self._broken_since is not None:
+                        self._broken_total += max(0.0, now - self._broken_since)
+                        self._broken_since = None
                     self._idle_since = None
                     self._due = float("-inf")
         except Exception:
             self._trouble()
 
-    def idle_seconds(self) -> float:
-        """How long the program has waited for a task so far, on the clock."""
+    # The thread that measures every ROBOT_STATE: the arm.
+
+    def arm_state(
+        self,
+        owner: Any,
+        motion: Any,
+        joints: Any = None,
+        jaw: Any = None,
+        at: float | None = None,
+    ) -> None:
+        """What a ROBOT_STATE shows of the arm; never raises.
+
+        owner and motion are its words; joints its measured joints in rad,
+        None when they are not whole; jaw its jaw opening, None when it is
+        not valid; at its arrival on the clock, None for now.
+        """
+        if self.idle_map_s is None:
+            return
+        try:
+            now = self._clock() if at is None else float(at)
+            with self._lock:
+                self._thinned(now)  # a gap before this one is counted first
+                why = self._arm_shows(owner, motion, joints, jaw)
+                self._arm_at = now if self._arm_at is None else max(self._arm_at, now)
+                if why:
+                    self._arm_busy(now, why)
+                elif self._arm_quiet is None:
+                    self._arm_quiet = now
+        except Exception:
+            if not self._arm_failed:
+                self._arm_failed = True
+                _log.warning(
+                    "what ROBOT_STATE shows of the arm did not reach the debug "
+                    "recording: a wait for a task is recorded as a task is",
+                    exc_info=True,
+                )
+
+    def _arm_shows(self, owner: Any, motion: Any, joints: Any, jaw: Any) -> str:
+        """Why this ROBOT_STATE is no arm at which nothing happens; "" for one.
+
+        The caller holds the lock. Travel is measured from the pose the arm
+        last stood at, so that a slow drift adds up; that pose follows an arm
+        that is owned or moves.
+        """
+        why = ""
+        if owner != ARM_NOBODY:
+            why = ARM_OWNER
+        elif motion not in ARM_STILL:
+            why = ARM_MOTION
+        pose = [] if joints is None else [float(value) for value in joints]
+        if pose and all(math.isfinite(value) for value in pose):
+            stood = self._arm_pose
+            moved = stood is not None and (
+                len(stood) != len(pose)
+                or max(abs(a - b) for a, b in zip(pose, stood, strict=True))
+                > ARM_TRAVEL_RAD
+            )
+            if moved or why or stood is None:
+                self._arm_pose = pose
+            why = why or (ARM_MOTION if moved else "")
+        opening = None if jaw is None else float(jaw)
+        if opening is not None and math.isfinite(opening):
+            stood_at = self._arm_jaw
+            moved = stood_at is not None and abs(opening - stood_at) > ARM_JAW_TRAVEL
+            if moved or why or stood_at is None:
+                self._arm_jaw = opening
+            why = why or (ARM_MOTION if moved else "")
+        return why
+
+    def _arm_busy(self, at: float, why: str) -> None:
+        """Something happens at the arm from `at` on; the caller holds the lock."""
+        was_quiet, self._arm_quiet = self._arm_quiet is not None, None
+        if self._thin_since is not None:
+            self._thin_ends(at)
+            self._due = float("-inf")  # the next tick is stored at once
+        waiting = self._idle_since is not None
+        if was_quiet and waiting and self._broken_since is None:
+            self._broken_since = max(at, self._idle_since)
+            self.idle_interrupted[why] += 1
+
+    def _thin_ends(self, at: float) -> None:
+        if self._thin_since is not None:
+            self._thin_total += max(0.0, at - self._thin_since)
+            self._thin_since = None
+
+    def _thinned(self, now: float) -> bool:
+        """Whether the wait for a task is thinned at `now`.
+
+        The caller holds the lock. Thinned: the program waits, and every
+        ROBOT_STATE of the last ARM_QUIET_S showed an arm nobody owns that
+        stands, the newest no older than ARM_STATE_AGE_S.
+        """
+        if self._arm_quiet is not None and now - self._arm_at > ARM_STATE_AGE_S:
+            self._arm_busy(self._arm_at + ARM_STATE_AGE_S, ARM_NO_STATE)
+        if self._idle_since is None:
+            return False
+        if self._thin_since is None:
+            quiet = self._arm_quiet
+            if quiet is None or now - quiet < ARM_QUIET_S:
+                return False
+            self._thin_since = max(quiet + ARM_QUIET_S, self._idle_since)
+            if self._broken_since is not None:
+                broken = self._thin_since - self._broken_since
+                self._broken_total += max(0.0, broken)
+                self._broken_since = None
+        return True
+
+    def waits(self) -> tuple[float, float, float]:
+        """The waits for a task so far, in seconds of the clock.
+
+        (all of them, their thinned part, the part after an owner, motion
+        or a missing ROBOT_STATE had ended a quiet stretch of the arm).
+        """
+        now = self._clock()
         with self._lock:
-            since, total = self._idle_since, self._idle_total
-        return total if since is None else total + max(0.0, self._clock() - since)
+            self._thinned(now)
+            parts = []
+            for since, total in (
+                (self._idle_since, self._idle_total),
+                (self._thin_since, self._thin_total),
+                (self._broken_since, self._broken_total),
+            ):
+                parts.append(total if since is None else total + max(0.0, now - since))
+        return parts[0], parts[1], parts[2]
+
+    def idle_seconds(self) -> float:
+        """How long the waits for a task have been thinned so far, on the clock."""
+        return self.waits()[1]
 
     def rule(self) -> dict[str, Any]:
         """What the rate's first event says: the rate, and the wait's rule."""
         told: dict[str, Any] = {"map_hz": self.map_hz, "note": RATE_NOTE}
         if self.idle_map_s is not None:
-            told.update(idle_map_s=self.idle_map_s, idle_note=IDLE_NOTE)
+            told.update(
+                idle_map_s=self.idle_map_s,
+                idle_note=IDLE_NOTE,
+                arm_quiet_s=ARM_QUIET_S,
+                arm_state_age_s=ARM_STATE_AGE_S,
+                arm_travel_rad=ARM_TRAVEL_RAD,
+                arm_jaw_travel=ARM_JAW_TRAVEL,
+            )
         return told
 
     def status(self) -> dict[str, Any]:
         """The block RATE_BLOCK of recording-status.json: the numbers so far."""
         block: dict[str, Any] = {"map_hz": self.map_hz, **self.counts}
         if self.idle_map_s is not None:
+            waited, thinned, broken = self.waits()
+            with self._lock:
+                by = dict(self.idle_interrupted)
             block.update(
                 idle_map_s=self.idle_map_s,
-                idle_seconds=round(self.idle_seconds(), 3),
+                # The waits for a task, and their thinned part.
+                wait_seconds=round(waited, 3),
+                idle_seconds=round(thinned, 3),
                 idle_skipped=self.idle_skipped,
+                # The times the arm ended a quiet stretch of a wait, and how
+                # long the wait then went on at map_hz.
+                idle_interrupted=sum(by.values()),
+                idle_interrupted_seconds=round(broken, 3),
+                idle_interrupted_by=by,
             )
         return block
 
@@ -499,7 +702,7 @@ class MapRate:
     def _decide(self, tick: _Tick) -> None:
         now = self._clock()
         with self._lock:
-            idle = self._idle_since is not None
+            idle = self.idle_map_s is not None and self._thinned(now)
             if idle:
                 # One per idle_map_s since a map was last stored; none with 0.
                 last = max(self._picture_at, self._map_at)
@@ -597,9 +800,9 @@ class MapRate:
             with self._lock:
                 if not self._held:
                     return
-                # While the program waits: no more often than its turn stores.
-                waiting = self._idle_since is not None
-                period = self.idle_map_s if waiting else self._period
+                # In a thinned wait: no more often than its turn stores.
+                thinned = self.idle_map_s is not None and self._thinned(now)
+                period = self.idle_map_s if thinned else self._period
                 if when_due and (period <= 0 or now - self._map_at < period):
                     return
                 key = next(reversed(self._held))
@@ -1089,11 +1292,13 @@ def _has_writer(recording: Any) -> bool:
 
 
 class TaskWait:
-    """Tells the rate when the agent program waits for a task at its prompt.
+    """Tells the rate when the agent program waits for a task at its prompt,
+    and what each ROBOT_STATE shows of the arm.
 
     The program opens waiting() around its read of the operator's task line.
-    limited() binds its rate for as long as it is open; without one, waiting()
-    does nothing. A question in the middle of a task is no such wait.
+    The thread that measures every ROBOT_STATE calls arm_state(). limited()
+    binds its rate for as long as it is open; without one, both do nothing.
+    A question in the middle of a task is no such wait.
     """
 
     def __init__(self) -> None:
@@ -1101,6 +1306,19 @@ class TaskWait:
 
     def bind(self, gate: MapRate | None) -> None:
         self._gate = gate
+
+    def arm_state(
+        self,
+        owner: Any,
+        motion: Any,
+        joints: Any = None,
+        jaw: Any = None,
+        at: float | None = None,
+    ) -> None:
+        """MapRate.arm_state() of the bound rate; never raises."""
+        gate = self._gate
+        if gate is not None:
+            gate.arm_state(owner, motion, joints, jaw, at)
 
     @contextmanager
     def waiting(self) -> Iterator[None]:
@@ -1136,7 +1354,8 @@ def limited(
     and with at_limit AT_LIMIT_DROP it drops its oldest ones at its size.
 
     With idle_map_s the rate stores one map picture per that many seconds
-    while task_wait.waiting() is open (0: none).
+    (0: none) while task_wait.waiting() is open and task_wait.arm_state() has
+    shown an arm nobody owns or moves for ARM_QUIET_S.
 
     Yields the MapRate and the Keeper. The first is None with map_hz 0, the
     second with AT_LIMIT_STOP; both without a recorder and with a recorder

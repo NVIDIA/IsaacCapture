@@ -420,8 +420,9 @@ def test_the_wait_for_a_task_has_an_option_of_the_programs_own(
     full = agent_config.load_settings(
         settings_file(tmp_path, experiment={"stack": "full"})
     )
-    # While the program waits for a task the debug recording stores one map
-    # picture per 10 s unless the run names another period; 0 stores none.
+    # While the program waits for a task and nothing happens at the arm, the
+    # debug recording stores one map picture per 10 s unless the run names
+    # another period; 0 stores none.
     assert idle_map_s(full) == idle_map_s(full, "--record-debug") == 10.0
     assert idle_map_s(full, "--record-debug", "--debug-idle-map-s", "0") == 0.0
     assert idle_map_s(full, "--debug-idle-map-s", "3600") == 3600.0
@@ -447,15 +448,28 @@ def test_the_wait_for_a_task_has_an_option_of_the_programs_own(
     assert line.endswith(
         "The joint path of each MOVE is in it as robot.move_path: what was "
         "planned and sent to the robot app, not what the motors were sent. While "
-        "the program waits for a task one map picture is stored every 10 s, "
-        "which --debug-idle-map-s sets; what the arm did or was refused is "
-        "stored as always"
+        "the program waits for a task and nobody owns or moves the arm, one map "
+        "picture is stored every 10 s, which --debug-idle-map-s sets; a person "
+        "who takes the arm over in that wait is recorded at 2 map pictures a "
+        "second, and what the arm did or was refused is stored as always"
     )
     none = launcher._option_lines(recorded, Path("run"), 2.0, "drop-oldest", 0.0)[-1]
     assert (
-        "While the program waits for a task no map picture is stored, which "
-        "--debug-idle-map-s sets"
+        "While the program waits for a task and nobody owns or moves the arm, "
+        "no map picture is stored, which --debug-idle-map-s sets; a person who "
+        "takes the arm over in that wait is recorded at 2 map pictures a second"
     ) in none
+    slow = launcher._option_lines(recorded, Path("run"), 1.0, "drop-oldest", 30.0)[-1]
+    assert "one map picture is stored every 30 s, which" in slow
+    assert "in that wait is recorded at 1 map picture a second, and" in slow
+    # The option's own help says the same.
+    (option,) = (
+        action
+        for action in launcher._parser()._actions
+        if action.dest == "debug_idle_map_s"
+    )
+    assert "at its prompt and nobody owns or moves the arm" in option.help
+    assert "A person who takes the arm over in that wait" in option.help
     # Nothing is said of a wait that has no rule.
     for line in (
         launcher._option_lines(recorded, Path("run"), 0.0)[-1],
@@ -637,6 +651,46 @@ def test_without_an_option_a_run_loads_nothing_of_the_experiment_and_leaves_no_f
         "debug_at_limit": "drop-oldest",
         "debug_idle_map_s": 10.0,
     }
+
+
+@apai
+def test_a_run_tells_the_rule_for_the_wait_who_owns_the_arm_off_the_arms_threads(
+    stage: Stage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What the debug recording's rule for the wait is told of the arm in a run."""
+    import threading
+
+    from isaaccapture_examples.agentic_remote.agent import debug_recording
+
+    told: list[tuple[Any, ...]] = []
+    real = debug_recording.TaskWait.arm_state
+
+    def arm_state(wait: Any, *shown: Any) -> None:
+        told.append((threading.current_thread().name, *shown))
+        real(wait, *shown)
+
+    monkeypatch.setattr(debug_recording.TaskWait, "arm_state", arm_state)
+    began = time.monotonic()
+    assert stage.run("--task", QUICK) == launcher.EXIT_OK
+    ended = time.monotonic()
+    # Every ROBOT_STATE the run measured, each on the measuring thread.
+    (counted,) = (line for line in stage.lines if line.startswith("ROBOT_STATEs "))
+    assert len(told) == int(counted.split()[1].rstrip(",")) >= 3
+    assert {call[0] for call in told} == {launcher.MEASURE_THREAD}
+    # Who owned the arm: nobody, the agent for its jaw command, nobody again.
+    owners = [call[1] for call in told]
+    changes = [
+        owner for at, owner in enumerate(owners) if owners[at - 1 : at] != [owner]
+    ]
+    assert changes == ["nobody", "agent", "nobody"]
+    for _, _, motion, joints, jaw, at in told:
+        assert motion in debug_recording.ARM_STILL  # no move in this task
+        assert len(joints) == 6 and all(isinstance(value, float) for value in joints)
+        assert jaw is None or isinstance(jaw, float)
+        # The ROBOT_STATE's arrival, on the clock the rate reads.
+        assert began <= at <= ended
+    arrivals = [call[5] for call in told]
+    assert arrivals == sorted(arrivals)
 
 
 # Every option, on the mock scene, with stand-ins for the experiment's modules
