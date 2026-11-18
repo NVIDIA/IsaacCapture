@@ -1243,20 +1243,38 @@ def test_the_readme_says_in_one_way_that_the_human_program_writes_no_raw_stop():
 
 
 # The README on where the human program runs, on the jaws under a person and on
-# a low gripper tip. On the rig the human program runs on the Thor, the machine
-# on the robot, attached at a Unix socket that the robot app serves when it is
-# started with --human-socket; on one machine it attaches to the robot link
-# service. The jaws are the gripper's fingers; a jaw opening is a share of
-# their travel, and the grip level is the jaw opening in force when a person
-# takes the arm over. The gripper tip is low below the table clearance or
-# inside the agent's last grasp region: a person lifts it out.
+# the table under a person. On the rig the human program runs on the Thor, the
+# machine on the robot, attached at a Unix socket that the robot app serves
+# when it is started with --human-socket; on one machine it attaches to the
+# robot link service. The jaws are the gripper's fingers; a jaw opening is a
+# share of their travel, and the grip level is the jaw opening in force when a
+# person takes the arm over. A table clearance is the height over the table
+# plane under which a checker takes only a step that rises; the human checker,
+# which checks a person's joint targets, has its own, the table plane on the
+# rig, and the human program stops the gripper tip a margin above it.
 
 HUMAN_YAML = CONFIGS / "human.yaml"
 RIG_HUMAN_YAML = CONFIGS / "human_rebot.yaml"
 HUMAN_SOCKET = "--human-socket"
 ON_THOR = "### The human program on the Thor"
-# The item of "A takeover, step by step" on a takeover with a low gripper tip.
-LOW_TIP_ITEM = "- **A low gripper tip: a person lifts the arm out.**"
+# The item of "A takeover, step by step" on the table under a person.
+FLOOR_ITEM = "- **The table under a person is a floor.**"
+# The robot app's file of the APAI checkers, read as text: importing it needs APAI.
+APAI_BACKEND = (
+    CONFIGS.parent
+    / "python"
+    / "isaaccapture_examples"
+    / "agentic_remote"
+    / "robot_app"
+    / "apai_backend.py"
+)
+# The joint speed a human limit set may not exceed on the rig's arm profile, rad/s.
+HUMAN_SPEED_CAP = 2.0
+
+
+def corner(values: list[float]) -> str:
+    """A corner of a tip box as the README and the rig file write it."""
+    return "[" + ", ".join(f"{value:.2f}" for value in values) + "]"
 
 
 def test_the_readme_places_the_human_program_on_the_thor_on_the_rig():
@@ -1335,28 +1353,39 @@ def test_the_readme_says_how_fast_the_arm_follows_the_hand_as_the_programs_have_
     robot = yaml.safe_load((CONFIGS / "robot_app_rebot.yaml").read_text("utf-8"))
     human = robot["limits"]["human"]
     # The joints: the owner's limit, the Thor's clamp and the program's share.
-    assert (human["max_joint_speed"], human["max_step_rad"]) == (0.8, 0.05)
+    assert (human["max_joint_speed"], human["max_step_rad"]) == (1.6, 0.10)
     assert (SPEED_MARGIN, logic.THOR_SPEED_MARGIN, logic.JOINT_SPEED_SHARE) == (
         0.98,
         0.98,
         0.9,
     )
+    period = robot["executor"]["period_s"]
     clamp = SPEED_MARGIN * human["max_joint_speed"]
     own = logic.JOINT_SPEED_SHARE * clamp
-    assert (f"{clamp:.2f}", f"{own:.2f}") == ("0.78", "0.71")
+    assert (f"{clamp:.2f}", f"{own:.2f}") == ("1.57", "1.41")
+    step_deg = f"{math.degrees(clamp * period):.1f} degrees"
+    assert step_deg == "1.8 degrees"
     assert (
         "The Thor follows a person's joint target at 0.98 of "
-        "`limits.human.max_joint_speed`, 0.8 rad/s by the rig owner's decision of "
-        "2026-11-16: 0.78 rad/s, which is 0.9 degrees with each setpoint."
+        f"`limits.human.max_joint_speed`, {human['max_joint_speed']:g} rad/s by the "
+        f"rig owner's decision of 2026-11-18: {clamp:.2f} rad/s, which is {step_deg} "
+        "with each setpoint."
     ) in section
     assert "names that limit in WELCOME (`human_max_joint_speed`)" in section
     assert (
-        "at 0.9 of the Thor's speed: on the joint that has the farthest to go 0.71 "
-        "rad/s, 40 degrees a second, and every other joint by the same share of "
-        "its way"
+        "at 0.9 of the Thor's speed: on the joint that has the farthest to go "
+        f"{own:.2f} rad/s, {math.degrees(own):.0f} degrees a second, and every other "
+        "joint by the same share of its way"
     ) in section
     unnamed = logic.JOINT_SPEED_SHARE * SPEED_MARGIN * logic.UNNAMED_JOINT_SPEED
     assert f"names no such limit is followed at {unnamed:.2f} rad/s" in section
+    # The bound of that limit on the rig's arm profile is the robot app's own.
+    assert f"\nHUMAN_SPEED_CAP = {HUMAN_SPEED_CAP}\n" in APAI_BACKEND.read_text("utf-8")
+    assert human["max_joint_speed"] <= HUMAN_SPEED_CAP
+    assert (
+        f"a human limit set of up to {HUMAN_SPEED_CAP:.1f} rad/s (`HUMAN_SPEED_CAP` of "
+        "`robot_app/apai_backend.py`)"
+    ) in section
     # The bounds of the tip's target, and the hand that is ahead.
     retarget, ik = rig["retarget"], rig["ik"]
     assert (
@@ -1364,6 +1393,10 @@ def test_the_readme_says_how_fast_the_arm_follows_the_hand_as_the_programs_have_
         f"and `retarget.max_angular_velocity` ({retarget['max_angular_velocity']:.1f} "
         "rad/s) of `configs/human_rebot.yaml` bound the tip's target"
     ) in section
+    assert (retarget["max_linear_velocity"], retarget["max_angular_velocity"]) == (
+        0.5,
+        2.0,
+    )
     note = human_types.NOTE_CATCHING_UP.format(cm="N")
     assert note == "hand N cm ahead: the arm is catching up"
     assert f"`{note}` from {human_types.AHEAD_NOTE_CM} cm on" in section
@@ -1393,22 +1426,30 @@ def test_the_readme_says_how_fast_the_arm_follows_the_hand_as_the_programs_have_
     # The program's line of its speeds, with the rig's files.
     assert (
         f"`human program: the arm follows the hand at up to {own:.2f} rad/s a joint "
-        "(the robot app's limit for a person is 0.8 rad/s), its tip at up to "
+        "(the robot app's limit for a person is "
+        f"{human['max_joint_speed']:g} rad/s), its tip at up to "
         f"{retarget['max_linear_velocity']:g} m/s and "
         f"{retarget['max_angular_velocity']:g} rad/s`"
     ) in text
     # The rig's human file, and the table of the settings.
-    assert "It differs in exactly seven keys:" in text
+    assert "It differs in exactly eight keys:" in text
     for key in ("max_linear_velocity", "max_angular_velocity"):
         assert f"`retarget.{key}: {retarget[key]}`" in text, key
     assert f"`ik.max_ahead_m: {ik['max_ahead_m']}`" in text
-    assert "`retarget.max_linear_velocity: 0.01`" not in text
+    for key in ("max_jump_rad", "max_ahead_rad"):
+        assert f"`ik.{key}: {ik[key]:g}`" in text, key
+    step = f"`limits.human.max_step_rad: {human['max_step_rad']:.2f}`"
+    assert f"lies below {step} of the rig's robot file" in text
+    assert ik["max_ahead_rad"] < human["max_step_rad"]
+    for old in ("0.25` m/s", "max_ahead_rad: 0.045", "max_step_rad: 0.05"):
+        assert old not in text, old
     # The tip's speeds, as the rig's human file gives them beside its bound.
-    assert "moves at 7 to 19 cm a second from the raised pose" in section
-    assert "up to the 25 cm a second of the bound" in section
+    bound_cm = f"{100 * retarget['max_linear_velocity']:g} cm a second of the bound"
+    assert "moves at 27 to 36 cm a second from the ready pose" in section
+    assert f"up to the {bound_cm}" in section
     beside = one_line(RIG_HUMAN_YAML.read_text(encoding="utf-8").replace("#", " "))
-    assert "7 to 19 cm a second from the raised pose" in beside
-    assert "up to the 25 cm a second of the bound below" in beside
+    assert "27 to 36 cm a second from the ready pose" in beside
+    assert f"up to the {bound_cm} below" in beside
     # The straight way, and a release counted from the hand.
     assert "the arm goes straight to where the hand is now" in section
     assert (
@@ -1435,12 +1476,30 @@ def test_the_readme_says_how_fast_the_arm_follows_the_hand_as_the_programs_have_
         f"keeps the tip of the pose it solves for {margin_cm} cm inside it" in section
     )
     assert "(`human_tip_box`)" in section and "**`human_tip_box` in WELCOME**" in text
+    # The box of a person on the rig, as the rig's robot file has it.
+    low, high = human["workspace_min"], human["workspace_max"]
+    assert (
+        f"`limits.human.workspace_min: {corner(low)}` and `workspace_max: "
+        f"{corner(high)}` of `configs/robot_app_rebot.yaml`"
+    ) in section
+    assert -low[1] == high[1]
+    assert (
+        f"{100 * low[0]:g} to {100 * high[0]:g} cm in front of the base, "
+        f"{100 * high[1]:g} cm to each side, and up to {100 * high[2]:g} cm above "
+        "the table plane"
+    ) in section
     # The table, the joint box and the reach: named in WELCOME, and the notes.
     for field in ("human_tip_floor", "human_joint_box"):
         assert f"(`{field}`)" in section and f"**`{field}` in WELCOME**" in text
     assert human_types.WALL_TABLE == "table"
     table = human_types.NOTE_AT_LIMIT.format(walls=human_types.WALL_TABLE)
     assert f"the note says `{table}`" in section and f"| `{table}` |" in text
+    floor_cm = f"{100 * human_types.TIP_FLOOR_MARGIN_M:g} cm"
+    assert floor_cm == "0.5 cm"
+    assert f"**The tip stops {floor_cm} above the table.**" in section
+    clearance = human["table_clearance_m"]
+    assert f"`limits.human.table_clearance_m`, {clearance} on the rig" in section
+    assert f"takes the stop {floor_cm} above that height for the lowest wall" in section
     reach = human_types.NOTE_OUT_OF_REACH
     limit = human_types.NOTE_AT_JOINT_LIMIT.format(joint="N")
     assert (reach, limit) == ("out of reach", "at a joint limit: joint N")
@@ -1449,40 +1508,68 @@ def test_the_readme_says_how_fast_the_arm_follows_the_hand_as_the_programs_have_
     assert "[; out of reach | ; at a joint limit: joint <N>]" in text
     joint_cm = f"{logic.JOINT_BOX_MARGIN_RAD:g} rad inside"
     assert joint_cm == "0.01 rad inside" and f"stops {joint_cm} it" in section
-    assert "from the fifth failed solve in a row (`ik.max_failures`)" in section
+    # Out of reach the arm follows as far as it can; the note counts passes.
+    assert "the fifth pass in a row without a solution (`ik.max_failures`)" in section
     assert rig["ik"]["max_failures"] == 5
+    assert "It does not end the engagement" in section
+    assert (
+        "the arm follows as far as it can, the tip's position first and the wrist's "
+        "angle second"
+    ) in section
+    assert logic.REACH_SHARES == (1.0, 0.5, 0.25)
+    assert "half and a quarter of the way to that position" in section
+    assert "the arm stands at the end of its reach" not in text
     # The wait for the arm to be at rest, and a robot app that keeps its drive.
     assert f"agree within {logic.REST_TOL_RAD:g} rad" in section
     assert f"{logic.REST_WAIT_S:g} s after the engagement ended" in section
     assert f"the note says `{logic.NOTE_DRIVE_ON}`" in section
     assert f"| `{logic.NOTE_DRIVE_ON}` |" in text
-    # A low gripper: what the note tells the person to do.
-    raise_notes = f"| `{logic.NOTE_RAISE_TABLE}`, `{logic.NOTE_RAISE}` |"
-    assert raise_notes in text
-    assert f"the note says `{logic.NOTE_RAISE_TABLE}`" in text
     behind = human_types.NOTE_THOR_BEHIND
     assert behind == "the robot app is behind: the arm follows slower"
     assert f"the note says `{behind}`" in section and f"| `{behind}` |" in text
     assert f"[; {behind}]" in text
-    steps = logic.HOLD_BACK_STEPS * clamp * robot["executor"]["period_s"]
+    steps = logic.HOLD_BACK_STEPS * clamp * period
     assert f"no further than two of the Thor's steps, {steps:.3f} rad, ahead" in section
     assert logic.HOLD_BACK_STEPS == 2 and logic.NO_FOLLOW_S == 1.0
+    assert steps < ik["max_ahead_rad"]
+    inside = f"{human['max_step_rad'] - steps:.3f} rad inside the Thor's step limit"
+    assert inside in section
     assert f"`{logic.NOT_FOLLOWED}`" in section and f"`{logic.NOT_FOLLOWED}`" in text
-    # What a blocked joint costs before the arm holds.
-    assert "the motors are asked for about 6 degrees more" in section
+    # What a blocked joint costs before the arm holds: what the Thor's clamp
+    # moves a joint's command in the stall window of APAI's contact watch
+    # (stall_window_s of APAI's rebot_rs profile, 0.12 s).
+    stalled = clamp * 0.12
+    assert (
+        "Against a blocked joint the motors are asked for about "
+        f"{math.degrees(stalled):.0f} degrees more"
+    ) in section
+    assert f"a command at a person's full speed moves {stalled:.2f} rad" in section
+    assert f"no move at {human['max_joint_speed']:g} rad/s was run" in section
+    assert "the motors are asked for about 6 degrees more" not in text
     # A ROBOT_STATE behind every setpoint, and when the next one is overdue.
     assert "sends a ROBOT_STATE behind every setpoint" in section
-    due = logic.STATE_DUE_PERIODS * robot["executor"]["period_s"]
+    due = logic.STATE_DUE_PERIODS * period
     assert logic.STATE_DUE_PERIODS == 1.5 and f"in this drive, {due:g} s" in section
-    # The program's lines of the box and of the joints, with the rig's robot app.
+    # The program's lines of the box and of the joints, with the rig's robot
+    # app: the tip 1 cm inside the walls, its lowest the stop above the table
+    # plane, which is z = 0 of the arm model.
+    inset = logic.TIP_BOX_MARGIN_M
+    stop = clearance + human_types.TIP_FLOOR_MARGIN_M
+    assert stop > low[2] + inset
+    sides = (
+        f"x {low[0] + inset:.3f} to {high[0] - inset:.3f}, "
+        f"y {low[1] + inset:.3f} to {high[1] - inset:.3f}, "
+        f"z {stop:.3f} to {high[2] - inset:.3f} m"
+    )
+    assert sides == "x 0.110 to 0.540, y -0.490 to 0.490, z 0.005 to 0.690 m"
     assert (
         "`human program: the gripper tip stops at the robot app's workspace limits: "
-        "x 0.11 to 0.49, y -0.29 to 0.29, z 0.03 to 0.54 m from the arm's base; its "
-        "lowest is the table clearance`"
+        f"{sides} from the arm's base; its lowest is {floor_cm} above the table "
+        "clearance`"
     ) in text
     assert (
         "`human program: the joints stop at the robot app's joint limits for a "
-        "person, and the arm stands while the hand is out of reach`"
+        "person, and the arm follows as far as it can while the hand is out of reach`"
     ) in text
     # The comment on the limit that sets the arm's pace says so.
     pace = one_line(
@@ -1490,7 +1577,8 @@ def test_the_readme_says_how_fast_the_arm_follows_the_hand_as_the_programs_have_
     )
     assert "This limit sets how fast the arm follows a person." in pace
     assert f"at 0.9 of that clamp, {own:.2f} rad/s a joint" in pace
-    assert "only bound the gripper tip, at 25 cm/s" in pace
+    tip_cm = f"{100 * retarget['max_linear_velocity']:g} cm/s"
+    assert f"only bound the gripper tip, at {tip_cm}" in pace
     assert "decide how fast the joint targets" not in pace
 
 
@@ -1520,83 +1608,78 @@ def test_the_readme_gives_the_two_jaw_settings_of_every_robot_app_file():
     assert f"{off} in every robot app file" not in text
 
 
-def test_the_readme_quotes_the_rule_of_the_lift_as_the_robot_app_has_it():
+def test_the_readme_gives_the_floor_under_a_person_as_the_programs_have_it():
+    from isaaccapture_examples.agentic_remote.human import logic
+    from isaaccapture_examples.agentic_remote.human import types as human_types
     from isaaccapture_examples.agentic_remote.robot_app import app, human
 
     steps = one_line(readme_section("### A takeover, step by step"))
-    rule = steps[steps.index(LOW_TIP_ITEM) :]
-    # What a takeover with a low gripper tip adds to its line.
+    rule = steps[steps.index(FLOOR_ITEM) :]
+    robot = yaml.safe_load(RIG_ROBOT_YAML.read_text(encoding="utf-8"))
+    person, rest = robot["limits"]["human"], robot["rest"]
+    # The human checker's own table clearance on the rig, and the typed rest's.
+    assert (person["table_clearance_m"], rest["table_clearance_m"]) == (0.0, 0.02)
+    own = f"`{person['table_clearance_m']}` in the rig file, the table plane"
+    assert f"`limits.human.table_clearance_m` of the robot app's file: {own}" in rule
+    assert "names it in WELCOME as a height (`human_tip_floor`)" in rule
+    # The stop above it, by the human program's margin.
+    assert logic.TIP_FLOOR_MARGIN_M == human_types.TIP_FLOOR_MARGIN_M
+    stop = f"{100 * human_types.TIP_FLOOR_MARGIN_M:g} cm"
+    assert stop == "0.5 cm"
+    assert f"**The tip stops {stop} above it and moves freely above that.**" in rule
+    named = f"{stop} above the named height (`TIP_FLOOR_MARGIN_M` of `human/types.py`)"
+    assert named in rule
+    assert "starts like any other squeeze" in rule
+    assert "inside the agent's last grasp region the tip is lowered as" in rule
+    assert "**A tip under the stop at a squeeze rises to it.**" in rule
+    # A takeover with the tip under that clearance, and what it adds to its line.
+    assert "**A takeover with the measured tip under that clearance is taken.**" in rule
     assert f"the takeover's line ends `{app.LOW_TIP}`" in rule
     assert f"the line goes on `{app.LOW_TIP}`" in readme_row("| 5 | B stays down")
-    # The refusal of a target that would lower the tip, and its tolerance.
-    ended = "`human drive ended: " + human.LIFT + "<why the tip is low>, and the target"
-    assert ended in rule
-    tolerance = f"{human.TIP_TOL_M * 1000:g} mm"
-    assert "The robot app keeps a **floor** for the gripper tip" in rule
-    assert f"puts the tip more than {tolerance} under that floor" in rule
-    lowered = readme_row("| While the measured gripper tip is low")
-    assert f"`human drive ended: {human.LIFT}...`" in lowered
-    # APAI's own rule under its table clearance, and what stays refused.
-    assert "Below APAI's own table clearance every step must rise" in rule
-    assert "The typed `rest` stays refused there" in rule
-    # The old rule is gone, and the test file of the rule is named.
+    # APAI's own rule under the clearance, and the typed rest's own table rule.
+    risen = "Under the human checker's clearance only a step that rises is taken."
+    assert f"**{risen}**" in rule
+    rest_cm = f"{100 * rest['table_clearance_m']:g} cm"
+    assert f"above `rest.table_clearance_m`, {rest_cm} on the rig" in rule
+    assert "**The typed `rest` keeps its own table rule.**" in rule
+    # The rule of the lift is in neither program and not in the README.
+    for name in ("LIFT", "TIP_TOL_M"):
+        assert not hasattr(human, name), name
+    for name in ("NOTE_RAISE", "NOTE_RAISE_TABLE", "LIFT_AFTER_S", "LIFT_SHARES"):
+        assert not hasattr(logic, name), name
     whole = one_line(README.read_text(encoding="utf-8"))
-    assert "Below the table clearance nobody can move the arm" not in whole
-    assert "Below the table clearance a takeover is refused too" not in whole
-    assert (TESTS / "test_lift_out.py").is_file()
-    assert "`test_lift_out.py`" in readme_section("## Run the tests")
-
-
-def test_the_readme_gives_the_joint_target_of_a_waiting_drive_as_the_logic_has_it():
-    # A drive of the robot app waits for a lift while it sends nothing for an
-    # arm that has settled under its highest gripper tip.
-    from isaaccapture_examples.agentic_remote.human import logic
-    from isaaccapture_examples.agentic_remote.robot_app.human import SPEED_MARGIN
-
-    steps = one_line(readme_section("### A takeover, step by step"))
-    rule = steps[steps.index(LOW_TIP_ITEM) :]
-    rig = yaml.safe_load(RIG_HUMAN_YAML.read_text(encoding="utf-8"))
-    robot = yaml.safe_load((CONFIGS / "robot_app_rebot.yaml").read_text("utf-8"))
-    # When the human program takes the drive to wait, and its two notes.
-    assert f"for {logic.LIFT_AFTER_S:g} s, a drive that has this engagement's" in rule
-    for note in (logic.NOTE_RAISE_TABLE, logic.NOTE_RAISE):
-        assert f"`{note}`" in rule
-    # One step of the robot app from the measured arm, with the rig's numbers.
-    one_step = "no further than the robot app reaches from the measured arm in one step"
-    assert one_step in rule
-    speed, period = robot["limits"]["human"]["max_joint_speed"], 0.02
-    assert robot["executor"]["period_s"] == period
-    step = logic.JOINT_SPEED_SHARE * SPEED_MARGIN * speed * period
-    share = f"{logic.JOINT_SPEED_SHARE:g} of one step of the robot app"
-    assert f"{share} ({step:.3f} rad on the rig, 0.8 degrees)" in rule
-    assert f"`ik.max_ahead_rad` less {logic.LIFT_SLACK_RAD:g} rad" in rule
-    tip_mm = 1000 * rig["retarget"]["max_linear_velocity"] * period
-    assert f"allows in one setpoint period ({tip_mm:g} mm on the rig)" in rule
-    assert logic.LIFT_SHARES == (1.0, 0.5, 0.25, 0.125)
-    assert "is tried at a half, a quarter and an eighth of its length" in rule
-    assert "This holds wherever the tip is" in rule
-    # Under the named height: the hand's pose above the tip.
-    tol_mm = 1000 * rig["ik"]["tol"]
-    assert logic.LIFT_ASKED_TOLS == 2.0
-    assert (
-        f"above that tip by more than {logic.LIFT_ASKED_TOLS * tol_mm:g} mm, twice "
-        f"what a solve may leave of its pose (`ik.tol`, {tol_mm:g} mm)"
-    ) in rule
-    assert "goes sideways or goes down moves nothing there" in rule
-    # What it leaves open is under the known gaps, and the old bound is gone.
+    for gone in (
+        "raise the hand",
+        "lift the gripper:",
+        "rule of the lift",
+        "waits for a lift",
+        "passes sent nothing",
+        "Below the table clearance nobody can move the arm",
+        "Below the table clearance a takeover is refused too",
+    ):
+        assert gone not in whole, gone
+    # What the floor leaves open is under the known gaps.
     gaps = one_line(readme_section("## Known gaps"))
     for gap in (
-        "An arm that settled far under its highest point is not lifted by a squeeze.",
-        "A slow start of the Thor's drive is taken for a wait for a lift.",
+        f"A person's floor is {stop} above the table plane of the arm model, not "
+        "above the table.",
+        "The floor knows the gripper tip only.",
+        "The contact watch was not run at a person's speed.",
+        "A drive starts from the measured pose, and nothing guards an arm that droops.",
+        "Out of reach the wrist is left behind.",
     ):
-        assert f"**{gap}**" in gaps
-    assert "the depth shrinks with that limit" in gaps
-    taken = f"From {logic.LIFT_AFTER_S:g} s on the human program takes such a drive"
-    assert taken in gaps
-    whole = one_line(README.read_text(encoding="utf-8"))
-    assert "0.04 rad on the rig" not in whole
-    assert "the joint target follows the hand" not in whole
-    assert (TESTS / "test_rig_configs.py").is_file()
+        assert f"**{gap}**" in gaps, gap
+    speed = person["max_joint_speed"]
+    assert f"no move at {speed:g} rad/s was run with them" in gaps
+    for gone in (
+        "An arm that settled far under its highest point",
+        "A slow start of the Thor's drive is taken for a wait",
+        "The lift is strict.",
+    ):
+        assert gone not in gaps, gone
+    # The tests of a person's drive close to the table are named.
+    assert (TESTS / "test_lift_out.py").is_file()
+    assert "`test_lift_out.py`" in readme_section("## Run the tests")
 
 
 def test_the_readme_quotes_what_the_trigger_is_told_as_the_programs_say_it():
@@ -2863,10 +2946,11 @@ def test_the_readme_gives_the_rig_speeds_as_the_two_rig_files_hold_them(monkeypa
         "rest.recovery_speed": rest["recovery_speed"],
         "thor.agent_max_joint_speed": agent["thor"]["agent_max_joint_speed"],
     }
-    # The rig owner's decisions of 2026-11-16: 0.2 rad/s there, 0.8 for a person.
+    # The rig owner's decisions: 0.2 rad/s there, of 2026-11-16, and 1.6 for a
+    # person, of 2026-11-18.
     assert speeds == dict.fromkeys(speeds, 0.2)
     speed, human = 0.2, limits["human"]["max_joint_speed"]
-    assert human == 0.8
+    assert human == 1.6
     rig = one_line(readme_section(RIG_FILES))
     heading = (
         f"**The speeds: the agent and the return to rest run at {speed:g} rad/s, and "
@@ -2877,6 +2961,36 @@ def test_the_readme_gives_the_rig_speeds_as_the_two_rig_files_hold_them(monkeypa
         assert f"`{key}`" in rig, key
     held = f"`limits.human.max_joint_speed` of the robot app's file holds the {human:g}"
     assert held in rig
+    # A person's limits of 2026-11-18, key by key as the two rig files hold them.
+    person = limits["human"]
+    assert "**A person's limits are the rig owner's values of 2026-11-18**" in rig
+    for key in ("max_joint_speed", "table_clearance_m"):
+        assert f"`{key}: {person[key]}`" in rig, key
+    assert f"`max_step_rad: {person['max_step_rad']:.2f}`" in rig
+    assert (
+        f"`workspace_min: {corner(person['workspace_min'])}` with `workspace_max: "
+        f"{corner(person['workspace_max'])}`"
+    ) in rig
+    hand = yaml.safe_load(RIG_HUMAN_YAML.read_text(encoding="utf-8"))
+    for block, key in (
+        ("retarget", "max_linear_velocity"),
+        ("retarget", "max_angular_velocity"),
+        ("ik", "max_ahead_rad"),
+    ):
+        assert f"`{block}.{key}: {hand[block][key]}`" in rig, key
+    assert f"`ik.max_jump_rad: {hand['ik']['max_jump_rad']:g}`" in rig
+    assert f"`rest.table_clearance_m` stays {rest['table_clearance_m']}" in rig
+    # The agent and a return to rest name no table clearance and no tip box.
+    for owner in ("agent", "recovery"):
+        for key in ("table_clearance_m", "workspace_min", "workspace_max"):
+            assert key not in limits[owner], (owner, key)
+    # The bound of a person's speed on the rig's arm profile.
+    assert human <= HUMAN_SPEED_CAP
+    cap = (
+        "**The cap a human limit set is checked against is the robot app's own, "
+        f"{HUMAN_SPEED_CAP:.1f} rad/s**"
+    )
+    assert cap in rig and "(`HUMAN_SPEED_CAP` of `robot_app/apai_backend.py`)" in rig
     assert "**Change the speeds on both machines together.**" in rig
     assert "**None of these speeds has run on the arm.**" in rig
     # The agent never plans faster than the Thor's own limit, whatever its
