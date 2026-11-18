@@ -166,13 +166,24 @@ gripper:
   closed_frac: 0.04
   target_tol: 0.03
   # Only the jaws under a person's trigger: a step has reached its opening
-  # within reach_tol, and an opening step is open_step wide.
+  # within reach_tol.
   reach_tol: 0.03
   full_open_tol: 0.03
   agree_tol: 0.02  # first value; measure in the hardware session
   reads: 3
   read_gap_s: 0.05
+  # Read only with human.jaw_release "steps": the width of one opening step
+  # of the jaws under a person's trigger, as a share of the jaw travel.
   open_step: 0.05
+  # Read only with human.jaw_release "open_fully": the effort, above 0 to 1,
+  # of the one opening toward a part-eased trigger. The jaw motor pulls with
+  # the profile's stiffness times this effort times its distance to the
+  # ramp's target. 0.8 is the effort of APAI's own opening, which a trigger
+  # that is let go all the way gets whatever stands here. On stand-in motors
+  # with the jaw friction seen on the rig, 0.5 just brings the jaws to where
+  # the trigger asks and 0.4 leaves them short, told as stalled: keep it at
+  # 0.6 or above.
+  follow_open_effort: 0.8
   reference_at_start: true
 
 grasp:
@@ -208,6 +219,23 @@ human:
   # crossed it.
   trigger_jaws: true
   jaw_match_tol: 0.05
+  # How the jaws open under the trigger:
+  #   open_fully  each opening is one motion. Let go all the way, the trigger
+  #               opens the jaws fully in 3 to 4 s: the motion of the typed
+  #               "open" (APAI's own opening). Eased part of the way, it opens
+  #               them to where it asks in one guarded ramp of APAI's driver
+  #               at gripper.follow_open_effort. Pulling the trigger during an
+  #               opening stops the jaws at the driver's next pass, 0.05 s,
+  #               and they then follow the trigger: a slip of the trigger of
+  #               0.1 s moves jaws that grip an object not at all, one of
+  #               0.2 s by about 0.01 of their travel (stand-in motors). A
+  #               STOP ends an opening as it ends the typed open.
+  #   steps       every opening goes in steps of gripper.open_step, each a
+  #               short push from where the jaws read. Measured on the rig:
+  #               such a push does not move jaws that grip an object, so they
+  #               stay closed.
+  # A file without the key gets open_fully.
+  jaw_release: open_fully
 
 connection:
   retry_s: 1.0

@@ -14,6 +14,9 @@ import numpy as np
 import pytest
 import yaml
 from isaaccapture_examples.agentic_remote.robot_app.config import (
+    JAW_RELEASE_OPEN_FULLY,
+    JAW_RELEASE_STEPS,
+    JAW_RELEASES,
     MIN_ASSISTANCE_S,
     ConfigError,
     ExecutorConfig,
@@ -123,6 +126,7 @@ def test_gripper_defaults():
         reads=3,
         read_gap_s=0.05,
         open_step=0.05,
+        follow_open_effort=0.8,
         reference_at_start=True,
     )
 
@@ -200,6 +204,96 @@ def test_the_human_settings_ship_in_the_safe_position():
     assert (shipped.enabled, shipped.require_live_view) == (False, True)
     # A file that names neither gets the same.
     assert (HumanConfig().enabled, HumanConfig().require_live_view) == (False, True)
+
+
+def test_a_file_without_jaw_release_opens_the_jaws_fully_when_the_trigger_is_let_go(
+    tmp_path,
+):
+    # human.jaw_release: what the jaws do when a person lets the trigger go.
+    assert JAW_RELEASES == (JAW_RELEASE_OPEN_FULLY, JAW_RELEASE_STEPS)
+    assert HumanConfig().jaw_release == JAW_RELEASE_OPEN_FULLY
+    loaded = _load_changed(tmp_path, _drop("human.jaw_release"))
+    assert loaded.human.jaw_release == JAW_RELEASE_OPEN_FULLY
+
+
+@pytest.mark.parametrize("value", JAW_RELEASES)
+def test_each_named_jaw_release_is_loaded(tmp_path, value):
+    loaded = _load_changed(tmp_path, _put("human.jaw_release", value))
+    assert loaded.human.jaw_release == value
+    assert HumanConfig(jaw_release=value).jaw_release == value
+
+
+@pytest.mark.parametrize(
+    "value", ["fully", "Steps", "open fully", "", True, 1, None, ["steps"]]
+)
+def test_a_jaw_release_that_is_not_one_of_its_names_is_refused(tmp_path, value):
+    allowed = ", ".join(JAW_RELEASES)
+    refusal = rf"human\.jaw_release must be one of {allowed}, got "
+    with pytest.raises(ConfigError, match=refusal):
+        _load_changed(tmp_path, _put("human.jaw_release", value))
+    with pytest.raises(ConfigError, match=refusal):
+        HumanConfig(jaw_release=value)
+
+
+@pytest.mark.parametrize("name", ["robot_app.yaml", "robot_app_rebot.yaml"])
+def test_the_robot_app_files_name_jaw_release_and_say_what_each_value_does(name):
+    path = CONFIG_YAML.with_name(name)
+    assert load_config(path).human.jaw_release in JAW_RELEASES
+    lines = path.read_text(encoding="utf-8").splitlines()
+    key = next(i for i, line in enumerate(lines) if line.startswith("  jaw_release:"))
+    first = key
+    while lines[first - 1].lstrip().startswith("#"):
+        first -= 1
+    comment = lines[first:key]
+    for value in JAW_RELEASES:
+        assert any(line.startswith(f"  #   {value} ") for line in comment), value
+
+
+@pytest.mark.parametrize("value", [0.05, 0.6, 1, 1.0])
+def test_an_effort_of_the_opening_under_the_trigger_is_loaded(tmp_path, value):
+    # gripper.follow_open_effort: read with human.jaw_release "open_fully".
+    loaded = _load_changed(tmp_path, _put("gripper.follow_open_effort", value))
+    effort = loaded.gripper.follow_open_effort
+    assert effort == value and isinstance(effort, float)
+    without = _load_changed(tmp_path, _drop("gripper.follow_open_effort"))
+    assert without.gripper.follow_open_effort == GripperConfig().follow_open_effort
+
+
+@pytest.mark.parametrize(
+    ("value", "refusal"),
+    [
+        (0, "must be above 0 and at most 1, got 0.0"),
+        (-0.5, "must be above 0 and at most 1, got -0.5"),
+        (1.01, "must be above 0 and at most 1, got 1.01"),
+        ("0.8", "must be a number, got '0.8'"),
+        (True, "must be a number, got True"),
+        (None, "must be a number, got None"),
+    ],
+)
+def test_an_effort_that_is_no_share_above_0_is_refused(tmp_path, value, refusal):
+    told = rf"gripper\.follow_open_effort {refusal}"
+    with pytest.raises(ConfigError, match=told):
+        _load_changed(tmp_path, _put("gripper.follow_open_effort", value))
+    with pytest.raises(ConfigError, match=told):
+        GripperConfig(follow_open_effort=value)
+
+
+@pytest.mark.parametrize("name", ["robot_app.yaml", "robot_app_rebot.yaml"])
+def test_the_robot_app_files_say_which_jaw_release_reads_each_opening_setting(name):
+    path = CONFIG_YAML.with_name(name)
+    assert load_config(path).gripper.follow_open_effort > 0.0
+    lines = path.read_text(encoding="utf-8").splitlines()
+    read_with = {
+        "open_step": JAW_RELEASE_STEPS,
+        "follow_open_effort": JAW_RELEASE_OPEN_FULLY,
+    }
+    for key, value in read_with.items():
+        at = next(i for i, line in enumerate(lines) if line.startswith(f"  {key}:"))
+        first = at
+        while lines[first - 1].lstrip().startswith("#"):
+            first -= 1
+        comment = " ".join(line.strip("# ") for line in lines[first:at])
+        assert f'Read only with human.jaw_release "{value}"' in comment, key
 
 
 def _human_box(config: RobotAppConfig, low, high) -> RobotAppConfig:

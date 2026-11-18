@@ -28,6 +28,7 @@ from ..protocol.messages import (
     JAW_PLAIN,
     GripperState,
 )
+from .config import JAW_RELEASE_OPEN_FULLY, JAW_RELEASES
 from .interfaces import (
     ArmFault,
     GripperOutcome,
@@ -86,7 +87,8 @@ GRIPPER_FAULT = "gripper_fault"
 FAILED = "failed"
 
 # Effort of a typed opening or close on a driver without a routine of its own
-# for it, and of each step of the jaws toward a person's trigger.
+# for it, of each close of the jaws toward a person's trigger, and of each
+# opening step toward it with human.jaw_release "steps".
 OPEN_EFFORT = 0.5
 # The most requests that wait behind the running one; a further one is refused.
 MAX_WAITING = 4
@@ -409,7 +411,10 @@ class _Job:
     measured: float | None = None  # the newest opening measured for this request
     may_close: bool = True  # False: a FOLLOW step sends no close
     closing: bool = False  # a FOLLOW step's close is with the arm
-    cut: bool = False  # cut_follow() ended that close
+    # A FOLLOW step opens the jaws in one guarded opening of the driver's.
+    in_one_go: bool = False
+    opening_out: bool = False  # that opening is with the arm
+    cut: bool = False  # cut_follow() ended that close or that opening
     # The scout stage's opening of a two-stage close; None: one close.
     scout: float | None = None
     own_effort: bool = False  # a CLOSE_TORQUE at the driver's own effort
@@ -568,20 +573,27 @@ class GripperWorker:
         on_done: DoneFn | None = None,
         max_effort: float = OPEN_EFFORT,
         may_close: bool = True,
+        jaw_release: str = JAW_RELEASE_OPEN_FULLY,
     ) -> str | None:
         """Queue one step of the jaws toward `opening`; None if queued.
 
         For the trigger of a person who owns the arm. The step is at most one
-        arm command: one step of open_step toward a wider opening, or a close
-        to `opening`; the light hold follows either when the jaws stall. None
-        is sent when the jaws are there, or hold something with a jaw target
-        no wider than `opening`, or would close with may_close False. The
-        first step after cut_follow() ended a close always sends the jaws its
-        opening. Refused when a fault-stop is latched, when the control owner
-        is not a person, when the two numbers are not the current ones, or
-        when any jaw request runs or waits.
+        arm command: an opening toward a wider `opening`, or a close to it;
+        the light hold follows either when the jaws stall. With jaw_release
+        "open_fully" (human.jaw_release) the opening is one guarded opening
+        of the driver's at gripper.follow_open_effort: its own opening, the
+        typed open's routine, to an opening of 1.0, and a plain command to
+        any other. With "steps" it is one step of open_step. None is sent
+        when the jaws are there, or hold something with a jaw target no wider
+        than `opening`, or would close with may_close False. The first step
+        after cut_follow() ended a close always sends the jaws its opening.
+        Refused when a fault-stop is latched, when the control owner is not a
+        person, when the two numbers are not the current ones, or when any
+        jaw request runs or waits.
         """
         reason = _value_refusal(opening, max_effort, PLAIN)
+        if reason is None and jaw_release not in JAW_RELEASES:
+            reason = f"unknown jaw_release {jaw_release!r}"
         return self._enqueue(
             opening,
             max_effort,
@@ -592,26 +604,38 @@ class GripperWorker:
             alone=True,
             numbers=(owner_number, stop_number),
             may_close=may_close,
+            in_one_go=jaw_release == JAW_RELEASE_OPEN_FULLY,
         )
 
-    def cut_follow(self, opening: float) -> bool:
-        """End a close of follow() that is under way; True when one was ended.
+    def cut_follow(self, opening: float | None) -> bool:
+        """End a command of follow() that is under way; True when one was ended.
 
-        For a trigger that now asks for `opening`: only a close to an opening
-        narrower than it by more than reach_tol is ended. It ends "cancelled"
-        and the jaws get the light hold, as at a STOP; the next step of
-        follow() then sends them its opening.
+        For a trigger that now asks for `opening`; None: it asks for nothing.
+        A close is ended when it goes to an opening narrower than that by
+        more than reach_tol. One guarded opening (human.jaw_release
+        "open_fully") is ended when it goes to an opening wider than that by
+        more than reach_tol, or when the trigger asks for nothing. Either
+        ends "cancelled", at the driver's next pass, and the jaws get the
+        light hold, as at a STOP. After a close the next step of follow()
+        sends them its opening.
         """
         tol = self._jaw_state.config.reach_tol
         with self._cond:
             job = self._running
-            if job is None or not job.closing or job.cut:
+            if job is None or job.cut:
                 return False
-            if job.opening >= opening - tol:
+            if job.closing:
+                wrong_way = opening is not None and job.opening < opening - tol
+            elif job.opening_out:
+                wrong_way = opening is None or job.opening > opening + tol
+            else:
                 return False
+            if not wrong_way:
+                return False
+            what = "close" if job.closing else "opening"
             job.cut = True
             job.cancel.set()
-        _log.debug("the close to %.3f is cut: %.3f is asked", job.opening, opening)
+        _log.debug("the %s to %.3f is cut: %s is asked", what, job.opening, opening)
         return True
 
     def stop_now(self, keep_reference: bool = False, hold_idle: bool = False) -> bool:
@@ -740,6 +764,7 @@ class GripperWorker:
         may_close: bool = True,
         scout: float | None = None,
         own_effort: bool = False,
+        in_one_go: bool = False,
     ) -> str | None:
         """Queue a request unless `reason` or the authority refuses it.
 
@@ -750,6 +775,7 @@ class GripperWorker:
         may_close: False lets a FOLLOW step send no close.
         scout: the scout stage's opening of a two-stage close.
         own_effort: a CLOSE_TORQUE runs at the driver's own effort.
+        in_one_go: a FOLLOW step opens in one guarded opening of the driver's.
         """
         state = self._authority.snapshot()
         reason = _authority_refusal(state, owner) or reason
@@ -767,6 +793,7 @@ class GripperWorker:
                 may_close=bool(may_close),
                 scout=None if scout is None else float(scout),
                 own_effort=bool(own_effort),
+                in_one_go=bool(in_one_go),
             )
             with self._cond:
                 if self._closed:
@@ -870,7 +897,9 @@ class GripperWorker:
         short of its target is left in the light hold. After
         cut_follow() ended a close the jaws are still aimed at that close's
         target: the step then always sends them the opening, or with no close
-        allowed where they are.
+        allowed where they are. An opening that is to go in one go is one
+        guarded opening of the driver's (_open_toward()); none is sent to
+        jaws that were sent fully open, read there and hold nothing.
         """
         detail = self._ended_early(job)
         if detail is not None:
@@ -888,7 +917,13 @@ class GripperWorker:
         with self._cond:
             after_cut = self._after_cut
         to_full_open = wanted >= 1.0 - _EPS and start < 1.0 - _EPS
-        if wanted > start + tol or to_full_open:
+        if job.in_one_go:
+            let_go = wanted >= 1.0 - _EPS
+            if let_go and not self._open_and_empty(start):
+                return self._open_toward(job, 1.0, OPEN)
+            if not let_go and wanted > start + tol:
+                return self._open_toward(job, wanted, PLAIN)
+        elif wanted > start + tol or to_full_open:
             step = min(wanted, start + config.open_step)
             outcome, fault = self._command(job, step, PLAIN)
             ended = _finite(outcome.opening)
@@ -915,6 +950,62 @@ class GripperWorker:
                 return self._close_toward(job, wanted)
         return GripperOutcome(REACHED, start), None
 
+    def _open_and_empty(self, start: float) -> bool:
+        """Whether jaws that read `start` need no opening to fully open.
+
+        They were sent fully open, read within full_open_tol of it and are
+        not marked as possibly holding something.
+        """
+        if start < 1.0 - self._jaw_state.config.full_open_tol - _EPS:
+            return False
+        target = _finite(self._arm.gripper_last_target())
+        sent_open = target is not None and target >= 1.0 - _EPS
+        return sent_open and not self._jaw_state.may_be_holding
+
+    def _open_toward(
+        self, job: _Job, opening: float, mode: str
+    ) -> tuple[GripperOutcome, str | None]:
+        """One guarded opening toward a trigger, which cut_follow() may end.
+
+        One arm command at gripper.follow_open_effort: the driver's own
+        opening (OPEN, the typed open's) to fully open, a plain command to
+        any other opening. The opening to fully open has ended when the jaws
+        read within full_open_tol of it, any other within the wider of
+        reach_tol and full_open_tol, which is how far short the driver's
+        guarded opening may end. One that ends short of that is left in the
+        light hold, as a stalled step is, and so is one that cut_follow()
+        ended once it had begun.
+        """
+        config = self._jaw_state.config
+        with self._cond:
+            job.opening_out = True
+        outcome, fault = self._command(
+            job, opening, mode, effort=config.follow_open_effort
+        )
+        with self._cond:
+            job.opening_out = False
+            cut = job.cut
+        ended = _finite(outcome.opening)
+        if cut and outcome.status == CANCELLED:
+            target = _finite(self._arm.gripper_last_target())
+            begun = target is not None and ended is not None
+            if fault is None and begun and abs(target - ended) <= _EPS:
+                # The opening had begun: the jaws are aimed at where they are.
+                self._light_hold()
+            return outcome, fault
+        if opening >= 1.0 - _EPS:
+            short = ended is None or ended < 1.0 - config.full_open_tol - _EPS
+        else:
+            tol = max(config.reach_tol, config.full_open_tol)
+            short = ended is None or ended < opening - tol - _EPS
+        ran = outcome.status in (REACHED, SENT, STALLED, TIMEOUT, GRIPPER_FAULT)
+        if fault is None and ran and short:
+            # Blocked: the jaws are not left pushing at the opening stiffness.
+            self._light_hold()
+            if outcome.status != TIMEOUT:
+                outcome = GripperOutcome(STALLED, ended, outcome.detail)
+        return _as_step(outcome), fault
+
     def _close_toward(
         self, job: _Job, opening: float
     ) -> tuple[GripperOutcome, str | None]:
@@ -940,12 +1031,13 @@ class GripperWorker:
         return outcome, fault
 
     def _command(
-        self, job: _Job, opening: float, mode: str
+        self, job: _Job, opening: float, mode: str, effort: float | None = None
     ) -> tuple[GripperOutcome, str | None]:
         """Give the arm one jaw command, unless the request was stopped first.
 
         Jaws without their reference are referenced by the driver's own
         routines, which close them first: not while they may hold something.
+        effort is this command's; None: the request's max_effort.
         """
         detail = self._ended_early(job)
         if detail is not None:
@@ -958,7 +1050,7 @@ class GripperWorker:
             self._after_cut = False  # this command aims the jaws anew
             self._by_trigger = job.mode == FOLLOW
         try:
-            outcome = self._run_on_arm(job, opening, mode)
+            outcome = self._run_on_arm(job, opening, mode, effort)
         except ArmFault as exc:
             fault = f"gripper fault: {exc}"
         except Exception as exc:  # a driver error must not end the worker thread
@@ -979,9 +1071,12 @@ class GripperWorker:
         )
         return outcome, fault
 
-    def _run_on_arm(self, job: _Job, opening: float, mode: str) -> GripperOutcome:
+    def _run_on_arm(
+        self, job: _Job, opening: float, mode: str, effort: float | None = None
+    ) -> GripperOutcome:
         """The arm port's call for one jaw command of this mode."""
-        arm, effort, cancel = self._arm, job.max_effort, job.cancel
+        arm, cancel = self._arm, job.cancel
+        effort = job.max_effort if effort is None else effort
         two_stage = getattr(arm, "gripper_close_two_stage", None)
         if mode == CLOSE_UNTIL_CONTACT and job.scout is not None and two_stage:
             return two_stage(job.scout, opening, effort, cancel)
@@ -1077,7 +1172,14 @@ class JawFollower:
     a wider opening. Jaws that an opening left short of the grip level open
     to what the trigger asks as it matches. Until the jaws were measured
     fully open no opening below the grip level is asked of them, and without
-    the leave to close none below where they are. Thread-safe.
+    the leave to close none below where they are.
+
+    jaw_release (human.jaw_release) says how the jaws open. "open_fully":
+    each opening is one guarded opening of the driver's to the opening the
+    trigger asks, the driver's own opening for a trigger that is let go. It
+    is cut when the trigger asks for a narrower opening or for none, and has
+    ended where the driver left the jaws. "steps": steps of open_step, each
+    aimed from where the jaws read. Thread-safe.
     """
 
     def __init__(
@@ -1088,8 +1190,16 @@ class JawFollower:
         authority: Authority,
         match_tol: float,
         say: Callable[[str], None] | None = None,
+        jaw_release: str = JAW_RELEASE_OPEN_FULLY,
     ) -> None:
         """say(line) logs when the jaws begin and end to follow the trigger."""
+        if jaw_release not in JAW_RELEASES:
+            raise ValueError(
+                f"jaw_release must be one of {', '.join(JAW_RELEASES)}, "
+                f"got {jaw_release!r}"
+            )
+        self._jaw_release = jaw_release
+        self._in_one_go = jaw_release == JAW_RELEASE_OPEN_FULLY
         self._arm = arm
         self._jaw_state = jaw_state
         self._worker = worker
@@ -1100,6 +1210,8 @@ class JawFollower:
         # A new opening is asked of the jaws only when it differs by more.
         self._band = config.reach_tol
         self._full_open = 1.0 - config.full_open_tol - _EPS
+        # One guarded opening has reached a part opening within this.
+        self._open_band = max(config.reach_tol, config.full_open_tol)
         # Reentrant: a step that is refused at once ends on the caller's thread.
         self._lock = threading.RLock()
         # The owner number and the stop number the grip level was noted for.
@@ -1160,6 +1272,9 @@ class JawFollower:
             elif opening is not None:
                 self._take(float(opening), numbers, no_close)
             elif self._matched:
+                if self._flying is not None:
+                    # One guarded opening under way goes no further.
+                    self._worker.cut_follow(None)
                 self._drop(NO_OPENING)
             else:
                 if numbers != self._numbers:
@@ -1263,9 +1378,11 @@ class JawFollower:
             refusal = f"{OPENING_STALLED}{stalled:.2f}"
         self._wanted, self._refusal = wanted, refusal
         flying = self._flying
-        if flying is not None and not self._cutting and wanted > flying + self._band:
-            # A close under way goes no further once the trigger asks for more.
-            self._cutting = self._worker.cut_follow(wanted)
+        if flying is not None and not self._cutting:
+            if abs(wanted - flying) > self._band:
+                # A close under way goes no further once the trigger asks for
+                # more, nor one guarded opening once it asks for less.
+                self._cutting = self._worker.cut_follow(wanted)
         self._pump()
 
     def _pump(self) -> None:
@@ -1281,6 +1398,11 @@ class JawFollower:
             if abs(wanted - settled) <= self._band and not to_full_open:
                 return
         self._flying = wanted
+        if self._in_one_go and self._stalled is not None:
+            # This step aims the jaws anew: it is not the opening that stalled.
+            self._stalled = None
+            if self._refusal.startswith(OPENING_STALLED):
+                self._refusal = ""
         # A refusal has called _done() before this returns.
         self._worker.follow(
             wanted,
@@ -1288,6 +1410,7 @@ class JawFollower:
             numbers[1],
             self._done,
             may_close=self._no_close is None,
+            jaw_release=self._jaw_release,
         )
 
     def _done(self, outcome: GripperOutcome) -> None:
@@ -1308,13 +1431,23 @@ class JawFollower:
                 self._drop(reason)
                 return
             band = self._band
-            # An opening goes one step at a time: more of it may be left, and
-            # a full open ends at 1.0, not within reach of it.
-            short = measured is not None and measured < flying - band
+            known = measured is not None
             to_end = flying >= 1.0 - _EPS
-            more = short or (to_end and measured is not None and measured < 1.0 - _EPS)
+            if self._in_one_go:
+                # One guarded opening has ended where the driver left the
+                # jaws: fully open once they read so, short of a part opening
+                # beyond what the driver's opening may end short.
+                at_end = to_end and known and measured >= self._full_open
+                short = known and not at_end
+                short = short and (to_end or measured < flying - self._open_band)
+                more = False
+            else:
+                # An opening goes one step at a time: more of it may be left,
+                # and a full open ends at 1.0, not within reach of it.
+                short = known and measured < flying - band
+                more = short or (to_end and known and measured < 1.0 - _EPS)
             further = self._step_end is None or (
-                measured is not None and measured > self._step_end + _EPS
+                known and measured > self._step_end + _EPS
             )
             self._stalled = None
             if own_cut:

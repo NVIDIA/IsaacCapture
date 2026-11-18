@@ -13,10 +13,17 @@ the jaw opening in force at the takeover. The trigger is ignored until the
 opening it asks for has reached the grip level: it has matched. From then on
 the jaws follow it. The light hold is the low jaw stiffness a close is left at
 once the jaws have stalled on an object.
+
+human.jaw_release says how the jaws open: "open_fully", each opening in one
+guarded opening of the driver's, or "steps", in steps of gripper.open_step.
+Every test here runs with both values, but for those of what the steps do,
+which are marked IN_STEPS; test_jaw_release.py has those of the opening in
+one go.
 """
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import sys
 import threading
@@ -33,6 +40,8 @@ from isaaccapture_examples.agentic_remote.robot_app.app import (
     human_target,
 )
 from isaaccapture_examples.agentic_remote.robot_app.config import (
+    JAW_RELEASE_STEPS,
+    JAW_RELEASES,
     RobotAppConfig,
     load_config,
 )
@@ -83,10 +92,20 @@ LIGHT, CLOSING = "light", "closing"
 JAWS_NOT_EMPTY = "the jaws are not proven empty"
 
 
+@pytest.fixture(params=JAW_RELEASES)
+def jaw_release(request: pytest.FixtureRequest) -> str:
+    """human.jaw_release of the robot app under test: each of its values in turn."""
+    return request.param
+
+
+# For a test of what the jaws do with human.jaw_release "steps" only.
+IN_STEPS = pytest.mark.parametrize("jaw_release", [JAW_RELEASE_STEPS], indirect=True)
+
+
 @pytest.fixture
-def config() -> RobotAppConfig:
+def config(jaw_release: str) -> RobotAppConfig:
     """The demo values with human driving switched on; the trigger moves the jaws."""
-    config = human_config(RobotAppConfig.default())
+    config = human_config(RobotAppConfig.default(), jaw_release=jaw_release)
     assert config.human.trigger_jaws and config.human.jaw_match_tol == 0.05
     return config
 
@@ -152,6 +171,20 @@ def opening_steps(start: float, end: float) -> list[tuple[float, str, str]]:
     count = round((end - start) / 0.05)
     targets = [start + 0.05 * index for index in range(1, count + 1)]
     return [(pytest.approx(target), PLAIN, "reached") for target in targets]
+
+
+def opening_commands(h, start: float, end: float) -> list[tuple[float, str, str]]:
+    """The commands of an opening from start to end with the app's jaw_release."""
+    if h.config.human.jaw_release == JAW_RELEASE_STEPS:
+        return opening_steps(start, end)
+    return [(pytest.approx(end), PLAIN, "reached")]
+
+
+def opening_effort(h) -> float:
+    """The effort of an opening under the trigger with the app's jaw_release."""
+    if h.config.human.jaw_release == JAW_RELEASE_STEPS:
+        return OPEN_EFFORT
+    return h.config.gripper.follow_open_effort
 
 
 def agent_leaves_the_jaws(h, opening: float, holding: float | None = None) -> None:
@@ -292,10 +325,11 @@ def test_the_jaws_follow_the_trigger_once_it_reached_the_grip_level(human_app):
     trigger.pull(0.3)
     assert len(h.arm.jaw_commands) == sent and len(h.arm.light_holds) == held
     assert (h.arm.gripper_read(), h.arm.jaw_stiffness) == (0.5, LIGHT)
-    # Wider than the object: the jaws open to it in the guarded opening's steps.
+    # Wider than the object: the jaws open to where the trigger asks.
     trigger.pull(0.7)
-    assert commands(h, sent) == opening_steps(0.5, 0.7)
-    assert all(c.max_effort == OPEN_EFFORT for c in h.arm.jaw_commands[sent:])
+    assert commands(h, sent) == opening_commands(h, 0.5, 0.7)
+    effort = opening_effort(h)
+    assert all(c.max_effort == effort for c in h.arm.jaw_commands[sent:])
     assert h.arm.gripper_read() == pytest.approx(0.7)
     # And they close with it again, above the grip level.
     opened = len(h.arm.jaw_commands)
@@ -333,13 +367,14 @@ def test_a_trigger_that_crossed_the_grip_level_has_reached_it(human_app):
     # Released in one go: from below the grip level to above it.
     trigger.pull(0.6)
     assert jaws(h)["matched"]
-    assert commands(h, sent) == opening_steps(0.3, 0.6)
+    assert commands(h, sent) == opening_commands(h, 0.3, 0.6)
     assert h.arm.gripper_read() == pytest.approx(0.6)
 
 
 # Jaws that an opening left short of the grip level
 
 
+@IN_STEPS
 def test_jaws_short_of_a_grip_level_of_fully_open_open_once_the_trigger_matched(
     human_app,
 ):
@@ -381,10 +416,11 @@ def test_jaws_short_of_the_grip_level_open_to_it_and_no_wider_without_a_live_vie
     assert len(h.arm.jaw_commands) == sent
     trigger.pull(0.8)
     assert jaws(h)["matched"] and jaws(h)["grip_level"] == 0.8
-    assert commands(h, sent) == opening_steps(0.6, 0.8)
+    assert commands(h, sent) == opening_commands(h, 0.6, 0.8)
     assert h.arm.gripper_read() == pytest.approx(0.8)
 
 
+@IN_STEPS
 def test_an_opening_that_is_still_blocked_at_the_match_is_tried_once(human_app):
     h = human_app
     agents_opening_runs_out_of_time(h, 1.0, at=0.7)
@@ -919,7 +955,7 @@ def test_without_a_fresh_live_view_the_jaws_open_but_do_not_close(human_app):
     assert facts["refusal"].startswith(f"{NO_CLOSING}the live view is not fresh: ")
     assert len(h.arm.jaw_commands) == sent
     trigger.pull(0.9)
-    assert commands(h, sent) == opening_steps(0.6, 0.9)
+    assert commands(h, sent) == opening_commands(h, 0.6, 0.9)
     assert jaws(h)["refusal"] == ""
 
 
@@ -937,6 +973,7 @@ def holding_the_agents_object(h) -> Trigger:
     return trigger
 
 
+@IN_STEPS
 @pytest.mark.parametrize("view", [True, False])
 def test_an_opening_under_way_stops_where_the_trigger_is_pulled_back(
     human_app, view: bool
@@ -957,6 +994,7 @@ def test_an_opening_under_way_stops_where_the_trigger_is_pulled_back(
     assert (facts["asked"], facts["refusal"]) == (0.6, "")
 
 
+@IN_STEPS
 def test_without_a_fresh_live_view_no_close_follows_an_opening_step(human_app):
     h = human_app
     trigger = following_open_jaws(h)
@@ -973,6 +1011,7 @@ def test_without_a_fresh_live_view_no_close_follows_an_opening_step(human_app):
     assert jaws(h)["refusal"].startswith(f"{NO_CLOSING}the live view is not fresh: ")
 
 
+@IN_STEPS
 def test_without_a_fresh_live_view_a_trigger_that_slipped_closes_nothing(human_app):
     h = human_app
     trigger = holding_the_agents_object(h)
@@ -1034,6 +1073,7 @@ def test_a_jaw_step_without_the_leave_to_close_sends_no_close(
 # An opening that something blocks
 
 
+@IN_STEPS
 def test_a_blocked_opening_ends_in_the_light_hold_and_the_operator_is_told(
     human_app,
 ):
@@ -1214,18 +1254,20 @@ def test_the_hand_back_still_needs_the_jaws_proven_empty_after_a_person_moved_th
 
 
 @pytest.fixture
-def apai_person_app(clock) -> Iterator[AppHarness]:
+def apai_person_app(clock, jaw_release: str) -> Iterator[AppHarness]:
     """A started robot app on APAI's mock arm with human driving switched on."""
     import test_apai_app as apai
 
     profile = apai.apai_backend.load_apai_profile("mock")
-    harness = apai.ApaiHarness(human_config(apai.make_config(profile)), profile, clock)
+    config = human_config(apai.make_config(profile), jaw_release=jaw_release)
+    harness = apai.ApaiHarness(config, profile, clock)
     harness.start()
     yield harness
     harness.close()
     apai.check_driver_use(harness)
 
 
+@IN_STEPS
 @pytest.mark.apai
 def test_on_apais_mock_arm_the_jaws_follow_the_trigger_into_the_light_hold(
     apai_person_app,
@@ -1308,20 +1350,23 @@ def test_on_apais_mock_arm_a_cut_close_is_aimed_anew_at_what_the_trigger_asks(
 # On the driver class of the rig
 
 
-@pytest.fixture
-def rig_person_app(clock, monkeypatch, tmp_path) -> Iterator[tuple[AppHarness, Any]]:
+@contextlib.contextmanager
+def rig_person(
+    clock, monkeypatch, tmp_path, jaw_release: str
+) -> Iterator[tuple[AppHarness, Any]]:
     """The rig file's robot app, started, on the driver class the rig runs.
 
     APAI's driver of the rebot_rs profile with its gripper guard, over the
     stand-in motor SDK of test_apai_backend.py; the profile is loaded as on
-    the Thor (rig.rig_profile), and human driving is switched on in memory.
-    Yields the app's harness and that SDK.
+    the Thor (rig.rig_profile). Human driving is switched on in memory, and
+    human.jaw_release is the one given. Yields the app's harness and that
+    SDK.
     """
     import test_apai_backend as rs
     import test_rig_configs as rig
 
     config = load_config(rig.ROBOT_RIG)
-    on = dataclasses.replace(config.human, enabled=True)
+    on = dataclasses.replace(config.human, enabled=True, jaw_release=jaw_release)
     backend = rs.apai_backend
     profile = rig.rig_profile(tmp_path)
     config = backend.config_for_profile(dataclasses.replace(config, human=on), profile)
@@ -1339,6 +1384,16 @@ def rig_person_app(clock, monkeypatch, tmp_path) -> Iterator[tuple[AppHarness, A
         harness.close()
 
 
+@pytest.fixture
+def rig_person_app(
+    clock, monkeypatch, tmp_path, jaw_release: str
+) -> Iterator[tuple[AppHarness, Any]]:
+    """rig_person() with each value of human.jaw_release in turn."""
+    with rig_person(clock, monkeypatch, tmp_path, jaw_release) as started:
+        yield started
+
+
+@IN_STEPS
 @pytest.mark.apai
 def test_on_the_rigs_driver_class_a_blocked_opening_ends_in_the_light_hold(
     rig_person_app,

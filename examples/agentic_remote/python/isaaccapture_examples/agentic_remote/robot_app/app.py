@@ -855,6 +855,7 @@ class RobotApp:
             self._authority,
             config.human.jaw_match_tol,
             lambda line: self._note(logging.INFO, line, kind=_NUMBER.sub("#", line)),
+            jaw_release=config.human.jaw_release,
         )
         self._wait = AssistanceWait(config.waits, clock, self._on_expire)
         self._stops = StopController(

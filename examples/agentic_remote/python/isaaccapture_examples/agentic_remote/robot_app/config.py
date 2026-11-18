@@ -25,6 +25,13 @@ MIN_RETRY_S = 0.2
 
 _LIMIT_SET_NAMES = ("agent", "human", "recovery")
 
+# human.jaw_release: how the jaws open under a person's trigger.
+# One guarded opening of the driver's to the opening the trigger asks; for a
+# trigger that is let go the driver's own opening to fully open.
+JAW_RELEASE_OPEN_FULLY = "open_fully"
+JAW_RELEASE_STEPS = "steps"  # steps of gripper.open_step
+JAW_RELEASES = (JAW_RELEASE_OPEN_FULLY, JAW_RELEASE_STEPS)
+
 # The time law of a return to rest, as rest.py plans it: the peak speed of a
 # minimum-jerk move over its mean speed, and the share of rest.recovery_speed
 # that the planned peak takes.
@@ -68,6 +75,13 @@ def _fraction(where: str, value: object) -> float:
     return number
 
 
+def _effort(where: str, value: object) -> float:
+    number = _real(where, value)
+    if not 0.0 < number <= 1.0:
+        raise ConfigError(f"{where} must be above 0 and at most 1, got {number!r}")
+    return number
+
+
 def _at_least(minimum: int) -> _Check:
     def check(where: str, value: object) -> int:
         if isinstance(value, bool) or not isinstance(value, Integral):
@@ -89,6 +103,17 @@ def _text(where: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"{where} must be a non-empty string, got {value!r}")
     return value
+
+
+def _one_of(*allowed: str) -> _Check:
+    def check(where: str, value: object) -> str:
+        if not isinstance(value, str) or value not in allowed:
+            raise ConfigError(
+                f"{where} must be one of {', '.join(allowed)}, got {value!r}"
+            )
+        return value
+
+    return check
 
 
 def _name_or_empty(where: str, value: object) -> str:
@@ -442,9 +467,13 @@ class GripperConfig:
     agree_tol: float = 0.02
     reads: int = 3
     read_gap_s: float = 0.05
-    # The jaws under a person's trigger open in steps this wide. The typed
-    # open is one opening of the driver.
+    # Read only with human.jaw_release "steps": the jaws under a person's
+    # trigger open in steps this wide, as a share of the jaw travel.
     open_step: float = 0.05
+    # Read only with human.jaw_release "open_fully": the effort, above 0 to 1,
+    # of the one opening toward a person's trigger. A driver's own opening,
+    # which a trigger that is let go gets, runs at the driver's effort.
+    follow_open_effort: float = 0.8
     reference_at_start: bool = True
 
     def __post_init__(self) -> None:
@@ -459,6 +488,7 @@ class GripperConfig:
             reads=_at_least(2),
             read_gap_s=_positive,
             open_step=_fraction,
+            follow_open_effort=_effort,
             reference_at_start=_flag,
         )
 
@@ -565,6 +595,13 @@ class HumanConfig:
     # share of the jaw travel, or has crossed it.
     trigger_jaws: bool = True
     jaw_match_tol: float = 0.05
+    # How the jaws open under the trigger. "open_fully": each opening is one
+    # guarded opening of the driver's to the opening the trigger asks, at
+    # gripper.follow_open_effort; a trigger that is let go gets the driver's
+    # own opening to fully open, the typed open's routine. A trigger that
+    # asks for less ends an opening under way. "steps": every opening goes in
+    # steps of gripper.open_step, each aimed from where the jaws read.
+    jaw_release: str = JAW_RELEASE_OPEN_FULLY
 
     def __post_init__(self) -> None:
         _normalise(
@@ -577,6 +614,7 @@ class HumanConfig:
             stage_keep_s=_positive,
             trigger_jaws=_flag,
             jaw_match_tol=_fraction,
+            jaw_release=_one_of(*JAW_RELEASES),
         )
 
 

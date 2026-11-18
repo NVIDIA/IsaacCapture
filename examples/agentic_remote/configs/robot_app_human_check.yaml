@@ -105,7 +105,13 @@ gripper:
   agree_tol: 0.02
   reads: 3
   read_gap_s: 0.05
-  open_step: 0.05  # the jaws under a person's trigger open in steps this wide
+  # Read only with human.jaw_release "steps": the width of one opening step
+  # of the jaws under a person's trigger, as a share of the jaw travel.
+  open_step: 0.05
+  # Read only with human.jaw_release "open_fully": the effort, above 0 to 1,
+  # of the one opening toward a person's trigger. A driver's own opening,
+  # which a trigger that is let go gets, runs at the driver's effort.
+  follow_open_effort: 0.8
   reference_at_start: true
 
 # The grasp region a MOVE may carry; one beyond these is refused, never cut down.
@@ -143,6 +149,18 @@ human:
   # crossed it.
   trigger_jaws: true
   jaw_match_tol: 0.05
+  # How the jaws open under the trigger:
+  #   open_fully  each opening is one motion. Let go all the way, the trigger
+  #               opens the jaws fully: the motion of the typed "open" (the
+  #               driver's own opening). Eased part of the way, it opens them
+  #               to where it asks in one guarded opening at
+  #               gripper.follow_open_effort. Pulling the trigger during an
+  #               opening stops the jaws and they then follow the trigger; a
+  #               STOP ends it as it ends the typed open.
+  #   steps       every opening goes in steps of gripper.open_step, each a
+  #               short push from where the jaws read.
+  # A file without the key gets open_fully.
+  jaw_release: open_fully
 
 # The robot connection, which the robot app dials. retry_s is the time from a failed
 # dial, or from a lost connection, to the next dial; never below 0.2.
