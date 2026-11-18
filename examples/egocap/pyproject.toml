@@ -59,12 +59,6 @@ livekit = [
 oak = [
     "depthai==3.6.1",
 ]
-gmsl = [
-    # GMSL camera feed over the station's CUDA IPC socket (capture_server/gmsl_ipc): frames live in GPU
-    # rings exported as CUDA IPC handles, so reading them needs a CUDA array library. Same major pin as the
-    # receiver that publishes them.
-    "cupy-cuda12x>=13,<14",
-]
 
 [project.scripts]
 capture-server = "capture_server.__main__:main"

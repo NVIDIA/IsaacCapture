@@ -24,7 +24,6 @@ knows what "scenario", "seed" and fault names mean.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from types import ModuleType
@@ -36,16 +35,13 @@ from .acquisition import Acquisition, DepthAIAdapter, IsaacCaptureAdapter, Track
 from .server import ServerConfig, StationCamera
 
 if TYPE_CHECKING:
-    from .gmsl_ipc.feed import SlotMapper, StreamInfo
     from .replay.episode import Episode
 
 __all__ = [
-    "build_gmsl_source_factory",
     "build_mock_source_factory",
     "build_real_source_factory",
     "build_replay_source_factory",
     "build_source_factory",
-    "gmsl_station_cameras",
     "replay_station_cameras",
 ]
 
@@ -289,123 +285,6 @@ def build_replay_source_factory(episode: Episode) -> SourceFactory:
     # CaptureMode.MOCK, so the server's mock/real consistency check treats it as a mock-side factory.
     source_factory.mock = True  # type: ignore[attr-defined]
     return source_factory
-
-
-@dataclass(frozen=True)
-class GmslCamera:
-    """One GMSL camera as the operator configured it: the feed stream it reads and the size it is served at."""
-
-    stream: str
-    #: Served ``(width, height)``; None serves the sensor's own size.
-    output_size: tuple[int, int] | None = None
-
-
-def gmsl_station_cameras(
-    cameras: dict[str, GmslCamera], catalog: dict[str, StreamInfo], *, fps: float, jpeg_quality: int
-) -> dict[str, StationCamera]:
-    """One station entry per configured camera, sized from its output size or the feed's own stream size.
-
-    The server validates a Begin's camera names and sizes against these entries, and the adapter rejects a
-    frame whose size differs from the accepted stream's, so the entry must state the served size exactly.
-    A camera naming a stream the feed does not publish is a configuration error, reported here at setup.
-    """
-    stations: dict[str, StationCamera] = {}
-    for name, camera in cameras.items():
-        info = catalog.get(camera.stream)
-        if info is None:
-            raise ValueError(
-                f"camera {name!r} reads feed stream {camera.stream!r}, which the frame feed does not publish; "
-                f"published streams: {sorted(catalog)}"
-            )
-        width, height = camera.output_size or (info.width, info.height)
-        stations[name] = StationCamera(camera.stream, width, height, fps, jpeg_quality)
-    return stations
-
-
-def build_gmsl_source_factory(
-    socket_path: str,
-    cameras: dict[str, GmslCamera],
-    stations: dict[str, StationCamera],
-    *,
-    slot_mapper: SlotMapper | None = None,
-    calibration_dir: Path | None = None,
-) -> SourceFactory:
-    """The live-station source factory: real IsaacCapture tracking (from ``$ISAAC_ROOT``, only when a session
-    requests tracking) plus GMSL cameras read from the receiver's frame feed.
-
-    Each session opens one feed subscription covering exactly the streams its cameras read, closed when the
-    acquisition is released; the feed is a broadcast publisher, so this never disturbs other consumers.
-    ``slot_mapper`` defaults to the CUDA IPC mapper; tests inject an in-process one.
-    """
-    # Imported here, like the other source families, so choosing mock, replay or OAK-D never loads this path.
-    from .gmsl_ipc import FeedClient
-    from .gmsl_ipc import source as gmsl_source
-
-    def source_factory(begin: p.BeginRequest, requested: tuple[p.CameraStreamConfig, ...]) -> Acquisition:
-        """Build this session's acquisition: real tracking if requested, one feed subscription for its cameras."""
-        from .acquisition.isaac_sdk import load_isaac_capture
-
-        sdk = load_isaac_capture() if begin.tracking.sources else None
-        tracking = (
-            _tracking_adapter(
-                begin,
-                sdk=sdk,
-                session_factory=sdk.TeleopSession,
-                calibration_dir=calibration_dir,
-                real_hardware=True,
-            )
-            if sdk
-            else None
-        )
-        if not requested:
-            return Acquisition(tracking=tracking, cameras=())
-        for camera in requested:
-            if camera.name not in cameras:
-                raise ValueError(
-                    f"camera {camera.name!r} is not a configured GMSL camera; configured: {sorted(cameras)}"
-                )
-        mapper = slot_mapper
-        if mapper is None:
-            from .gmsl_ipc.cuda_slots import CudaSlotMapper
-
-            mapper = CudaSlotMapper()
-        streams = tuple(dict.fromkeys(cameras[c.name].stream for c in requested))
-        feed = FeedClient(socket_path, streams, slot_mapper=mapper)
-        feed.connect()
-        adapters = tuple(
-            DepthAIAdapter(
-                sdk=gmsl_source,
-                pipeline_factory=partial(
-                    gmsl_source.Pipeline,
-                    feed=feed,
-                    stream=cameras[camera.name].stream,
-                    output_size=(stations[camera.name].width, stations[camera.name].height),
-                    jpeg_quality=stations[camera.name].jpeg_quality,
-                ),
-                camera=camera,
-            )
-            for camera in requested
-        )
-        return _FeedAcquisition(tracking=tracking, cameras=adapters, feed=feed)
-
-    # Live cameras and live tracking: this is real acquisition, reported as LIVE.
-    source_factory.mock = False  # type: ignore[attr-defined]
-    return source_factory
-
-
-class _FeedAcquisition(Acquisition):
-    """An acquisition that also owns the session's feed subscription and closes it after its cameras."""
-
-    def __init__(self, *, tracking: Any, cameras: tuple[DepthAIAdapter, ...], feed: Any) -> None:
-        super().__init__(tracking=tracking, cameras=cameras)
-        self._feed = feed
-
-    async def close(self) -> Any:
-        """Release adapters first (they stop polling), then drop the subscription and unmap the slots."""
-        try:
-            return await super().close()
-        finally:
-            self._feed.close()
 
 
 def build_source_factory(
