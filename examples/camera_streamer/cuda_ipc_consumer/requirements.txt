@@ -4,3 +4,5 @@
 numpy>=1.26,<2
 cupy-cuda12x>=13.0,<14
 opencv-python>=4.9,<4.12
+pybind11>=2.12
+ninja>=1.11

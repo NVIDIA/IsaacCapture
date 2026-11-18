@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Create camera_receiver's local Python environment and build its local decoder.
+# Create camera_receiver's local Python environment and build its local decoder and slot marker module.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -69,12 +69,15 @@ export CAMERA_RECEIVER_VENV="$VENV"
 export CAMERA_RECEIVER_PYTHON="$PYTHON_EXE"
 
 if [[ "${CAMERA_RECEIVER_CLEAN_BUILD:-1}" != "0" ]]; then
-  echo "setup.sh: cleaning codec/build"
-  rm -rf "${HERE}/codec/build"
+  echo "setup.sh: cleaning codec/build and ipc_protocol/build"
+  rm -rf "${HERE}/codec/build" "${HERE}/../ipc_protocol/build"
 fi
 
 echo "setup.sh: building native decoder"
 "${HERE}/codec/build.sh"
+
+echo "setup.sh: building slot marker module"
+IPC_PROTOCOL_PYTHON="$PYTHON_EXE" "${HERE}/../ipc_protocol/build.sh"
 
 echo "setup.sh: verifying receiver config"
 "$PYTHON_EXE" "${HERE}/camera_receiver.py" \

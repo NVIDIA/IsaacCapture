@@ -391,9 +391,6 @@ class _StreamRuntime:
         self.gpu_id = int(gpu_id)
         self.camera_count = 2 if config.stereo else 1
         self.write_index = 0
-        self.slot_generations = [
-            [0 for _ in range(config.ring_depth)] for _ in range(self.camera_count)
-        ]
         self.decoders: list[Optional[NvVideoDecoder]] = [None] * self.camera_count
         self.executor = ThreadPoolExecutor(
             max_workers=1,
@@ -455,10 +452,6 @@ class _StreamRuntime:
     def shutdown(self) -> None:
         self.executor.shutdown(wait=True)
         self.reset_decoders()
-
-    def next_generation(self, camera_index: int, slot: int) -> int:
-        self.slot_generations[camera_index][slot] += 1
-        return self.slot_generations[camera_index][slot]
 
 
 class Avs1TcpReceiver:
@@ -764,27 +757,40 @@ class Avs1TcpReceiver:
 
         self._validate_stream_descriptor(stream, runtime.config)
         slot = runtime.write_index
+        # Advance every eye's marker before any GPU work can touch the slot, so a reader's
+        # final check sees every write that may have overlapped its copy. A failed attempt
+        # keeps its new generation, which invalidates the slot's earlier notices.
+        generations = {
+            sample.camera_index: self._ipc_publisher.begin_write(
+                runtime.config.ipc_names[sample.camera_index], slot
+            )
+            for sample in stream.samples
+        }
         t0 = time.monotonic()
         receiver_process_submit_mono_ns = time.monotonic_ns()
         receiver_process_submit_ns, _ = _read_wall_clock_ns()
         assert self._sample_pool is not None
         futures: list[Future[bool]] = [
-            self._sample_pool.submit(
-                self._process_sample, runtime, stream, sample, slot
-            )
+            self._sample_pool.submit(self._write_sample, runtime, stream, sample, slot)
             for sample in stream.samples
         ]
         # Finish every eye before a failure can allow slot reuse or decoder reset.
         wait(futures)
-        if not all(future.result() for future in futures):
+        errors = [future.exception() for future in futures]
+        if any(errors) or not all(future.result() for future in futures):
+            # Nothing is published. Drain the device so no launched work overlaps the next
+            # attempt on this slot, then report the first failure.
+            with cp.cuda.Device(self._gpu_device_id):
+                cp.cuda.Device().synchronize()
+            for error in errors:
+                if error is not None:
+                    raise error
             return
         receiver_process_done_mono_ns = time.monotonic_ns()
         receiver_process_done_ns, _ = _read_wall_clock_ns()
 
-        # The native decoder is synchronous. Raw NV12 copies / conversion kernels
-        # run on CuPy's current stream, so sync before announcing IPC visibility.
-        with cp.cuda.Device(self._gpu_device_id):
-            cp.cuda.get_current_stream().synchronize()
+        # The native decoder is synchronous and every worker waited for its own CUDA stream,
+        # which carries the raw copies and conversion kernels, so the slot is complete here.
 
         timestamp_ns = time.monotonic_ns()
         receiver_ipc_publish_mono_ns = timestamp_ns
@@ -802,7 +808,7 @@ class Avs1TcpReceiver:
         )
 
         for sample in stream.samples:
-            generation = runtime.next_generation(sample.camera_index, slot)
+            generation = generations[sample.camera_index]
             metadata = self._frame_metadata(
                 bundle=bundle,
                 stream=stream,
@@ -834,6 +840,25 @@ class Avs1TcpReceiver:
                 stream.tsc_delta_ns,
                 latencies,
             )
+
+    def _write_sample(
+        self,
+        runtime: _StreamRuntime,
+        stream: Avs1Stream,
+        sample: Avs1Sample,
+        slot: int,
+    ) -> bool:
+        """Write one eye and wait for this worker's own GPU stream.
+
+        The marker may be announced only after every launch that wrote the slot has completed,
+        whichever thread ran it, so each worker finishes its stream before returning.
+        """
+        import cupy as cp
+
+        ok = self._process_sample(runtime, stream, sample, slot)
+        with cp.cuda.Device(self._gpu_device_id):
+            cp.cuda.get_current_stream().synchronize()
+        return ok
 
     def _process_sample(
         self,
