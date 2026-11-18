@@ -23,9 +23,26 @@ the installation requirement:
 Replace ``X.Y`` with the version of your source build, as described in the build
 guide. Base installations and imports do not require OVXR.
 
-OVXR declares its compatible OVRTX and OVStage versions in its package metadata.
-The consuming application's dependency constraints must accept those versions.
+Isaac Capture pins OVXR ``0.2.0.1794933073``. This release requires OVRTX
+``0.7.0.1794596436`` and OVStage ``0.4.0.1794520352``. The consuming
+application's dependency constraints must accept those versions.
 See the package pages below for supported Python versions and platforms.
+
+Upgrading from OVXR 0.1
+-----------------------
+
+Keep existing ``OvxrSession``, ``OvxrSessionConfig`` and ``FrameOutputs`` calls.
+``FrameOutputs.latest_color()`` continues to return a numeric output ID and sensor
+time when an image is available. Update any application pins or overrides for
+the three packages above, then regenerate the application's lock file.
+
+Applications that call OVRTX or OVStage directly must also account for their
+API changes. Pass typed handles back to the provider that issued them and use
+``.raw_id`` for numeric storage. Stage ordinals are signed 64-bit integers;
+use ``ovstage.ORDINAL_MAX`` for latest-value reads. Rebuild native integrations
+against matching headers. See the
+`OVRTX 0.7 changes <https://github.com/NVIDIA-Omniverse/ovrtx/blob/main/CHANGELOG.md#070---2026-11-12>`__
+and `OVStage 0.4 changes <https://github.com/NVIDIA-Omniverse/ovstage/blob/main/CHANGELOG.md#040---2026-11-10>`__.
 
 Optional packages and licenses
 ------------------------------
