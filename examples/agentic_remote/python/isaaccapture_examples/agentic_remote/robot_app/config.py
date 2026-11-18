@@ -171,6 +171,15 @@ class LimitSet:
     max_step_rad: float | None = None
     envelope_min: tuple[float, ...] | None = None  # the agent's joint box, rad
     envelope_max: tuple[float, ...] | None = None
+    # The human set only, read by a checker that knows the table. The height
+    # over the table plane under which a person's gripper tip may only rise,
+    # m; None: the arm profile's and rest.table_clearance_m.
+    table_clearance_m: float | None = None
+    # The human set only: the box a person's gripper tip is held in, [x, y, z]
+    # of its lowest and of its highest corner, m, in the arm's base frame;
+    # None: the arm profile's box.
+    workspace_min: tuple[float, ...] | None = None
+    workspace_max: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         block = f"limits.{_text('a limit set name', self.name)}"
@@ -185,10 +194,14 @@ class LimitSet:
             max_step_rad=_optional(_positive),
             envelope_min=_optional(_reals),
             envelope_max=_optional(_reals),
+            table_clearance_m=_optional(_not_negative),
+            workspace_min=_optional(_reals),
+            workspace_max=_optional(_reals),
         )
         _check_box(
             f"{block}.joint_min", self.joint_min, f"{block}.joint_max", self.joint_max
         )
+        self._check_workspace(block)
         if self.envelope_min is None and self.envelope_max is None:
             return
         if self.envelope_min is None or self.envelope_max is None:
@@ -206,6 +219,21 @@ class LimitSet:
                 f"{block}.envelope_min has {len(self.envelope_min)} values but "
                 f"{block}.joint_min has {len(self.joint_min)}"
             )
+
+    def _check_workspace(self, block: str) -> None:
+        """workspace_min and workspace_max: both or neither, three values each."""
+        low, high = self.workspace_min, self.workspace_max
+        if low is None and high is None:
+            return
+        where_min, where_max = f"{block}.workspace_min", f"{block}.workspace_max"
+        if low is None or high is None:
+            raise ConfigError(f"{where_min} and {where_max} must be given together")
+        for where, corner in ((where_min, low), (where_max, high)):
+            if len(corner) != 3:
+                raise ConfigError(
+                    f"{where} must hold 3 values, x, y and z, got {list(corner)!r}"
+                )
+        _check_box(where_min, low, where_max, high)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -241,6 +269,13 @@ class Limits:
                 raise ConfigError(
                     f"limits.{slot} must not have an envelope: only the agent has one"
                 )
+        for slot in ("agent", "recovery"):
+            for key in ("table_clearance_m", "workspace_min", "workspace_max"):
+                if getattr(getattr(self, slot), key) is not None:
+                    raise ConfigError(
+                        f"limits.{slot}.{key} must not be set: only the human "
+                        "limit set has a table clearance and a tip box of its own"
+                    )
         # A return to rest must be able to start wherever a person left the arm.
         boxes = zip(
             self.recovery.joint_min,

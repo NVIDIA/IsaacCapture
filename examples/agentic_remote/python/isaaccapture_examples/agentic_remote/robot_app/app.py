@@ -242,7 +242,8 @@ TAKEN_OVER = (
     "then squeeze it to move"
 )
 # Added to TAKEN_OVER when the gripper tip is low at the takeover: below the
-# table clearance or inside the agent's last grasp region.
+# human checker's table clearance, where that checker takes only a step that
+# rises.
 LOW_TIP = "; the gripper tip is low: only a lift is taken until it is clear"
 HANDED_BACK = "takeover ended: the arm is given back; nobody owns it"
 # Why an engaged human target moves nothing: the grip was squeezed before the
@@ -842,7 +843,6 @@ class RobotApp:
             claim_idle=self._executor.claim_idle,
             note_clamped=lambda: self._publisher.note_clamped(),
             reads_paused=lambda: self._idle.paused(),
-            last_grasp_region=lambda: self._grasp_region,
             after_setpoint=self._publish_setpoint,
         )
         self._jaw_state = JawState(config.gripper, clock)
@@ -2851,8 +2851,8 @@ class RobotApp:
         low = self._low_tip(pose)
         try:
             if low:
-                # A person lifts such an arm out: the human drive takes no
-                # target that lowers the tip while it is low.
+                # A person lifts such an arm out: the human checker takes
+                # only a step that rises while the tip is under its clearance.
                 self._checkers.human.check_low_pose(pose)
             else:
                 self._checkers.human.check_pose(pose)
@@ -2908,11 +2908,11 @@ class RobotApp:
     def _low_tip(self, pose: Sequence[float]) -> bool:
         """Whether the gripper tip is low at this pose, as the human checker has it.
 
-        Low is below the table clearance or inside the agent's last grasp
-        region. False with a checker that knows no table.
+        Low is below that checker's table clearance. False with a checker
+        that knows no table.
         """
         try:
-            tip = self._checkers.human.tip_state(pose, self._grasp_region)
+            tip = self._checkers.human.tip_state(pose, None)
         except Refusal:
             return False  # no pose: check_pose() says so
         return tip is not None and tip.low is not None

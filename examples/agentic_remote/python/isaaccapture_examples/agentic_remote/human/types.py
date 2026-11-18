@@ -32,12 +32,18 @@ AHEAD_NOTE_CM = 5
 NOTE_AT_LIMIT = "at the workspace limit: {walls}"
 # The walls by the robot's base axes, x forward, y left, z up: (low, high).
 WALL_NAMES = (("back", "front"), ("right", "left"), ("bottom", "top"))
-# The lowest wall where it is the height above the table that the robot app
-# names for a low gripper tip, not the bottom of its box.
+# The lowest wall where it is the stop above the table, over the height the
+# robot app names for its table clearance, not the bottom of its box.
 WALL_TABLE = "table"
-# What they say while the joint target stands with the hand going on: the
-# pose solved for has no solution, or the joint target is at the joint box
-# the robot app names for a person; joint counts from 1, as its checker does.
+# How far above that height the pose solved for stays, m: the robot app's
+# checker lets a tip under the height only rise. The margin covers what a
+# solve leaves of its pose and how far a setpoint of the robot app lies off
+# the way between two joint targets.
+TIP_FLOOR_MARGIN_M = 0.005
+# What they say while the arm is held short of the hand: the hand's pose has
+# no solution and the arm follows as far as it can, or the joint target is at
+# the joint box the robot app names for a person; joint counts from 1, as its
+# checker does.
 NOTE_OUT_OF_REACH = "out of reach"
 NOTE_AT_JOINT_LIMIT = "at a joint limit: joint {joint}"
 # What they say while the joint target is held back for a robot app whose own
@@ -195,3 +201,15 @@ class SolverPort(Protocol):
 
     def solve(self, base_T_ee: np.ndarray, q_seed: Sequence[float]) -> IkStep:
         """Joint values for a pose of the gripper tip, seeded with q_seed."""
+
+    def nearest(
+        self,
+        base_T_ee: np.ndarray,
+        q_seed: Sequence[float],
+        low: Sequence[float] | None = None,
+        high: Sequence[float] | None = None,
+    ) -> IkStep:
+        """Joint values one step from q_seed toward a pose with no solution.
+
+        The tip's position first; each joint inside low..high when given.
+        """

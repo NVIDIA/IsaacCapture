@@ -29,8 +29,9 @@ joint_names: [joint1, joint2, joint3, joint4, joint5, joint6]
 # rig's profile (configs/thor_operation of the experiment) the robot app reads
 # that file on the Thor as the launcher does and takes it for the profile's
 # speed cap: an agent or recovery limit set faster than that cap is refused at
-# the start. The human limit set is refused only above the speed cap of APAI's
-# rebot_rs profile, 0.8, the bound the launcher holds its own speed to.
+# the start. The human limit set is refused only above 2.0, the robot app's own
+# speed cap for a person on that profile (HUMAN_SPEED_CAP of
+# robot_app/apai_backend.py).
 # thor.agent_max_joint_speed of configs/agent_rebot.yaml repeats the agent's
 # speed; change both together.
 limits:
@@ -58,18 +59,36 @@ limits:
     joint_max: [2.0744, 2.0744, 2.0744, 1.77, 1.55, 2.0744]
     # This limit sets how fast the arm follows a person. The robot app clamps
     # a person's motion at 0.98 of it and names it in WELCOME; the human
-    # program moves its joint target at 0.9 of that clamp, 0.71 rad/s a joint.
+    # program moves its joint target at 0.9 of that clamp, 1.41 rad/s a joint.
     # The hand speed limits of configs/human_rebot.yaml
-    # (retarget.max_*_velocity) only bound the gripper tip, at 25 cm/s.
-    max_joint_speed: 0.8  # the owner's value of 2026-11-16
+    # (retarget.max_*_velocity) only bound the gripper tip, at 50 cm/s.
+    # The contact stop runs with the thresholds of the rig's APAI profile,
+    # which no move at this speed was run with: check it in the hardware
+    # session.
+    max_joint_speed: 1.6  # the owner's value of 2026-11-18
     # A human target is a joint target that follows a person's hand. This is
     # the farthest, on any joint, one may lie from the arm at a squeeze and
     # from the last joint target sent after it; one beyond it is refused and
-    # the arm holds. So the largest jump at a squeeze is 2.9 degrees a joint:
-    # 7.3 cm at the gripper tip in the ready pose, up to 9 cm with the arm
+    # the arm holds. So the largest jump at a squeeze is 5.7 degrees a joint:
+    # 14.6 cm at the gripper tip in the ready pose, up to 18 cm with the arm
     # reaching out, taken in 0.08 s. First value.
     # ik.max_ahead_rad of configs/human_rebot.yaml stays below it.
-    max_step_rad: 0.05
+    max_step_rad: 0.10
+    # The table for a person, the owner's value of 2026-11-18: the height
+    # over the table plane under which the human checker takes only a step
+    # that rises. 0.0: a person's gripper tip moves freely down to the table
+    # plane. The human program stops the tip 0.5 cm above that height, which
+    # WELCOME names (human_tip_floor). The joints between the base and the
+    # tip stay 1 cm above the table plane, as for every owner. The agent and
+    # a return to rest keep the profile's clearance and rest.table_clearance_m.
+    table_clearance_m: 0.0
+    # The box the human checker holds a person's gripper tip in, the owner's
+    # value of 2026-11-18: x, y and z of its lowest and of its highest
+    # corner, m, in the arm's base frame. WELCOME names it (human_tip_box).
+    # The agent and a return to rest keep the profile's box, 0.10 to 0.50 m
+    # forward, 0.30 m to each side and up to 0.55 m.
+    workspace_min: [0.10, -0.50, -0.01]
+    workspace_max: [0.55, 0.50, 0.70]
   recovery:
     version: rebot-p4-1
     joint_min: [-2.8, -0.05, -0.05, -1.69, -1.57, -3.14]

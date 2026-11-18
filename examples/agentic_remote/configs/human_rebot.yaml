@@ -15,9 +15,9 @@
 # none was measured on the arm or with a headset. Times are in s, lengths in m,
 # angles in rad unless a key says deg.
 #
-# It differs from configs/human.yaml in seven keys: socket_path, teleop.endpoint,
+# It differs from configs/human.yaml in eight keys: socket_path, teleop.endpoint,
 # teleop.attempts, retarget.max_linear_velocity, retarget.max_angular_velocity,
-# ik.apai_arm and ik.max_ahead_rad.
+# ik.apai_arm, ik.max_jump_rad and ik.max_ahead_rad.
 #
 # The program refuses a key it does not know and a number outside the bound its
 # comment names; a number without a named bound must be above 0.
@@ -62,21 +62,23 @@ retarget:
   controller_pose: grip  # the controller pose that is followed: grip or aim
   position_scale: 1.0  # the target's motion per motion of the hand
   squeeze_threshold: 0.5  # the grip counts as squeezed above this; below 1
-  # How fast the arm follows the hand is set by the joints, not by these two.
-  # The Thor follows a person at up to 0.8 rad/s a joint, the owner's value of
-  # 2026-11-16 (limits.human.max_joint_speed of configs/robot_app_rebot.yaml),
-  # and names that limit in WELCOME. This program moves the joint target it
-  # sends at 0.9 of the Thor's speed clamp, 0.71 rad/s on the fastest joint: 40
-  # degrees a second. Computed on the arm model, not measured on the arm: the
-  # gripper tip then moves at 7 to 19 cm a second from the raised pose, by its
-  # direction, and up to the 25 cm a second of the bound below where the arm
-  # is stretched out and the tip moves sideways; it is slower along the reach
-  # of a stretched arm and where the arm is folded.
+  # How fast the arm follows the hand is set by the joints and by these two,
+  # whichever binds. The Thor follows a person at up to 1.6 rad/s a joint, the
+  # owner's value of 2026-11-18 (limits.human.max_joint_speed of
+  # configs/robot_app_rebot.yaml), and names that limit in WELCOME. This
+  # program moves the joint target it sends at 0.9 of the Thor's speed clamp,
+  # 1.41 rad/s on the fastest joint: 81 degrees a second. Computed on the arm
+  # model, not measured on the arm: the gripper tip then moves at 27 to 36 cm
+  # a second from the ready pose (the arm raised over the table), by its
+  # direction, at 16 to 32 cm a second where the arm is folded near its base,
+  # and up to the 50 cm a second of the bound below where the arm is
+  # stretched out and the tip moves sideways.
   # The fastest the gripper tip's target moves, toward the hand and with the arm
-  # behind it: it binds only where the joints could move the tip faster.
-  max_linear_velocity: 0.25  # m/s
-  # The fastest the gripper tip's target turns.
-  max_angular_velocity: 1.0  # rad/s
+  # behind it: 1 cm a pass. The owner's value of 2026-11-18.
+  max_linear_velocity: 0.5  # m/s
+  # The fastest the gripper tip's target turns: 0.04 rad a pass. The owner's
+  # value of 2026-11-18.
+  max_angular_velocity: 2.0  # rad/s
   # A hand faster than this is not followed at all, and the arm holds until the
   # grip was released and squeezed again. Not below the bound above; null: none.
   reject_linear_velocity: 2.0  # m/s
@@ -103,30 +105,37 @@ ik:
   # A solution further than this, on any joint, from the joint target before it
   # is a jump. The step of the tip is then halved, up to three times; a jump
   # that stays ends the engagement, the stretch in which the arm follows the
-  # hand.
-  max_jump_rad: 0.05
+  # hand. One pass at the hand speed limit, 1 cm of the tip, asks a joint
+  # for 0.04 to 0.09 rad between the ready pose and the arm folded near its
+  # base, as computed on the arm model: 0.10 takes such a step whole. Of a
+  # solution the joint target goes 0.028 rad a pass, its speed limit; twice
+  # that is the least this bound may be, so that a halved step still moves
+  # the fastest joint at its limit.
+  max_jump_rad: 0.10
   # The farthest, on any joint, the joint target may lie from where the arm, or
   # the Thor's own joint target, can be: beyond it the arm does not follow and
   # the engagement ends. At a squeeze it is measured from the arm; once the Thor
   # drives, from its last joint target moved on by what its speed clamp allows
-  # since. 0.005 below the 0.05 rad at which the Thor refuses a target
+  # since. 0.01 below the 0.10 rad at which the Thor refuses a target
   # (limits.human.max_step_rad of the rig's robot file): that covers two
   # readings of the holding arm at a squeeze. A squeeze at rest begins 0.033
-  # from the arm, so not lower. While the Thor's drive waits for a low gripper
-  # to be lifted, the joint target stays 0.005 inside this bound from the arm.
-  max_ahead_rad: 0.045
+  # from the arm, and a joint target that follows the hand is held back to two
+  # of the Thor's steps, 0.063 rad, ahead of the Thor's own: so not lower.
+  max_ahead_rad: 0.09
   # The farthest the hand may be from the arm's gripper tip, in all. Up to it
   # the arm catches up with the hand and stops where the hand stopped; a hand
   # further away is not believed, and the engagement ends. The Thor names in
   # WELCOME the box its checker holds the gripper tip in; the tip stops 1 cm
   # inside a wall of it and slides along the wall while the hand goes on. It
-  # names the height under which the tip is low, 2 cm above the table plane,
-  # as well: the tip stops 1 cm above that, and a tip under it only rises. And
-  # it names the joint box for a person: a joint stops 0.01 rad inside it.
+  # names its table clearance for a person as well, the table plane on the
+  # rig: the tip stops 0.5 cm above that and slides along it while the hand
+  # pushes down. And it names the joint box for a person: a joint stops 0.01
+  # rad inside it.
   max_ahead_m: 0.5
-  # Failed solves in a row from which the note says "out of reach". While the
-  # hand's pose has no solution the arm stands at its last joint target and
-  # the engagement goes on. A whole number.
+  # Passes in a row from which the note says "out of reach". A hand's pose
+  # that has no solution does not end the engagement: the arm follows as far
+  # as it can, the tip's position first and the wrist's angle second, and
+  # follows the hand again once its pose has a solution. A whole number.
   max_failures: 5
 
 buttons:

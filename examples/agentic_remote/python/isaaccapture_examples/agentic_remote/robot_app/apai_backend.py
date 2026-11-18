@@ -104,6 +104,9 @@ SPEED_CEILING = "rebot_rs"
 # launcher gives them.
 BOUNDS_MODULE = "thor_calibration_rig"
 BOUNDS_LABEL = "operation"
+# The joint speed a human limit set may not exceed on the launcher's arm
+# profile, rad/s.
+HUMAN_SPEED_CAP = 2.0
 # The pause between two looks at the motors' fault reports, in s.
 _FAULT_POLL_S = 0.5
 # "Holding" is said of a joint only while its newest reading at the target
@@ -458,24 +461,11 @@ def human_speed_cap(profile: ApaiProfile) -> float:
 
     The profile's own cap. The arm profile the experiment's launcher runs has
     that launcher's speed for its cap, which is the agent's: there a person's
-    bound is the cap of APAI's SPEED_CEILING profile, the bound the launcher
-    holds its own speed to. ValueError when that profile cannot be read.
+    bound is HUMAN_SPEED_CAP.
     """
     if profile.launcher_dir is None:
         return speed_cap(profile)
-    try:
-        raw = load_profile("arms", SPEED_CEILING).overrides.safety.max_joint_vel
-        bound = float(raw)
-    except Exception as exc:
-        raise ValueError(
-            f"the joint speed cap of APAI's {SPEED_CEILING} profile cannot be "
-            f"read: {type(exc).__name__}: {exc}"
-        ) from exc
-    if isinstance(raw, bool) or not (math.isfinite(bound) and bound > 0.0):
-        raise ValueError(
-            f"the joint speed cap of APAI's {SPEED_CEILING} profile is {raw!r}"
-        )
-    return bound
+    return HUMAN_SPEED_CAP
 
 
 def _contact_config(profile: ApaiProfile) -> ContactMonitorConfig:
@@ -495,8 +485,10 @@ def build_apai_checkers(
     Speed comes from the owner's limit set. The agent's and the recovery set
     may not exceed the profile's speed cap, the human set not
     human_speed_cap() (ValueError); the rest of the harness limits come from
-    the APAI profile. No harness gets an obstacle map. paced is passed to
-    ApaiChecker.
+    the APAI profile. The human harness alone takes the table clearance and
+    the tip box its limit set names (limits.human.table_clearance_m,
+    workspace_min and workspace_max). No harness gets an obstacle map. paced
+    is passed to ApaiChecker.
     """
     kinematics = profile.kinematics
     if kinematics.n != config.n_joints:
@@ -516,11 +508,13 @@ def build_apai_checkers(
     human, bound = config.limits.human, human_speed_cap(profile)
     if human.max_joint_speed > bound + _EPS:
         whose = "the APAI profile's speed cap"
+        named = "safety.max_joint_vel"
         if profile.launcher_dir is not None:
-            whose = f"the speed cap of APAI's {SPEED_CEILING} profile"
+            whose = "the robot app's speed cap for a person"
+            named = "apai_backend.HUMAN_SPEED_CAP"
         raise ValueError(
             f"limits.human.max_joint_speed {human.max_joint_speed:g} rad/s is "
-            f"above {whose} of {bound:g} rad/s (safety.max_joint_vel)"
+            f"above {whose} of {bound:g} rad/s ({named})"
         )
     contact = _contact_config(profile)
     if not contact.enforcing:
@@ -541,7 +535,7 @@ def build_apai_checkers(
     def checker(
         limit_set: LimitSet,
         fold_onto: Sequence[float] | None = None,
-        **changes: float,
+        **changes: Any,
     ) -> ApaiChecker:
         limits = dataclasses.replace(
             base, max_joint_vel=limit_set.max_joint_speed, contact=contact, **changes
@@ -553,12 +547,15 @@ def build_apai_checkers(
             base_pose=base_pose,
             arm_name=limit_set.name,
         )
+        clearance = limit_set.table_clearance_m
+        if clearance is None:
+            clearance = config.rest.table_clearance_m
         return ApaiChecker(
             limit_set,
             harness,
             clock,
             period_s=config.executor.period_s,
-            table_clearance_m=config.rest.table_clearance_m,
+            table_clearance_m=clearance,
             paced=paced,
             grasp=config.grasp,
             fold_onto=fold_onto,
@@ -571,11 +568,22 @@ def build_apai_checkers(
     _restrict_as_launcher(agent.harness, profile)
     return CheckerSet(
         agent=agent,
-        human=checker(config.limits.human),
+        human=checker(human, **_person_limits(human)),
         # Nothing can feed the recovery watchdog, and the rest pose lies on joint
         # stops, inside the joint margin the other two keep.
         recovery=checker(config.limits.recovery, watchdog_s=math.inf, joint_margin=0.0),
     )
+
+
+def _person_limits(human: LimitSet) -> dict[str, Any]:
+    """The harness limits the human limit set names in place of the profile's."""
+    changes: dict[str, Any] = {}
+    if human.table_clearance_m is not None:
+        changes["table_clearance"] = human.table_clearance_m
+    if human.workspace_min is not None and human.workspace_max is not None:
+        changes["workspace_min"] = np.array(human.workspace_min, dtype=float)
+        changes["workspace_max"] = np.array(human.workspace_max, dtype=float)
+    return changes
 
 
 def _restrict_as_launcher(harness: SafetyHarness, profile: ApaiProfile) -> None:
@@ -966,8 +974,9 @@ class ApaiChecker:
         self, q: Sequence[float], region: GraspRegion | None
     ) -> TipState | None:
         tip = self._kinematics.fk(self._pose(q))[:3, 3]
-        # Low is where a return to rest is refused or the harness's pose vet
-        # refuses the tip: under the higher of the two table clearances.
+        # Low is where the harness's pose vet refuses the tip or the checker's
+        # own table clearance is not kept: under the higher of the two. A
+        # human limit set that names a table clearance gives both that one.
         limits = self._harness.limits
         clearance = max(self._table_clearance_m, float(limits.table_clearance))
         return TipState(float(tip[2]), _low_tip(tip, clearance, limits, region))

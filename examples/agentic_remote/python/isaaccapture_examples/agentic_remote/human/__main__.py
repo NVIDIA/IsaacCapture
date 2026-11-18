@@ -56,6 +56,7 @@ from .types import (
     NOTE_AT_LIMIT,
     NOTE_CATCHING_UP,
     NOTE_THOR_BEHIND,
+    TIP_FLOOR_MARGIN_M,
     ControllerFeed,
     FeedStep,
     GraphStep,
@@ -423,6 +424,19 @@ class _TimedSolver:
         finally:
             self.times_s.append(time.perf_counter() - started)
 
+    def nearest(
+        self,
+        base_T_ee: Any,  # noqa: N803
+        q_seed: Sequence[float],
+        low: Sequence[float] | None = None,
+        high: Sequence[float] | None = None,
+    ) -> IkStep:
+        started = time.perf_counter()
+        try:
+            return self._solver.nearest(base_T_ee, q_seed, low, high)
+        finally:
+            self.times_s.append(time.perf_counter() - started)
+
 
 def _plain(text: object, limit: int = _MAX_TEXT_CHARS) -> str:
     """str(text) for one printed line: printable, at most `limit` characters."""
@@ -438,7 +452,7 @@ def _fixed(value: float, digits: int) -> str:
 
 def _bound(metres: float) -> str:
     """A side of the tip's room in m; "any" for one that nothing bounds."""
-    return _fixed(metres, 2) if math.isfinite(metres) else "any"
+    return _fixed(metres, 3) if math.isfinite(metres) else "any"
 
 
 def _ms(seconds: Any, digits: int = 0) -> str:
@@ -531,8 +545,7 @@ def report_line(
     from AHEAD_NOTE_CM on the line says so. walls are the walls of the robot
     app's box for the gripper tip that the tip stands at with the hand beyond
     them; behind says that the joint target is held back for a slow robot app;
-    stand is why the joint target stands though the hand goes on, as the
-    note gives it.
+    stand is what holds the arm short of the hand, as the note gives it.
     """
     human = _human_facts(state)
     tip = None if last is None else last.ee_target
@@ -762,7 +775,7 @@ class _Loop:
             for index, axis in enumerate("xyz")
         )
         bottom = (
-            "its lowest is the table clearance"
+            f"its lowest is {100.0 * TIP_FLOOR_MARGIN_M:g} cm above the table clearance"
             if table
             else "it names no table clearance: a tip lowered under it ends the drive"
         )
@@ -776,7 +789,8 @@ class _Loop:
         if self._logic.joint_box(welcome):
             return (
                 f"{PROGRAM}: the joints stop at the robot app's joint limits for "
-                "a person, and the arm stands while the hand is out of reach"
+                "a person, and the arm follows as far as it can while the hand "
+                "is out of reach"
             )
         return (
             f"{PROGRAM}: the robot app names no joint limits for a person: a "

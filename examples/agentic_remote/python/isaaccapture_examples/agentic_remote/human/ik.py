@@ -7,13 +7,20 @@ Inverse kinematics (IK) goes from a pose of the gripper tip to joint values;
 forward kinematics (FK) goes the other way. A jump is a solution far from the
 joint values the solve started from, its seed. APAI is imported only when a
 solver is built from one of its arm profiles.
+
+A pose that has no solution lies out of reach. APAI's solve then gives the
+joint values of its last iteration, which near the edge of reach can lie
+anywhere, and one error for position and turn together: neither is used.
+Solver.nearest goes one step from the seed toward such a pose on the arm
+model's FK alone, the tip's position first and the wrist's turn second.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -25,6 +32,26 @@ IK_MARGIN_RAD = 0.025
 
 # The src folder of an APAI checkout, as the other programs name it.
 APAI_SRC_ENV = "AGENTIC_REMOTE_APAI_SRC"
+
+# Solver.nearest. What 1 rad of the wrist's turn weighs against 1 m of the
+# tip's way, m: the position comes first. Computed on the reBot arm's model
+# for a hand 20 to 50 cm beyond its reach: the wrist then gives way by up to
+# 0.27 rad from the hand's orientation. With 0.05 the tip comes 4 to 22 cm
+# nearer and the wrist gives way by up to 1.03 rad.
+NEAR_TURN_WEIGHT_M = 0.1
+# The damping of its least-squares step, m per rad: at the edge of reach a
+# way of the tip that no joint makes moves no joint far.
+NEAR_DAMPING = 0.02
+# The joint step its Jacobian, the tip's motion per motion of each joint, is
+# measured with on the FK, rad.
+NEAR_PROBE_RAD = 1e-6
+# The shares of its step that are tried, and the least by which one must
+# bring the pose nearer, m with a turn weighed as above. Less is no progress:
+# the arm has come as near as it can.
+NEAR_SHARES = (1.0, 0.5, 0.25, 0.125)
+NEAR_GAIN_M = 2e-6
+# How its problem text begins.
+NO_NEARER = "no nearer pose"
 
 
 class Solver:
@@ -118,3 +145,114 @@ class Solver:
                 f"the limit is {self.max_jump_rad:g}",
             )
         return IkStep(tuple(float(value) for value in q), "")
+
+    def nearest(
+        self,
+        base_T_ee: np.ndarray,  # noqa: N803
+        q_seed: Sequence[float],
+        low: Sequence[float] | None = None,
+        high: Sequence[float] | None = None,
+    ) -> IkStep:
+        """Joint values one step from q_seed toward a pose with no solution.
+
+        One damped least-squares step on the FK: the tip's position weighs
+        1, the wrist's turn NEAR_TURN_WEIGHT_M. No joint leaves the margin
+        the IK keeps from the joint limits, nor low..high, rad, when given;
+        one outside at q_seed goes no further out. No joint moves further
+        than max_jump_rad. No joints come back unless the pose at them is
+        nearer by NEAR_GAIN_M than the pose at q_seed, and their tip no
+        further from the pose's position: the wrist's turn costs the tip
+        nothing.
+        """
+        seed = self._joints(q_seed)
+        pose = np.asarray(base_T_ee, dtype=np.float64)
+        bounds = self._kinematics.joint_limits
+        floor = np.asarray(bounds[0], dtype=np.float64) + IK_MARGIN_RAD
+        ceiling = np.asarray(bounds[1], dtype=np.float64) - IK_MARGIN_RAD
+        if low is not None:
+            floor = np.maximum(floor, self._joints(low))
+        if high is not None:
+            ceiling = np.minimum(ceiling, self._joints(high))
+        step = nearest_step(self.fk, pose, seed, floor, ceiling, self.max_jump_rad)
+        if step is None:
+            return IkStep(None, f"{NO_NEARER} than the one of the last joint target")
+        return IkStep(tuple(float(value) for value in step), "")
+
+
+def nearest_step(
+    fk: Callable[[Sequence[float]], np.ndarray],
+    pose: np.ndarray,
+    seed: np.ndarray,
+    low: np.ndarray,
+    high: np.ndarray,
+    most_rad: float,
+) -> np.ndarray | None:
+    """The joint values of Solver.nearest on any FK; None: none is nearer.
+
+    low and high bound each joint, rad; most_rad bounds the step of each.
+    """
+    weights = np.array([1.0, 1.0, 1.0] + [NEAR_TURN_WEIGHT_M] * 3)
+    at = fk(seed)
+    gap = weights * _gap(at, pose)
+    jacobian = np.empty((6, len(seed)))
+    for joint in range(len(seed)):
+        probe = seed.copy()
+        probe[joint] += NEAR_PROBE_RAD
+        jacobian[:, joint] = weights * _gap(at, fk(probe)) / NEAR_PROBE_RAD
+    # A joint outside its bounds at the seed may come back; none goes out.
+    step = _bounded_step(
+        jacobian, gap, np.minimum(low - seed, 0.0), np.maximum(high - seed, 0.0)
+    )
+    far = float(np.max(np.abs(step)))
+    if not math.isfinite(far) or far == 0.0:
+        return None
+    if far > most_rad:
+        step *= most_rad / far
+    off, away = float(np.linalg.norm(gap)), float(np.linalg.norm(gap[:3]))
+    for share in NEAR_SHARES:
+        q = seed + share * step
+        left = weights * _gap(fk(q), pose)
+        nearer = float(np.linalg.norm(left)) <= off - NEAR_GAIN_M
+        if nearer and float(np.linalg.norm(left[:3])) <= away + 1e-9:
+            return q
+    return None
+
+
+def _bounded_step(
+    jacobian: np.ndarray, gap: np.ndarray, low: np.ndarray, high: np.ndarray
+) -> np.ndarray:
+    """The damped least-squares joint step for gap, each joint in low..high.
+
+    A joint whose step would pass a bound is held at the bound, and the
+    others are solved again for what is left of the gap.
+    """
+    step = np.zeros(jacobian.shape[1])
+    free = np.ones(jacobian.shape[1], dtype=bool)
+    damped = NEAR_DAMPING**2 * np.eye(jacobian.shape[0])
+    while free.any():
+        left = gap - jacobian[:, ~free] @ step[~free]
+        part = jacobian[:, free]
+        step[free] = part.T @ np.linalg.solve(part @ part.T + damped, left)
+        over = free & ((step < low) | (step > high))
+        if not over.any():
+            break
+        step[over] = np.clip(step[over], low[over], high[over])
+        free &= ~over
+    return step
+
+
+def _gap(at: np.ndarray, to: np.ndarray) -> np.ndarray:
+    """The way from one 4x4 pose to another, in the base axes.
+
+    The tip's way, m, then the turn as its axis times its angle, rad. A half
+    turn has no shorter way round and counts as no turn.
+    """
+    turn = to[:3, :3] @ at[:3, :3].T
+    twice = np.array(
+        [turn[2, 1] - turn[1, 2], turn[0, 2] - turn[2, 0], turn[1, 0] - turn[0, 1]]
+    )
+    sine = 0.5 * float(np.linalg.norm(twice))
+    cosine = 0.5 * (float(np.trace(turn)) - 1.0)
+    if sine > 1e-9:
+        twice = twice * (math.atan2(sine, cosine) / sine)
+    return np.concatenate([to[:3, 3] - at[:3, 3], 0.5 * twice])

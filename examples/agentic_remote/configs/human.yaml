@@ -91,9 +91,10 @@ ik:
   # the arm catches up with the hand and stops where the hand stopped; a hand
   # further away is not believed, and the engagement ends.
   max_ahead_m: 0.5
-  # Failed solves in a row from which the note says "out of reach". While the
-  # hand's pose has no solution the arm stands at its last joint target and
-  # the engagement goes on. A whole number.
+  # Passes in a row from which the note says "out of reach". A hand's pose
+  # that has no solution does not end the engagement: the arm follows as far
+  # as it can, the tip's position first and the wrist's angle second, and
+  # follows the hand again once its pose has a solution. A whole number.
   max_failures: 5
 
 buttons:
