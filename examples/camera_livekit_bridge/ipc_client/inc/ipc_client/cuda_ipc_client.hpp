@@ -41,6 +41,8 @@ struct FrameNotice
     std::string stream;
     int slot = 0;
     std::uint64_t slot_generation = 0;
+    /// When the publisher announced the picture, on its CLOCK_MONOTONIC (the same clock on this host); 0 if absent.
+    std::uint64_t timestamp_ns = 0;
     nlohmann::json metadata;
 };
 

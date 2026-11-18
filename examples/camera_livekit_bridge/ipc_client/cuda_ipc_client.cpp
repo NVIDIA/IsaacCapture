@@ -238,6 +238,7 @@ bool CudaIpcClient::next_frame(FrameNotice& out, std::chrono::milliseconds timeo
         out.stream = message.at("stream").get<std::string>();
         out.slot = message.at("slot").get<int>();
         out.slot_generation = message.value("slot_generation", std::uint64_t{ 0 });
+        out.timestamp_ns = message.value("timestamp_ns", std::uint64_t{ 0 });
         out.metadata = message.value("metadata", nlohmann::json::object());
         return true;
     }
