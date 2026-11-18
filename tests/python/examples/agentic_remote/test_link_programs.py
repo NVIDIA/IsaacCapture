@@ -1319,6 +1319,181 @@ def test_the_readme_gives_the_robot_app_the_socket_the_rig_human_file_names():
     assert paths == {path}
 
 
+def test_the_readme_says_how_fast_the_arm_follows_the_hand_as_the_programs_have_it():
+    # A person drives the arm: how fast it follows, what a hand that is ahead
+    # does, how to stop it and what is printed, by the programs' own numbers
+    # and words.
+    import math
+
+    from isaaccapture_examples.agentic_remote.human import logic
+    from isaaccapture_examples.agentic_remote.human import types as human_types
+    from isaaccapture_examples.agentic_remote.robot_app.human import SPEED_MARGIN
+
+    text = one_line(README.read_text(encoding="utf-8"))
+    section = one_line(readme_section("### How fast the arm follows the hand"))
+    rig = yaml.safe_load(RIG_HUMAN_YAML.read_text(encoding="utf-8"))
+    robot = yaml.safe_load((CONFIGS / "robot_app_rebot.yaml").read_text("utf-8"))
+    human = robot["limits"]["human"]
+    # The joints: the owner's limit, the Thor's clamp and the program's share.
+    assert (human["max_joint_speed"], human["max_step_rad"]) == (0.8, 0.05)
+    assert (SPEED_MARGIN, logic.THOR_SPEED_MARGIN, logic.JOINT_SPEED_SHARE) == (
+        0.98,
+        0.98,
+        0.9,
+    )
+    clamp = SPEED_MARGIN * human["max_joint_speed"]
+    own = logic.JOINT_SPEED_SHARE * clamp
+    assert (f"{clamp:.2f}", f"{own:.2f}") == ("0.78", "0.71")
+    assert (
+        "The Thor follows a person's joint target at 0.98 of "
+        "`limits.human.max_joint_speed`, 0.8 rad/s by the rig owner's decision of "
+        "2026-11-16: 0.78 rad/s, which is 0.9 degrees with each setpoint."
+    ) in section
+    assert "names that limit in WELCOME (`human_max_joint_speed`)" in section
+    assert (
+        "at 0.9 of the Thor's speed: on the joint that has the farthest to go 0.71 "
+        "rad/s, 40 degrees a second, and every other joint by the same share of "
+        "its way"
+    ) in section
+    unnamed = logic.JOINT_SPEED_SHARE * SPEED_MARGIN * logic.UNNAMED_JOINT_SPEED
+    assert f"names no such limit is followed at {unnamed:.2f} rad/s" in section
+    # The bounds of the tip's target, and the hand that is ahead.
+    retarget, ik = rig["retarget"], rig["ik"]
+    assert (
+        f"`retarget.max_linear_velocity` ({retarget['max_linear_velocity']:g} m/s) "
+        f"and `retarget.max_angular_velocity` ({retarget['max_angular_velocity']:.1f} "
+        "rad/s) of `configs/human_rebot.yaml` bound the tip's target"
+    ) in section
+    note = human_types.NOTE_CATCHING_UP.format(cm="N")
+    assert note == "hand N cm ahead: the arm is catching up"
+    assert f"`{note}` from {human_types.AHEAD_NOTE_CM} cm on" in section
+    assert f"| `{note}` |" in text and f"[; {note.replace('N', '<N>')}]" in text
+    far = round(100 * ik["max_ahead_m"])
+    assert f"believed up to `ik.max_ahead_m`, {far} cm, from the gripper tip" in section
+    too_far = f"`the hand is N cm from the gripper tip, over the {far} cm believed`"
+    assert too_far in section
+    # What still ends an engagement has a section of its own.
+    again = one_line(readme_section("### What still asks for a new squeeze"))
+    assert "(#what-still-asks-for-a-new-squeeze)" in section
+    turned = round(math.degrees(logic.MAX_AHEAD_TURN_RAD))
+    assert f"more than {far} cm from the gripper tip (`ik.max_ahead_m`)" in again
+    assert f"or turned more than {turned} degrees ahead of it" in again
+    assert too_far in again
+    assert "**Both programs are to be deployed together.**" in again
+    for gone in ("ahead of the arm, over the", "past the workspace limit"):
+        assert gone not in text
+    # How to stop it, and the squeeze.
+    assert "**To stop the arm, release the grip.**" in section
+    assert "Stopping the hand does not stop the arm at once" in section
+    wait = f"{logic.FOLLOW_WAIT_S:g} s"
+    assert f"`the arm did not follow the squeeze within {wait}`" in section
+    # The lead and the Thor's own step limit.
+    assert f"(`ik.max_ahead_rad`, {ik['max_ahead_rad']} rad on the rig)" in section
+    assert f"`limits.human.max_step_rad`, {human['max_step_rad']} rad" in section
+    # The program's line of its speeds, with the rig's files.
+    assert (
+        f"`human program: the arm follows the hand at up to {own:.2f} rad/s a joint "
+        "(the robot app's limit for a person is 0.8 rad/s), its tip at up to "
+        f"{retarget['max_linear_velocity']:g} m/s and "
+        f"{retarget['max_angular_velocity']:g} rad/s`"
+    ) in text
+    # The rig's human file, and the table of the settings.
+    assert "It differs in exactly seven keys:" in text
+    for key in ("max_linear_velocity", "max_angular_velocity"):
+        assert f"`retarget.{key}: {retarget[key]}`" in text, key
+    assert f"`ik.max_ahead_m: {ik['max_ahead_m']}`" in text
+    assert "`retarget.max_linear_velocity: 0.01`" not in text
+    # The tip's speeds, as the rig's human file gives them beside its bound.
+    assert "moves at 7 to 19 cm a second from the raised pose" in section
+    assert "up to the 25 cm a second of the bound" in section
+    beside = one_line(RIG_HUMAN_YAML.read_text(encoding="utf-8").replace("#", " "))
+    assert "7 to 19 cm a second from the raised pose" in beside
+    assert "up to the 25 cm a second of the bound below" in beside
+    # The straight way, and a release counted from the hand.
+    assert "the arm goes straight to where the hand is now" in section
+    assert (
+        "From the hand, a release takes about 0.05 s and up to three setpoints"
+        in section
+    )
+    assert "`teleop.max_tick_age_s`: up to 0.2 s" in section
+    assert rig["teleop"]["max_tick_age_s"] == 0.15
+    # A second squeeze, the walls of the Thor's box, a slow Thor: the notes
+    # and the reasons as the human program has them.
+    assert f"the note says `{logic.NOTE_STOPPING}`" in section
+    assert f"| `{logic.NOTE_STOPPING}` |" in text
+    wall = human_types.NOTE_AT_LIMIT.format(walls="front")
+    assert wall == "at the workspace limit: front"
+    names = [name for pair in human_types.WALL_NAMES for name in pair]
+    assert sorted(names) == ["back", "bottom", "front", "left", "right", "top"]
+    assert (
+        f"`{wall}` (`back`, `left`, `right`, `top`, `bottom`; two walls as" in section
+    )
+    assert f"| `{wall}` (`back`, `left`, `right`, `top`, `bottom`;" in text
+    assert "[; at the workspace limit: <wall>[, <wall>]]" in text
+    margin_cm = round(100 * logic.TIP_BOX_MARGIN_M)
+    assert (
+        f"keeps the tip of the pose it solves for {margin_cm} cm inside it" in section
+    )
+    assert "(`human_tip_box`)" in section and "**`human_tip_box` in WELCOME**" in text
+    # The table, the joint box and the reach: named in WELCOME, and the notes.
+    for field in ("human_tip_floor", "human_joint_box"):
+        assert f"(`{field}`)" in section and f"**`{field}` in WELCOME**" in text
+    assert human_types.WALL_TABLE == "table"
+    table = human_types.NOTE_AT_LIMIT.format(walls=human_types.WALL_TABLE)
+    assert f"the note says `{table}`" in section and f"| `{table}` |" in text
+    reach = human_types.NOTE_OUT_OF_REACH
+    limit = human_types.NOTE_AT_JOINT_LIMIT.format(joint="N")
+    assert (reach, limit) == ("out of reach", "at a joint limit: joint N")
+    assert f"the note says `{limit}`" in section and f"| `{limit}` |" in text
+    assert f"the note says `{reach}`" in section and f"| `{reach}` |" in text
+    assert "[; out of reach | ; at a joint limit: joint <N>]" in text
+    joint_cm = f"{logic.JOINT_BOX_MARGIN_RAD:g} rad inside"
+    assert joint_cm == "0.01 rad inside" and f"stops {joint_cm} it" in section
+    assert "from the fifth failed solve in a row (`ik.max_failures`)" in section
+    assert rig["ik"]["max_failures"] == 5
+    # The wait for the arm to be at rest, and a robot app that keeps its drive.
+    assert f"agree within {logic.REST_TOL_RAD:g} rad" in section
+    assert f"{logic.REST_WAIT_S:g} s after the engagement ended" in section
+    assert f"the note says `{logic.NOTE_DRIVE_ON}`" in section
+    assert f"| `{logic.NOTE_DRIVE_ON}` |" in text
+    # A low gripper: what the note tells the person to do.
+    raise_notes = f"| `{logic.NOTE_RAISE_TABLE}`, `{logic.NOTE_RAISE}` |"
+    assert raise_notes in text
+    assert f"the note says `{logic.NOTE_RAISE_TABLE}`" in text
+    behind = human_types.NOTE_THOR_BEHIND
+    assert behind == "the robot app is behind: the arm follows slower"
+    assert f"the note says `{behind}`" in section and f"| `{behind}` |" in text
+    assert f"[; {behind}]" in text
+    steps = logic.HOLD_BACK_STEPS * clamp * robot["executor"]["period_s"]
+    assert f"no further than two of the Thor's steps, {steps:.3f} rad, ahead" in section
+    assert logic.HOLD_BACK_STEPS == 2 and logic.NO_FOLLOW_S == 1.0
+    assert f"`{logic.NOT_FOLLOWED}`" in section and f"`{logic.NOT_FOLLOWED}`" in text
+    # What a blocked joint costs before the arm holds.
+    assert "the motors are asked for about 6 degrees more" in section
+    # A ROBOT_STATE behind every setpoint, and when the next one is overdue.
+    assert "sends a ROBOT_STATE behind every setpoint" in section
+    due = logic.STATE_DUE_PERIODS * robot["executor"]["period_s"]
+    assert logic.STATE_DUE_PERIODS == 1.5 and f"in this drive, {due:g} s" in section
+    # The program's lines of the box and of the joints, with the rig's robot app.
+    assert (
+        "`human program: the gripper tip stops at the robot app's workspace limits: "
+        "x 0.11 to 0.49, y -0.29 to 0.29, z 0.03 to 0.54 m from the arm's base; its "
+        "lowest is the table clearance`"
+    ) in text
+    assert (
+        "`human program: the joints stop at the robot app's joint limits for a "
+        "person, and the arm stands while the hand is out of reach`"
+    ) in text
+    # The comment on the limit that sets the arm's pace says so.
+    pace = one_line(
+        (CONFIGS / "robot_app_rebot.yaml").read_text("utf-8").replace("#", " ")
+    )
+    assert "This limit sets how fast the arm follows a person." in pace
+    assert f"at 0.9 of that clamp, {own:.2f} rad/s a joint" in pace
+    assert "only bound the gripper tip, at 25 cm/s" in pace
+    assert "decide how fast the joint targets" not in pace
+
+
 def test_the_readme_gives_the_two_jaw_settings_of_every_robot_app_file():
     files = sorted(CONFIGS.glob("robot_app*.yaml"))
     assert len(files) >= 5
@@ -1478,15 +1653,12 @@ def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
 
     printed, lines = commands()
     # The panes the script makes are the rows of the README's table: five. The
-    # viewer's page is the live view; no pane is the live view program's.
+    # viewer's page is the live view.
     panes = re.findall(r"-T (\w+)$", script, re.M)
     panes += re.findall(r"\$\(pane (\w+)\)", script)
     rows = dict(re.findall(r"^\| `([a-z]+)` \| `([^`]+)`", told, re.M))
     assert sorted(rows) == sorted(panes) == sorted(printed)
     assert len(rows) == 5 and rows["viewer"] == "./run_viewer.sh"
-    assert "view" not in rows and "| `view` |" not in told
-    assert not any("view.yaml" in line or "run_view.sh" in line for line in lines)
-    assert "--live-view" not in told and "--live-view" not in script
     assert "The window has five panes, all visible together" in one_line(told)
     assert "**The pane `viewer` is the live view.**" in told
     said = (
@@ -1496,9 +1668,6 @@ def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
     assert said in one_line(told)
     for line in said.strip("`").split(", in a visible browser tab; "):
         assert line in one_line(script), line
-    assert "The live view program (`run_view.sh`) is started by nothing on the rig" in (
-        one_line(told)
-    )
     variables = workstation_variables()
     assert len(variables) == 6
     for pane, command in rows.items():
@@ -1832,14 +2001,16 @@ def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it()
     # as the launcher and the page's block have them.
     package = CONFIGS.parent / "python" / "isaaccapture_examples" / "agentic_remote"
     program = (package / "viewer_live" / "live.py").read_text(encoding="utf-8")
+    values = (package / "viewer_live" / "settings.py").read_text(encoding="utf-8")
     block = (package / "viewer_live" / "page_block.html").read_text(encoding="utf-8")
     assert "**It only looks.**" in told
     assert "It is **shown and not stored**" in told
-    assert "DEFAULT_FPS = 30.0" in program and "up to 30 a second" in told
+    assert "DEFAULT_FPS = 30.0" in values and "up to 30 a second" in told
     fps = "`--live-fps N` is the most pictures a second, 1 to 60, 30 by default"
-    assert "FPS_RANGE = (1.0, 60.0)" in program and fps in told
+    assert "FPS_RANGE = (1.0, 60.0)" in values and fps in told
     width = "`--live-width PIXELS` is the picture's greatest width, 64 to 4096, 960"
-    assert "WIDTH_RANGE_PX = (64, 4096)" in program and width in told
+    assert "WIDTH_RANGE_PX = (64, 4096)" in values and width in told
+    assert "DEFAULT_WIDTH_PX = 960" in values
     # The pause after a failed try, and the line that names it.
     pauses = "5 s, then 10, 20 and 40 s, and 60 s from then on; once pictures arrived"
     assert "RETRY_PAUSES_S = (5.0, 10.0, 20.0, 40.0, 60.0)" in program
@@ -1877,12 +2048,24 @@ def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it()
         "`--link-socket PATH` names another socket",
         "`GET /api/live.jpg?after=N`",
         "`POST /api/live/shown`",
-        "`This page was loaded again, here or in another tab: reload it for the "
-        "live picture.`",
         "`The robot is told: live view, N s old.`",
-        "It is no longer part of the rig's set-up: nothing on the rig starts it.",
+        # The rule and the token are the viewer's own, in its model.
+        "under the rules of **The view is live** and **The view token** below "
+        "(`viewer_live/view_model.py`)",
+        "- **The view is live** only while five things hold:",
+        "- **The view token** is a secret the viewer gives to one page:",
+        "The viewer sends VIEW_STATUS every 0.2 s, also while the view is not live.",
+        "These times are fixed values of `viewer_live/settings.py`",
     ):
         assert piece in view, piece
+    for value in (
+        "STATUS_PERIOD_S = 0.2",
+        "ACK_TIMEOUT_S = 1.0",
+        "STATE_MAX_AGE_S = 1.0",
+    ):
+        assert value in values, value
+    model = (package / "viewer_live" / "view_model.py").read_text(encoding="utf-8")
+    assert "CLOCK_STEP_QUIET_S = 3.0" in model and "FUTURE_TOLERANCE_S = 0.05" in model
     for piece in (
         "not reported to the robot: {why}; trying",
         "attached to the robot link service at ",
@@ -1890,22 +2073,80 @@ def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it()
     ):
         assert piece in link, piece
     for piece in (
-        "This page was loaded again, here or in another tab: reload it for the live "
-        "picture.",
         "The robot is told: live view, ${view.age_s.toFixed(2)} s old.",
+        # The note of a page whose viewer gives no answer, or no new picture.
+        "`${failed}; trying again every second${old ? `; this picture is ${age} old`",
+        "`the viewer answered ${answer.status}`",
+        "`no new picture from the viewer; this picture is ${age} old`",
     ):
         assert piece in block, piece
+    assert "This page was loaded again" not in block + view
     # Why the page does not tell the robot "live": the block's words, the
     # share of the picture that must be inside the window, and the watch-only
-    # page of another machine.
+    # page of another machine. The longer ones are the note under the button:
+    # a page that a newer load replaced, and one that was open across a
+    # restart of the viewer.
     for words in (
         "Map picture showing",
         "tab hidden",
         "scroll the live picture into view",
         "watch only: see below",
         "watch only: the live view is the page opened on the workstation",
+        "viewer not reached: see below",
+        "viewer restarted: see below",
+        "no new picture: see below",
+        "the viewer cannot be reached",
+        "the viewer was restarted: this page loads itself again",
+        "the viewer was restarted: this page loads itself again once Live picture is "
+        "pressed",
+        "watch only: the viewer was restarted; reload this page to make it the live "
+        "view",
+        "watch only: another page on the workstation is the live view; reload this "
+        "page to make it the live view",
+        "watch only: no page is the live view now; reload this page to make it the "
+        "live view",
     ):
-        assert f"'{words}'" in block and f"`{words}`" in view, words
+        assert f"'{words}'" in block and f"`{words}" in view, words
+    for piece in (
+        "- **What the page's note says** when its picture is not live or does not "
+        "count.",
+        "`the viewer cannot be reached; trying again every second; this picture is N "
+        "s old`",
+        "`the viewer answered 401; trying again every second`",
+        "`no new picture from the viewer; this picture is N s old`",
+        "a page whose note ends with `reload this page to make it the live view` is "
+        "reloaded",
+        "After a restart of the viewer nothing is done: the page loads itself again",
+        # The viewer instance, and what the viewer says of the page that counts.
+        "7. A token is valid in one **viewer instance**: one start of the viewer",
+        "`X-Viewer-Instance`",
+        "It does so once for each instance",
+        # A load that a page makes by itself takes the view token from no page.
+        "It does so only while `loaded` of that viewer is false, in a visible tab, "
+        "and not if it was replaced before",
+        "the page makes it only while the new viewer has given no page a view token",
+        "From then on it acknowledges nothing more and asks for pictures to watch "
+        "(`&watch=1`)",
+    ):
+        assert piece in view, piece
+    assert 'INSTANCE_HEADER = "X-Viewer-Instance"' in program
+    for key in ("instance", "counting_page", "loaded", "is_this_page", "asks"):
+        assert f'"{key}"' in program and f"`{key}`" in view and f"`{key}`" in told
+    assert "if (!REMOTE && vacantFor !== other) return;" in block
+    assert "vacantFor = other && counting.loaded === false ? other : '';" in block
+    assert "FETCH_WATCH_S = 2.0" in program and "in the last 2 s (`asks`)" in view
+    trouble = troubleshooting()
+    for piece in (
+        "| Viewer's page: the live picture stands still, dimmed, and the note under "
+        "the button says `the viewer cannot be reached; trying again every second; "
+        "this picture is N s old` |",
+        "| Viewer's page: `watch only: another page on the workstation is the live "
+        "view; reload this page to make it the live view`, or `watch only: no page "
+        "is the live view now; ...` |",
+        "Reload a page whose note ends with `reload this page to make it the live "
+        "view`.",
+    ):
+        assert piece in trouble, piece
     assert "const SHARE = 0.75;" in block
     for piece in (
         "with at least three quarters of it inside the browser window",
@@ -1930,6 +2171,92 @@ def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it()
     step = one_line(step)
     assert "**The page's picture is live.**" in step and "`no live picture`" in step
     assert "`./run_viewer.sh --no-live` starts the viewer without" in step
+    # The live arm: what moves live and at which rate, what stays from the
+    # recording, and the line under the 3D view, as the launcher's robot.py
+    # and the page's block have them.
+    robot = (package / "viewer_live" / "robot.py").read_text(encoding="utf-8")
+    start = (package / "viewer_live" / "__main__.py").read_text(encoding="utf-8")
+    assert "then no live picture, no live arm and no live view" in told
+    assert "no live arm either: the page shows" in script
+    assert "- **The live arm.**" in told
+    rig = yaml.safe_load((CONFIGS / "robot_app_rebot.yaml").read_text())
+    assert rig["state"]["publish_period_s"] == 0.05
+    assert "20 a second on the rig (`state.publish_period_s` 0.05)" in told
+    for piece in (
+        "**What moves live, and at which rate**: the camera picture, up to 30 a "
+        "second, and the arm with the gripper's collision volumes, 20 a second.",
+        "**What stays from the recording, at the page's own rate of twice a "
+        "second**: the obstacle map, the refusals",
+        "**The line under the 3D view says which arm is drawn.**",
+        "**The arm is drawn by the experiment's own code.**",
+        "(`RunIndex.geometry`)",
+        "`GET /api/live/robot.json?after=N`",
+        "none is queued",
+        "All five follow the viewer's own access rule",
+        "It needs no view token and a watch-only page of another machine reads it",
+    ):
+        assert piece in told, piece
+    assert 'ROBOT_PATH = "/api/live/robot.json"' in program
+    assert "const ROBOT = '/api/live/robot.json';" in block
+    assert "self._viewer.RunIndex(path)" in robot and ".geometry(q)" in robot
+    # The four things the line says, and the two words for no map.
+    for words, script_words in (
+        ("arm: live, N a second; map: M s old", "`arm: live, ${rate()}`"),
+        (
+            "arm: last read N s ago (<why>); map: M s old",
+            "`arm: last read ${seconds(age)} ago (",
+        ),
+        ("arm: recorded", "'arm: recorded'"),
+        ("arm: no live state: <why>", "`arm: no live state: ${why}`"),
+        ("map: no recording", "'no recording'"),
+        ("map: none recorded", "'none recorded'"),
+    ):
+        assert f"`{words}`" in told and script_words in block, words
+    assert "STALE_S = 1.0" in robot and "ROBOT_STATE is older than 1 s" in told
+    # Live only with fresh readings: the limit, why readings are old, the jaws.
+    for piece in (
+        "**The arm is called live only while its readings are fresh.**",
+        "plus the time since the ROBOT_STATE arrived is at most 1 s",
+        "`arm: last read N s ago (torque off: the joints are not read)`",
+        "`(joint feedback lost)`",
+        "`jaws: last read N s ago (M % open)`",
+        "; arm model of run <name>`",
+        "the ROBOT_STATE has N joints and the arm model of run <name> has M`",
+    ):
+        assert piece in told, piece
+    assert 'TORQUE_OFF_WHY = "torque off: the joints are not read"' in robot
+    assert 'FEEDBACK_LOST = "joint feedback lost"' in robot
+    assert "joints and the arm model of run " in robot
+    for piece in ("`jaws: last read ${seconds(jaws.age_s)} ago (${open})`",):
+        assert piece in block, piece
+    # The share of the page's time, and the figures of the rig's recorded run.
+    for piece in (
+        "**Drawing the arm takes at most about half of the page's time.**",
+        "`arm: live, 14 of 20 a second (a draw takes 25 ms); map: M s old`",
+        "- **What the live arm costs** grows with the map",
+        "whose map has 3,837 cells: 20 states a second drawn",
+        "Each answer goes out in one write",
+    ):
+        assert piece in told, piece
+    assert "of ${drawn + missed} a second" in block
+    assert "(a draw takes ${Math.round(cost)} ms)" in block
+    for key in ("stale_s", "pose_age_s", "last_read", "model_run"):
+        assert f'"{key}":' in robot and f"`{key}`" in told, key
+    for key in ("n", "available", "why", "age_s", "per_second", "joints", "target_q"):
+        assert f'"{key}":' in robot and f"`{key}`" in told, key
+    for key in ("gripper", "owner", "stop_level", "motion", "torque_on", "torque"):
+        assert f'"{key}":' in robot and f"`{key}`" in told, key
+    said = (
+        "`viewer: live arm: on the page and at /api/live/robot.json: each "
+        "ROBOT_STATE of that robot link service as it arrives; shown, not stored`"
+    )
+    assert said in told
+    assert 'f"{PROGRAM}: live arm: on the page and at {ROBOT_PATH}: each "' in start
+    assert "**The page's arm is live as well.**" in step
+    assert "`arm: live, N a second; map: M s old`" in step
+    assert "`./run_viewer.sh --no-live` starts the viewer without the live arm" in step
+    ran = readme_row("| The live arm of the experiment's viewer |")
+    assert "`test_viewer_live.py`" in ran and "Not run: with a person" in ran
     folders = one_line(readme_section("### `state_dir` and the run folders"))
     assert f"`{agent_config.RESOLVED_CONFIG}` (APAI's whole configuration" in folders
 
@@ -2599,36 +2926,147 @@ def test_the_readme_gives_the_debug_recordings_size_limit_and_how_to_raise_it(
     assert f"reached its size limit, {limit:g} GiB by default" in troubleshooting()
 
 
-def test_the_readme_quotes_the_view_without_the_camera_streamers_variable(monkeypatch):
-    view_main = pytest.importorskip(
-        "isaaccapture_examples.agentic_remote.view.__main__"
+def test_the_readme_names_the_planned_paths_among_the_run_folders_files():
+    from isaaccapture_examples.agentic_remote.agent import (
+        debug_recording,
+        launcher,
+        move_paths,
     )
-    shipped = CONFIGS / "view.yaml"
-    camera = yaml.safe_load(shipped.read_text(encoding="utf-8"))["camera"]
-    named = camera["bridge_python"]
-    variable = "AGENTIC_REMOTE_CAMERA_PR"
-    assert named.startswith(f"${{{variable}}}/")
-    rig = yaml.safe_load(RIG_AGENT_YAML.read_text(encoding="utf-8"))["camera"]
-    assert rig["bridge_python"] == named
-    # Without the variable the shipped file is refused, whatever the source.
-    monkeypatch.delenv(variable, raising=False)
-    with pytest.raises(view_main.ViewConfigError) as refused:
-        view_main.load_view_settings(shipped)
-    quoted = str(refused.value).replace(repr(named), "'...'")
-    view = one_line(readme_section("### The live view"))
-    assert f"`live view: the settings cannot be used: {quoted}`" in view
-    assert f"`{named}`" in view
-    # Any absolute folder serves a view that starts no camera frame bridge.
-    monkeypatch.setenv(variable, "/nowhere")
-    assert view_main.load_view_settings(shipped).bridge_python.startswith("/nowhere/")
-    recipe = readme_section("## Run demo 1 on one machine")
-    assert f'{variable}="$PWD" AGENTIC_REMOTE_VIEW_PYTHON=' in recipe
-    for row in ("| 4 | view |",):
-        rows = [
-            line
-            for line in README.read_text(encoding="utf-8").splitlines()
-            if line.startswith(row)
-        ]
-        assert len(rows) == 2
-        for line in rows:
-            assert f'`{variable}="$PWD" AGENTIC_REMOTE_VIEW_PYTHON="$PY" ' in line
+
+    name = launcher.MOVE_PATHS_FILE
+    assert name == "move-paths.jsonl" and name in launcher.MEASURE_FILES
+    files = (*launcher.MEASURE_FILES, launcher.SUMMARY_FILE)
+    # The three places that list the files of a run folder name all seven.
+    folders = one_line(readme_section("### `state_dir` and the run folders"))
+    measures = one_line(readme_section("### What a run records and measures"))
+    step = one_line(
+        readme_section("### 10. After a run: the viewer and the run's files")
+    )
+    for told in (folders, measures, step):
+        for file in files:
+            assert f"`{file}`" in told, file
+    assert len(files) == 7 and "the seven files of" in folders
+    assert "Seven files go into the run folder" in measures
+    assert "**Seven files are written in every run**" in step
+    assert "in the six `.jsonl` files" in measures
+    # The file's row, and each field of a line by the name the program writes.
+    row = readme_row(f"| `{name}` |")
+    assert "MOVE the agent sent, or could not send" in row
+    line = move_paths.path_row({"move_id": "m", "setpoints": []}, None)
+    end = move_paths.end_row({}, "", 0.0)
+    for key in (*line, "setpoints", *end):
+        assert f"`{key}`" in measures, key
+    assert f"`path_file`, in a line with a `move_id`: `{name}`" in measures
+    for key in ("scout_opening", "timeout_s", "sent_mono_s", "sent_utc", "skill"):
+        assert f"`{key}`" in readme_row("| `jaw-commands.jsonl` |"), key
+    # What a re-run can take from it, and what it cannot.
+    for said in (
+        "**The planned path of a move, in `move-paths.jsonl`.**",
+        "**how many of the setpoints it sent to the motors**",
+        "The setpoints `0` to `sent - 1` are what the robot app commanded",
+        "**The move is not delayed by it**",
+        "**What a run's record is good for, and what it is not.**",
+        "(`model-trace/`, with the full stack)",
+        "(`debug/`, with `--record-debug`)",
+        "What the arm did is in `robot-state.jsonl`",
+        "**It is not a closed-loop re-run.**",
+        "that needs a simulator or the rig",
+        "**Not run on the rig**",
+    ):
+        assert said in measures, said
+    assert move_paths.CHUNK == 16 and "16 setpoints at a time" in measures
+    # The event of the debug recording, by its name and by what it says it is.
+    event = move_paths.PATH_EVENT
+    assert f"`{event}` is one event per MOVE" in measures
+    assert "the **planned** path the agent sent in one MOVE" in measures
+    assert "PLANNED joint path of one MOVE" in move_paths.PATH_NOTE
+    assert "and no such event is made up" in measures
+    options = one_line(readme_section(LAUNCHER_OPTIONS))
+    assert f"`{event}` (the planned joint path of each MOVE)" in options
+    # The rule for the wait for a task, where the debug recording is told.
+    assert "**While the program waits for a task.**" in options
+    assert f"`{debug_recording.IDLE_OPTION} 0` stores none" in options
+    for key in ("idle_map_s", "idle_seconds", "idle_skipped", "debug_idle_map_s"):
+        assert f"`{key}`" in options, key
+    assert f"`{debug_recording.IDLE_OPTION} SECONDS` sets that time" in step
+
+
+def test_the_readme_tells_when_a_wait_is_thinned_and_how_a_path_line_is_read():
+    from isaaccapture_examples.agentic_remote.agent import debug_recording
+
+    readme = README.read_text(encoding="utf-8")
+    options = one_line(readme_section(LAUNCHER_OPTIONS))
+    measures = one_line(readme_section("### What a run records and measures"))
+    step = one_line(
+        readme_section("### 10. After a run: the viewer and the run's files")
+    )
+    # A wait for a task is thinned only while nothing happens at the arm, by
+    # the numbers the program has; a person's takeover is not.
+    assert "\n## Demo 2: a person takes over\n" in readme
+    travel, jaw = debug_recording.ARM_TRAVEL_RAD, debug_recording.ARM_JAW_TRAVEL
+    quiet, age = debug_recording.ARM_QUIET_S, debug_recording.ARM_STATE_AGE_S
+    for said in (
+        "and nothing happens at the arm: the newest ROBOT_STATE shows nobody as "
+        "the control owner, and the arm does not move",
+        f"a measured joint is more than {travel:g} rad from the pose the arm last "
+        "stood at",
+        f"the jaw opening is more than {jaw:g} of its range from where it stood",
+        "**As soon as a ROBOT_STATE shows an owner (the agent, a person, recovery) "
+        "or motion, the rate of `--debug-map-hz` is back**: the next map refresh "
+        "is stored at once",
+        f"without an owner and without motion for {quiet:g} s while the program "
+        "still waits",
+        "**a takeover in [Demo 2](#demo-2-a-person-takes-over) is recorded at the "
+        "normal rate**",
+        f"to {quiet:g} s after the hand-back the recording stores "
+        f"{debug_recording.DEBUG_MAP_HZ:g} map pictures a second",
+        f"**Without a ROBOT_STATE newer than {age:g} s**",
+        "takes the safe side for the record: the rate of `--debug-map-hz`",
+        "a person who moves an object by hand while nobody owns the arm and it "
+        "stands is recorded once per idle period",
+    ):
+        assert said in options, said
+    for word in debug_recording.ARM_STILL:
+        assert f"`{word}`" in options, word
+    # What the recording says of it, by the names of its first event and of
+    # its status block.
+    causes = (
+        debug_recording.ARM_OWNER,
+        debug_recording.ARM_MOTION,
+        debug_recording.ARM_NO_STATE,
+    )
+    assert causes == ("owner", "motion", "no_state")
+    for key in (
+        "arm_quiet_s",
+        "arm_state_age_s",
+        "arm_travel_rad",
+        "arm_jaw_travel",
+        "wait_seconds",
+        "idle_interrupted",
+        "idle_interrupted_seconds",
+        "idle_interrupted_by",
+        *causes,
+    ):
+        assert f"`{key}`" in options, key
+    assert "nobody owns or moves the arm" in step
+    assert "a person who takes the arm over in that wait is recorded at 2 a" in step
+    # A line of move-paths.jsonl is read by its count, not by its status.
+    for said in (
+        "**Go by `end.sent`, not by `end.status`**",
+        "ends `refused` with `sent` above 0",
+        "`sent` is `null` when the RESULT carried no count",
+        "refused at its admission, none was sent",
+        "at least `sent_seen` were",
+        # What the hand-over costs a move, as it was measured.
+        "some tens of millionths of a second per move",
+        "a median of 24 and at most 49 were measured",
+        # One failed write shuts the file, as it shuts the others.
+        "After one failed write `move-paths.jsonl` is shut for the rest of the "
+        "run, as the other measurement files are",
+        # The files exist for a real run of the rig.
+        "the six measurement files exist for a real run",
+        "The run folder `20261118T022210Z-3147525` of the second session",
+    ):
+        assert said in measures, said
+    assert "2 to 3 millionths" not in readme
+    assert "has been seen yet" not in measures
