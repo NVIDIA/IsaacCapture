@@ -11,8 +11,6 @@ import threading
 import time
 from types import SimpleNamespace
 
-import pytest
-
 from capture_server import protocol as p
 from egocap_web.config import CaptureStatusConfig
 from egocap_web.setup_checks import CameraFact, CaptureFacts, DeviceFact
@@ -467,14 +465,13 @@ async def test_an_evaluation_outlives_a_caller_that_went_away(tmp_path):
         await asyncio.sleep(0.01)
     # A page that closes its request cancels the caller, not the evaluation it asked for.
     gone.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await gone
+    assert (await asyncio.gather(gone, return_exceptions=True))[0].__class__ is asyncio.CancelledError
     # A caller that arrives while the disk still hangs waits its turn instead of taking a second thread.
     reads = len(world.free_reads_on)
     waiting = asyncio.create_task(setup.refresh())
     await asyncio.sleep(0.05)
     assert len(world.free_reads_on) == reads and not waiting.done()
     world.disk_gate.set()
-    await waiting
-    assert len(world.free_reads_on) == reads
+    answered = await waiting
+    assert answered.items and len(world.free_reads_on) == reads
     assert setup.block_reason() == "Free disk space: 1.0 GB free; 10 GB needed"
