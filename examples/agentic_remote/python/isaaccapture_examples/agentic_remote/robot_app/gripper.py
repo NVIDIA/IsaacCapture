@@ -251,8 +251,9 @@ class JawState:
 
         UNKNOWN when the jaws are not referenced or a read fails, EMPTY only
         when every "jaws proven empty" condition of the design's section 11
-        holds, LOADED otherwise. Takes config.reads readings read_gap_s apart.
-        While the operator's word stands the answer is EMPTY.
+        holds, LOADED otherwise. Jaws told to close that read at or below
+        closed_frac count as at their target. Takes config.reads readings
+        read_gap_s apart. While the operator's word stands the answer is EMPTY.
         """
         referenced = bool(arm.gripper_referenced())
         readings: list[float] = []
@@ -370,6 +371,11 @@ class JawState:
             )
         if target is None:
             return JawLoad.LOADED, "no jaw target was sent yet"
+        closed = cfg.closed_frac + _EPS
+        if target <= closed and high <= closed:
+            # Told to close and at or below the closed line: closed on nothing,
+            # however far short of the target the driver's close ended.
+            return JawLoad.EMPTY, ""
         worst = max(low, high, key=lambda reading: abs(reading - target))
         tol = cfg.target_tol
         if target >= 1.0 - _EPS:
@@ -380,7 +386,7 @@ class JawState:
                 JawLoad.LOADED,
                 f"the jaws are at {worst:.3f}, not at their target {target:.3f}",
             )
-        if target >= 1.0 - _EPS or high <= cfg.closed_frac + _EPS:
+        if target >= 1.0 - _EPS or high <= closed:
             return JawLoad.EMPTY, ""
         return JawLoad.LOADED, f"the jaws are part open at {high:.3f}"
 
