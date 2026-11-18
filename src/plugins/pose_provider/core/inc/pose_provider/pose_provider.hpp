@@ -5,6 +5,7 @@
 
 #include <pose_camera_input/camera_input.hpp>
 #include <pose_engine_api/pose_engine.hpp>
+#include <pusherio/plugin_session.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -20,12 +21,20 @@ namespace pose_provider
 /** @brief Largest accepted ProviderConfig timeout. */
 inline constexpr std::chrono::milliseconds kMaxProviderTimeout{ 3'600'000 };
 
+/** @brief Longest accepted ProviderConfig::output_collection, in bytes: OpenXR's limit for a collection ID. */
+inline constexpr std::size_t kMaxOutputCollectionBytes = 255;
+
 struct ProviderConfig
 {
     //! From construction until the camera input is ready and the run is started; initialize() is not interrupted.
     std::chrono::milliseconds startup_timeout{ 30'000 };
     //! From entering Draining until the camera input has ended and the engine has drained.
     std::chrono::milliseconds drain_timeout{ 5'000 };
+    //! The se3_tracker collection that receives the poses, new for each run. Empty: the run publishes nothing and opens
+    //! no plugin session.
+    std::string output_collection;
+    //! Set by the plugin launcher. With an output collection, the plugin's device status is published under it.
+    std::string plugin_root_id;
 };
 
 enum class ProviderState
@@ -49,6 +58,8 @@ enum class ProviderComponent
     InputPreparation, //!< A frame does not match the setup, a frame or loss report repeats or goes back in capture
                       //!< number, or the left eye's times are missing, negative on the device clock, or do not
                       //!< increase.
+    Output, //!< The plugin session, the device status or the output collection did not open, or an estimate was not
+            //!< published.
 };
 
 struct ProviderStatus
@@ -63,27 +74,36 @@ struct ProviderStatus
     std::chrono::milliseconds startup_timeout{ 0 }; //!< Applied limits.
     std::chrono::milliseconds drain_timeout{ 0 };
     std::size_t prepared_image_groups = 0; //!< Image groups whose prepared storage the engine can hold at once.
+    std::optional<TrackingState> latest_tracking_state; //!< Of the latest published estimate.
+    std::optional<int64_t> last_valid_measurement_time_ns; //!< Common-clock anchor time of the latest valid one.
+    std::optional<int64_t> last_publication_time_ns; //!< Common-clock time the latest estimate was published.
 };
 
 class PoseInputAdapter;
+class OutputSession;
+class PoseOutput;
 
 /**
  * @brief Runs one engine adapter through one run on one camera input.
  *
  * Not thread-safe: one control thread makes every call, so it is the engine's only producer, consumer and
  * lifecycle caller, and the camera input's only user. Every path to Finished, including destruction, calls the
- * engine's stop() exactly once and then destroys the camera input.
+ * engine's stop() exactly once, then destroys the camera input, then closes the output.
  */
 class PoseProvider
 {
 public:
     /**
-     * @brief Without @p camera_input no source description arrives, and the startup timeout fails the run.
-     * @throws std::invalid_argument for a null engine or a timeout outside (0, kMaxProviderTimeout].
+     * @brief Without @p camera_input no source description arrives, and the startup timeout fails the run. With an
+     * output collection, the first update() opens the plugin session through @p session_factory, which tests pass, or
+     * else an OpenXR session that does not wait for a headset system.
+     * @throws std::invalid_argument for a null engine, a timeout outside (0, kMaxProviderTimeout] or an output
+     * collection longer than kMaxOutputCollectionBytes.
      */
     PoseProvider(ProviderConfig config,
                  std::unique_ptr<IPoseEngine> engine,
-                 std::unique_ptr<ICameraInput> camera_input = nullptr);
+                 std::unique_ptr<ICameraInput> camera_input = nullptr,
+                 core::PluginSessionFactory session_factory = nullptr);
 
     /** @brief Aborts an unfinished run. */
     ~PoseProvider();
@@ -150,11 +170,14 @@ private:
     void finish_run(); // The only way into Finished.
 
     ProviderConfig config_;
+    core::PluginSessionFactory session_factory_;
     std::unique_ptr<ICameraInput> camera_; // Destroyed by finish_run().
     std::optional<SourceDescription> source_; // As delivered, so its lenses are not the applied ones.
     std::optional<ResolvedPoseSetup> setup_;
     std::unique_ptr<PoseInputAdapter> input_; // Built after initialize().
     std::unique_ptr<IPoseEngine> engine_; // After any collaborator whose storage the engine may hold.
+    std::unique_ptr<OutputSession> session_; // Closed last.
+    std::unique_ptr<PoseOutput> output_; // Opened after initialize(); closed after the camera input's release.
     std::vector<uint64_t> accepted_groups_; // Accepted group IDs, oldest first, that may still get an estimate.
     Clock::time_point startup_deadline_;
     Clock::time_point drain_deadline_;

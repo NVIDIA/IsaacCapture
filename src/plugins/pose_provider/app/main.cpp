@@ -46,12 +46,6 @@ void on_signal(int)
     errno = saved_errno;
 }
 
-struct Options
-{
-    ProviderConfig config;
-    std::string plugin_root_id;
-};
-
 enum class ParseResult
 {
     Ok,
@@ -73,8 +67,12 @@ std::string seconds_text(std::chrono::milliseconds duration)
 std::string usage()
 {
     const ProviderConfig defaults{};
-    return "Usage: pose_provider_plugin [--startup-timeout=<seconds>] [--drain-timeout=<seconds>] "
-           "[--plugin-root-id=<id>] [-h|--help]\n"
+    return "Usage: pose_provider_plugin --output-collection=<id> [--startup-timeout=<seconds>] "
+           "[--drain-timeout=<seconds>] [--plugin-root-id=<id>] [-h|--help]\n"
+           "  --output-collection=<id>     se3_tracker collection that receives the poses, new for each run; required, "
+           "1 to " +
+           std::to_string(kMaxOutputCollectionBytes) +
+           " bytes\n"
            "  --startup-timeout=<seconds>  Time allowed from launch for the camera input to become ready and the run "
            "to start (default " +
            seconds_text(defaults.startup_timeout) +
@@ -83,7 +81,7 @@ std::string usage()
            "the engine has drained (default " +
            seconds_text(defaults.drain_timeout) +
            ")\n"
-           "  --plugin-root-id=<id>        Set by the plugin launcher\n"
+           "  --plugin-root-id=<id>        Set by the plugin launcher; the plugin's device status is published under it\n"
            "  -h, --help                   Print this help\n"
            "Timeouts are between 0.001 and " +
            seconds_text(kMaxProviderTimeout) +
@@ -112,7 +110,7 @@ bool parse_seconds(std::string_view text, std::chrono::milliseconds& out)
     return true;
 }
 
-ParseResult parse_options(int argc, char** argv, Options& out, std::string& error)
+ParseResult parse_options(int argc, char** argv, ProviderConfig& out, std::string& error)
 {
     for (int i = 1; i < argc; ++i)
     {
@@ -126,12 +124,13 @@ ParseResult parse_options(int argc, char** argv, Options& out, std::string& erro
     constexpr std::string_view kStartup = "--startup-timeout=";
     constexpr std::string_view kDrain = "--drain-timeout=";
     constexpr std::string_view kRootId = "--plugin-root-id=";
+    constexpr std::string_view kOutput = "--output-collection=";
     for (int i = 1; i < argc; ++i)
     {
         const std::string_view arg = argv[i];
         if (arg.starts_with(kStartup))
         {
-            if (!parse_seconds(arg.substr(kStartup.size()), out.config.startup_timeout))
+            if (!parse_seconds(arg.substr(kStartup.size()), out.startup_timeout))
             {
                 error = "invalid --startup-timeout '" + std::string(arg.substr(kStartup.size())) + "'";
                 return ParseResult::Error;
@@ -139,7 +138,7 @@ ParseResult parse_options(int argc, char** argv, Options& out, std::string& erro
         }
         else if (arg.starts_with(kDrain))
         {
-            if (!parse_seconds(arg.substr(kDrain.size()), out.config.drain_timeout))
+            if (!parse_seconds(arg.substr(kDrain.size()), out.drain_timeout))
             {
                 error = "invalid --drain-timeout '" + std::string(arg.substr(kDrain.size())) + "'";
                 return ParseResult::Error;
@@ -149,9 +148,13 @@ ParseResult parse_options(int argc, char** argv, Options& out, std::string& erro
         {
             out.plugin_root_id = std::string(arg.substr(kRootId.size()));
         }
+        else if (arg.starts_with(kOutput))
+        {
+            out.output_collection = std::string(arg.substr(kOutput.size()));
+        }
         else
         {
-            for (const std::string_view option : { kStartup, kDrain, kRootId })
+            for (const std::string_view option : { kStartup, kDrain, kRootId, kOutput })
             {
                 if (arg == option.substr(0, option.size() - 1))
                 {
@@ -163,6 +166,17 @@ ParseResult parse_options(int argc, char** argv, Options& out, std::string& erro
             return ParseResult::Error;
         }
     }
+    if (out.output_collection.empty())
+    {
+        error = "--output-collection=<id> is required";
+        return ParseResult::Error;
+    }
+    if (out.output_collection.size() > kMaxOutputCollectionBytes)
+    {
+        error = "--output-collection has " + std::to_string(out.output_collection.size()) + " bytes, more than " +
+                std::to_string(kMaxOutputCollectionBytes);
+        return ParseResult::Error;
+    }
     return ParseResult::Ok;
 }
 
@@ -171,9 +185,9 @@ ParseResult parse_options(int argc, char** argv, Options& out, std::string& erro
 int main(int argc, char** argv)
 try
 {
-    Options options;
+    ProviderConfig config;
     std::string error;
-    switch (parse_options(argc, argv, options, error))
+    switch (parse_options(argc, argv, config, error))
     {
     case ParseResult::Help:
         std::cout << usage();
@@ -201,11 +215,12 @@ try
     isaaccapture::Logger::get(kLoggerName)
         ->info(
             "Pose Provider plugin: adapter {} {}, engine library {} {}; startup timeout {} ms, drain timeout {} "
-            "ms; plugin root id '{}'",
+            "ms; output collection '{}'; plugin root id '{}'",
             identity.adapter, identity.adapter_version, identity.engine_library, identity.engine_library_version,
-            options.config.startup_timeout.count(), options.config.drain_timeout.count(), options.plugin_root_id);
+            config.startup_timeout.count(), config.drain_timeout.count(), config.output_collection,
+            config.plugin_root_id);
 
-    PoseProvider provider(options.config, std::move(engine));
+    PoseProvider provider(config, std::move(engine));
     // Stands in for the application's start request until the plugin has a control channel.
     provider.request_start();
     bool finish_passed = false;
