@@ -545,9 +545,13 @@ def test_apais_rest_tool_folds_the_arm_and_the_motors_go_off_at_measured_rest(
     # At the motors: rest, then the driver's close, then the torque cut.
     check_rest_then_close_then_cut(thor, "close_gripper_torque")
     assert thor.said("release")
-    # ROBOT_STATE says rest with the motors off; nothing is latched.
-    state = agent.state(unpowered, "rest with the motors off")
-    assert state.owner == "nobody" and state.session_id == session
+    # ROBOT_STATE says rest with the motors off; nothing is latched. The state
+    # that shows the arm given back may come after the first one at rest.
+    state = agent.state(
+        lambda state: unpowered(state) and state.owner == "nobody",
+        "rest with the motors off and nobody as owner",
+    )
+    assert state.session_id == session
     assert [sample.value for sample in state.joints] == pytest.approx(REST, abs=0.05)
     assert agent.adapter.connected is False
     assert agent.gate.requests == [
