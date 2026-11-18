@@ -256,6 +256,14 @@ public:
         m_cv.notify_all();
     }
 
+    //! Hands `frame` to the session as if the bridge had sent it.
+    void deliver(std::vector<uint8_t> frame)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_inbox.push_back(std::move(frame));
+        m_cv.notify_all();
+    }
+
     //! True while a send() is waiting for hold(false).
     bool blocked() const
     {
@@ -512,22 +520,54 @@ TEST_CASE("RemotePluginSession answers every PING with a PONG", "[remote_device_
     RemotePluginSession session(connect_to(bridge.port()), "test_app", { .hand_tracking_push = true });
     REQUIRE(bridge.wait_for(protocol::FrameType::Hello).has_value());
 
-    for (int64_t t1 : { 111LL, 222LL, 333LL })
+    for (int i = 0; i < 3; ++i)
     {
         const int64_t before = core::os_monotonic_now_ns();
-        REQUIRE(bridge.send(protocol::FrameType::Ping, protocol::kSessionChannelId, protocol::encode_ping(t1)));
+        REQUIRE(bridge.send(protocol::FrameType::Ping, protocol::kSessionChannelId, {}));
         const auto frame = bridge.wait_for(protocol::FrameType::Pong);
         const int64_t after = core::os_monotonic_now_ns();
         REQUIRE(frame.has_value());
         REQUIRE(frame->header.channel_id == protocol::kSessionChannelId);
         const protocol::Pong pong = protocol::decode_pong(frame->payload);
-        REQUIRE(pong.ping_sent_ns == t1);
-        // Same host, same clock: before <= ping_received <= pong_sent == header t_send <= after.
-        REQUIRE(before <= pong.ping_received_ns);
-        REQUIRE(pong.ping_received_ns <= pong.pong_sent_ns);
-        REQUIRE(pong.pong_sent_ns == frame->header.t_send_monotonic_ns);
-        REQUIRE(pong.pong_sent_ns <= after);
+        // Same host, same clock: before <= ping_sent (the PING header t_send) <= ping_received <= the PONG header
+        // t_send <= after.
+        REQUIRE(before <= pong.ping_sent_ns);
+        REQUIRE(pong.ping_sent_ns <= pong.ping_received_ns);
+        REQUIRE(pong.ping_received_ns <= frame->header.t_send_monotonic_ns);
+        REQUIRE(frame->header.t_send_monotonic_ns <= after);
     }
+}
+
+TEST_CASE("A PONG that waited in the send queue reports when it was sent, not when it was queued",
+          "[remote_device_bridge][unit]")
+{
+    auto transport = std::make_unique<BlockingTransport>();
+    BlockingTransport& link = *transport;
+    RemotePluginSession session(std::move(transport), "test_app", { .hand_tracking_push = true });
+    auto channel = session.create_hand_tracking_push_channel(XR_HAND_LEFT_EXT);
+    const auto joints = make_joints(0.1f);
+
+    // Stall the link: the sender thread blocks inside send() on this sample.
+    link.hold(true);
+    channel->push(joints.data(), 1);
+    REQUIRE(wait_until([&] { return link.blocked(); }));
+
+    std::vector<uint8_t> ping = protocol::encode_frame(protocol::FrameType::Ping, protocol::kSessionChannelId, {});
+    const int64_t ping_sent_ns = core::os_monotonic_now_ns();
+    protocol::stamp_header(ping, 1, ping_sent_ns);
+    link.deliver(std::move(ping));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the PONG is queued behind the stalled send
+
+    const int64_t released_ns = core::os_monotonic_now_ns();
+    link.hold(false);
+    const auto frame = link.wait_for(protocol::FrameType::Pong);
+    REQUIRE(frame.has_value());
+    const protocol::Pong pong = protocol::decode_pong(frame->payload);
+    REQUIRE(pong.ping_sent_ns == ping_sent_ns);
+    REQUIRE(pong.ping_received_ns >= ping_sent_ns);
+    REQUIRE(pong.ping_received_ns < released_ns);
+    // The send time is when the PONG left after the stall, so t3 - t2 covers the time it waited in the queue.
+    REQUIRE(frame->header.t_send_monotonic_ns >= released_ns);
 }
 
 TEST_CASE("RemotePluginSession keeps the session when the bridge refuses one channel", "[remote_device_bridge][unit]")

@@ -298,17 +298,12 @@ private:
         m_queue_cv.notify_one();
     }
 
-    //! Stamps seq/t_send (and a PONG's pong_sent_ns) and sends one frame. Constructor thread during the handshake,
-    //! sender thread after.
+    //! Stamps seq/t_send and sends one frame; t_send is taken here, as the frame is written, so a PONG that waited
+    //! in the queue still reports when it left. Constructor thread during the handshake, sender thread after.
     bool send_now(FrameBytes& frame)
     {
-        const int64_t t_send_ns = core::os_monotonic_now_ns();
-        protocol::stamp_header(frame, m_next_seq++, t_send_ns);
+        protocol::stamp_header(frame, m_next_seq++, core::os_monotonic_now_ns());
         const protocol::FrameType type = protocol::decode_header(frame).type;
-        if (type == protocol::FrameType::Pong)
-        {
-            protocol::set_pong_sent_time(frame, t_send_ns);
-        }
         if (!m_transport->send(frame.data(), frame.size()))
         {
             return false;
@@ -488,10 +483,10 @@ private:
             }
             case protocol::FrameType::Ping:
             {
-                // Queued as control (never dropped); send_now() sets pong_sent_ns when the sender thread sends it.
-                const int64_t t1_ns = protocol::decode_ping(frame.payload);
+                // The PING's send time is its header t_send. Queued as control (never dropped); the PONG's own send
+                // time is stamped by send_now() when the sender thread writes it.
                 enqueue_control(protocol::FrameType::Pong, protocol::kSessionChannelId,
-                                protocol::encode_pong(protocol::Pong{ t1_ns, t_recv_ns, 0 }));
+                                protocol::encode_pong(protocol::Pong{ frame.header.t_send_monotonic_ns, t_recv_ns }));
                 break;
             }
             case protocol::FrameType::Error:
