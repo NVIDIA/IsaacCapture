@@ -3,6 +3,8 @@
 
 <a id="cts-overview"></a>
 
+<a id="device-conformance-testing"></a>
+
 # Device Conformance Testing
 
 You have integrated a device that publishes hand or full-body poses into Isaac Capture. The
@@ -10,6 +12,8 @@ Conformance Test Suite (CTS) produces the evidence that the integration works: y
 scripted take, a checker reads only that recording and returns a verdict, and you send the take
 through the submission form for your pull request. This page explains the process, the two suites
 and what a verdict means.
+
+<a id="how-it-works"></a>
 
 ## How it works
 
@@ -58,6 +62,8 @@ Submit Your Results
 
 <a id="cts-overview-suites"></a>
 
+<a id="pick-your-suite"></a>
+
 ## Pick your suite
 
 Run the suite for the data your device produces. A device that produces both runs both.
@@ -84,6 +90,8 @@ Full-Body Suite
 
 [Full-Body Suite](full_body.md)
 
+<a id="what-the-checker-looks-at"></a>
+
 ## What the checker looks at
 
 | Area                          | What it asks                                               | Examples                                                                                                                        |
@@ -99,10 +107,12 @@ the suite pages say which.
 
 <a id="cts-overview-verdicts"></a>
 
+<a id="verdicts"></a>
+
 ## Verdicts
 
 ![Verdict ladder: a device failure gives fail, else a performance failure gives retake, else
-an unanswered required check or no answer at all gives insufficient_data, else pass.](_static/cts/verdicts.svg)
+an unanswered required check or no answer at all gives insufficient_data, else pass.](../_images/verdicts.svg)
 
 | Verdict             |   Exit status | Meaning                                                                                                          | What to do                                                                           |
 |---------------------|---------------|------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
@@ -123,6 +133,8 @@ report.
 - `meas`: measured and reported, not judged. Read the value; it is not an approval.
 - `n/a`: not answered, because data was missing or a check it depends on failed. Never a pass.
 - `note`: an advisory check failed. Reported; it does not move the verdict.
+
+<a id="what-you-need"></a>
 
 ## What you need
 

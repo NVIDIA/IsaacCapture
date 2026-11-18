@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="generated-tracker-code"></a>
+
 # Generated Tracker Code
 
 Trackers whose live impl only moves a FlatBuffer between a plugin and the host via
@@ -11,6 +13,8 @@ Adding one is a `.fbs` schema plus roughly ten lines of TOML; see
 
 This page records what is generated today, what is deliberately still hand-written, and what
 would have to change to generate the rest.
+
+<a id="how-it-works"></a>
 
 ## How it works
 
@@ -41,6 +45,8 @@ The generator rewrites a file only when its content changed. Configure also pass
 `--prune-stale` so that after renaming or removing a tracker, orphan headers cannot remain on
 the generated include path and keep satisfying a stale `#include`.
 
+<a id="what-each-entry-produces"></a>
+
 ## What each entry produces
 
 Per manifest entry, in `${CMAKE_BINARY_DIR}/generated/trackers/`:
@@ -70,6 +76,8 @@ Python edit at all.
 the built module.
 
 <a id="tracker-metadata"></a>
+
+<a id="trackers-with-metadata"></a>
 
 ## Trackers with metadata
 
@@ -104,6 +112,8 @@ Python. Only `direction = "pull"` supports `metadata`.
 - **Replay.** Reads the recorded metadata when the session opens, and publishes data only from a
   recording that holds it.
 
+<a id="generated-today"></a>
+
 ## Generated today
 
 | Manifest entry              | Class                           | Notes                                                                                                   |
@@ -121,6 +131,8 @@ Python. Only `direction = "pull"` supports `metadata`.
 | `spacemouse`                | `SpaceMouseTracker`             | Overrides `class` and `traits`; the defaults would spell `Spacemouse`                                   |
 | `gamepad`                   | `GamepadTracker`                | Gamepad state pushed by the gamepad plugin (SDL3); only `python_accessor` is overridden                 |
 
+<a id="still-hand-written"></a>
+
 ## Still hand-written
 
 | Tracker                                           | Why it is not generated                                                                                                                                               |
@@ -135,6 +147,8 @@ Python. Only `direction = "pull"` supports `metadata`.
 
 A quick way to tell the two groups apart: only schema-based impls mention `SchemaTracker` or
 `SchemaPusher`. Of the hand-written live impls that use those helpers, each is listed above.
+
+<a id="future-work"></a>
 
 ## Future work
 

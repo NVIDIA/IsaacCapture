@@ -3,6 +3,8 @@
 
 <a id="cts-submit"></a>
 
+<a id="submit-your-results"></a>
+
 # Submit Your Results
 
 This page shows how to package a checked take and send it through the submission form for your
@@ -17,10 +19,14 @@ integration pull request. You can submit any verdict, as long as its report goes
 > * [5. Describe the take in your pull request](#describe-the-take-in-your-pull-request)
 > * [6. What happens next](#what-happens-next)
 
+<a id="open-your-integration-pull-request"></a>
+
 ## 1. Open your integration pull request
 
 Open the pull request that adds your device ([Add a New Device](../device/add_device.md),
 [Contributing](../development/contributing.md)). Each form submission refers to that pull request.
+
+<a id="record-and-check-one-take-per-suite"></a>
 
 ## 2. Record and check one take per suite
 
@@ -29,6 +35,8 @@ both. Takes are never overwritten, so submit the one you want reviewed. Record f
 have pushed to the pull request, with nothing under `src/python/isaaccapture/cts/` changed. The
 take records the commit it was recorded at, and the report whether the checker’s code was
 modified; we re-run the checker at that commit.
+
+<a id="package-the-take"></a>
 
 ## 3. Package the take
 
@@ -62,12 +70,16 @@ glovex_2026-03-04_101530-hand.pass.zip
     └── glovex_2026-03-04_101530-hand.log           recorder log
 ```
 
+<a id="submit-the-form"></a>
+
 ## 4. Submit the form
 
 Fill in the submission form with the link to your pull request and upload the archive from step 3.
 Submit the form once for each archive. The form asks you to sign in with a Google account.
 
 [Open the submission form](https://forms.gle/hLqAhNkae4bhAUX79)
+
+<a id="describe-the-take-in-your-pull-request"></a>
 
 ## 5. Describe the take in your pull request
 
@@ -81,6 +93,8 @@ Verdict:  pass
 Archive:  glovex_2026-03-04_101530-hand.pass.zip, sha256 <the 12 characters the viewer shows>
 Notes:    <for fail, retake or insufficient_data: which checks failed, and why>
 ```
+
+<a id="what-happens-next"></a>
 
 ## 6. What happens next
 

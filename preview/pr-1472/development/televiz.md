@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="televiz"></a>
+
 # Televiz
 
 Televiz (`isaaccapture.viz`) is the shared visualization module for Isaac Capture. It composites what the
@@ -14,7 +16,7 @@ into a final image. Camera capture, decode, and network transport live in the ap
 
 The compositor is implemented in C++ (`namespace viz`, built on Vulkan + OpenXR + CUDA with no
 external rendering-framework dependency) and exposed through a pybind11 binding. This page uses the
-Python API, which mirrors the C++ names one-to-one — see [C++ API]().
+Python API, which mirrors the C++ names one-to-one — see [C++ API](#c-api).
 
 > ##### On this page
 > 
@@ -42,6 +44,8 @@ Python API, which mirrors the C++ names one-to-one — see [C++ API]().
 > * [C++ API](#c-api)
 > * [More information](#more-information)
 
+<a id="installation"></a>
+
 ## Installation
 
 Televiz ships inside the `isaaccapture` wheel — install it from PyPI:
@@ -62,6 +66,8 @@ developing Isaac Capture itself — that build enables Televiz automatically whe
 CUDA Toolkit are detected. `glslangValidator` is additionally required to compile the shaders:
 if it is missing, configuration fails rather than quietly dropping the module — install it, or
 pass `-DBUILD_VIZ=OFF`.
+
+<a id="overview"></a>
 
 ## Overview
 
@@ -85,13 +91,15 @@ Four layer types are available:
   `(color, depth)` buffers. Use it to present a rendered 3D scene from the current head pose.
 
 A session holds **either** one `ProjectionLayer` **or** any number of texture layers
-(`QuadLayer` / `CylinderLayer` / `EquirectLayer`), never both — see [Layers]().
+(`QuadLayer` / `CylinderLayer` / `EquirectLayer`), never both — see [Layers](#layers).
 
 All symbols are imported from the top-level module:
 
 ```default
 import isaaccapture.viz as televiz
 ```
+
+<a id="display-modes"></a>
 
 ## Display modes
 
@@ -102,6 +110,8 @@ A session runs in exactly one display mode, set on the config:
 | `kXr`           | OpenXR + Vulkan. Per-eye swapchains, stereo rendering, depth composition layer. Requires a<br/>running OpenXR runtime (e.g. CloudXR).    |
 | `kWindow`       | GLFW desktop window. Layers are aspect-fit tiled; stereo layers show the left eye.                                                       |
 | `kOffscreen`    | No display. Composite to an internal target and pull pixels back with<br/>`readback_to_host()`. Useful for tests and headless rendering. |
+
+<a id="quick-start"></a>
 
 ## Quick start
 
@@ -134,7 +144,7 @@ session.destroy()
 ```
 
 For a window or headset, set `mode` to `DisplayMode.kWindow` or `DisplayMode.kXr` instead. The
-layer setup is identical; you just drive a frame loop (see [Frame loop]()) rather than the one-shot
+layer setup is identical; you just drive a frame loop (see [Frame loop](#frame-loop)) rather than the one-shot
 `readback_to_host()`, which is offscreen-only.
 
 <a id="orin-openxr-composition"></a>
@@ -151,26 +161,30 @@ layer_cfg.openxr_composition = False
 Cylinder and equirect layers cannot opt out. In [Camera Streaming](../references/camera_streaming.md) the
 same switch is YAML `compositor: televiz` (quads only).
 
+<a id="session-configuration"></a>
+
 ## Session configuration
 
 `VizSessionConfig` fields:
 
-| Field                            | Default                  | Description                                                                                                                                                                                                                                  |
-|----------------------------------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `mode`                           | `DisplayMode.kOffscreen` | `DisplayMode.kXr` / `kWindow` / `kOffscreen`. Set it explicitly; the default is<br/>offscreen.                                                                                                                                               |
-| `window_width` / `window_height` | `1024`                   | Render size for window and offscreen modes. Ignored in XR (the runtime dictates per-eye<br/>resolution; query it with `get_recommended_resolution()`).                                                                                       |
-| `app_name`                       | `"televiz"`              | OpenXR application name.                                                                                                                                                                                                                     |
-| `required_extensions`            | `[]`                     | Extra OpenXR instance extensions to enable when Televiz hosts the session and downstream<br/>components (e.g. `TeleopSession` trackers) need them. Televiz already enables its own<br/>rendering extensions. See [Sharing the XR session](). |
-| `xr_near_z` / `xr_far_z`         | `0.05` / `100.0`         | Near / far planes for the XR projection.                                                                                                                                                                                                     |
-| `xr_system_wait_seconds`         | `0`                      | How long to wait for the OpenXR system (headset) to become available at create time.<br/>Zero fails fast when no headset is present.                                                                                                         |
-| `clear_color`                    | `(0, 0, 0, 0)`           | Background color as an `(r, g, b, a)` sequence in `[0, 1]`. Transparent by default.                                                                                                                                                          |
-| `gpu_timing`                     | `False`                  | Enable GPU timestamp queries, surfaced via `get_gpu_timing()`.                                                                                                                                                                               |
+| Field                            | Default                  | Description                                                                                                                                                                                                                                      |
+|----------------------------------|--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `mode`                           | `DisplayMode.kOffscreen` | `DisplayMode.kXr` / `kWindow` / `kOffscreen`. Set it explicitly; the default is<br/>offscreen.                                                                                                                                                   |
+| `window_width` / `window_height` | `1024`                   | Render size for window and offscreen modes. Ignored in XR (the runtime dictates per-eye<br/>resolution; query it with `get_recommended_resolution()`).                                                                                           |
+| `app_name`                       | `"televiz"`              | OpenXR application name.                                                                                                                                                                                                                         |
+| `required_extensions`            | `[]`                     | Extra OpenXR instance extensions to enable when Televiz hosts the session and downstream<br/>components (e.g. `TeleopSession` trackers) need them. Televiz already enables its own<br/>rendering extensions. See [Sharing the XR session](#id1). |
+| `xr_near_z` / `xr_far_z`         | `0.05` / `100.0`         | Near / far planes for the XR projection.                                                                                                                                                                                                         |
+| `xr_system_wait_seconds`         | `0`                      | How long to wait for the OpenXR system (headset) to become available at create time.<br/>Zero fails fast when no headset is present.                                                                                                             |
+| `clear_color`                    | `(0, 0, 0, 0)`           | Background color as an `(r, g, b, a)` sequence in `[0, 1]`. Transparent by default.                                                                                                                                                              |
+| `gpu_timing`                     | `False`                  | Enable GPU timestamp queries, surfaced via `get_gpu_timing()`.                                                                                                                                                                                   |
 
 Construct the session with the factory; never call the class directly:
 
 ```python
 session = televiz.VizSession.create(cfg)
 ```
+
+<a id="layers"></a>
 
 ## Layers
 
@@ -182,13 +196,15 @@ Layers come in two families, and a session holds one family or the other:
   plane, a curved arc, or a sphere. The three sections at the end of this chapter cover just that
   difference; everything before them applies to all of them.
 * **Projection layer** — one `ProjectionLayer`, a full-view RGBD layer for an in-loop renderer.
-  A session holds at most one, and never alongside a texture layer. See [ProjectionLayer]().
+  A session holds at most one, and never alongside a texture layer. See [ProjectionLayer](#projectionlayer).
 
 Layers render in **insertion order** — the first added renders first (underneath). A layer is owned
 by the session; `add_quad_layer` returns a **non-owning** handle, so don’t keep it past the
 session’s lifetime.
 
 <a id="openxr-composition-layers"></a>
+
+<a id="composition-model"></a>
 
 ### Composition model
 
@@ -222,6 +238,8 @@ setting to use on Jetson Orin in XR (see [Jetson Orin, XR](#orin-openxr-composit
 equirect layers have no such switch: they exist only as native runtime layers, and therefore only in
 XR. Window and offscreen modes always use the built-in compositor.
 
+<a id="shared-configuration"></a>
+
 ### Shared configuration
 
 `QuadLayerConfig`, `CylinderLayerConfig`, and `EquirectLayerConfig` all carry these fields:
@@ -238,6 +256,8 @@ XR. Window and offscreen modes always use the built-in compositor.
 
 Stereo works the same way on every surface, following the VR-video convention: per-eye textures on
 the *same* surface, with `stereo_baseline_mm` adding an optional per-eye pose shift on top.
+
+<a id="submitting-frames"></a>
 
 ### Submitting frames
 
@@ -262,7 +282,7 @@ ever shown half-updated.
 
 **It blocks until the copy completes.** `submit()` synchronizes `stream` before returning, so
 your source buffer is free to reuse the moment it does — no fences to manage, no lifetime rules
-past the call. The cost lands on the calling thread (see [Performance and diagnostics]()), not on
+past the call. The cost lands on the calling thread (see [Performance and diagnostics](#performance-and-diagnostics)), not on
 the render path, which is why capture threads should call `submit()` directly rather than
 funnelling frames to the render thread.
 
@@ -279,16 +299,18 @@ buffer was produced on a *different* stream, synchronize that stream first — e
 stale pixels, with no error raised. The in-tree ZED and OAK-D sources synchronize per eye
 before publishing, which is what makes their plain `submit(left, right)` (stream 0) safe.
 
+<a id="quadlayer"></a>
+
 ### QuadLayer
 
 A flat plane — the default surface, and the right one for normal-FOV camera feeds. Beyond the
-[Shared configuration]() fields, `QuadLayerConfig` adds the two composition knobs, which exist here
+[Shared configuration](#shared-configuration) fields, `QuadLayerConfig` adds the two composition knobs, which exist here
 because the quad is the only layer that can be drawn either way:
 
-| Field                | Default   | Description                                                                                                                                                                                                                          |
-|----------------------|-----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `generate_mipmaps`   | `True`    | Allocate + regenerate a capped mip chain each frame; sampler uses trilinear filtering. Only<br/>applies on the built-in compositor path.                                                                                             |
-| `openxr_composition` | `True`    | `True` = the OpenXR runtime composites the quad, `False` = Televiz’s built-in<br/>compositor. On Jetson Orin in XR, set `False` (see [Jetson Orin, XR](#orin-openxr-composition)).<br/>See [Composition model](). |
+| Field                | Default   | Description                                                                                                                                                                                                                         |
+|----------------------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `generate_mipmaps`   | `True`    | Allocate + regenerate a capped mip chain each frame; sampler uses trilinear filtering. Only<br/>applies on the built-in compositor path.                                                                                            |
+| `openxr_composition` | `True`    | `True` = the OpenXR runtime composites the quad, `False` = Televiz’s built-in<br/>compositor. On Jetson Orin in XR, set `False` (see [Jetson Orin, XR](#orin-openxr-composition)).<br/>See [Composition model](#composition-model). |
 
 Its placement is a `QuadLayerPlacement` — a `pose` plus `size_meters`. In window mode it
 is optional: a quad with no placement fills its tile of the window (the whole window when it is
@@ -316,6 +338,8 @@ layer.set_visible(True)
 Lock-mode placement strategies (`world` / `head` / `lazy` / `gimbal`) are **application
 policy** and ship in the sample, not in the module.
 
+<a id="cylinderlayer"></a>
+
 ### CylinderLayer
 
 The texture curved onto the inside of a vertical cylinder arc. Every point on the surface sits at
@@ -332,6 +356,8 @@ its center. `CylinderLayerPlacement` describes the arc:
 
 XR only, and the runtime must support `XR_KHR_composition_layer_cylinder` (CloudXR does).
 `add_cylinder_layer` raises `ValueError` otherwise.
+
+<a id="equirectlayer"></a>
 
 ### EquirectLayer
 
@@ -369,6 +395,8 @@ while running:
     cam.submit(camera_rgba)
     session.render()
 ```
+
+<a id="projectionlayer"></a>
 
 ### ProjectionLayer
 
@@ -414,6 +442,8 @@ and reprojects the last submitted frame at display rate. In XR, a visible layer 
 submit for a frame presents nothing (the swapchains are cleared) rather than reproject stale RGBD
 under a new pose.
 
+<a id="frame-loop"></a>
+
 ## Frame loop
 
 Two API levels drive the frame loop. Both release the GIL during blocking waits.
@@ -444,6 +474,8 @@ while running:
 XR), `delta_time` (CPU wall-clock seconds — usable without any XR knowledge), `should_render`,
 `resolution`, and `views`. Each `ViewInfo` in `views` has `viewport`, `fov`, and
 `pose` — 2 entries in XR stereo, 1 (identity pose) in window / offscreen.
+
+<a id="performance-and-diagnostics"></a>
 
 ## Performance and diagnostics
 
@@ -476,6 +508,8 @@ while running:
     last_missed = stats.missed_frames
 ```
 
+<a id="session-state"></a>
+
 ## Session state
 
 A session moves through `SessionState`:
@@ -493,6 +527,8 @@ Query it with `get_state()`; in window mode `should_close()` reports the window-
 request. OpenXR events are polled inside `begin_frame`, which drives the XR-specific transitions.
 
 <a id="sharing-the-xr-session"></a>
+
+<a id="id1"></a>
 
 ## Sharing the XR session
 
@@ -537,7 +573,11 @@ machines and lifecycles — either can run without the other. In the unified pat
 OpenXR session is shared, so if it is lost both must be recreated. See
 [Teleop Session](../teleop/teleop_session.md) for the `TeleopSession` side.
 
+<a id="api-reference"></a>
+
 ## API reference
+
+<a id="vizsession"></a>
 
 ### VizSession
 
@@ -557,6 +597,8 @@ OpenXR session is shared, so if it is lost both must be recreated. See
 - Properties `vk_device` / `vk_physical_device` / `vk_queue_family_index` — raw handles for
   wiring Televiz into a foreign Vulkan app. Most users won’t touch these.
 
+<a id="quadlayer-cylinderlayer-equirectlayer"></a>
+
 ### QuadLayer / CylinderLayer / EquirectLayer
 
 - `submit(left, right=None, stream=0)` — submit a frame (mono: `left` only; stereo: both).
@@ -574,6 +616,8 @@ OpenXR session is shared, so if it is lost both must be recreated. See
 - `set_visible(visible)` / `is_visible()`.
 - Properties `resolution`, `format`, `name` (plus `aspect_ratio` on `QuadLayer`).
 
+<a id="data-types"></a>
+
 ### Data types
 
 - `VizBuffer` — non-owning 2D pixel buffer descriptor. Device buffers expose
@@ -585,6 +629,8 @@ OpenXR session is shared, so if it is lost both must be recreated. See
   `(w, x, y, z)`), `Fov`, `ViewInfo`.
 - Enums `DisplayMode`, `PixelFormat` (`kRGBA8` / `kD32F`),
   `MemorySpace`, `SessionState`.
+
+<a id="c-api"></a>
 
 ## C++ API
 
@@ -614,6 +660,8 @@ the Python bindings: in C++, layers are added with a single templated
 `VizSession::add_layer<L>(args...)` method, which also accepts your own `LayerBase` subclasses —
 the route for plugging in a custom renderer. See [Build System](../references/build.md) for build options and
 output locations.
+
+<a id="more-information"></a>
 
 ## More information
 

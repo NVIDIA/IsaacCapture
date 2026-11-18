@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="body-tracking"></a>
+
 # Body Tracking
 
 Isaac Teleop supports streaming full-body tracking data from an XR headset
@@ -27,7 +29,7 @@ Meta Quest 3/3S also expose body tracking to WebXR via inside-out body
 tracking (IOBT), and the CloudXR client will stream it. However the Quest
 skeleton is mapped to the PICO BD 24-joint layout in the current version,
 and accuracy is lower since there are no physical trackers. See
-[Quest Body Tracking (Limited Support)]() for details.
+[Quest Body Tracking (Limited Support)](#quest-body-tracking-limited-support) for details.
 
 #### SEE ALSO
 [GR00T-WholeBodyControl (SONIC)](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/isaac_teleop_publisher_setup.html) can consume this CloudXR skeleton on a G1 robot as well.
@@ -46,6 +48,8 @@ See that project’s setup guide for additional details.
 > * [Quest Body Tracking (Limited Support)](#quest-body-tracking-limited-support)
 > * [SOMA pose transport](#soma-pose-transport)
 
+<a id="setting-up-pico-motion-trackers"></a>
+
 ## Setting Up PICO Motion Trackers
 
 Full body tracking uses
@@ -62,6 +66,8 @@ are supported:
 - **2 trackers:** 2 ankles only. Provides lower-body tracking with upper-body
   estimation. Least hardware, but reduced accuracy for waist and sitting/lying
   postures.
+
+<a id="instructions"></a>
 
 ### Instructions
 
@@ -82,7 +88,11 @@ are supported:
 Before each session, confirm all trackers are powered on, paired, and
 calibrated.
 
+<a id="how-full-body-tracking-works"></a>
+
 ## How Full Body Tracking Works
+
+<a id="skeleton-profile"></a>
 
 ### Skeleton profile
 
@@ -96,6 +106,8 @@ feature from the browser. Each frame, the CloudXR client library reads the body
 joint data provided by the PICO runtime and streams it to the server. No
 additional configuration is needed in the WebXR client; body tracking is
 enabled automatically when the device supports it.
+
+<a id="joint-skeleton-24-joints"></a>
 
 ### Joint skeleton (24 joints)
 
@@ -131,6 +143,8 @@ frame.
 |      22 | Left Hand      | Left Wrist     |
 |      23 | Right Hand     | Right Wrist    |
 
+<a id="server-side-access"></a>
+
 ### Server-side access
 
 On the server, body tracking data is consumed through the
@@ -152,13 +166,15 @@ joint data each frame through `DeviceIOSession`. The Python equivalent is
 the shell that launches them:
 
 ```bash
-python -m isaaccapture.cloudxr.service start   # runs in the background
+python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
 source ~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/full_body_printer
 ```
 
 See [CloudXR Service](../../references/cloudxr.md#dedicated-cloudxr-runtime) and
 [Load CloudXR environment variables](../../references/cloudxr.md#load-cloudxr-environment-variables) for the full service setup.
+
+<a id="troubleshooting"></a>
 
 ### Troubleshooting
 
@@ -170,15 +186,21 @@ See [CloudXR Service](../../references/cloudxr.md#dedicated-cloudxr-runtime) and
   enterprise features (see above). Verify all PICO motion trackers are
   paired, powered on, and calibrated. Confirm the PICO browser is up to
   date.
-- **The printer prints** `[body tracking inactive]`. The headset is
-  connected but body tracking is unavailable: check that the Motion Trackers
-  are paired and calibrated and that the headset has enterprise body-tracking
-  support. A printer that never reaches `[Step 4] Reading samples...` is
-  still waiting for the runtime / headset instead.
+- **The printer prints** `valid=0/24 pelvis=[not tracked] head=[not tracked]`
+  **on every sample.** The runtime supports body tracking but no joint is
+  tracked. This is also the output before a headset connects. With the headset
+  connected, check that body tracking is enabled, the Motion Trackers are paired
+  and calibrated, and the headset has enterprise body-tracking support.
+- **The printer prints** `[body tracking inactive]`. The OpenXR runtime
+  reports that the system does not support body tracking, so the tracker
+  returns no data. A printer that never reaches `[Step 4] Reading samples...`
+  is still waiting for the runtime / headset instead.
 - **Some joints report** `is_valid: false`. The PICO runtime may
   temporarily lose tracking for individual joints during fast movement or
   partial occlusion. These joints will recover automatically once tracking is
   re-acquired.
+
+<a id="recording-and-replay"></a>
 
 ## Recording and Replay
 
@@ -192,14 +214,23 @@ Recording is also available directly from C++: pass a `McapRecordingConfig`
 to `DeviceIOSession::run()` with the tracker mapped to the `full_body`
 channel base name. `examples/mcap_record_replay/cpp/record_full_body.cpp`
 demonstrates this — a file recorded there replays unchanged with
-`replay_full_body.py`. Give it an output directory
-(`record_full_body 5 recordings/`) and each run writes a fresh timestamped
-take into it; `replay_full_body.py` run from the same directory picks the
-newest one from `./recordings/` by default.
+`replay_full_body.py`. Give it an output directory and each run writes a
+fresh timestamped take into it. With the runtime started and its environment
+sourced as above, and the example package installed as in
+[MCAP Recording & Replay](../../references/mcap_record_replay.md), run from the repo root:
 
-![Full body skeleton replayed from an MCAP recording in viser](_static/full-body-replay.gif)
+```bash
+./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
+python -m isaaccapture_examples.mcap_record_replay.replay_full_body
+```
+
+The replay picks the newest `full_body_*.mcap` under `./recordings/`.
+
+![Full body skeleton replayed from an MCAP recording in viser](../../_images/full-body-replay.gif)
 
 `replay_full_body.py` visualizing a recorded BD 24-joint skeleton in viser.
+
+<a id="quest-body-tracking-limited-support"></a>
 
 ## Quest Body Tracking (Limited Support)
 
@@ -216,6 +247,8 @@ source headset.
 Quest body tracking does not require external trackers. It uses the
 headset’s built-in cameras. Tracking quality may differ from the
 tracker-based PICO solution, particularly for lower-body joints.
+
+<a id="soma-pose-transport"></a>
 
 ## SOMA pose transport
 

@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="device-provider-monitoring"></a>
+
 # Device provider monitoring
 
 `TeleopSession` exposes a read-only snapshot of the providers and devices in
@@ -12,13 +14,16 @@ launch as before but are not included in the monitoring inventory.
 Providers and devices remain in the status inventory for the lifetime of the
 session, including after provider failure or shutdown.
 
+<a id="reading-status"></a>
+
 ## Reading status
 
 The getters return cached immutable values and perform no device, process, or
-OpenXR I/O:
+OpenXR I/O. `config` is a `TeleopSessionConfig` as built in
+[Teleop Session](../teleop/teleop_session.md):
 
 ```python
-from isaaccapture.teleop_session_manager import DeviceState
+from isaaccapture.teleop_session_manager import DeviceState, TeleopSession
 
 with TeleopSession(config) as session:
     while True:
@@ -36,6 +41,8 @@ with TeleopSession(config) as session:
 unknown ID. `StatusSnapshot.updated_at_ns` is the monotonic time when the
 current snapshot was assembled; it is not an observation-history field.
 
+<a id="identity-and-inventory"></a>
+
 ## Identity and inventory
 
 - A monitored plugin provider ID is `plugin/<plugin_root_id>`.
@@ -50,6 +57,8 @@ current snapshot was assembled; it is not an observation-history field.
 Plugin device descriptors come from `PluginInfo.devices` in `plugin.yaml`.
 Unknown paths in a status report never create devices. The identity rules form
 the integration contract for plugins that support monitoring.
+
+<a id="provider-states"></a>
 
 ## Provider states
 
@@ -69,6 +78,8 @@ the integration contract for plugins that support monitoring.
 `STOPPED`
 : The provider was intentionally stopped during session teardown. Every owned
   device is `UNAVAILABLE` without treating teardown as a failure.
+
+<a id="device-states"></a>
 
 ## Device states
 
@@ -102,6 +113,8 @@ the integration contract for plugins that support monitoring.
 Device state records the current condition; its reason records the cause and
 must not restate the state. The error field carries optional human-readable detail
 rather than another reason code.
+
+<a id="plugin-status-transport"></a>
 
 ## Plugin status transport
 
@@ -138,14 +151,26 @@ plugin’s normal update thread rather than an SDK callback thread. Status
 transport must not change ordinary data publication, reconnection, or tracker
 behavior.
 
+<a id="openxr-ownership"></a>
+
 ## OpenXR ownership
 
-For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-tracking. Runtime or session loss fails the provider; sustained loss of active
-head tracking disconnects the headset while leaving the runtime provider
-available.
+For an owned OpenXR session, Isaac Teleop polls lifecycle events before each
+input update. `XR_SESSION_STATE_STOPPING` ends the running session, clears
+current head, hand, controller and body samples, and pauses input queries and
+controller haptics. `XR_SESSION_STATE_READY` begins the same session again
+so input can recover without restarting the application. Startup still requires
+the runtime to make the session ready before the synchronous initial begin.
+
+Isaac Teleop also polls HMD tracking. Runtime or session loss fails the provider;
+sustained loss of active head tracking disconnects the headset while leaving the
+runtime provider available.
 
 For externally supplied `oxr_handles`, Isaac Teleop does not consume the
 external owner’s event queue. The provider is available after setup and the
 headset remains `UNKNOWN` unless the owner supplies health through another
 integration.
+
+Native consumers must rebuild together: `OpenXRSessionHandles` includes optional
+shared lifecycle state. Externally supplied handles without this state keep
+caller-managed lifecycle behavior.

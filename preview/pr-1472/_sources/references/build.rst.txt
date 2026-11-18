@@ -94,6 +94,7 @@ activated virtual environment as well:
    pip install .            # build + install the compiled wheel from source
    pip install -e .         # editable / developer install
 
+This path installs no CloudXR runtime, so nothing that starts CloudXR runs under it.
 For the walkthrough — how this scoped build differs from the classic flow (ABI,
 omitted type stubs, versioning) and the caveat on iterating on pure-Python
 subpackages under an editable install — see

@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="spacemouse-plugin"></a>
+
 # SpaceMouse Plugin
 
 C++ plugin that streams a **3Dconnexion SpaceMouse** (a 6-DoF cap plus buttons) into the
@@ -26,6 +28,8 @@ tracker → MCAP).
 > * [Troubleshooting](#troubleshooting)
 > * [Tests](#tests)
 
+<a id="components"></a>
+
 ## Components
 
 - **Schema** — [src/core/schema/fbs/spacemouse.fbs](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/spacemouse.fbs)
@@ -36,6 +40,8 @@ tracker → MCAP).
   in [src/core/deviceio_trackers/trackers.toml](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml).
 - **Source node** — `SpaceMouseSource` turns the tracker’s data into
   `spacemouse_translation`, `spacemouse_rotation` and `spacemouse_buttons` for retargeters.
+
+<a id="device-access"></a>
 
 ## Device access
 
@@ -55,6 +61,8 @@ From a wheel install, run the copy bundled with the plugin:
 The rule ([src/plugins/spacemouse/70-spacemouse.rules](https://github.com/NVIDIA/IsaacCapture/blob/main/src/plugins/spacemouse/70-spacemouse.rules)) makes SpaceMouse HID nodes
 read-only for all users. No group membership is needed.
 
+<a id="build"></a>
+
 ## Build
 
 Linux only. Complete the [source-build prerequisites](../../development/build_from_source/index.md)
@@ -64,6 +72,8 @@ first. The plugin builds with the default plugin set:
 cmake -B build
 cmake --build build --target spacemouse_plugin --parallel
 ```
+
+<a id="usage"></a>
 
 ## Usage
 
@@ -105,6 +115,8 @@ next to any reader of the same collection:
 ./install/plugins/spacemouse/spacemouse_plugin --device=/dev/hidraw3
 ```
 
+<a id="published-data"></a>
+
 ## Published data
 
 The plugin pushes `SpaceMouseOutput` to collection `spacemouse` (`--collection-id` changes
@@ -119,11 +131,15 @@ reader never holds the last deflection of an unplugged device; `SpaceMouseSource
 its outputs as absent. An open device that stops reporting for 250 ms while deflected has its
 axes zeroed. Recordings use MCAP channels `spacemouse` and `spacemouse_tracked`.
 
+<a id="retargeters"></a>
+
 ## Retargeters
 
 `SpaceMouseToSe3RelRetargeter` (end-effector delta), `SpaceMouseToSe2Retargeter` (base
 velocity) and `SpaceMouseGripperRetargeter` (toggle on the left button) consume
 `SpaceMouseSource`.
+
+<a id="device-status"></a>
 
 ## Device status
 
@@ -131,6 +147,8 @@ When `TeleopSession` starts the plugin, it reports device `<collection_id>/space
 (`spacemouse/spacemouse` by default) through
 [Device provider monitoring](../../references/device_provider_monitoring.md): `CONNECTED`, `DISCONNECTED` when no SpaceMouse
 is found, or `FAILED` when one is found but cannot be opened.
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 
@@ -141,6 +159,8 @@ is found, or `FAILED` when one is found but cannot be opened.
   `--device`.
 - **Axes move but buttons never change** — some receivers report buttons on another interface;
   try `--device` on the device’s other `hidraw` node.
+
+<a id="tests"></a>
 
 ## Tests
 

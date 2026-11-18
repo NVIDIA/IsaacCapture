@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="soma-pose-transport"></a>
+
 # SOMA Pose Transport
 
 Isaac Capture can transport SOMA body and hand data through FlatBuffers and
@@ -28,6 +30,8 @@ for the upstream model and assets.
 >   * [The viewer receives no skeleton](#the-viewer-receives-no-skeleton)
 > * [See also](#see-also)
 
+<a id="data-flow"></a>
+
 ## Data flow
 
 Body and hand data use separate schemas and collections. Applications can
@@ -43,6 +47,8 @@ controls. The standalone hand schemas provide independent left and right hand
 streams, identified by `hand_side` (`SomaHandSide.LEFT` or
 `SomaHandSide.RIGHT`). Isaac Capture does not automatically fuse standalone
 hands with the hand controls in a body payload.
+
+<a id="choose-a-representation"></a>
 
 ## Choose a representation
 
@@ -78,6 +84,8 @@ unavailable for that frame; producers do not serialize placeholder values for
 joints they cannot provide. Consumers expand the keyed values into SOMA-X’s
 canonical dense order when invoking its body or hand helpers.
 
+<a id="build-the-examples"></a>
+
 ## Build the examples
 
 Start with a configured Isaac Capture checkout. See
@@ -86,15 +94,17 @@ prerequisites. Install the live viewer and both deterministic publishers into a 
 set up as in [step 4 of Build from source](../../development/build_from_source/index.md#build-from-source-install-package):
 
 ```bash
-uv pip install -e ./examples/deviceio_live_view
-uv pip install -e ./examples/soma_body_publisher
-uv pip install -e ./examples/soma_hand_publisher
+uv pip install -e ./examples/deviceio_live_view --no-sources
+uv pip install -e ./examples/soma_body_publisher --no-sources
+uv pip install -e ./examples/soma_hand_publisher --no-sources
 ```
 
 The example packages install `py-soma-x==0.3.1`.
 The publishers use the Python-accessible `TensorPushTracker` and its native
 `SchemaPusher` transport; no separate sender executable is needed. Demo samples
 use the session’s monotonic clock for both timestamps.
+
+<a id="run-the-body-example"></a>
 
 ## Run the body example
 
@@ -121,6 +131,8 @@ These commands use `joint-rotations`. To publish evaluated joint poses, add
 `--body-representation joint-poses` to the publisher and
 `--soma-body-representation joint-poses` to the viewer.
 
+<a id="run-the-hand-example"></a>
+
 ## Run the hand example
 
 Start the viewer with SOMA hands:
@@ -144,6 +156,8 @@ These commands use `joint-rotations`. To publish evaluated joint poses, add
 `--hand-representation joint-poses` to the publisher and
 `--soma-hand-representation joint-poses` to the viewer.
 
+<a id="collection-ids-and-schema-identifiers"></a>
+
 ## Collection IDs and schema identifiers
 
 A collection ID pairs a producer with a consumer and is not encoded in the
@@ -161,6 +175,8 @@ The representation selected by the publisher and consumer must match. The
 transport identifiers are `soma_body_joint_rotations`,
 `soma_body_joint_poses`, `soma_hand_joint_rotations`, and
 `soma_hand_joint_poses`.
+
+<a id="vendor-integration"></a>
 
 ## Vendor integration
 
@@ -180,6 +196,8 @@ PyTorch. A rotation consumer uses SOMA-X and its resolved neutral identity to
 evaluate forward kinematics. A joint-pose consumer does not need SOMA-X for
 per-frame evaluation.
 
+<a id="current-limitations"></a>
+
 ## Current limitations
 
 - The examples evaluate rotations against a neutral identity. They do not
@@ -189,12 +207,18 @@ per-frame evaluation.
 - The live viewer selects sources at launch. It does not switch schemas while
   running.
 
+<a id="troubleshooting"></a>
+
 ## Troubleshooting
+
+<a id="no-module-named-isaaccapture-examples"></a>
 
 ### No module named `isaaccapture_examples`
 
-Install the corresponding example with `uv pip install -e` and launch it
+Install the corresponding example with `uv pip install -e ./examples/<name> --no-sources` and launch it
 with `uv run --no-sync` from the repository root.
+
+<a id="the-publisher-cannot-connect"></a>
 
 ### The publisher cannot connect
 
@@ -202,10 +226,14 @@ Start the viewer, open its client, and then source
 `~/.cloudxr/run/cloudxr.env` in the publisher terminal. The environment file
 identifies the active CloudXR OpenXR runtime.
 
+<a id="the-viewer-receives-no-skeleton"></a>
+
 ### The viewer receives no skeleton
 
 Confirm that the publisher and viewer use the same representation and
 collection names.
+
+<a id="see-also"></a>
 
 ## See also
 

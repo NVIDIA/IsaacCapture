@@ -1,12 +1,16 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 Wuji Technology. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="retargeter-wuji-glove-to-wuji-hand"></a>
+
 # Retargeter: Wuji Glove to Wuji Hand
 
 `WujiHandRetargeter` maps hand tracking from any OpenXR
 `XR_EXT_hand_tracking` source to the 20 joint commands of a Wuji Hand or
 Wuji Hand 2. It wraps the retargeting support in `wuji_sdk` and does not
 depend on the Wuji glove plugin.
+
+<a id="at-a-glance"></a>
 
 ## At a glance
 
@@ -18,6 +22,8 @@ depend on the Wuji glove plugin.
 | Output        | `hand_joints` contains 20 joint angles in firmware order;<br/>`hand_valid` indicates whether they came from a valid input frame.           |
 | Tracking loss | Invalid input resets the retargeting session. The hardware demo holds<br/>the last valid command instead of forwarding the invalid output. |
 
+<a id="installation"></a>
+
 ## Installation
 
 Install the Wuji retargeting extra:
@@ -25,6 +31,8 @@ Install the Wuji retargeting extra:
 ```console
 $ pip install 'isaaccapture[wuji]'
 ```
+
+<a id="use-it-from-python"></a>
 
 ## Use it from Python
 
@@ -43,6 +51,8 @@ retargeter = WujiHandRetargeter(config, name="wuji_right")
 
 `model` accepts `"wuji_hand"` or `"wuji_hand_2"`. `hand_side` accepts
 `"left"` or `"right"`.
+
+<a id="run-the-example"></a>
 
 ## Run the example
 
@@ -74,6 +84,8 @@ a reachable Wuji hand.
 passing one that disagrees with it is an error. A hand whose reported side
 differs from `--hand` produces a mirrored-motion warning. Without
 `--plugin-path`, the OpenXR hand source must already be running.
+
+<a id="validate"></a>
 
 ## Validate
 

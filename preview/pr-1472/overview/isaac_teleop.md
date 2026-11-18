@@ -1,13 +1,15 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="isaac-teleop"></a>
+
 # Isaac Teleop
 
 **Isaac Teleop** is the teleoperation component of [Isaac Capture](../index.md).
 It combines a standardized device interface, a graph-based retargeting pipeline,
 and a data collection workflow for simulated and real-world robots.
 
-![Isaac Teleop robot teleoperation](_static/isaac-teleop-hero.jpg)
+![Isaac Teleop robot teleoperation](../_images/isaac-teleop-hero.jpg)
 
 Key features:
 

@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="tactile-devices"></a>
+
 # Tactile devices
 
 Tactile devices capture contact measurements. For actuator output, see
@@ -22,6 +24,8 @@ The current geometry mapping is linear blend skinning (LBS) over hand joints.
 > * [Publishing and consuming](#publishing-and-consuming)
 > * [Vendor integrations](#vendor-integrations)
 
+<a id="data-contract"></a>
+
 ## Data contract
 
 The contract is defined by
@@ -40,7 +44,11 @@ then a unit quaternion `(x, y, z, w)`. Identity orientation is `(0, 0, 0, 1)`.
 All frames are right-handed. A pose maps coordinates from its local frame into
 its reference frame: `p_reference = R(q) * p_local + position`.
 
+<a id="coordinate-conventions"></a>
+
 ## Coordinate conventions
+
+<a id="hand-joints-and-the-skeleton-root"></a>
 
 ### Hand joints and the skeleton root
 
@@ -80,6 +88,8 @@ the wrist translation and rotation. Subtracting the wrist position alone is
 insufficient. A downstream consumer must perform this conversion when using
 root-relative joint poses; `TactileSource` does not rebase a hand stream.
 
+<a id="taxel-frames"></a>
+
 ### Taxel frames
 
 A taxel pose’s origin is its sensing location. Its orientation defines:
@@ -102,6 +112,8 @@ does not identify which body the reported force acts on. A device integration
 must document that choice and calibrate its units, axes, and signs accordingly.
 Raw pressure or ADC counts require conversion to force before publication.
 
+<a id="left-and-right-hands"></a>
+
 ### Left and right hands
 
 Both hands use the same joint identifiers, right-handed algebra, units,
@@ -118,6 +130,8 @@ and calibration, using configuration and distinct collection IDs such as
 these names. Mirroring positions alone is insufficient: a reflection cannot be
 encoded as a rotation quaternion, so each hand needs a proper right-handed
 orientation for every joint and taxel.
+
+<a id="mapping-taxels-onto-the-moving-hand"></a>
 
 ## Mapping taxels onto the moving hand
 
@@ -147,6 +161,8 @@ normals or world-space forces must choose an orientation/normal mapping rule.
 For a single rigid attachment, the taxel transform is unambiguous:
 `C[j](t) * inverse(B[j]) * T_root_taxel_bind`. Transform force directions using
 rotation only, without adding the pose translation.
+
+<a id="publishing-and-consuming"></a>
 
 ## Publishing and consuming
 
@@ -186,6 +202,8 @@ The runnable feeder, direct tracker consumer, and MCAP replay commands are in
 exercise transport; it is not an anatomical calibration model. Live operation
 requires an OpenXR runtime and an available HMD system, including when using a
 headless session; replay does not require the runtime.
+
+<a id="vendor-integrations"></a>
 
 ## Vendor integrations
 

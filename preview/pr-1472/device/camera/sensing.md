@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="sensing-gmsl-camera"></a>
+
 # SENSING GMSL Camera
 
 SENSING GMSL2 cameras connect to a Jetson through the SG8A carrier and stream
@@ -8,6 +10,8 @@ through NVIDIA SIPL. Choose either setup below to preview both cameras with
 `nvsipl_camera`, the vendor reference application. Run commands from a
 terminal on the Jetson desktop, at the Isaac Capture repository root. The
 preview appears on the Jetson monitor.
+
+<a id="prerequisites"></a>
 
 ## Prerequisites
 
@@ -22,6 +26,8 @@ needs Docker with the NVIDIA container runtime configured on the Jetson.
 #### WARNING
 SIPL has exclusive access to the cameras. Stop any other camera client
 before running the check.
+
+<a id="host-setup-and-preview"></a>
 
 ## Host: setup and preview
 
@@ -46,6 +52,8 @@ nvsipl_camera -t src/plugins/sensing/configs/shw5g.json -c SHW5G_2 \
 
 A live camera grid opens on the monitor. The terminal also reports FPS for
 both sensors, approximately 60 fps each. Enter `q` in the terminal to stop.
+
+<a id="container-setup-and-preview"></a>
 
 ## Container: setup and preview
 
@@ -78,6 +86,8 @@ The live camera grid appears on the same monitor as the host preview. Enter
 it is removed when you exit. Subsequent launches can use
 `setup_container.sh --no-build` to reuse the image.
 
+<a id="setup-details"></a>
+
 ## Setup details
 
 Host setup fetches the [SENSING driver package](https://github.com/SENSING-Technology/nvidia-jetson-camera-drivers) and
@@ -103,6 +113,8 @@ For custom images, [docker/Dockerfile.example](https://github.com/NVIDIA/IsaacCa
 `setup_container.sh --print-args` prints shell-quoted Docker flags;
 `--json` emits the same flags as a JSON array. These runtime helpers do not
 install the SDK headers needed to compile SIPL applications.
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 

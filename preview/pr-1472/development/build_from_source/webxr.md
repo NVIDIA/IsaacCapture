@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="build-webxr-client"></a>
+
 # Build WebXR Client
 
 #### TIP
@@ -20,11 +22,15 @@ The source is located at [deps/cloudxr/webxr_client/](https://github.com/NVIDIA/
 > * [2. Install dependencies](#install-dependencies)
 > * [3. Build & Run](#build-run)
 
+<a id="prerequisites"></a>
+
 ## Prerequisites
 
 - Node.js (v20 or higher). Ubuntu’s `nodejs` apt package is older (18.x on Ubuntu 24.04), so
   install a current release from [Node.js downloads](https://nodejs.org/en/download) (for
   example with nvm) and check it with `node --version`. `npm` ships with it.
+
+<a id="download-cloudxr-js-sdk"></a>
 
 ## 1. Download CloudXR.js SDK
 
@@ -38,6 +44,8 @@ scripts/download_cloudxr_sdk.sh
 This will automatically download the CloudXR.js SDK and place it in `deps/cloudxr/`. The
 package.json is configured to install the SDK from the downloaded local package.
 
+<a id="install-dependencies"></a>
+
 ## 2. Install dependencies
 
 From the `deps/cloudxr/webxr_client/` directory:
@@ -46,7 +54,11 @@ From the `deps/cloudxr/webxr_client/` directory:
 npm install
 ```
 
+<a id="build-run"></a>
+
 ## 3. Build & Run
+
+<a id="production-build"></a>
 
 ### Production build
 
@@ -63,6 +75,8 @@ Output in `build/`:
 - `bundle.emulator.js` — desktop XR / IWER stack (DevUI, synthetic environments,
   and related deps); loaded only when emulation is used
 
+<a id="development-build-one-shot"></a>
+
 ### Development build (one-shot)
 
 Outputs to `./build/` with source maps for debugging:
@@ -70,6 +84,8 @@ Outputs to `./build/` with source maps for debugging:
 ```bash
 npm run dev
 ```
+
+<a id="development-server-with-hot-reload"></a>
 
 ### Development server (with hot reload)
 

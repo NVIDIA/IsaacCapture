@@ -1,9 +1,13 @@
 <a id="license"></a>
 
+<a id="id1"></a>
+
 # License
 
 Unless otherwise noted, the code in this repository is licensed under the
 [Apache 2.0 license](https://www.apache.org/licenses/LICENSE-2.0).
+
+<a id="known-exceptions"></a>
 
 ## Known exceptions
 
@@ -16,6 +20,8 @@ Unless otherwise noted, the code in this repository is licensed under the
   [MIT license](https://opensource.org/licenses/MIT) or [Boost Software License 1.0](https://www.boost.org/LICENSE_1_0.txt).
 - CloudXR SDK is NVIDIA’s proprietary software, licensed under the [NVIDIA CloudXR License](https://github.com/NVIDIA/IsaacCapture/blob/main/deps/cloudxr/CLOUDXR_LICENSE).
 - The documentation is built using [NVIDIA Sphinx Theme](https://pypi.org/project/nvidia-sphinx-theme/).
+
+<a id="license-headers"></a>
 
 ## License headers
 

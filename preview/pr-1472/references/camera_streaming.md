@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="camera-streaming"></a>
+
 # Camera Streaming
 
 `camera_viz` is the reference camera-streaming sample built on [Televiz](../development/televiz.md) (`isaaccapture.viz`). It captures frames from one or more cameras
@@ -10,7 +12,7 @@ data](#recorded-camera-streaming) — a video file replayed in place of a live c
 to a desktop window instead of the headset.
 
 Controllers adjust the camera view, including its placement, shape, and stereo settings.
-This sample does not send robot commands or record robot demonstrations; see [Next steps]()
+This sample does not send robot commands or record robot demonstrations; see [Next steps](#next-steps)
 for robot-control and recording integrations.
 
 The sample lives at [examples/camera_viz/](https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz). This page walks you
@@ -18,7 +20,7 @@ from setup and a camera-free first run to real cameras and the robot → worksta
 It is the primary user guide for the sample, including commands, configuration, controller
 bindings, and troubleshooting.
 
-![camera_viz in window mode with synthetic multi-camera feeds](_static/televiz_2d.gif)
+![camera_viz in window mode with synthetic multi-camera feeds](../_images/televiz_2d.gif)
 
 `camera_viz` in XR mode — one plane per camera.
 
@@ -52,6 +54,8 @@ bindings, and troubleshooting.
 > * [Sharing the XR session with TeleopSession](#sharing-the-xr-session-with-teleopsession)
 > * [Next steps](#next-steps)
 
+<a id="requirements"></a>
+
 ## Requirements
 
 - A workstation meeting the [system requirements](requirements.md) (Ubuntu, NVIDIA
@@ -74,6 +78,8 @@ bindings, and troubleshooting.
 - For Jetson Argus cameras, a Jetson image with libargus, CUDA, EGL, and the Jetson Multimedia API
   headers installed. The optional Argus native source is built only when setup is run with
   `--with-argus`.
+
+<a id="setup"></a>
 
 ## Setup
 
@@ -123,7 +129,7 @@ dependencies or vendor SDKs. Flags trim or extend that:
 | `--with-zed`          | Also build + install the ZED SDK’s Python API (`pyzed`). Requires the ZED SDK on the<br/>machine (default `/usr/local/zed`; override with `--zed-sdk PATH`).                                                                                                 |
 | `--sender-only`       | Split mode only — robot-side install of just the sender’s dependencies.                                                                                                                                                                                      |
 | `--jetson`            | Enable Jetson CUDA library discovery for direct or split mode. With RTP enabled, also<br/>check for the matching NVRTC package.                                                                                                                              |
-| `--venv PATH`         | Use `PATH` for the environment and link the sample’s `.venv` to it; see<br/>[Using an external virtual environment](#camera-streaming-external-venv).                                                                                            |
+| `--venv PATH`         | Use `PATH` for the environment and link the sample’s `.venv` to it; see<br/>[Using an external virtual environment](#camera-streaming-external-venv).                                                                                                        |
 | `--wheel PATH`        | Install a locally built `isaaccapture` wheel instead of resolving one from the index — for<br/>developing Isaac Capture itself.                                                                                                                              |
 | `--python VERSION`    | Python for the venv that `setup` creates (default 3.12). An existing `.venv` keeps its<br/>Python.                                                                                                                                                           |
 | `--build-from-source` | Skip the package index and build `isaaccapture` from the surrounding checkout without<br/>prompting — a full C++ / CUDA / Vulkan build (see<br/>[Build from Source](../development/build_from_source/index.md)).                                           |
@@ -141,6 +147,8 @@ examples/camera_viz/camera_viz.sh setup --python 3.11 \
 
 <a id="camera-streaming-external-venv"></a>
 
+<a id="using-an-external-virtual-environment"></a>
+
 ### Using an external virtual environment
 
 To reuse a Python 3.12 environment, run from the repository root:
@@ -154,6 +162,8 @@ Setup installs dependencies there and links `examples/camera_viz/.venv` to it. M
 shell environment; activation is optional. Add `--jetson` on Jetson.
 
 <a id="camera-streaming-jetson-cuda"></a>
+
+<a id="jetson-cuda-prerequisites"></a>
 
 ### Jetson CUDA prerequisites
 
@@ -172,6 +182,8 @@ sudo apt install nvidia-cuda-dev
 Use the CUDA toolkit matching your JetPack. `--jetson` configures library discovery. A separate `nvcc` compiler is needed for CUDA source builds, such as the native
 RTP codec, rather than ordinary CuPy kernel execution.
 
+<a id="oak-d-usb-permissions"></a>
+
 ### OAK-D USB permissions
 
 OAK-D cameras need the Luxonis udev rule. Without it, `depthai` reports
@@ -185,6 +197,8 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 Then unplug and reconnect the camera.
+
+<a id="command-overview"></a>
 
 ## Command overview
 
@@ -209,6 +223,8 @@ launcher flags.
 
 <a id="camera-streaming-web-client"></a>
 
+<a id="web-client-for-camera-visualization"></a>
+
 ## Web client for camera visualization
 
 The default [Isaac Teleop Web Client](https://nvidia.github.io/IsaacCapture/client/main/) shows an in-XR control panel with connection information
@@ -224,6 +240,8 @@ Follow the [headset connection steps](../teleop/quick_start.md#connect-quest-pic
 certificate acceptance, and connection.
 
 <a id="recorded-camera-streaming"></a>
+
+<a id="first-run-a-recording-no-camera-required"></a>
 
 ## First run — a recording, no camera required
 
@@ -264,6 +282,8 @@ and the clip looping on a plane in the headset once it connects — or in a desk
 
 <a id="camera-streaming-first-session"></a>
 
+<a id="first-session-checklist"></a>
+
 ### First-session checklist
 
 With the default `replay.yaml`:
@@ -280,6 +300,8 @@ With the default `replay.yaml`:
 
 In window mode, check playback, image quality, and restart. If a check fails, see
 [Troubleshooting](#camera-streaming-troubleshooting).
+
+<a id="replaying-your-own-recording"></a>
 
 ### Replaying your own recording
 
@@ -315,20 +337,24 @@ encode → UDP → decode path with no camera attached.
 
 <a id="camera-streaming-sources"></a>
 
+<a id="supported-sources"></a>
+
 ## Supported sources
 
 The source kind is selected by the `type` field of each entry in the YAML `cameras` list:
 
-| `type:`     | Notes                                                                                                                                                                                                                                                                               |
-|-------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `v4l2`      | USB / UVC cameras — anything `v4l2-ctl --list-formats-ext` reports.                                                                                                                                                                                                                 |
-| `oakd`      | OAK-D RGB / LEFT / RIGHT; mono or `stereo: true`. Stereo ships GRAY8 over USB to halve<br/>bandwidth and is broadcast to RGBA on the GPU; `stereo_rgb` keeps color.                                                                                                                 |
-| `zed`       | ZED 2 / Mini / X One; mono or `stereo: true` (per-eye SDK retrieve, zero-copy on the GPU).                                                                                                                                                                                          |
-| `argus`     | Jetson libargus cameras through CUDA EGLStream, including GMSL sensors exposed by<br/>`nvargus-daemon`. Build setup with `--with-argus` first.                                                                                                                                      |
+| `type:`     | Notes                                                                                                                                                                                                                                                              |
+|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `v4l2`      | USB / UVC cameras — anything `v4l2-ctl --list-formats-ext` reports.                                                                                                                                                                                                |
+| `oakd`      | OAK-D RGB / LEFT / RIGHT; mono or `stereo: true`. Stereo ships GRAY8 over USB to halve<br/>bandwidth and is broadcast to RGBA on the GPU; `stereo_rgb` keeps color.                                                                                                |
+| `zed`       | ZED 2 / Mini / X One; mono or `stereo: true` (per-eye SDK retrieve, zero-copy on the GPU).                                                                                                                                                                         |
+| `argus`     | Jetson libargus cameras through CUDA EGLStream, including GMSL sensors exposed by<br/>`nvargus-daemon`. Build setup with `--with-argus` first.                                                                                                                     |
 | `video`     | Recorded camera data — video-file replay (anything OpenCV’s FFmpeg backend reads). Loops<br/>by default; `stereo: true` splits side-by-side recordings into eyes (viewer only). See<br/>[First run — a recording, no camera required](#recorded-camera-streaming). |
-| `synthetic` | Debugging tool — GPU-generated test pattern, no camera or file required. `stereo: true` adds<br/>a `disparity_px` offset between the eyes.                                                                                                                                          |
+| `synthetic` | Debugging tool — GPU-generated test pattern, no camera or file required. `stereo: true` adds<br/>a `disparity_px` offset between the eyes.                                                                                                                         |
 
 <a id="camera-streaming-live-camera"></a>
+
+<a id="running-with-a-real-camera"></a>
 
 ## Running with a real camera
 
@@ -350,6 +376,8 @@ with `./camera_viz.sh setup --with-zed` and use `configs/zed.yaml` (`type: zed`,
 **You should see** the same startup lines as above with the camera’s tag (`[v4l2]`,
 `[oakd]`, `[zed]`, `[argus]`) and the live feed. Multiple entries in the `cameras` list
 render as one plane each.
+
+<a id="jetson-argus-gmsl-cameras"></a>
 
 ### Jetson Argus / GMSL cameras
 
@@ -382,6 +410,8 @@ Other ready-to-edit configs include `realsense.yaml`, `synthetic.yaml`,
 `synthetic_stereo.yaml`, `synthetic_xr_3up.yaml`, and `multi_camera.yaml` in
 [configs/](https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/configs).
 
+<a id="display-modes"></a>
+
 ## Display modes
 
 XR is the default: each camera renders as its own plane in the headset via the active OpenXR
@@ -404,6 +434,8 @@ Lazy-mode knobs live under `placements.<name>`: `look_away_angle_deg`,
 
 <a id="camera-streaming-controls"></a>
 
+<a id="controller-bindings"></a>
+
 ### Controller bindings
 
 In XR the controllers retune the view live, without editing the YAML and restarting. Quest and
@@ -411,7 +443,7 @@ Pico report these bindings identically. The right hand changes how the feed look
 what surface it is mapped onto:
 
 <!-- Use concise titles and Televiz branding; name camera_viz in the prose. -->![camera_viz XR controller bindings: left controller adjusts surface and shape;
-right controller adjusts depth and placement.](_static/camera-viz-controls.png)
+right controller adjusts depth and placement.](../_images/camera-viz-controls.png)
 
 Bindings at a glance. The table below is the same thing in words.
 
@@ -456,6 +488,8 @@ A quad’s `distance` and a cylinder’s `cylinder_radius_m` stay YAML-only. App
 so moving either surface farther away while enlarging it by the same factor preserves its
 apparent size. The real distance to the surface still affects stereo depth.
 
+<a id="stereo-plane-distance"></a>
+
 ### Stereo plane distance
 
 A stereo layer draws each eye’s image on its own plane. `stereo_plane_distance_cm` sets
@@ -488,6 +522,8 @@ equivalent for curved layers that works at any radius. Live gap adjustment requi
 `Layer.set_stereo_baseline_mm`; when using an older wheel without that method, the binding
 disables itself with a notice while `A`, `B`, `X`, and `Y` remain available.
 
+<a id="display-surfaces"></a>
+
 ## Display surfaces
 
 By default each camera renders on a flat plane, which suits normal-FOV feeds. Wide-FOV and
@@ -512,6 +548,8 @@ CloudXR stream them efficiently (see
 Troubleshooting below. On the Televiz 2D API the same switch is
 `openxr_composition = False` (see [Jetson Orin, XR](../development/televiz.md#orin-openxr-composition)).
 
+<a id="aiming-an-equirect"></a>
+
 ### Aiming an equirect
 
 The middle of the texture maps to the sphere pose’s **−z** direction and the middle row to
@@ -532,6 +570,8 @@ column (for example, `equirect +35°`). The sphere follows the operator; `lock_m
 `distance`, and `size` do not position it.
 
 <a id="camera-cloudxr-runtime"></a>
+
+<a id="cloudxr-runtime-flags"></a>
 
 ## CloudXR runtime flags
 
@@ -594,6 +634,8 @@ client-reconstructed streaming.
 
 <a id="split-mode"></a>
 
+<a id="split-mode-robot-workstation-over-rtp"></a>
+
 ## Split mode — robot → workstation over RTP
 
 Split mode runs the capture side on the robot (the `camera_streamer` module) and ships RTP H.264 to
@@ -653,6 +695,8 @@ across unplug, SDK errors, and network blips. Operate the installed unit with:
 ./camera_viz.sh service-restart
 ```
 
+<a id="loopback"></a>
+
 ### Loopback
 
 Loopback is a testing / debugging aid, not a deployment mode: `./camera_viz.sh loopback
@@ -667,6 +711,8 @@ Two things to know when running it:
   `submit/s 0.0`. For a RealSense, run `configs/realsense.yaml`.
 - `loopback` does not forward `--mode`, so it opens in the YAML’s `display.mode` (`xr` by
   default). Set `display.mode: window` in the YAML for a desktop window.
+
+<a id="configuration"></a>
 
 ## Configuration
 
@@ -726,6 +772,8 @@ display:
 See the [configs/](https://github.com/NVIDIA/IsaacCapture/tree/main/examples/camera_viz/configs) directory for a complete, commented
 YAML per source kind.
 
+<a id="status-panel"></a>
+
 ## Status panel
 
 In a terminal, `camera_viz` redraws a snapshot in place:
@@ -750,6 +798,8 @@ layout. When stderr is not a terminal (for example, piped output or a deployed s
 the viewer prints one line every five seconds with the same numbers.
 
 <a id="camera-streaming-troubleshooting"></a>
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 
@@ -815,6 +865,8 @@ the viewer prints one line every five seconds with the same numbers.
 - **Not sure which side is stuck?** — set `verbose: true` at the top of the YAML for periodic
   per-source breadcrumbs on both ends.
 
+<a id="how-it-works"></a>
+
 ## How it works
 
 The sample is organized so that capture, transport, and visualization are cleanly separated, with
@@ -861,6 +913,8 @@ camera_viz/
   strategies. Placement is application policy — Televiz only renders a layer at whatever pose the app
   sets each frame.
 
+<a id="sharing-the-xr-session-with-teleopsession"></a>
+
 ## Sharing the XR session with TeleopSession
 
 Only one OpenXR session is allowed per process, so when this sample runs alongside teleoperation the
@@ -885,6 +939,8 @@ See the *Sharing the XR session* section of [Televiz](../development/televiz.md)
 
 `viz_session.get_oxr_handles()` returns `(instance, session, space, proc_addr)` as raw
 `uint64` values, or `None` outside `isaaccapture.viz.DisplayMode.kXr`.
+
+<a id="next-steps"></a>
 
 ## Next steps
 

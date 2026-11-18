@@ -1,14 +1,18 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="wheel-contents-sbom-and-license-evidence"></a>
+
 # Wheel contents SBOM and license evidence
 
-Every published `isaaccapture` wheel lists what it redistributes and carries the license
-text behind each obligation. You can check both offline, without installing the wheel. The
-Release build refuses to ship a wheel with a gap in either.
+Every `isaaccapture` wheel published from 1.7 on lists what it redistributes and carries the
+license text behind each obligation; earlier wheels carry neither. You can check both offline,
+without installing the wheel. The Release build refuses to ship a wheel with a gap in either.
 
-To check a wheel, see [Verifying a wheel](). To learn how the evidence is worked out, or why
+To check a wheel, see [Verifying a wheel](#verifying-a-wheel). To learn how the evidence is worked out, or why
 a build stopped, see the collector’s developer README, [scripts/sbom/README.md](https://github.com/NVIDIA/IsaacCapture/blob/main/scripts/sbom/README.md).
+
+<a id="what-a-wheel-carries"></a>
 
 ## What a wheel carries
 
@@ -38,9 +42,11 @@ isaaccapture-<version>-<abi>-<platform>.whl
 - `sboms/` may also hold a CycloneDX document `auditwheel` writes for the libraries it
   bundled.
 
+<a id="evidence-published-with-a-release"></a>
+
 ## Evidence published with a release
 
-Each tagged GitHub release carries one archive, `isaaccapture-sbom-<tag>.zip`. Unpacked,
+Each tagged GitHub release from 1.7 on carries one archive, `isaaccapture-sbom-<tag>.zip`. Unpacked,
 its `isaaccapture-sbom-<tag>/` directory holds, for every wheel:
 
 `<wheel>.spdx.json`
@@ -61,6 +67,8 @@ and, once per release:
 `isaaccapture-sbom-manifest.json`
 : Each wheel’s filename and SHA-256 and its evidence files’ digests, recorded after the
   last change to the wheel, so a wheel touched since no longer matches.
+
+<a id="verifying-a-wheel"></a>
 
 ## Verifying a wheel
 

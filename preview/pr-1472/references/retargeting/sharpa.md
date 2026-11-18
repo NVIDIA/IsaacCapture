@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="retargeter-manus-to-sharpa"></a>
+
 # Retargeter: Manus to Sharpa
 
 `SharpaHandRetargeter` maps live hand-tracking poses from a [Manus glove](https://www.manus-meta.com/) (or any other source feeding the OpenXR
@@ -8,6 +10,8 @@ hand-tracking layer) onto Sharpa hand joint angles, frame by frame, via
 optimization-based inverse kinematics. `SharpaBiManualRetargeter` is a
 thin combiner that interleaves left and right outputs into a single
 target-ordered vector for downstream control.
+
+<a id="at-a-glance"></a>
 
 ## At a glance
 
@@ -30,6 +34,8 @@ shows up on the OpenXR hand layer that this retargeter consumes.
 
 [Retargeting Interface](index.md) – the broader retargeting interface and pipeline-builder
 pattern.
+
+<a id="public-v2d-source-and-the-grounding-extra"></a>
 
 ## Public V2D source and the `[grounding]` extra
 
@@ -60,6 +66,8 @@ $ pip install -e ".[grounding]"
 There is no separate V2D wheel, authentication step, source setup script,
 or CMake bundle option. A build configured with
 `BUILD_PYTHON_BINDINGS=OFF` does not fetch V2D.
+
+<a id="use-it-from-python"></a>
 
 ## Use it from Python
 
@@ -98,6 +106,8 @@ For bimanual control, instantiate two `SharpaHandRetargeter`s and
 wrap them with `SharpaBiManualRetargeter` so a single output vector is
 produced in your target joint order.
 
+<a id="run-the-example"></a>
+
 ## Run the example
 
 The repo ships a bimanual demo in `examples/retargeting`. Install it from the
@@ -122,6 +132,8 @@ $ python -m isaaccapture_examples.retargeting.sharpa_hand_retargeter_demo \
 The synthetic mode is the smoke test: if it animates a curl trajectory
 and prints non-zero finger qpos each frame, the install is good.
 
+<a id="validate"></a>
+
 ## Validate
 
 Run both checks after configuring and building with Python bindings:
@@ -145,6 +157,8 @@ $ ctest --test-dir build -R '^retargeting_' --output-on-failure
 100% tests passed, 0 tests failed
 ```
 
+<a id="ci"></a>
+
 ## CI
 
 Ubuntu, release-wheel, editable-install, and ROS 2 jobs use the same
@@ -152,6 +166,8 @@ CMake-managed public dependency. The ROS 2 replay matrix includes
 `hand_retargeter:=pink_ik` and verifies that the installed wheel turns
 a deterministic finger-curl trajectory into finite, ordered, nonzero,
 changing Sharpa joint commands.
+
+<a id="bumping-public-v2d"></a>
 
 ## Bumping public V2D
 

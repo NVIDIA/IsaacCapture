@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="lerobot-and-so-101"></a>
+
 # LeRobot and SO-101
 
 With Isaac Teleop, we got an end-to-end data collection and training pipeline for SO-101 in both sim and real teleoperation.
@@ -16,13 +18,15 @@ The same SO-101 task runs in Isaac Lab and on the real arm, each recording a LeR
 panels below stack on narrow screens and sit side by side on wider ones, and can be replaced
 independently:
 
-![SO-101 task teleoperated in Isaac Lab (simulation)](_static/lerobot/so-101-isaac-teleop-sim.gif)
+![SO-101 task teleoperated in Isaac Lab (simulation)](../../_images/so-101-isaac-teleop-sim.gif)
 
 In Isaac Lab (simulation)
 
-![SO-101 task teleoperated on the real arm](_static/lerobot/so-101-isaac-teleop-real.gif)
+![SO-101 task teleoperated on the real arm](../../_images/so-101-isaac-teleop-real.gif)
 
 On the real arm
+
+<a id="end-to-end-workflow"></a>
 
 ## End-to-end workflow
 
@@ -31,19 +35,21 @@ you from teleoperation to a deployed policy:
 
 1. **Teleoperate and collect.** Drive the SO-101 with the [XR controller or the SO-101 Leader](devices.md) and record demonstrations — in [real](data_collection_real.md) and in
    [simulation](data_collection_sim.md). Both produce datasets in the LeRobot format.
-   ![Teleoperation and data collection with LeRobot](_static/lerobot/xr-so-101-full.gif)
+   ![Teleoperation and data collection with LeRobot](../../_images/xr-so-101-full.gif)
 
    Teleoperation and data collection with LeRobot.
 2. **Train.** Fine-tune a [GR00T N1.7](training_groot.md) policy on the collected dataset.
-   <!-- Source: https://docs.nvidia.com/learning/physical-ai/sim-to-real-so-101/latest/_images/sim-teleop-example-huggingface.gif -->![Data collection with LeRobot](_static/lerobot/sim-teleop-example-huggingface.gif)
+   <!-- Source: https://docs.nvidia.com/learning/physical-ai/sim-to-real-so-101/latest/_images/sim-teleop-example-huggingface.gif -->![Data collection with LeRobot](../../_images/sim-teleop-example-huggingface.gif)
 
    Data set preview with LeRobot.
 3. **Deploy.** Take the policy from sim to real — see the [Sim-to-Real SO-101 learning path](https://docs.nvidia.com/learning/physical-ai/sim-to-real-so-101/latest/index.html) —
    addressing the sim-to-real gap with domain randomization, sim/real co-training, and
    actuator-gap compensation.
-   <!-- Source: https://docs.nvidia.com/learning/physical-ai/sim-to-real-so-101/latest/_images/so101_vial_to_rack_task.gif -->![Trained GR00T N1.7 policy running on the SO-101](_static/lerobot/so101_vial_to_rack_task.gif)
+   <!-- Source: https://docs.nvidia.com/learning/physical-ai/sim-to-real-so-101/latest/_images/so101_vial_to_rack_task.gif -->![Trained GR00T N1.7 policy running on the SO-101](../../_images/so101_vial_to_rack_task.gif)
 
    The trained GR00T N1.7 policy running autonomously on the SO-101.
+
+<a id="in-this-section"></a>
 
 ## In this section
 
@@ -55,6 +61,8 @@ you from teleoperation to a deployed policy:
 
 New to XR teleoperation? Start with the [Isaac Teleop Quick Start](../../teleop/quick_start.md)
 to set up CloudXR and connect a headset.
+
+<a id="pending-tasks"></a>
 
 ## Pending Tasks
 

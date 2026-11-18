@@ -1,11 +1,15 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="ovxr-installation"></a>
+
 # OVXR installation
 
 OVXR provides optional XR presentation for applications that use Isaac Capture
 for teleoperation input. Select the `ovxr` extra when installing Isaac Capture
 to include OVXR and its rendering dependencies.
+
+<a id="install-xr-support"></a>
 
 ## Install XR support
 
@@ -25,6 +29,8 @@ OVXR declares its compatible OVRTX and OVStage versions in its package metadata.
 The consuming application’s dependency constraints must accept those versions.
 See the package pages below for supported Python versions and platforms.
 
+<a id="optional-packages-and-licenses"></a>
+
 ## Optional packages and licenses
 
 The `ovxr` extra installs OVXR and its OVRTX/OVStage dependencies separately
@@ -40,6 +46,8 @@ from the Isaac Capture wheel. These packages retain their own licenses:
 
 CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
 to their separate NVIDIA license and CloudXR EULA acceptance.
+
+<a id="optional-camera-panels"></a>
 
 ## Optional camera panels
 
@@ -71,6 +79,8 @@ Use `CUDAToolkit_ROOT` to select a CUDA Toolkit installation and `VULKAN_SDK`
 to help locate a Vulkan SDK. The GPU driver and Vulkan runtime loader are required
 on the host.
 
+<a id="optional-desktop-mirror"></a>
+
 ## Optional desktop mirror
 
 The desktop mirror requires **Python 3.12 or newer**. Isaac Capture’s core
@@ -94,6 +104,8 @@ stream. The mirror drains that stream before reusing the source buffer, includin
 upload failures; the source image can reside on a different GPU. This depends on
 the synchronous `ByteImageProvider.set_bytes_data_from_gpu` implementation,
 not OVUI’s separate asynchronous upload API. See the [OVUI upload implementation](https://github.com/NVIDIA-Omniverse/ovui/blob/60fc40daf56d010ccbc9734f64e6463b1017f74a/ovui/standalone/src/VulkanByteImageGpu.cpp#L1069-L1124).
+
+<a id="use-from-another-application"></a>
 
 ## Use from another application
 
@@ -144,6 +156,8 @@ application’s lock file after changing the wheel or dependency selection, then
 run with `uv run --extra ovxr`. Installing packages with `uv pip install`
 alone does not update the application’s lock file.
 
+<a id="application-specific-ovxr-versions"></a>
+
 ## Application-specific OVXR versions
 
 Isaac Capture pins the OVXR version used for compatibility testing. uv respects
@@ -177,6 +191,8 @@ relying on the selected build.
 Applications using different provider versions need separate project
 environments and lock files. Each can install the same Isaac Capture wheel
 with its own OVXR/OVRTX/OVStage combination.
+
+<a id="session-lifetime"></a>
 
 ## Session lifetime
 

@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="egohand"></a>
+
 # EgoHand
 
 EgoHand reconstructs SOMA hand poses, 3D joints, and meshes from egocentric
@@ -9,7 +11,7 @@ frames, and the code lives in [src/python/isaaccapture_egopost](https://github.c
 The method is described in the
 [EgoHand paper](https://arxiv.org/abs/2610.30293).
 
-![EgoHand showcase: video frames, skeleton overlays, a hand close-up, and 3D meshes](_static/egohand-showcase.gif)
+![EgoHand showcase: video frames, skeleton overlays, a hand close-up, and 3D meshes](../_images/egohand-showcase.gif)
 
 Video, skeletons, hand detail, and 3D meshes.
 
@@ -17,13 +19,17 @@ The EgoHand pipeline supports integration with any SLAM or camera localization
 algorithm (e.g., NVIDIA ViPE) to produce hand reconstructions in world
 coordinates.
 
-![EgoHand pipeline: video, camera calibration, and hand boxes feed hand crops, a visual backbone, a transformer decoder, and SOMA reconstruction](_static/egohand-pipeline.svg)
+![EgoHand pipeline: video, camera calibration, and hand boxes feed hand crops, a visual backbone, a transformer decoder, and SOMA reconstruction](../_images/egohand-pipeline.svg)
 
 EgoHand inference pipeline.
 
 To capture egocentric video with a camera, see [Cameras](../device/cameras/index.md).
 
+<a id="setup"></a>
+
 ## Setup
+
+<a id="system-requirements"></a>
 
 ### System requirements
 
@@ -33,6 +39,8 @@ To capture egocentric video with a camera, see [Cameras](../device/cameras/index
 | GPU         | NVIDIA RTX 6000 Ada Generation, L40, L20, or RTX PRO 6000 Blackwell |
 | Memory      | 32 GB                                                               |
 | Storage     | 25 GB                                                               |
+
+<a id="clone-and-install"></a>
 
 ### Clone and install
 
@@ -51,21 +59,25 @@ uv pip install --python .venv/bin/python --no-deps -r requirements-dinov3.txt
 
 Run EgoHand commands on this page from `src/python/isaaccapture_egopost/`.
 
+<a id="prepare-your-inputs"></a>
+
 ### Prepare your inputs
 
 | Input              | What you need                                                                                                                                                                                                                 |
 |--------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Video              | An `.mp4` file, or a folder of `.mp4` files.                                                                                                                                                                                  |
-| Camera calibration | A JSON file in the format described in [Camera input formats]().                                                                                                                                                              |
-| 2D hand boxes      | Saved boxes from your own detector or ground truth, or the optional<br/>RT-DETR detector. See [2D Hand Boxes]().                                                                                                              |
+| Camera calibration | A JSON file in the format described in [Camera input formats](#camera-input-formats).                                                                                                                                         |
+| 2D hand boxes      | Saved boxes from your own detector or ground truth, or the optional<br/>RT-DETR detector. See [2D Hand Boxes](#d-hand-boxes).                                                                                                 |
 | EgoHand checkpoint | The default [EgoHand-v1](https://huggingface.co/nvidia/EgoHand-v1)<br/>checkpoint (`egohand_s060000.ckpt`) downloads automatically and is cached<br/>locally. To use a local file, pass `--egohand_ckpt /path/to/model.ckpt`. |
 | SOMA-X hand assets | Hand rig assets download automatically from<br/>[nvidia/SOMA-X](https://huggingface.co/nvidia/SOMA-X) and are cached<br/>locally. They are needed even with a local checkpoint or your own boxes.                             |
 
-Check out the [example]()
+Check out the [example](#example)
 
 <a id="example"></a>
  of EgoHand running on a video from the
 [NVIDIA Video-to-Data Challenge](https://huggingface.co/datasets/nvidia/video_to_data_challenge).
+
+<a id="model-weights"></a>
 
 ### Model weights
 
@@ -78,7 +90,7 @@ The model weights are hosted on Hugging Face and ready to be downloaded.
 
 To run without network access, download the weights in advance and pass the
 local files: `--egohand_ckpt` for the EgoHand checkpoint, and `weights` in the
-detector config for RT-DETR (see [Use the optional RT-DETR detector]()):
+detector config for RT-DETR (see [Use the optional RT-DETR detector](#use-the-optional-rt-detr-detector)):
 
 ```bash
 .venv/bin/hf download nvidia/EgoHand-v1 egohand_s060000.ckpt --local-dir weights
@@ -104,6 +116,8 @@ MHR/base_body_lod1.obj
 MHR/SOMA_wrap_lod1.obj
 ```
 
+<a id="example"></a>
+
 ## Example
 
 This example runs EgoHand on a head-mounted RGB video from the NVIDIA
@@ -126,9 +140,11 @@ PYOPENGL_PLATFORM=egl PYTHONPATH="$(pwd)" .venv/bin/python \
   --output_dir outputs/nv_v2d_challenge_example
 ```
 
-![Skeleton overlay on episode_000045 with perspective cropping](_static/egohand-v2d-example.jpg)
+![Skeleton overlay on episode_000045 with perspective cropping](../_images/egohand-v2d-example.jpg)
 
 Example output.
+
+<a id="outputs"></a>
 
 ## Outputs
 
@@ -149,6 +165,8 @@ Results are saved under `--output_dir`, one subfolder per input video:
 ```
 
 Overlay videos are skipped with `--no_save_videos` or `--frame_batch_size`.
+
+<a id="result-arrays"></a>
 
 ### Result arrays
 
@@ -184,6 +202,8 @@ neither calibrated 3D confidence nor an occlusion label. Checkpoints without the
 2D head omit both fields. `--per_frame_results` writes the same fields without
 the leading `N` axis, with frame IDs in the filenames.
 
+<a id="hand-reconstruction"></a>
+
 ## Hand Reconstruction
 
 With saved boxes:
@@ -213,6 +233,8 @@ are placed at the wrong distance whenever the true focal length differs.
 The overlay renders through the same camera, so the error does not show in
 the video. Always pass real camera intrinsics.
 
+<a id="one-or-two-hands"></a>
+
 ### One or two hands
 
 `--hand` defaults to `both`, which also handles single-hand footage: the
@@ -221,6 +243,8 @@ the footage never shows the other hand, to skip its reconstruction.
 `--postprocessing_qc` requires `--hand both` and flags genuinely single-hand
 footage as a delivery failure, so do not combine the two. The combined Docker
 image hardcodes `--hand both`.
+
+<a id="camera-input-formats"></a>
 
 ### Camera input formats
 
@@ -246,6 +270,8 @@ Pass the calibration as JSON with `--intrinsics_json`. A pinhole example:
 | `FISHEYE624`          | `[k0, k1, k2, k3, k4, k5, p0, p1, s0, s1, s2, s3]`               | Project Aria fisheye, used in<br/>[HOT3D](https://facebookresearch.github.io/hot3d/). |
 | `RATIONAL_POLYNOMIAL` | `[k1, k2, p1, p2, k3, k4, k5, k6, s1, s2, s3, s4, tau_x, tau_y]` | 14-coefficient rational polynomial, used in the NVIDIA Video-to-Data<br/>Challenge.   |
 
+<a id="command-line-reference"></a>
+
 ### Command-line reference
 
 `run_egohand_inference_pipeline.py` options. `--input`, `--output_dir`, and
@@ -256,8 +282,8 @@ Pass the calibration as JSON with `--intrinsics_json`. A pinhole example:
 |--------------------------------------------------------------------|------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `--input`                                                          | —                      | MP4 file or folder of MP4 files.                                                                                                                                                                                                                                                                                                                                                          |
 | `--output_dir`                                                     | —                      | Output root; each video’s results go to `<output_dir>/<video_stem>/`.                                                                                                                                                                                                                                                                                                                     |
-| `--bbox_detector_config`                                           | —                      | Box source config (see [2D Hand Boxes]()). Supports `${ENV_VAR}`<br/>substitution.                                                                                                                                                                                                                                                                                                        |
-| `--intrinsics_json`                                                | —                      | Camera calibration (see [Camera input formats]()).                                                                                                                                                                                                                                                                                                                                        |
+| `--bbox_detector_config`                                           | —                      | Box source config (see [2D Hand Boxes](#d-hand-boxes)). Supports `${ENV_VAR}`<br/>substitution.                                                                                                                                                                                                                                                                                           |
+| `--intrinsics_json`                                                | —                      | Camera calibration (see [Camera input formats](#camera-input-formats)).                                                                                                                                                                                                                                                                                                                   |
 | `--hand`                                                           | `both`                 | `left`, `right`, or `both`.                                                                                                                                                                                                                                                                                                                                                               |
 | `--perspective_cropping`                                           | off                    | Project each hand region into a virtual pinhole view, correcting lens<br/>distortion. Recommended for all cameras. Without it, `PINHOLE` frames<br/>are used as-is and other models are undistorted first. Per-hand crop<br/>overlays are disabled in this mode.                                                                                                                          |
 | `--rectify_pixel_aspect_ratio` / `--no-rectify_pixel_aspect_ratio` | on                     | For calibrations with `fx != fy`, resize frames to square pixels<br/>before detection and inference. Overlays, box JSONs, and 3D outputs are<br/>expressed in the original frame; for `PINHOLE` input, per-frame files<br/>from `--save_npzs` keep `pred_keypoints_2d` normalized to the crop in<br/>the corrected image. No effect with `--perspective_cropping` or when<br/>`fx == fy`. |
@@ -268,9 +294,9 @@ Pass the calibration as JSON with `--intrinsics_json`. A pinhole example:
 | `--device`                                                         | `cuda`                 | Torch device.                                                                                                                                                                                                                                                                                                                                                                             |
 | `--dtype`                                                          | `float32`              | `float32`, `float16`, or `bfloat16`.                                                                                                                                                                                                                                                                                                                                                      |
 | `--postprocessing_smooth` / `--no-postprocessing_smooth`           | on                     | Adaptive smoothing of SOMA rotations, translation, and shape over the<br/>whole clip; joints and vertices are rebuilt to match.                                                                                                                                                                                                                                                           |
-| `--postprocessing_qc` / `--no-postprocessing_qc`                   | off                    | Write a per-video quality-control report (see [3D quality control]()).<br/>Requires `--hand both` and `--intrinsics_json`.                                                                                                                                                                                                                                                                |
+| `--postprocessing_qc` / `--no-postprocessing_qc`                   | off                    | Write a per-video quality-control report (see [3D quality control](#d-quality-control)).<br/>Requires `--hand both` and `--intrinsics_json`.                                                                                                                                                                                                                                              |
 | `--qc_max_bad_frac`                                                | `0.02`                 | Tolerated fraction of flagged frame-hand predictions, in `[0, 1]`.<br/>Only used with `--postprocessing_qc`.                                                                                                                                                                                                                                                                              |
-| `--soma_hand_assets`                                               | Hosted assets          | Local SOMA-X hand asset folder (see [Model weights]() for the required<br/>files; the default checkpoint uses the MHR identity model).                                                                                                                                                                                                                                                    |
+| `--soma_hand_assets`                                               | Hosted assets          | Local SOMA-X hand asset folder (see [Model weights](#model-weights) for the required<br/>files; the default checkpoint uses the MHR identity model).                                                                                                                                                                                                                                      |
 | `--no_save_videos`                                                 | off                    | Skip the `.mp4` overlays.                                                                                                                                                                                                                                                                                                                                                                 |
 | `--no_mesh`                                                        | off                    | Skip mesh rendering in overlays. Meshes are rendered only for<br/>`PINHOLE` input and are skipped automatically for other camera models.                                                                                                                                                                                                                                                  |
 | `--draw_skeleton` / `--no-draw_skeleton`                           | on                     | Draw the 2D joint skeleton overlay.                                                                                                                                                                                                                                                                                                                                                       |
@@ -282,12 +308,16 @@ Pass the calibration as JSON with `--intrinsics_json`. A pinhole example:
 | `--max_seconds`                                                    | Full video             | Only process the first N seconds of each video.                                                                                                                                                                                                                                                                                                                                           |
 | `--frame_batch_size`                                               | Whole clip             | Decode this many frames at a time to cap memory on long videos.<br/>Disables overlay rendering; predictions and smoothing still cover the<br/>whole clip. Rejected with live RT-DETR box smoothing; with<br/>`bbox_smoothing: false`, live tracking runs within each batch. For<br/>whole-clip tracking, use saved boxes from `run_hand_detector.py`.                                     |
 
+<a id="postprocessing"></a>
+
 ### Postprocessing
 
 The code lives in
 [inference/postprocessing](https://github.com/NVIDIA/IsaacCapture/tree/main/src/python/isaaccapture_egopost/inference/postprocessing).
 Adaptive smoothing and quality control run inside the reconstruction command;
 world-coordinate projection is a separate step afterwards.
+
+<a id="adaptive-hand-smoothing"></a>
 
 #### Adaptive hand smoothing
 
@@ -313,6 +343,8 @@ order.
 
 Smoothing is separate from detector box tracking, which processes the 2D boxes
 before inference, and from the world-coordinate refinement below.
+
+<a id="d-quality-control"></a>
 
 #### 3D quality control
 
@@ -341,6 +373,8 @@ default**. Add these options to the reconstruction command:
 
 The checks are heuristics: a smooth but misplaced hand can pass a geometry
 check. Review the report alongside the overlays when choosing a threshold.
+
+<a id="world-coordinates-and-camera-pose-refinement"></a>
 
 #### World coordinates and camera-pose refinement
 
@@ -410,6 +444,8 @@ shared by both hands comes from camera motion, so check the reported common
 versus differential motion metrics before adopting the corrected trajectory;
 the result is not guaranteed to be physically plausible.
 
+<a id="d-hand-boxes"></a>
+
 ## 2D Hand Boxes
 
 EgoHand needs a 2D box for each hand it reconstructs. `--bbox_detector_config`
@@ -419,6 +455,8 @@ selects where the boxes come from:
 |-----------------------------------------|--------------------------------------------------------|--------------------------------------|
 | Your own detector or ground-truth boxes | `inference/hand_detector_2d/configs/saved_bboxes.yaml` | No RT-DETR weights needed.           |
 | Optional RT-DETR detector               | `inference/hand_detector_2d/configs/rtdetr.yaml`       | Works as-is with the hosted weights. |
+
+<a id="use-your-own-detector-or-ground-truth-boxes"></a>
 
 ### Use your own detector or ground-truth boxes
 
@@ -464,13 +502,15 @@ saved_bbox_path: "${BBOX_DIR}"
 ```
 
 Set `BBOX_DIR` to the root (`bboxes/`, not `bboxes/my_video/`), then run
-[Hand Reconstruction]() with this config.
+[Hand Reconstruction](#hand-reconstruction) with this config.
 
 #### WARNING
 Keep `--output_dir` separate from `BBOX_DIR`. When the calibration has
 `fx != fy`, pixel-aspect rectification (on by default) rewrites the bbox
 JSON in the output folder. If that folder is your input box tree, the
 mapping is applied twice and the input files are silently corrupted.
+
+<a id="use-the-optional-rt-detr-detector"></a>
 
 ### Use the optional RT-DETR detector
 
@@ -532,6 +572,8 @@ For whole-clip tracking on long videos, run detection separately (the
 standalone script tracks the complete clip once) and reconstruct in batches
 with `saved_bboxes.yaml`.
 
+<a id="run-detection-separately"></a>
+
 ### Run detection separately
 
 To inspect or reuse detections before reconstruction, run RT-DETR on its own.
@@ -575,6 +617,8 @@ It accepts `--hand` (`both`), `--device` (`cuda`), `--max_seconds`,
 and `--frame_batch_size` (`256` frames decoded at once). Only
 `detector_backend: rtdetr` is accepted.
 
+<a id="keypoints-to-soma-converter"></a>
+
 ## Keypoints to SOMA converter
 
 [keypoint_2_soma_converter](https://github.com/NVIDIA/IsaacCapture/tree/main/src/python/isaaccapture_egopost/keypoint_2_soma_converter)
@@ -585,10 +629,12 @@ joints**, mesh reconstruction parameters, and optional skeleton videos. It
 consumes existing 3D tracks; it does not detect hands or estimate 3D keypoints
 from video.
 
-![Input 21-point skeleton on the left, fitted SOMA 25-joint skeleton on the right](_static/egohand-keypoint-soma-comparison.jpg)
+![Input 21-point skeleton on the left, fitted SOMA 25-joint skeleton on the right](../_images/egohand-keypoint-soma-comparison.jpg)
 
 Input 21-point skeleton (left) and fitted SOMA 25-joint skeleton (right).
 Green is the left hand, orange the right; magenta rings mark the input root.
+
+<a id="set-up"></a>
 
 ### Set up
 
@@ -614,6 +660,8 @@ SOMA/MHR files from `nvidia/SOMA-X` (revision `v0.3.0`) once:
 ```bash
 python -m soma_sequence_fit assets --out assets
 ```
+
+<a id="prepare-the-landmark-npz"></a>
 
 ### Prepare the landmark NPZ
 
@@ -647,6 +695,8 @@ np.savez_compressed(
     distortion=np.zeros(5, np.float32),
 )
 ```
+
+<a id="fit-and-compare"></a>
 
 ### Fit and compare
 
@@ -701,6 +751,8 @@ options.
 | `overlay.mp4`              | Fitted 25-joint skeleton, with `--overlay`.                                                                                        |
 | `comparison.mp4` / `.jpg`  | Side-by-side video and last-frame screenshot from `compare`.                                                                       |
 
+<a id="docker"></a>
+
 ## Docker
 
 Two images are provided: a combined detection and reconstruction image, and a
@@ -710,7 +762,9 @@ detector-only image whose box output feeds a later reconstruction run. See
 The detector wrapper always uses pixel-aspect rectification and has no switch
 to disable it. For a perspective-cropping second pass, run
 `run_hand_detector.py` directly with `--no-rectify_pixel_aspect_ratio` (see
-[Run detection separately]()).
+[Run detection separately](#run-detection-separately)).
+
+<a id="performance"></a>
 
 ## Performance
 
@@ -727,7 +781,7 @@ for how each stage is measured. Two derived metrics combine them:
   smoothing.
 
 Reference per-stage timings (ms per source frame) on an NVIDIA L40 for the
-[Example]() video `episode_000045.mp4` (290 frames, 2028×1520). Results vary
+[Example](#example) video `episode_000045.mp4` (290 frames, 2028×1520). Results vary
 by environment and GPU.
 
 | Stage                       |   Perspective cropping |   Without perspective cropping |
@@ -752,6 +806,8 @@ The same measurement on an NVIDIA RTX PRO 6000 Blackwell:
 | **Model inference latency** |                  9.012 |                          9.06  |
 | **Full pipeline latency**   |                 18.006 |                         13.876 |
 
+<a id="limitations"></a>
+
 ## Limitations
 
 - Reconstructions are camera-relative; world placement needs an external
@@ -761,7 +817,9 @@ The same measurement on an NVIDIA RTX PRO 6000 Blackwell:
 - The optional detector and tracker assume both hands stay in frame. When a hand
   leaves and re-enters, the tracker can misassign or duplicate boxes, and
   neither the results nor `--postprocessing_qc` flag it. For such footage,
-  check `bbox_viz.mp4` or supply your own boxes (see [2D Hand Boxes]()).
+  check `bbox_viz.mp4` or supply your own boxes (see [2D Hand Boxes](#d-hand-boxes)).
+
+<a id="license"></a>
 
 ## License
 

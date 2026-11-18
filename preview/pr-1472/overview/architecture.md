@@ -1,15 +1,19 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="architecture"></a>
+
 # Architecture
 
 Isaac Capture provides shared capture infrastructure for teleoperation and
 egocentric data. It is a library used by applications and integration
 environments, including Isaac Lab and Sim, Isaac ROS, and other ROS stacks.
 
-![Isaac Capture contains Isaac Teleop and the Ego Pipeline above shared device plugins, retargeters, and data utilities. Integration environments use the library; GitHub and PyPI distribute it.](_static/isaac-capture-architecture.png)
+![Isaac Capture contains Isaac Teleop and the Ego Pipeline above shared device plugins, retargeters, and data utilities. Integration environments use the library; GitHub and PyPI distribute it.](../_images/isaac-capture-architecture.png)
 
 Isaac Capture components, shared infrastructure, and integration environments.
+
+<a id="capture-components"></a>
 
 ## Capture components
 
@@ -23,7 +27,11 @@ The **Ego Pipeline** covers human and egocentric data capture. **Ego Capture**
 and **Ego Post-Processing** are its two stages. They share the underlying device
 and data infrastructure with Isaac Teleop.
 
+<a id="shared-infrastructure"></a>
+
 ## Shared infrastructure
+
+<a id="device-plugins"></a>
 
 ### Device plugins
 
@@ -33,6 +41,8 @@ common transport. XR headsets provide poses and input through OpenXR.
 See [Add a New Device](../device/add_device.md) for plugin development and [Ecosystem](ecosystem.md) for
 individual device capabilities.
 
+<a id="retargeters"></a>
+
 ### Retargeters
 
 The [Retargeting Interface](../references/retargeting/index.md) framework maps device inputs to robot
@@ -40,11 +50,15 @@ embodiments through graph-based source nodes and retargeters. Hand retargeters
 and body-tracking inputs can be combined with application-specific mappings.
 The framework is shared; Isaac Teleop uses it to produce robot actions.
 
+<a id="data-utilities"></a>
+
 ### Data utilities
 
 Shared [FlatBuffers schemas](https://github.com/NVIDIA/IsaacCapture/tree/main/src/core/schema/fbs) define device data.
 [MCAP Recording & Replay](../references/mcap_record_replay.md) covers recording and playback;
 [LeRobot and SO-101](../integrations/lerobot/index.md) covers LeRobot data collection workflows.
+
+<a id="visualization-and-streaming"></a>
 
 ### Visualization and streaming
 
@@ -53,6 +67,8 @@ sensor feeds and 3D content for XR headsets or desktop windows. It supports
 per-eye stereo views and GPU frame submission, and can share an OpenXR session
 with device tracking. See [Camera Streaming](../references/camera_streaming.md) for streaming
 camera data and [CloudXR Service](../references/cloudxr.md) for the CloudXR service.
+
+<a id="integration-and-distribution"></a>
 
 ## Integration and distribution
 

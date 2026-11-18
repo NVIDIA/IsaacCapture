@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="generic-joint-space-device"></a>
+
 # Generic Joint-Space Device
 
 A reusable device path for any **joint-encoder source** – leader arms, exoskeletons, haptic
@@ -14,6 +16,8 @@ The **SO-101 leader arm** ([TheRobotStudio SO-ARM100](https://github.com/TheRobo
 ([Seeed reBot DevArm](https://github.com/Seeed-Projects/reBot-DevArm), 7 Damiao DM-series or
 RobStride RS-series motors) is a second instance built from the same recipe.
 
+<a id="at-a-glance"></a>
+
 ## At a glance
 
 | Layer      | Component                                                                                                                                                                                                                                                                   |
@@ -23,6 +27,8 @@ RobStride RS-series motors) is a second instance built from the same recipe.
 | Tracker    | `JointStateTracker` (facade) with live (`LiveJointStateTrackerImpl`) and MCAP-replay<br/>(`ReplayJointStateTrackerImpl`) backends, registered in the live/replay factories.                                                                                                 |
 | Source     | `JointStateSource` (`IDeviceIOSource`) – converts the FlatBuffer into a name-keyed<br/>group of joint positions for the retargeting graph.                                                                                                                                  |
 | Retargeter | `JointStateRetargeter` – `joint` (mirror) or `ee_pose` (URDF FK) mode. See<br/>[Retargeter: Joint-Space Device](../../references/retargeting/joint_space.md).                                                                                                               |
+
+<a id="data-schema"></a>
 
 ## Data schema
 
@@ -54,6 +60,8 @@ surface joint **positions** only.
 
 <a id="so101-leader-plugin"></a>
 
+<a id="the-so-101-leader-plugin"></a>
+
 ## The SO-101 leader plugin
 
 `so101_leader` reads the six SO-101 servos (`shoulder_pan, shoulder_lift, elbow_flex,
@@ -81,6 +89,8 @@ joint_names=[...])` on the same `collection_id`; `TeleopSession` discovers and p
 
 <a id="rebot-devarm-leader-plugin"></a>
 
+<a id="the-rebot-devarm-leader-plugin"></a>
+
 ## The reBot DevArm leader plugin
 
 `rebot_devarm_leader` reads the seven joints of the Seeed reBot DevArm (`joint1 .. joint6,
@@ -102,6 +112,8 @@ Both builds share the calibration file format; see the
 (name, command/feedback CAN ids, motor model, sign, zero offset) and hardware notes.
 
 <a id="rebot-devarm-damiao-build"></a>
+
+<a id="the-damiao-build"></a>
 
 ### The Damiao build
 
@@ -130,6 +142,8 @@ While wrapped, the running plugin streams the gripper joint with `valid = false`
 hold it instead of executing garbage.
 
 <a id="rebot-devarm-robstride-build"></a>
+
+<a id="the-robstride-build"></a>
 
 ### The RobStride build
 
@@ -160,6 +174,8 @@ on the RobStride backend only `motor_id` is used (replies are matched by device 
 `feedback_id` column is ignored), and `rs-*` model names are accepted and ignored since the
 decode is model-independent. Factory RobStride device ids are `1..7`; the host id is `0xFD`.
 
+<a id="record-and-replay"></a>
+
 ## Record and replay
 
 The live tracker records to MCAP, and `ReplayJointStateTrackerImpl` replays it back with no
@@ -173,6 +189,8 @@ from isaaccapture.teleop_session_manager import SessionMode, TeleopSession, Tele
 # Replay (headless): TeleopSessionConfig(..., mode=SessionMode.REPLAY,
 #                                        mcap_config=McapReplayConfig("leader.mcap"))
 ```
+
+<a id="add-another-joint-space-device"></a>
 
 ## Add another joint-space device
 

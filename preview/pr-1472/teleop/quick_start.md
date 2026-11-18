@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="quick-start"></a>
+
 # Quick Start
 
 This guide walks through running a teleoperation session with an XR headset using CloudXR. By the
@@ -22,6 +24,8 @@ No headset? See [Synthetic XR Teleoperation](synthetic_xr.md) for desktop contro
 
 <a id="check-out-code-base"></a>
 
+<a id="check-out-code-base-for-examples"></a>
+
 ## 1. Check out code base (for examples)
 
 Clone the repository and enter the project directory:
@@ -35,6 +39,8 @@ As a quick start guide, we don’t need to build the code base from source. Howe
 to clone the repository for a couple quick samples to run.
 
 <a id="install-isaaccapture-pip-package"></a>
+
+<a id="install-the-isaaccapture-pip-package"></a>
 
 ## 2. Install the `isaaccapture` pip package
 
@@ -68,25 +74,28 @@ uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
 ```
 
 Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
-and an opt-in to pre-release versions:
+and a version specifier that names a pre-release, which opts in `isaaccapture` alone rather
+than every dependency:
 
 ```bash
-uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0' \
-      --extra-index-url https://pypi.nvidia.com --prerelease=allow
+uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0a0' \
+      --extra-index-url https://pypi.nvidia.com
 ```
 
 The two commands above track the newest 1.x release. To follow this version of the documentation
 (1.8.x) exactly, pin to the series it describes instead:
 
 ```default
-uv pip install 'isaaccapture[cloudxr,retargeters]~=1.8.0' \
-      --extra-index-url [https://pypi.nvidia.com](https://pypi.nvidia.com) --prerelease=allow
+uv pip install 'isaaccapture[cloudxr,retargeters]~=1.8.0a0' \
+      --extra-index-url https://pypi.nvidia.com
 ```
 
 Instead of installing the package from PyPI, you can build from source and install the local wheel.
 See [Build from Source](../development/build_from_source/index.md) for more details.
 
 <a id="run-cloudxr-server"></a>
+
+<a id="configure-cloudxr-optional"></a>
 
 ## 3. Configure CloudXR (optional)
 
@@ -95,9 +104,10 @@ you do **not** need to start the runtime in a separate terminal or source any
 environment file. If nothing is serving yet, the example starts a CloudXR
 service in the background and prints how to stop it; that service outlives the
 example, so the headset stays connected from one run to the next.
-The first launch downloads the CloudXR Web Client SDK and asks you to review and
-accept the EULA on the terminal; answer the prompt once and the acceptance is
-remembered for subsequent runs.
+When an example starts the service for the first time, it fetches the prebuilt
+web client assets (when hosting locally) and asks you to review and accept the
+EULA on the terminal; answer the prompt once and the acceptance is remembered
+for subsequent runs.
 
 <!-- TODO: ``Quest3`` is the profile every WebXR client uses — Quest, PICO, and the
 desktop-browser IWER emulator — so the name reads as a hardware restriction it
@@ -111,11 +121,12 @@ Vision Pro connects natively and needs `auto-native` instead; the default is
 not derived from the connected headset, so set it yourself. The profile is set
 on the *runtime*, so applications inherit whatever the runtime they connect to
 was started with. To override it, or any other setting, write a `KEY=value`
-env file and start the service with it:
+env file and start the service with it (`--accept-eula` is required on the
+first detached start):
 
 ```bash
 echo 'NV_DEVICE_PROFILE=auto-native' > custom.env
-python -m isaaccapture.cloudxr.service start --cloudxr-env-config ./custom.env
+python -m isaaccapture.cloudxr.service start --accept-eula --cloudxr-env-config ./custom.env
 ```
 
 The same `--cloudxr-env-config` flag is available on the teleop examples under
@@ -152,6 +163,8 @@ overrides for debugging or forcing the stable path. See
 
 <a id="whitelist-firewall-ports"></a>
 
+<a id="whitelist-ports-for-firewall"></a>
+
 ## 4. Whitelist ports for Firewall
 
 CloudXR requires certain network ports to be open. Depending on your firewall configuration, you
@@ -187,6 +200,8 @@ Please see the [CloudXR network setup](https://docs.nvidia.com/cloudxr-sdk/lates
 running the CloudXR runtime and wss proxy in containerized environment; or using Vision Pro client).
 
 <a id="connect-xr-headset"></a>
+
+<a id="connect-an-xr-headset"></a>
 
 ## 5. Connect an XR headset
 
@@ -234,19 +249,19 @@ hosting and existing-service behavior.
 
 ### CloudXR web client
 
-![CloudXR web client usage instruction](_static/cloudxr-web-client-howto.png)
+![CloudXR web client usage instruction](../_images/cloudxr-web-client-howto.png)
 
 **Figure:** CloudXR web client usage instruction
 
 ### Privacy warning
 
-![Browser privacy warning for self-signed certificate](_static/cloudxr_accept_cert_not_private.png)
+![Browser privacy warning for self-signed certificate](../_images/cloudxr_accept_cert_not_private.png)
 
 **Figure:** Browser privacy warning for self-signed certificate
 
 ### Certificate accepted
 
-![Certificate accepted page](_static/cloudxr_accept_cert_accepted.png)
+![Certificate accepted page](../_images/cloudxr_accept_cert_accepted.png)
 
 **Figure:** Certificate accepted page
 
@@ -300,6 +315,8 @@ You will need v3.0.0 or newer of the [Isaac XR Teleop Sample Client for Apple Vi
 to connect to Isaac Teleop.
 
 <a id="run-teleop-example"></a>
+
+<a id="run-a-teleop-example"></a>
 
 ## 6. Run a teleop example
 
@@ -359,9 +376,11 @@ the same way; [examples/teleop/README.md](https://github.com/NVIDIA/IsaacCapture
 - `gripper_retargeting_example` — full gripper example with more
   configuration options
 
+<a id="next-steps"></a>
+
 ## Next steps
 
-![Isaac Lab](_static/isaaclab.jpg)
+![Isaac Lab](../_images/isaaclab.jpg)
 
 **Teleoperation in Isaac Lab**
 
@@ -371,7 +390,7 @@ Lab Mimic and train imitation learning policies.
 
 If you are new to Isaac Lab, follow instructions in [Isaac Lab Quick Start](https://isaac-sim.github.io/IsaacLab/develop/source/setup/quickstart.html) to get started.
 
-![Isaac ROS](_static/isaacros.png)
+![Isaac ROS](../_images/isaacros.png)
 
 **Teleoperation with Isaac ROS**
 
@@ -381,6 +400,8 @@ Unitree G1 humanoid. You validate the setup in MuJoCo, then deploy on real hardw
 Jetson AGX Thor, as a precursor to data collection and imitation learning.
 
 *ROS is a trademark of Open Robotics.*
+
+<a id="more-information"></a>
 
 ## More Information
 

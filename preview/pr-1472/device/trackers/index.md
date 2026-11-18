@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="spatial-trackers-and-device-data"></a>
+
 # Spatial Trackers and Device Data
 
 Spatial tracking includes headset and controller poses, articulated hands and
@@ -24,7 +26,7 @@ APIs (`xrLocateSpace`, `xrSyncActions`, etc.):
 - [HeadTracker](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/cpp/inc/deviceio_trackers/head_tracker.hpp) – HMD head pose
 - [HandTracker](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/cpp/inc/deviceio_trackers/hand_tracker.hpp) – articulated hand joints (left and right)
 - [ControllerTracker](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/cpp/inc/deviceio_trackers/controller_tracker.hpp) – controller poses and button/axis inputs (left and right)
-- [FullBodyTracker](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/cpp/inc/deviceio_trackers/full_body_tracker.hpp) – vendor-agnostic 24-joint full body pose; default vendor reads the PICO `XR_BD_body_tracking` extension (see [Vendor Selection]())
+- [FullBodyTracker](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/cpp/inc/deviceio_trackers/full_body_tracker.hpp) – vendor-agnostic 24-joint full body pose; default vendor reads the PICO `XR_BD_body_tracking` extension (see [Vendor Selection](#id3))
 
 **SchemaTracker-based trackers** – create new device type by defining a FlatBuffer schema and
 reading it from OpenXR tensor collections via the
@@ -53,6 +55,8 @@ device trackers and retargeters to work together.
 
 <a id="data-schema-convention"></a>
 
+<a id="id1"></a>
+
 ## Data Schema Convention
 
 Every tracker’s data is defined by a FlatBuffers schema under
@@ -74,6 +78,8 @@ table XxxRecord {
 ```
 
 <a id="tracked-sub-channel"></a>
+
+<a id="the-tracked-recording-sub-channel"></a>
 
 ### The `_tracked` recording sub-channel
 
@@ -107,6 +113,8 @@ but the resulting file cannot be replayed.
   `DeviceDataTimestamp`. This is the `root_type` written to MCAP channels by
   the recorder.
 
+<a id="reading-a-payload"></a>
+
 ### Reading a payload
 
 The `get_*()` accessors hand out the payload table itself as an owning handle
@@ -139,6 +147,8 @@ run one `update()` the handle is non-empty for the rest of the session, and
 an empty `data` vector – not an empty handle – means no messages arrived
 this frame. Before that first update the handle is empty like any other.
 
+<a id="shared-types"></a>
+
 ### Shared Types
 
 **DeviceDataTimestamp** ([src/core/schema/fbs/timestamp.fbs](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/timestamp.fbs))
@@ -164,7 +174,11 @@ struct Pose {
 
 <a id="tracker-reference"></a>
 
+<a id="id2"></a>
+
 ## Tracker Reference
+
+<a id="headtracker"></a>
 
 ### HeadTracker
 
@@ -180,6 +194,8 @@ Tracks the HMD head pose via the OpenXR view space.
 - Examples:
   - [examples/oxr/cpp/oxr_simple_api_demo.cpp](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/oxr/cpp/oxr_simple_api_demo.cpp)
   - [examples/oxr/python/isaaccapture_examples/oxr/modular_example.py](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/oxr/python/isaaccapture_examples/oxr/modular_example.py)
+
+<a id="handtracker"></a>
 
 ### HandTracker
 
@@ -199,6 +215,8 @@ Tracks articulated hand joints (26 joints per hand, following the OpenXR
   - [examples/oxr/python/isaaccapture_examples/oxr/modular_example.py](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/oxr/python/isaaccapture_examples/oxr/modular_example.py)
   - [examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/retargeting/python/isaaccapture_examples/retargeting/sources_example.py)
 
+<a id="controllertracker"></a>
+
 ### ControllerTracker
 
 Tracks both left and right controllers – grip and aim poses, plus button and
@@ -217,11 +235,13 @@ axis inputs. Uses standard OpenXR action bindings.
   - [examples/teleop/python/isaaccapture_examples/teleop/locomotion_retargeting_example.py](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/teleop/python/isaaccapture_examples/teleop/locomotion_retargeting_example.py)
   - [examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py)
 
+<a id="fullbodytracker"></a>
+
 ### FullBodyTracker
 
 Tracks 24 body joints through a vendor-selected backend. The tracker itself is
 a vendor-agnostic marker and carries no vendor or live/replay state: a live
-session picks the backend via `VendorConfig` (see [Vendor Selection]()), and
+session picks the backend via `VendorConfig` (see [Vendor Selection](#id3)), and
 replay reads the recorded `full_body` channel regardless of which vendor
 produced it. When no vendor is selected, the default vendor `body.pico-xr`
 reads the PICO `XR_BD_body_tracking` extension directly.
@@ -250,13 +270,13 @@ started first; the Python modules start it themselves):
 
 ```bash
 # C++ (after cmake --install)
-python -m isaaccapture.cloudxr.service start   # runs in the background
+python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
 source ~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/full_body_printer
 ./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
 
 # Python
-uv pip install -e ./examples/mcap_record_replay
+uv pip install -e ./examples/mcap_record_replay --no-sources
 python -m isaaccapture_examples.mcap_record_replay.live_full_body --accept-eula
 python -m isaaccapture_examples.mcap_record_replay.record_full_body --accept-eula
 python -m isaaccapture_examples.mcap_record_replay.replay_full_body
@@ -264,6 +284,8 @@ python -m isaaccapture_examples.mcap_record_replay.replay_full_body
 
 See [Body Tracking](../body_tracking/index.md) for headset setup and
 [MCAP Recording & Replay](../../references/mcap_record_replay.md) for the record and replay options.
+
+<a id="soma-body-trackers"></a>
 
 ### SOMA body trackers
 
@@ -326,6 +348,8 @@ body-schema selection. It does not map SOMA into `FullBodyPose`.
   - [tests/python/core/schema/test_soma_body_joint_rotations.py](https://github.com/NVIDIA/IsaacCapture/blob/main/tests/python/core/schema/test_soma_body_joint_rotations.py)
   - [tests/python/core/retargeting_engine/test_soma_body_source.py](https://github.com/NVIDIA/IsaacCapture/blob/main/tests/python/core/retargeting_engine/test_soma_body_source.py)
 
+<a id="somahandjointrotationstracker-and-somahandjointposestracker"></a>
+
 ### SomaHandJointRotationsTracker and SomaHandJointPosesTracker
 
 Reads either of the two SOMA hand transport profiles defined and verified against SOMA-X v0.3.1.
@@ -364,6 +388,8 @@ each hand.
   - [tests/python/core/schema/test_soma_hand_joint_poses.py](https://github.com/NVIDIA/IsaacCapture/blob/main/tests/python/core/schema/test_soma_hand_joint_poses.py)
   - [tests/python/core/retargeting_engine/test_soma_hand_source.py](https://github.com/NVIDIA/IsaacCapture/blob/main/tests/python/core/retargeting_engine/test_soma_hand_source.py)
 
+<a id="framemetadatatrackeroak"></a>
+
 ### FrameMetadataTrackerOak
 
 Per-frame metadata for a **single** OAK camera stream. Create one tracker per
@@ -391,7 +417,7 @@ a headset to connect to the CloudXR runtime; after that the printer reports
 the same `--collection-prefix`. Run each in its own shell:
 
 ```bash
-python -m isaaccapture.cloudxr.service start   # runs in the background
+python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
 
 # Shell 1: the plugin
 source ~/.cloudxr/run/cloudxr.env
@@ -406,6 +432,8 @@ source ~/.cloudxr/run/cloudxr.env
 
 See [OAK Camera Plugin](../cameras/oak.md) to build the plugin and
 [CloudXR Service](../../references/cloudxr.md#dedicated-cloudxr-runtime) for the runtime setup.
+
+<a id="generic3axispedaltracker"></a>
 
 ### Generic3AxisPedalTracker
 
@@ -429,6 +457,8 @@ The Python method is named `get_pedal_data()` (instead of the C++
 `get_data()`).
 
 <a id="vendor-selection"></a>
+
+<a id="id3"></a>
 
 ## Vendor Selection
 
@@ -479,6 +509,8 @@ so it travels with the pipeline into both extension discovery and session
 construction; see [Teleop Session](../../teleop/teleop_session.md).
 
 <a id="tracker-usage-example"></a>
+
+<a id="usage-examples"></a>
 
 ## Usage Examples
 

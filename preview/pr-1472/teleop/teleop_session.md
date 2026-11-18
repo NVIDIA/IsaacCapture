@@ -1,12 +1,16 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="teleop-session"></a>
+
 # Teleop Session
 
 TeleopSessionManager provides a declarative, configuration-based API for
 setting up complete teleop pipelines. It eliminates boilerplate code and makes
 examples more readable by focusing on **what** you want to do rather than
 **how** to set it up.
+
+<a id="overview"></a>
 
 ## Overview
 
@@ -30,6 +34,8 @@ Successful retry clears the failure flag. Failures while unwinding the resource
 stack remain terminal: later entry, stepping and exit raise the stored error.
 An entry failure with successful rollback still permits reuse; the original
 setup error remains primary in either case.
+
+<a id="quick-start"></a>
 
 ## Quick Start
 
@@ -81,12 +87,16 @@ with TeleopSession(config) as session:
         right = result["gripper_right"][0]
 ```
 
+<a id="configuration-classes"></a>
+
 ## Configuration Classes
 
 #### NOTE
 Currently, to customize the teleop session, you need to configure it via Python code. We are
 working on a more declarative configuration API that takes a YAML file as input. Follow the
 following issue for progress: [https://github.com/NVIDIA/IsaacCapture/issues/229](https://github.com/NVIDIA/IsaacCapture/issues/229)
+
+<a id="teleopsessionconfig"></a>
 
 ### TeleopSessionConfig
 
@@ -117,7 +127,7 @@ details.
 When `oxr_handles` is provided (live mode), `TeleopSession` uses the
 supplied handles instead of creating its own OpenXR session. The caller is
 responsible for the external session’s lifetime. Construct handles with
-`OpenXRSessionHandles(instance, session, space, proc_addr)` where each
+`OpenXRSessionHandles(instance, session, space, xr_get_instance_proc_addr)` where each
 argument is a `uint64` handle value.
 
 ```python
@@ -132,6 +142,8 @@ config = TeleopSessionConfig(
     oxr_handles=handles,  # Skip internal OpenXR session creation
 )
 ```
+
+<a id="tracker-vendor-selection"></a>
 
 #### Tracker vendor selection
 
@@ -155,6 +167,8 @@ full_body = FullBodySource(
     name="full_body", vendor=deviceio.TrackerVendor("body.pico-xr")
 )
 ```
+
+<a id="retargeting-execution"></a>
 
 #### Retargeting execution
 
@@ -262,6 +276,8 @@ config = TeleopSessionConfig(
 )
 ```
 
+<a id="deadline-pacing-tuning"></a>
+
 #### Deadline pacing tuning
 
 `DeadlinePacingConfig` predicts the next application-frame deadline
@@ -302,20 +318,31 @@ Practical tuning:
   `compute_cost_adaptation=0.40` to `0.60` so the compute estimate catches
   up faster.
 
+<a id="pluginconfig"></a>
+
 ### PluginConfig
 
-Configure plugins:
+Configure plugins and pass them as `TeleopSessionConfig(plugins=[...])`:
 
 ```python
-PluginConfig(
+from pathlib import Path
+
+from isaaccapture.teleop_session_manager import PluginConfig
+
+plugin = PluginConfig(
     plugin_name="controller_synthetic_hands",
     plugin_root_id="synthetic_hands",
-    search_paths=[Path("/path/to/plugins")],
+    search_paths=[Path("/path/to/IsaacCapture/install/plugins")],
     enabled=True,
     plugin_args=["--arg1=val1", "--arg2=val2"],
     required=True,
 )
 ```
+
+A source build installs `controller_synthetic_hands` and the other plugins
+into `install/plugins/`. The plugins shipped inside the `isaaccapture`
+wheel are under `BUNDLED_PLUGINS_DIR`, which you import from
+`isaaccapture.teleop_session_manager` and pass as a search path instead.
 
 Plugins are optional by default: if none of their search paths exist or the
 configured plugin is not discovered, session startup continues without them.
@@ -333,9 +360,15 @@ appearing there. See
 [Device provider monitoring](../references/device_provider_monitoring.md) for status identities, state
 precedence, and plugin integration guidance.
 
+<a id="api-reference"></a>
+
 ## API Reference
 
+<a id="teleopsession"></a>
+
 ### TeleopSession
+
+<a id="methods"></a>
 
 #### Methods
 
@@ -386,6 +419,8 @@ result = session.step(
 )
 ```
 
+<a id="properties"></a>
+
 #### Properties
 
 - `frame_count: int` – Current frame number
@@ -397,6 +432,8 @@ result = session.step(
   most recent returned output
 - `last_step_info: RetargetingStepInfo` – Age and timing metadata for
   the most recent returned output
+
+<a id="helper-functions"></a>
 
 ### Helper Functions
 
@@ -415,7 +452,11 @@ The module also exports two utility functions:
   Convenience function that creates `HandsSource`, `ControllersSource`,
   and/or `HeadSource` instances from a list of tracker objects.
 
+<a id="examples"></a>
+
 ## Examples
+
+<a id="complete-examples"></a>
 
 ### Complete Examples
 
@@ -431,13 +472,16 @@ The module also exports two utility functions:
    python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
    ```
 
+<a id="before-vs-after"></a>
+
 ### Before vs After
 
 **Before (verbose, manual setup):**
 
 ```python
-# Create trackers
-controller_tracker = deviceio.ControllerTracker()
+# Create source and its tracker
+controllers = ControllersSource(name="controllers")
+controller_tracker = controllers.get_tracker()
 
 # Get extensions
 required_extensions = deviceio.DeviceIOSession.get_required_extensions([controller_tracker])
@@ -456,7 +500,6 @@ plugin_manager = pm.PluginManager([...])
 plugin_context = plugin_manager.start(...)
 
 # Setup pipeline
-controllers = ControllersSource(name="controllers")
 gripper_left = GripperRetargeter(
     GripperRetargeterConfig(hand_side="left"),
     name="gripper_left",
@@ -480,14 +523,7 @@ pipeline = OutputCombiner({
 while True:
     deviceio_session.update()
     # Manual data injection needed for new sources
-    left_controller = controller_tracker.get_left_controller(deviceio_session)
-    right_controller = controller_tracker.get_right_controller(deviceio_session)
-    inputs = {
-        "controllers": {
-            "deviceio_controller_left": [left_controller],
-            "deviceio_controller_right": [right_controller]
-        }
-    }
+    inputs = {"controllers": controllers.poll_tracker(deviceio_session)}
     result = pipeline(inputs)
     # ... error handling, cleanup ...
 ```
@@ -508,6 +544,8 @@ with TeleopSession(config) as session:
         result = session.step()  # Everything handled automatically!
 ```
 
+<a id="benefits"></a>
+
 ## Benefits
 
 1. **Reduced Boilerplate** – ~70% reduction in code length
@@ -518,7 +556,11 @@ with TeleopSession(config) as session:
 6. **Plugin Management** – Built-in plugin lifecycle management
 7. **Maintainable** – Changes to setup logic happen in one place
 
+<a id="advanced-features"></a>
+
 ## Advanced Features
+
+<a id="custom-update-logic"></a>
 
 ### Custom Update Logic
 

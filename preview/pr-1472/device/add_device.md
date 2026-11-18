@@ -1,5 +1,7 @@
 <a id="device-interface-device-plugin"></a>
 
+<a id="add-a-new-device"></a>
+
 # Add a New Device
 
 For new hardware that requires a custom driver or SDK, create an Isaac Capture device plugin
@@ -12,14 +14,16 @@ for examples.
 To add a new device that streams typed data over the OpenXR runtime, follow these four steps.
 The reference implementation is the **generic 3-axis foot pedal**:
 
-| Component                                         | Code Location                                                                                                                                                                                                                                                 |
-|---------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Data Schema                                       | [src/core/schema/fbs/pedals.fbs](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/pedals.fbs)                                                                                                                                             |
-| Device Plugin                                     | [src/plugins/generic_3axis_pedal](https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/generic_3axis_pedal)                                                                                                                                           |
+| Component                                         | Code Location                                                                                                                                                                                                                                    |
+|---------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Data Schema                                       | [src/core/schema/fbs/pedals.fbs](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/pedals.fbs)                                                                                                                                |
+| Device Plugin                                     | [src/plugins/generic_3axis_pedal](https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/generic_3axis_pedal)                                                                                                                              |
 | Tracker facade (`Generic3AxisPedalTracker`)       | Generated at configure time from [src/core/deviceio_trackers/trackers.toml](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml)<br/>(see [Schema-based tracker manifest](#schema-based-tracker-manifest)) |
-| Live backend (`LiveGeneric3AxisPedalTrackerImpl`) | Generated alongside the facade under `${CMAKE_BINARY_DIR}/generated/trackers/`                                                                                                                                                                                |
-| `SchemaTracker` / `SampleResult`                  | [src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp)                                                                           |
-| Debug printer                                     | [examples/schemaio/pedal_printer.cpp](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/schemaio/pedal_printer.cpp)                                                                                                                                   |
+| Live backend (`LiveGeneric3AxisPedalTrackerImpl`) | Generated alongside the facade under `${CMAKE_BINARY_DIR}/generated/trackers/`                                                                                                                                                                   |
+| `SchemaTracker` / `SampleResult`                  | [src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/live_trackers/cpp/inc/live_trackers/schema_tracker.hpp)                                                              |
+| Debug printer                                     | [examples/schemaio/pedal_printer.cpp](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/schemaio/pedal_printer.cpp)                                                                                                                      |
+
+<a id="step-1-define-the-data-schema"></a>
 
 ## Step 1: Define the data schema
 
@@ -58,6 +62,8 @@ Include `timestamp.fbs` for `DeviceDataTimestamp`; include other shared types (e
 `point.fbs`) as needed. After adding or changing a schema, rebuild so that the C++ and
 Python generated code (e.g. `pedals_generated.h`, `pedals_bfbs_generated.h`) is updated.
 
+<a id="step-2-implement-a-device-plugin"></a>
+
 ## Step 2: Implement a device plugin
 
 The plugin runs in a separate process (or as part of a host app), reads hardware, and pushes
@@ -87,9 +93,13 @@ Reference implementation: [src/plugins/generic_3axis_pedal](https://github.com/N
 [generic_3axis_pedal_plugin.hpp](https://github.com/NVIDIA/IsaacCapture/blob/main/src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.hpp) and
 [generic_3axis_pedal_plugin.cpp](https://github.com/NVIDIA/IsaacCapture/blob/main/src/plugins/generic_3axis_pedal/generic_3axis_pedal_plugin.cpp).
 
+<a id="step-3-implement-a-tracker"></a>
+
 ## Step 3: Implement a tracker
 
 <a id="schema-based-tracker-manifest"></a>
+
+<a id="schema-based-trackers-manifest"></a>
 
 ### Schema-based trackers (manifest)
 
@@ -131,6 +141,8 @@ python src/core/codegen/generate_trackers.py \\
 
 (`--out-dir` and `--emit-cmake` are required by the CLI even when `--print-resolved`
 skips writing generated sources; temporary paths are fine.)
+
+<a id="hand-written-trackers"></a>
 
 ### Hand-written trackers
 
@@ -196,6 +208,8 @@ locate tracker:
   (`LiveHandTrackerImpl`): same facade / `ITrackerImpl` split, but `update()` drives
   `xrLocate*` rather than `SchemaTracker`.
 
+<a id="step-4-implement-a-simple-c-printer-optional"></a>
+
 ## Step 4: Implement a simple C++ printer (optional)
 
 A minimal reader app verifies the full path: plugin (or pusher) pushes; printer discovers
@@ -215,6 +229,8 @@ Use the same `collection_id` (and optionally `tensor_identifier`) as the plugin.
 
 <a id="schema-io-example"></a>
 
+<a id="schema-io-example-build-and-run"></a>
+
 ## Schema IO example: build and run
 
 The **Schema IO example** is a simpler example that demonstrates pushing and reading serialized
@@ -233,13 +249,19 @@ cmake --build build --parallel
 cmake --install build
 ```
 
-**Run** pusher and printer in separate terminals:
+**Run** pusher and printer in separate terminals. Neither starts CloudXR, so
+start the runtime first (see [CloudXR Service](../references/cloudxr.md#dedicated-cloudxr-runtime)) and source its
+environment in each terminal:
 
 ```bash
+python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
+
 # Terminal 1: Start printer
+source ~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/pedal_printer
 
 # Terminal 2: Start pusher
+source ~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/pedal_pusher
 ```
 

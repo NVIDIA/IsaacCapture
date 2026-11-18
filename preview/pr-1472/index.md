@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="welcome-to-isaac-capture"></a>
+
 # Welcome to Isaac Capture
 
 [![Default: Apache-2.0](https://img.shields.io/badge/Default-Apache--2.0-blue.svg)](development/license.html) [![EgoPost: OpenMDW-1.1](https://img.shields.io/badge/EgoPost-OpenMDW--1.1-blue.svg)](https://github.com/NVIDIA/IsaacCapture/blob/main/LICENSES/LicenseRef-OpenMDW-1.1.txt)
@@ -24,6 +26,8 @@ and [PyPI](https://pypi.org/project/isaaccapture/).
 To run Isaac Teleop, follow [Quick Start](teleop/quick_start.md) for installation,
 headset setup, and your first session. Existing users can consult
 [Migrating to isaaccapture](development/migration.md) for the Python package migration.
+
+<a id="table-of-contents"></a>
 
 ## Table of Contents
 
@@ -244,6 +248,8 @@ headset setup, and your first session. Existing users can consult
   * [Running](references/haptic_feedback.md#running)
   * [Adding a new haptic device](references/haptic_feedback.md#adding-a-new-haptic-device)
   * [See also](references/haptic_feedback.md#see-also)
+
+<a id="indices-and-tables"></a>
 
 ## Indices and tables
 

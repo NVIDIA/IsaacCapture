@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 Wuji Technology. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="wuji-glove"></a>
+
 # Wuji Glove
 
 A Linux-only plugin for integrating [Wuji](https://www.wuji.tech/)
@@ -18,6 +20,8 @@ them as standard hand tracking.
 > * [Wrist pose](#wrist-pose)
 > * [Troubleshooting](#troubleshooting)
 
+<a id="data-flow"></a>
+
 ## Data flow
 
 The plugin combines the glove’s wrist-relative skeleton with an absolute wrist
@@ -33,6 +37,8 @@ Optical hand / controller ───┘   (wrist-pose fusion)   (spatial hand joi
 [Retargeter: Wuji Glove to Wuji Hand](../../references/retargeting/wuji.md) explains how to map OpenXR hand tracking
 to the 20 joint commands of a Wuji Hand or Wuji Hand 2.
 
+<a id="prerequisites"></a>
+
 ## Prerequisites
 
 - **Linux** — x86_64 or aarch64 (tested on Ubuntu 22.04 / 24.04).
@@ -46,6 +52,8 @@ to the 20 joint commands of a Wuji Hand or Wuji Hand 2.
   `wuji-sdk` pip package; the install script downloads it automatically.
 - **Wuji glove(s)** reachable on the same LAN as the plugin host.
 - **CloudXR runtime** running on the plugin host.
+
+<a id="installation"></a>
 
 ## Installation
 
@@ -71,6 +79,8 @@ cmake --build build --target wuji_glove_plugin
 cmake --install build --component wuji_glove
 ```
 
+<a id="running-the-plugin"></a>
+
 ## Running the Plugin
 
 The plugin reaches the Teleop session through the CloudXR / OpenXR runtime, so
@@ -78,7 +88,7 @@ start the runtime first and source its environment in the shell that launches
 the plugin:
 
 ```bash
-python -m isaaccapture.cloudxr.service start   # runs in the background
+python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
 source ~/.cloudxr/run/cloudxr.env
 ./install/plugins/wuji_glove/wuji_glove_plugin
 ```
@@ -87,6 +97,8 @@ See [CloudXR Service](../../references/cloudxr.md#dedicated-cloudxr-runtime) and
 [Load CloudXR environment variables](../../references/cloudxr.md#load-cloudxr-environment-variables) for the full service setup. The plugin resolves each glove’s side from device
 metadata and reconnects automatically after a disconnect; applications can also
 launch it through its `plugin.yaml` using `TeleopSession`.
+
+<a id="wrist-pose"></a>
 
 ## Wrist pose
 
@@ -107,6 +119,8 @@ export WUJI_GLOVE_AIM_TO_WRIST_RIGHT="px,py,pz,qx,qy,qz,qw"
 
 Position values are in meters and quaternion values use `(x, y, z, w)`.
 The built-in offsets assume mirrored left/right mounts.
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 

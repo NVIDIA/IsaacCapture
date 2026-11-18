@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="data-collection-in-sim"></a>
+
 # Data Collection in Sim
 
 Collect SO-101 demonstrations in simulation with [NVIDIA Isaac Lab](https://isaac-sim.github.io/IsaacLab), on the cube-stacking task. You drive the simulated
@@ -14,6 +16,8 @@ device:
 | `IsaacContrib-Stack-Cube-SO101-IK-Abs-v0`       | Absolute-pose IK + Isaac Teleop teleoperation, driven by an **XR controller**.     |
 | `IsaacContrib-Stack-Cube-SO101-Joint-Teleop-v0` | Joint-space mirror, driven by a physical **SO-101 leader arm** (no headset or IK). |
 | `IsaacContrib-Stack-Cube-SO101-v0`              | Joint-position control baseline (no teleop).                                       |
+
+<a id="before-you-start"></a>
 
 ## Before you start
 
@@ -40,6 +44,8 @@ at all — omit `--xr` and the sim runs standalone in the Kit viewport.
 an Isaac Teleop C++ plugin that is **not** part of the `isaaccapture` pip package or of Isaac Lab —
 you must build this repository from source to get it. See
 [Build and install the plugin](#sim-so101-leader-build) in the **SO-101 Leader** tab below.
+
+<a id="collect-teleop-data"></a>
 
 ## Collect Teleop Data
 
@@ -225,6 +231,8 @@ plugin running in its second terminal exactly as above:
 | `Permission denied` on `/dev/ttyACM*`           | Add your user to the `dialout` group (`sudo usermod -aG dialout $USER`) and log<br/>back in.                                                                                 |
 | Plugin runs, follower does not move             | The `collection_id` must be `so101_leader`, and teleoperation must be started<br/>(press `B` in the Kit viewport, or send **start** from the headset when using<br/>`--xr`). |
 | Follower moves to the wrong pose or hits limits | Re-run `calibrate` and pass the resulting file; flip `sign` for any joint that<br/>moves the wrong way.                                                                      |
+
+<a id="convert-to-lerobot-dataset"></a>
 
 ## Convert to LeRobot Dataset
 

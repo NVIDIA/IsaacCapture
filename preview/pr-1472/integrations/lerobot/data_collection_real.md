@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="data-collection-in-real"></a>
+
 # Data Collection in Real
 
 Record demonstrations on a physical SO-101 into a [LeRobot dataset](https://huggingface.co/docs/lerobot/en/index), driving the follower with either teleop device
@@ -11,6 +13,8 @@ page runs from a LeRobot source checkout. `teleoperate.py` drives the arm live, 
 `record.py` does the same while saving a dataset. Both take the same
 `--robot.*` / `--teleop.*` flags; `--teleop.type` selects the device
 (`xr_controller` | `so101_leader`).
+
+<a id="before-you-start"></a>
 
 ## Before you start
 
@@ -37,8 +41,8 @@ Follow the necessary one-time steps to set up your environment and hardware:
    uv venv --python 3.12 .venv
    source .venv/bin/activate
    uv pip install -e ".[feetech,kinematics,dataset]" "huggingface_hub>=1.5"
-   uv pip install "isaaccapture[cloudxr,retargeters-lite]~=1.8.0" "scipy>=1.14" \
-         --extra-index-url [https://pypi.nvidia.com](https://pypi.nvidia.com) --prerelease=allow
+   uv pip install "isaaccapture[cloudxr,retargeters-lite]~=1.8.0a0" "scipy>=1.14" \
+         --extra-index-url https://pypi.nvidia.com
    ```
 
    The upstream `isaac_teleop_to_so101` scripts still import `isaacteleop`.
@@ -55,10 +59,12 @@ Follow the necessary one-time steps to set up your environment and hardware:
    python -m isaaccapture.cloudxr.service start --accept-eula
    ```
 
+<a id="teleop-and-data-recording"></a>
+
 ## Teleop and data recording
 
 Run the scripts as modules from the **LeRobot repository root**, with the environment from
-[Before you start]() activated (they use relative imports, so `python -m` is required).
+[Before you start](#before-you-start) activated (they use relative imports, so `python -m` is required).
 
 #### NOTE
 The `examples` package resolves only from that root. Running these commands from an Isaac
@@ -188,6 +194,8 @@ Isaac Teleop’s `so101_leader` plugin, which the script launches for you.
        --dataset.episode_time_s=20 \
        --dataset.reset_time_s=5
    ```
+
+<a id="recording-controls"></a>
 
 ## Recording controls
 

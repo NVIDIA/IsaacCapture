@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="contributing"></a>
+
 # Contributing
 
 We welcome contributions. Please see the repository’s [CONTRIBUTING.md](https://github.com/NVIDIA/IsaacCapture/blob/main/CONTRIBUTING.md) for:
@@ -9,7 +11,11 @@ We welcome contributions. Please see the repository’s [CONTRIBUTING.md](https:
 - Development setup and coding standards
 - Pull request process
 
+<a id="previewing-documentation-changes"></a>
+
 ## Previewing documentation changes
+
+<a id="local-build"></a>
 
 ### Local build
 
@@ -25,6 +31,8 @@ make current-docs
 The output is written to `docs/build/current/`. Open `index.html` in a
 browser to inspect it. Sphinx is run with `-W --keep-going`, so warnings are
 treated as errors — fix them locally before pushing.
+
+<a id="pr-preview-on-github-pages"></a>
 
 ### PR preview on GitHub Pages
 

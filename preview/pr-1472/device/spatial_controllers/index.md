@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="spatial-controllers"></a>
+
 # Spatial controllers
 
 Spatial controllers provide motion input for teleoperation. The SpaceMouse

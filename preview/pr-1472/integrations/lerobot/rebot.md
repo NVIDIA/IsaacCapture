@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="rebot-b601-rs-on-jetson-agx-orin"></a>
+
 # reBot B601-RS on Jetson AGX Orin
 
 The [reBot B601-RS](https://github.com/Welt-liu/reBot-B601-Agent-Guide) is a 6-DOF arm built from
@@ -33,6 +35,8 @@ The working example, including the assets referenced below, lives in [examples/r
 | [assets/set_can_pinmux.py](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/rebot/assets/set_can_pinmux.py)   | Routes the header pins to the CAN controller, via `/dev/mem`. Required on every boot;<br/>idempotent; needs sudo. |
 | [assets/can0-rebot.service](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/rebot/assets/can0-rebot.service) | systemd oneshot that redoes the pinmux and brings `can0` up at 1 Mbit on boot.                                    |
 
+<a id="what-you-need"></a>
+
 ## What you need
 
 | Item                       | Notes                                                                                                                                           |
@@ -42,13 +46,15 @@ The working example, including the assets referenced below, lives in [examples/r
 | SN65HVD230 CAN transceiver | The Orin has a CAN *controller* but no *transceiver* — see below.                                                                               |
 | Jumper wires               | Orin 40-pin header (J30) to the transceiver’s 4-pin header.                                                                                     |
 
+<a id="the-can-transceiver"></a>
+
 ## The CAN transceiver
 
 The Orin’s on-chip CAN controller speaks logic-level TX/RX; it cannot drive a differential CAN bus
 on its own. A **3.3 V** transceiver bridges the two. The Waveshare SN65HVD230 board is the common
 choice — it is 3.3 V native, which matches the Orin’s I/O directly.
 
-![Waveshare SN65HVD230 CAN transceiver board](_static/rebot/sn65hvd230-can-board.jpg)
+![Waveshare SN65HVD230 CAN transceiver board](../../_images/sn65hvd230-can-board.jpg)
 
 The Waveshare SN65HVD230 CAN board. The 4-pin header carries `3.3V`, `GND`, `RX` and
 `TX`; the screw terminal carries `CANH` and `CANL`.
@@ -60,12 +66,14 @@ The Waveshare SN65HVD230 CAN board. The 4-pin header carries `3.3V`, `GND`, `RX`
 Power the board from **3.3 V**, not 5 V. The SN65HVD230 is a 3.3 V part and the Orin’s header
 pins are not 5 V tolerant.
 
+<a id="wiring"></a>
+
 ## Wiring
 
 Connect the Orin’s 40-pin header (**J30**) to the transceiver. The Waveshare header labels are
 written from the host’s point of view, so this is **straight-through — do not cross TX and RX**:
 
-![Wiring from the Orin J30 header through the SN65HVD230 transceiver to the reBot arm](_static/rebot/orin-sn65hvd230-rebot-wiring.svg)
+![Wiring from the Orin J30 header through the SN65HVD230 transceiver to the reBot arm](../../_images/orin-sn65hvd230-rebot-wiring.svg)
 
 The complete signal path. The Orin drives logic-level TX/RX; the transceiver turns it into the
 differential pair the arm’s motors share.
@@ -104,6 +112,8 @@ Two checks with a multimeter save hours of debugging:
 - **Motor power** — 24–48 V at the arm’s power connector. RobStride motors run their CAN off the
   motor rail, so an unpowered arm produces **no CAN replies at all**, which looks exactly like a
   wiring fault.
+
+<a id="bring-up-the-bus"></a>
 
 ## Bring up the bus
 
@@ -175,6 +185,8 @@ python3: can't open file '/opt/rebot/set_can_pinmux.py': [Errno 2] No such file 
 
 Install the script and `sudo systemctl restart can0-rebot.service`.
 
+<a id="calibrate-and-drive"></a>
+
 ## Calibrate and drive
 
 Start the motorbridge WebSocket gateway and connect
@@ -203,6 +215,8 @@ MOTORBRIDGE_WS_TOKEN=<token> BIND=0.0.0.0:9002 ./start-gateway.sh
 A browser cannot set WebSocket request headers, so Studio has to carry the token in the URL:
 `ws://<orin-ip>:9002/?motorbridge_ws_token=<token>`.
 
+<a id="let-an-agent-do-it"></a>
+
 ## Let an agent do it
 
 [examples/rebot/SKILL.md](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/rebot/SKILL.md) is written as an agent skill: it carries the full procedure
@@ -226,6 +240,8 @@ Any step needing sudo, hand me the exact command to run myself.
 If the scan finds no motors, work the troubleshooting tree in that file before
 changing anything — start by confirming motor power.
 ```
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 
@@ -254,10 +270,12 @@ was never set, or one a reboot cleared.
 
 <a id="rebot-two-arms"></a>
 
+<a id="future-work-a-second-arm-on-can1"></a>
+
 ## Future work: a second arm on `can1`
 
 The Orin has two independent CAN controllers, so in principle a second arm needs nothing more than
-a second SN65HVD230 on the `can1` pins listed in [Wiring](). **This path is not implemented — the
+a second SN65HVD230 on the `can1` pins listed in [Wiring](#wiring). **This path is not implemented — the
 example targets \`\`can0\`\` only, and making it work is on you.** What follows is the shape of the
 work, not a procedure to follow.
 

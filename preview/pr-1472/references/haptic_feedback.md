@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="haptic-feedback"></a>
+
 # Haptic Feedback
 
 Drive a haptic actuator from a simulator signal through the existing Isaac Teleop
@@ -15,6 +17,8 @@ force-feedback devices fit the same contract.
 > * [Running](#running)
 > * [Adding a new haptic device](#adding-a-new-haptic-device)
 > * [See also](#see-also)
+
+<a id="architecture"></a>
 
 ## Architecture
 
@@ -49,6 +53,8 @@ Sim / input signal      Retargeter                 Sink (IDeviceIOSink)
                                                          .apply_left/right_haptic_feedback
 ```
 
+<a id="example"></a>
+
 ## Example
 
 `controller_haptic_example` in `examples/haptic_feedback` is the minimal
@@ -62,6 +68,8 @@ rumble from sim contact instead.
 `ControllerHapticDevice` must reuse the `ControllerTracker` owned by
 `ControllersSource` (pass `controllers.get_tracker()`) so the session creates
 a single controller tracker and there is no OpenXR action-set contention.
+
+<a id="running"></a>
 
 ## Running
 
@@ -80,6 +88,8 @@ No arguments — pull either trigger to rumble that controller. Press Ctrl+C to
 exit. Runtimes that do not expose `xrApplyHapticFeedback` silently no-op rather
 than tearing down the session.
 
+<a id="adding-a-new-haptic-device"></a>
+
 ## Adding a new haptic device
 
 A new haptic device implements `IHapticDevice` (`accepted_type`,
@@ -91,6 +101,8 @@ assumption. Devices that run their vendor SDK in a separate process (haptic
 gloves, exoskeletons) implement the same interface but exchange data with their
 plugin over a tensor collection; those integrations land on top of this
 foundation.
+
+<a id="see-also"></a>
 
 ## See also
 

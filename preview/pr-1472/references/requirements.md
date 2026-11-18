@@ -1,11 +1,15 @@
+<a id="system-requirements"></a>
+
 # System Requirements
 
 Isaac Teleop can be used for teleoperation of robots, data collection, and human-centric data
 collection. The hardware & software requirements are different for each use case.
 
+<a id="teleoperation-to-robots-with-input-devices"></a>
+
 ## Teleoperation to Robots with Input Devices
 
-![Hardware requirements for teleoperation with extra input devices](_static/hardware-req-02.svg)
+![Hardware requirements for teleoperation with extra input devices](../_images/hardware-req-02.svg)
 
 When using extra input devices (such as Manus Gloves, Logitech Rudder Pedals, OAK-D Camera, Haptikos Exoskeletons etc.),
 Isaac Teleop needs to be **run on a laptop or workstation**, that is connected to the robot via
@@ -19,9 +23,11 @@ network.  The minimum requirements for the laptop/workstation are:
 | CUDA          | 12.8 or newer                                            |
 | NVIDIA Driver | 580.95.05 or newer                                       |
 
+<a id="teleoperation-with-isaac-sim-and-isaac-lab"></a>
+
 ## Teleoperation with Isaac Sim and Isaac Lab
 
-![Hardware requirements for teleoperation with Isaac Sim and Isaac Lab](_static/hardware-req-03.svg)
+![Hardware requirements for teleoperation with Isaac Sim and Isaac Lab](../_images/hardware-req-03.svg)
 
 For running simulation with Isaac Sim and Isaac Lab with RTX rendering, the CloudXR server and
 Isaac Teleop sessions need to be **run on the same workstation with Isaac Sim and Isaac Lab**. The
@@ -42,13 +48,15 @@ If you are only using XR headsets for teleoperation, you can host the workstatio
 See [Isaac Lab Cloud Deployment](https://isaac-sim.github.io/IsaacLab/develop/source/features/docker_cloud.html#cloud-workstations)
 for more details.
 
+<a id="human-centric-data-collection"></a>
+
 ## Human-centric Data Collection
 
 Isaac Teleop can also be used for human-centric data collection without a robot or simulator in the
 loop. In this case, Isaac Teleop needs to be **run on a laptop or workstation**, that is connected
 to device peripherals. The minimum requirements for the laptop/workstation are:
 
-![Hardware requirements for human-centric data collection](_static/hardware-req-04.svg)
+![Hardware requirements for human-centric data collection](../_images/hardware-req-04.svg)
 
 | Component     | Requirement                                              |
 |---------------|----------------------------------------------------------|

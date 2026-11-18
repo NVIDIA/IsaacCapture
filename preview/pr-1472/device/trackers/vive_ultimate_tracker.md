@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 HTC Corporation. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="vive-ultimate-tracker"></a>
+
 # VIVE Ultimate Tracker
 
 Use [HTC VIVE Ultimate Trackers](https://www.vive.com/us/accessory/vive-ultimate-tracker/)
@@ -34,6 +36,8 @@ and replayed. Currently only Linux is supported, on x86_64 and arm64. No headset
 > * [Troubleshooting](#troubleshooting)
 > * [License](#license)
 
+<a id="overview"></a>
+
 ## Overview
 
 Tracker data reaches Isaac Capture through two pieces of software:
@@ -50,6 +54,8 @@ Ultimate Trackers -> USB dongle -> VIVE Hub tracker_server -> /tmp/vut.sock (VUT
     -> Se3Tracker readers / MCAP recording / replay
 ```
 
+<a id="components"></a>
+
 ## Components
 
 - **VIVE Hub for Linux**: desktop app plus `tracker_server` daemon, used for pairing, map
@@ -60,6 +66,8 @@ Ultimate Trackers -> USB dongle -> VIVE Hub tracker_server -> /tmp/vut.sock (VUT
 - **Examples**: `record_se3_vive` records every tracker to an MCAP file, and
   `replay_se3_vive` plays a recording back in a 3D browser view.
 
+<a id="prerequisites"></a>
+
 ## Prerequisites
 
 - **Linux**: x86_64 or arm64, on a desktop (graphical) session. Ubuntu 20.04 or newer is
@@ -69,12 +77,18 @@ Ultimate Trackers -> USB dongle -> VIVE Hub tracker_server -> /tmp/vut.sock (VUT
   will neither build nor connect with it.
 - **Isaac Capture built from source**. See [Build from Source](../../development/build_from_source/index.md).
 
+<a id="quick-start"></a>
+
 ## Quick Start
 
 Part 1 brings the trackers up with VIVE Hub. Part 2 builds the plugin and streams the trackers
 into Isaac Capture.
 
+<a id="part-1-set-up-the-trackers-with-vive-hub"></a>
+
 ## Part 1: Set up the trackers with VIVE Hub
+
+<a id="step-1-download-vive-hub-for-linux"></a>
 
 ### Step 1: Download VIVE Hub for Linux
 
@@ -92,6 +106,8 @@ To verify the download, download the `.sha256` file next to the package and run:
 ```bash
 sha256sum -c VIVEHub-Linux-*.sha256
 ```
+
+<a id="step-2-install-vive-hub"></a>
 
 ### Step 2: Install VIVE Hub
 
@@ -124,6 +140,8 @@ sudo ./install-box64.sh
 udev rules only take effect on the host machine. If you build Isaac Capture in a container, run
 `install-udev.sh` on the host, not inside the container.
 
+<a id="step-3-pair-the-trackers-and-build-the-tracking-map"></a>
+
 ### Step 3: Pair the trackers and build the tracking map
 
 Start VIVE Hub from the extracted folder:
@@ -143,6 +161,8 @@ In the VIVE Hub UI:
 
 **Leave VIVE Hub running.** The plugin reads poses from its daemon.
 
+<a id="step-4-optional-check-the-trackers-with-the-vut-sdk-demo"></a>
+
 ### Step 4 (optional): Check the trackers with the VUT SDK demo
 
 To confirm that poses are coming out of VIVE Hub before you involve Isaac Capture, run the demo
@@ -153,7 +173,11 @@ cd sdk/examples
 make && ./vut_demo
 ```
 
+<a id="part-2-stream-the-trackers-into-isaac-capture"></a>
+
 ## Part 2: Stream the trackers into Isaac Capture
+
+<a id="step-5-build-isaac-capture-with-the-plugin"></a>
 
 ### Step 5: Build Isaac Capture with the plugin
 
@@ -174,6 +198,8 @@ If `VUT_SDK_DIR` is not set, or `lib/libvut_sdk.a` is not found under it, CMake 
 If `vive_se3_tracker_plugin` is missing after the build, check this message in the configure
 output.
 
+<a id="step-6-start-the-cloudxr-runtime"></a>
+
 ### Step 6: Start the CloudXR runtime
 
 Start the CloudXR runtime from the Python environment where `isaaccapture` is installed. It runs
@@ -185,6 +211,8 @@ python -m isaaccapture.cloudxr.service start --accept-eula
 ```
 
 See [CloudXR Service](../../references/cloudxr.md) for details.
+
+<a id="step-7-run-the-plugin"></a>
 
 ### Step 7: Run the plugin
 
@@ -200,6 +228,8 @@ source ~/.cloudxr/run/cloudxr.env
 The plugin creates one collection per tracker the first time it receives a pose from that tracker,
 and prints the collection ids. Press `Ctrl+C` to stop it.
 
+<a id="step-8-verify-the-pose-stream"></a>
+
 ### Step 8: Verify the pose stream
 
 In another terminal, source the CloudXR environment and read one collection with the stock SE3
@@ -211,13 +241,15 @@ source ~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/se3_printer vive_tracker_<serial>
 ```
 
+<a id="step-9-optional-record-and-replay"></a>
+
 ### Step 9 (optional): Record and replay
 
 Install the examples package once, from the Isaac Capture root, in a venv set up as in
 [step 4 of Build from source](../../development/build_from_source/index.md#build-from-source-install-package):
 
 ```bash
-uv pip install -e ./examples/mcap_record_replay
+uv pip install -e ./examples/mcap_record_replay --no-sources
 ```
 
 While the plugin is running, record every tracker. With no arguments, the script records 10
@@ -244,7 +276,11 @@ network can see it. Other useful options are `--rate N`, `--no-viz`, `--port N` 
 `--collections a,b,c`. See
 [MCAP Recording & Replay](../../references/mcap_record_replay.md) for the underlying MCAP tooling.
 
+<a id="using-the-tracker-data"></a>
+
 ## Using the Tracker Data
+
+<a id="collection-naming"></a>
 
 ### Collection naming
 
@@ -259,6 +295,8 @@ a tracker, an MCAP file recorded today still shows which physical tracker each c
 The plugin does not assign roles such as “left wrist”. Map serials to roles in your own
 application.
 
+<a id="collection-auto-discovery"></a>
+
 ### Collection auto-discovery
 
 While the plugin runs, it writes its live collection ids, one per line, to
@@ -269,12 +307,16 @@ exits. Readers such as `record_se3_vive` use it to find collections without bein
 To read the poses in your own code, create one `Se3Tracker` per collection id. See
 [Spatial Trackers and Device Data](index.md).
 
+<a id="reference-frame"></a>
+
 ### Reference frame
 
 Poses are forwarded exactly as VIVE Hub reports them: right-handed, X right, Y up, -Z forward
 (the same axis convention as OpenXR). The origin comes from the VIVE Hub tracking map. It is
 **not** the OpenXR session base space, so align the frames downstream if you combine the trackers
 with headset or controller data.
+
+<a id="timestamps-and-validity"></a>
 
 ### Timestamps and validity
 
@@ -288,6 +330,8 @@ tracker:
 | No new sample, but still fresh         | Push nothing. Readers keep the last pose, and MCAP gets no duplicate timestamps. |
 | Stale (older than `VIVE_SE3_STALE_MS`) | Push `is_valid=false` with an identity pose on every tick.                       |
 
+<a id="configuration"></a>
+
 ## Configuration
 
 The plugin is configured with environment variables:
@@ -298,6 +342,8 @@ The plugin is configured with environment variables:
 | `VIVE_SE3_STALE_MS`         | `250`                                       | Time in ms (1 to 3600000) after which a tracker without new samples is pushed as invalid. |
 | `VIVE_SE3_COLLECTIONS_FILE` | `$XDG_RUNTIME_DIR/vive_se3_collections.txt` | Where live collection ids are advertised.                                                 |
 | `VIVE_SE3_SYNTHETIC`        | (unset)                                     | Set to `1` to generate fake trackers without VIVE Hub, for a no-hardware smoke test.      |
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 
@@ -315,6 +361,8 @@ The plugin is configured with environment variables:
   attach the newest `vivehub_*.log` and `tracker_server_*.log` files from
   `~/.local/share/HTC/VIVEUltimateTracker/logs/`. VIVE Hub keeps only the latest 10 logs for
   each component, so copy them before you launch it again several times.
+
+<a id="license"></a>
 
 ## License
 

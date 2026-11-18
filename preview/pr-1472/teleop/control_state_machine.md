@@ -1,10 +1,14 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="teleop-control-state-machine"></a>
+
 # Teleop Control State Machine
 
 This page describes the default teleop control state machine used by
 `DefaultTeleopStateManager` and how to connect button inputs.
+
+<a id="overview"></a>
 
 ## Overview
 
@@ -25,6 +29,8 @@ logic can read:
 Isaac Teleop provides `DefaultTeleopStateManager` as a ready-to-use default
 state machine. It should work for most setups, but you can also implement your
 own control state machine as long as it preserves the same output contract.
+
+<a id="default-state-machine-behavior"></a>
 
 ## Default State Machine Behavior
 
@@ -57,6 +63,8 @@ Safety behavior:
 - This fail-safe is immediate (same frame). If teleop control inputs are lost
   (for example controller disconnect, tracking loss, or selector output becomes
   unavailable), execution state is forced to `STOPPED` right away.
+
+<a id="connecting-inputs"></a>
 
 ## Connecting Inputs
 
@@ -101,6 +109,17 @@ control_pipeline = manager.connect(
 )
 ```
 
+To run the full example, install `isaaccapture` into the active environment
+first: from your source build as in
+[step 4 of Build from source](../development/build_from_source/index.md), or
+from the package index as in the [Quick Start](quick_start.md). Then, from
+the project root:
+
+```bash
+uv pip install -e ./examples/teleop_session_manager
+python -m isaaccapture_examples.teleop_session_manager.teleop_controls_simple_example
+```
+
 Debounce behavior is configurable in `create_bool_selector`:
 
 - `threshold` / `release_threshold` for float hysteresis
@@ -114,6 +133,8 @@ Important availability note:
   as a safety fault and immediately transitions to `STOPPED`; when required
   inputs first become unavailable it emits a single loss-driven
   `reset_event = True` pulse.
+
+<a id="using-context-in-high-level-app-logic"></a>
 
 ## Using Context in High-Level App Logic
 

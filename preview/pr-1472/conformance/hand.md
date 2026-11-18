@@ -3,6 +3,8 @@
 
 <a id="cts-hand"></a>
 
+<a id="hand-suite"></a>
+
 # Hand Suite
 
 #### Preview
@@ -28,10 +30,12 @@ connected through CloudXR.
 
 <a id="cts-hand-pacing"></a>
 
+<a id="how-each-step-runs"></a>
+
 ## How each step runs
 
 ![Timeline of one take: eleven steps in a row, each a spoken cue, a
-three-count count-in, a beep, a hold and a tick. One step is enlarged.](_static/cts/hand-pacing.svg)
+three-count count-in, a beep, a hold and a tick. One step is enlarged.](../_images/hand-pacing.svg)
 
 The cue is spoken, three counts lead in, a beep opens the hold, a tick
 closes it. The capture panel shows **listen**, **get into position** (3, 2, 1), **hold**.
@@ -50,11 +54,13 @@ Every step is also checked for the gross motion its name asks for
 
 <a id="cts-hand-steps"></a>
 
+<a id="the-eleven-steps"></a>
+
 ## The eleven steps
 
 Both hands perform every step together, except the two rolls.
 
-![Both hands lie flat on the table, palms down, fingers together.](_static/cts/hand/01-flat_on_table_open.gif)
+![Both hands lie flat on the table, palms down, fingers together.](../_images/01-flat_on_table_open.gif)
 
 **1 · Flat on the table**
 
@@ -67,7 +73,7 @@ Checked: fingers straight (`posture.flat_hand_extension`), joints in one plane
 (`table.fingers_coplanar`), level (`table.level`), both hands at one height
 (`table.hands_same_height`).
 
-![Two tight fists, thumbs over the fingers; the view circles them to show every side.](_static/cts/hand/02-fist.gif)
+![Two tight fists, thumbs over the fingers; the view circles them to show every side.](../_images/02-fist.gif)
 
 **2 · Fists**
 
@@ -78,7 +84,7 @@ Curl every finger fully, thumb wrapped over the fingers.
 Checked: fingers curled (`posture.fist_closure`), more than in the flat steps
 (`segmentation.step_order_matches_labels`).
 
-![On both hands the thumb closes onto the index fingertip over one second, then holds.](_static/cts/hand/03-pinch_index.gif)
+![On both hands the thumb closes onto the index fingertip over one second, then holds.](../_images/03-pinch_index.gif)
 
 **3 · Pinch: index**
 
@@ -89,7 +95,7 @@ Pad to pad on both hands, the other fingers relaxed and open.
 Checked: the tip nearest the thumb is the index (`pinch.finger_identity`).
 Measured: thumb-to-tip distance (`pinch.contact_distance`).
 
-![On both hands the thumb closes onto the middle fingertip over one second, then holds.](_static/cts/hand/04-pinch_middle.gif)
+![On both hands the thumb closes onto the middle fingertip over one second, then holds.](../_images/04-pinch_middle.gif)
 
 **4 · Pinch: middle**
 
@@ -100,7 +106,7 @@ Pad to pad on both hands, the other fingers relaxed and open.
 Checked: the tip nearest the thumb is the middle (`pinch.finger_identity`).
 Measured: thumb-to-tip distance (`pinch.contact_distance`).
 
-![On both hands the thumb closes onto the ring fingertip over one second, then holds.](_static/cts/hand/05-pinch_ring.gif)
+![On both hands the thumb closes onto the ring fingertip over one second, then holds.](../_images/05-pinch_ring.gif)
 
 **5 · Pinch: ring**
 
@@ -111,7 +117,7 @@ Pad to pad on both hands, the other fingers relaxed and open.
 Checked: the tip nearest the thumb is the ring (`pinch.finger_identity`).
 Measured: thumb-to-tip distance (`pinch.contact_distance`).
 
-![On both hands the thumb closes onto the little fingertip over one second, then holds.](_static/cts/hand/06-pinch_little.gif)
+![On both hands the thumb closes onto the little fingertip over one second, then holds.](../_images/06-pinch_little.gif)
 
 **6 · Pinch: little**
 
@@ -122,7 +128,7 @@ Pad to pad on both hands, the other fingers relaxed and open.
 Checked: the tip nearest the thumb is the little (`pinch.finger_identity`).
 Measured: thumb-to-tip distance (`pinch.contact_distance`).
 
-![Palms pressed flat together, fingers up, seen first from your side and then from either side.](_static/cts/hand/07-palms_together.gif)
+![Palms pressed flat together, fingers up, seen first from your side and then from either side.](../_images/07-palms_together.gif)
 
 **7 · Palms together**
 
@@ -133,7 +139,7 @@ Palms flat against each other, fingers up, thumbs closed alongside the index.
 Checked: each fingertip sits opposite its namesake on the other hand, within 5 cm
 (`palms.fingertip_gap`).
 
-![Hands raised, palms facing you, move together until the middle fingertips touch.](_static/cts/hand/08-tips_together.gif)
+![Hands raised, palms facing you, move together until the middle fingertips touch.](../_images/08-tips_together.gif)
 
 **8 · Fingertips together**
 
@@ -145,7 +151,7 @@ Fingers point at each other; only the two middle fingertips touch.
 Checked: the middle tips touch; this is the still reference for the rolls
 (`tips.roll_contact`).
 
-![Tips touching, the right palm turns out and back; the left hand stays still.](_static/cts/hand/09-right_tip_roll.gif)
+![Tips touching, the right palm turns out and back; the left hand stays still.](../_images/09-right_tip_roll.gif)
 
 **9 · Right tip roll**
 
@@ -158,7 +164,7 @@ tips touching.
 Checked: the turning tip stays on the still one (`tips.roll_contact`); the
 wrist turns with the joints (`consistency.position_orientation_same_frame`).
 
-![Tips touching, the left palm turns out and back; the right hand stays still.](_static/cts/hand/10-left_tip_roll.gif)
+![Tips touching, the left palm turns out and back; the right hand stays still.](../_images/10-left_tip_roll.gif)
 
 **10 · Left tip roll**
 
@@ -171,7 +177,7 @@ tips touching.
 Checked: the turning tip stays on the still one (`tips.roll_contact`); the
 wrist turns with the joints (`consistency.position_orientation_same_frame`).
 
-![Both hands lie flat on the table again, palms down.](_static/cts/hand/11-flat_on_table_close.gif)
+![Both hands lie flat on the table again, palms down.](../_images/11-flat_on_table_close.gif)
 
 **11 · Flat on the table again**
 
@@ -188,9 +194,11 @@ not required.
 
 <a id="cts-hand-rehearse"></a>
 
+<a id="rehearse"></a>
+
 ## Rehearse
 
-Download [`hand-rehearsal.mp3`](_downloads/42e9871f2e36488d34d636939f88d59a/hand-rehearsal.mp3) (about 2 minutes). It
+Download [`hand-rehearsal.mp3`](../_downloads/42e9871f2e36488d34d636939f88d59a/hand-rehearsal.mp3) (about 2 minutes). It
 plays the cues, counts, beeps and ticks at the real timing. Perform along with it before
 your first take.
 
@@ -200,6 +208,8 @@ your first take.
 - **Have a helper watch the capture panel** while you perform.
 
 <a id="cts-hand-record"></a>
+
+<a id="record"></a>
 
 ## Record
 
@@ -256,6 +266,8 @@ take and cannot be regenerated.
 
 <a id="cts-hand-check"></a>
 
+<a id="check"></a>
+
 ## Check
 
 Point the checker at the `.mcap` inside its take directory, so it finds the labels file
@@ -296,6 +308,8 @@ every check without a recording, and `--check NAME` runs only that check.
 
 <a id="cts-hand-view"></a>
 
+<a id="view"></a>
+
 ## View
 
 The viewer needs the checker environment set up with `--panel` ([Set Up the Tools](setup.md)):
@@ -312,9 +326,11 @@ current step and lists the checks, the deciding ones first; invalid joints show 
 
 ![The hand viewer: both hands lying flat on a table grid, and a sidebar with a green
 PASS banner, playback controls, a Submission folder with the package for submission
-button, and the checks that decide the take.](_static/cts/hand-checker-panel.png)
+button, and the checks that decide the take.](../_images/hand-checker-panel.png)
 
 The viewer on a synthetic reference take, during step 1.
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 

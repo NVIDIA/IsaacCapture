@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="retargeter-joint-space-device"></a>
+
 # Retargeter: Joint-Space Device
 
 `JointStateRetargeter` maps a name-keyed joint-state input (from
@@ -8,12 +10,16 @@
 It is the generic retargeter for leader arms, exoskeletons, and other joint-encoder devices; the
 SO-101 leader arm is the reference instance.
 
+<a id="at-a-glance"></a>
+
 ## At a glance
 
 | Mode      | Output                                                  | Use                                                                                                                                      |
 |-----------|---------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
 | `joint`   | one float per target joint (`joint_targets`)            | Lossless leader -> follower mirror for same-kinematics teleoperation. Name remap + optional<br/>per-joint affine. No extra dependencies. |
 | `ee_pose` | 7-D `ee_pose` `[x,y,z,qx,qy,qz,qw]` + `gripper_command` | Task-space / cross-embodiment teleoperation via URDF forward kinematics. Requires<br/>`pinocchio` (the `[retargeters]` extra).           |
+
+<a id="joint-mode"></a>
 
 ## `joint` mode
 
@@ -24,6 +30,8 @@ Each target joint is filled from a device joint (by name) with an optional affin
 * `target_joints` – robot joint names to emit (defaults to `device_joints`).
 * `joint_map` – `{device_name: target_name}` overrides; `scale` / `offset` / `sign` –
   per-target affine.
+
+<a id="ee-pose-mode"></a>
 
 ## `ee_pose` mode
 
@@ -44,6 +52,8 @@ command. Config: `urdf_path`, `ee_link`, `gripper_joint` (and optional `gripper_
 The `joints` input is read positionally in `device_joints` order, so the upstream source’s
 `joint_names` must list the same names in the same order. A name mismatch is rejected by the
 graph’s type check at `connect` time.
+
+<a id="use-it-from-python"></a>
 
 ## Use it from Python
 
@@ -82,6 +92,8 @@ def build_so101_joint_pipeline():
 For `ee_pose` mode, build the retargeter with `mode="ee_pose"` + a `urdf_path` / `ee_link`
 and flatten `ee_pose` + `gripper_command` into the env’s task-space action layout.
 
+<a id="run-the-example"></a>
+
 ## Run the example
 
 The repo ships `examples/teleop/python/isaaccapture_examples/teleop/joint_space_device_example.py`:
@@ -97,6 +109,8 @@ $ python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plu
 `so101_new_calib.urdf` is not shipped in this repo. It is `Simulation/SO101/so101_new_calib.urdf`
 in [TheRobotStudio/SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100); pass its path to
 `--urdf`. Run the commands from the repository root.
+
+<a id="validate"></a>
 
 ## Validate
 

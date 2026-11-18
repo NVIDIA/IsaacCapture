@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="sharpa-avatarexo-glove"></a>
+
 # Sharpa AvatarExo Glove
 
 A Linux-only plugin for integrating Sharpa AvatarExo (AE) Gloves into the
@@ -35,6 +37,8 @@ is [examples/sharpa_avatar](https://github.com/NVIDIA/IsaacCapture/tree/main/exa
 > * [Troubleshooting](#troubleshooting)
 > * [License](#license)
 
+<a id="data-flow"></a>
+
 ## Data flow
 
 The glove SDK exposes three datasets plus haptics. HUMAN landmarks are placed
@@ -58,6 +62,8 @@ avatar_hand_plugin  (Avatar SDK, production package)
 Sharpa robot hand. Avatar HUMAN output is the same OpenXR layer that
 retargeter consumes.
 
+<a id="prerequisites"></a>
+
 ## Prerequisites
 
 - **Linux x86_64** (tested on Ubuntu 22.04).
@@ -71,6 +77,8 @@ retargeter consumes.
 
 The SDK stays external: headers, libraries, and runtime assets are not copied
 into this repository or the plugin install prefix.
+
+<a id="installation"></a>
 
 ## Installation
 
@@ -96,6 +104,8 @@ cmake --install build
 root skips this plugin and the rest of Isaac Capture still configures. See
 [Build from Source](../../development/build_from_source/index.md).
 
+<a id="usb-access-one-time-on-the-host"></a>
+
 ### USB access (one-time, on the host)
 
 udev rules must run **on the host**, not inside a container:
@@ -105,13 +115,15 @@ udev rules must run **on the host**, not inside a container:
 # then unplug and reconnect the glove
 ```
 
+<a id="running-the-plugin"></a>
+
 ## Running the plugin
 
 The plugin publishes through the CloudXR / OpenXR runtime. Start the runtime
 and source its environment in the shell that launches the plugin:
 
 ```bash
-python -m isaaccapture.cloudxr.service start   # runs in the background
+python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
 source ~/.cloudxr/run/cloudxr.env
 ./install/plugins/sharpa_avatar/avatar_hand_plugin
 ```
@@ -125,12 +137,14 @@ you opt out). Run it from the repository root, in a venv set up as in
 [step 4 of Build from source](../../development/build_from_source/index.md#build-from-source-install-package):
 
 ```bash
-uv pip install -e ./examples/sharpa_avatar
+uv pip install -e ./examples/sharpa_avatar --no-sources
 python -m isaaccapture_examples.sharpa_avatar
 ```
 
 Gloves reconnect from `update()` if they drop offline. Only one process
 may hold the Avatar SDK at a time.
+
+<a id="datasets"></a>
 
 ## Datasets
 
@@ -149,11 +163,15 @@ By default every path is on. Restrict them with `--datasets=`
 | `avatar_robot_left`, `avatar_robot_right` | ROBOT 22-DoF retargeted joint state               |
 | `avatar_glove_haptic`                     | Inbound per-finger vibration commands             |
 
+<a id="human-openxr-hands"></a>
+
 ### HUMAN (OpenXR hands)
 
 HUMAN landmarks are mapped onto the 26 OpenXR hand slots (unsupported slots
 stay invalid) and pushed with `HandInjector`. Hosts read them through
 `HandsSource` like any other hand-tracking plugin.
+
+<a id="raw-and-robot-joint-state-tensors"></a>
 
 ### RAW and ROBOT (joint-state tensors)
 
@@ -161,11 +179,15 @@ Each side pushes a `JointStateOutput` (tensor id `joint_state`) with the
 22 named DoF from the pinned SDK. Consume them with `JointStateSource`
 and the collection ids above.
 
+<a id="haptic"></a>
+
 ### Haptic
 
 The plugin reads `HapticCommand` on `avatar_glove_haptic` and drives
 five finger vibration motors. The visualization example uses the same
 per-finger pinch path as the generic glove haptic sample.
+
+<a id="health-reporting"></a>
 
 ### Health reporting
 
@@ -175,6 +197,8 @@ firmware diagnostics, and haptic errors. HUMAN, RAW, and ROBOT then report their
 own freshness and fetch errors, so one healthy stream cannot hide another
 stalled stream. Outputs disappear after ingress stops and are recreated when
 the glove resumes; existing DeviceIO consumers bind to the new generation.
+
+<a id="wrist-pose"></a>
 
 ## Wrist pose
 
@@ -187,6 +211,8 @@ tracked.
 
 The example places that local skeleton into a stable left/right display
 frame. Pass `--world-frame` to leave the OpenXR poses unmodified.
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 
@@ -201,6 +227,8 @@ frame. Pass `--world-frame` to leave the OpenXR poses unmodified.
 | Viser shows an empty grid        | HUMAN must be enabled (default). RAW-only is joint angles, not a<br/>3D skeleton. Confirm the example is not launched with<br/>`--datasets` that omit `human`.    |
 | No vibration                     | Keep `haptic` in `--datasets` and close a fingertip toward the<br/>thumb (example pinch path).                                                                    |
 | CloudXR runtime errors           | Check `python -m isaaccapture.cloudxr.service status`, and source<br/>`~/.cloudxr/run/cloudxr.env` in the same terminal as the plugin.                            |
+
+<a id="license"></a>
 
 ## License
 

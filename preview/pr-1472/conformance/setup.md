@@ -3,6 +3,8 @@
 
 <a id="cts-setup"></a>
 
+<a id="set-up-the-tools"></a>
+
 # Set Up the Tools
 
 This page gets a workstation ready to record: the repository built, the CTS tool environments
@@ -17,6 +19,8 @@ Run the commands from the repository root.
 > * [4. Connect the headset](#connect-the-headset)
 > * [Troubleshooting](#troubleshooting)
 
+<a id="check-the-requirements"></a>
+
 ## 1. Check the requirements
 
 | Requirement                              | Details                                                                                                                                                                                                                                                                                                           |
@@ -29,6 +33,8 @@ Run the commands from the repository root.
 | An XR headset and CloudXR                | Needed even when your device produces the joints: the capture’s OpenXR session comes from<br/>CloudXR. See step 4.                                                                                                                                                                                                |
 | Your plugin, installed                   | `cmake --install build` installs every built plugin into `install/plugins/`; add<br/>`--component <name>` to install one, if its plugin declares a component. Headset hand<br/>tracking and PICO body tracking need no plugin.                                                                                    |
 | Space and a helper                       | Hand: a table and a chair. Full body: room to stand, raise both arms and squat. A second<br/>person at the screen makes either suite easier.                                                                                                                                                                      |
+
+<a id="build-the-repository"></a>
 
 ## 2. Build the repository
 
@@ -47,6 +53,8 @@ A plugin behind a `BUILD_PLUGIN_<NAME>` option builds only when you add
 [Build from Source](../development/build_from_source/index.md) lists the build prerequisites, and
 [Build System](../references/build.md) explains per-Python-version build trees.
 
+<a id="create-the-tool-environments"></a>
+
 ## 3. Create the tool environments
 
 Each suite has a checker environment and a capture environment. Run the line for each suite you
@@ -64,6 +72,8 @@ takes on another machine, such as a Mac, run the checker script alone there. The
 idempotent and write only inside their own directory; re-run them after pulling or rebuilding.
 
 <a id="cts-setup-headset"></a>
+
+<a id="connect-the-headset"></a>
 
 ## 4. Connect the headset
 
@@ -97,7 +107,7 @@ PY=$PWD/src/python/isaaccapture/cts/hand/capture/.venv/bin/python
 
 ### What the certificate warning looks like
 
-![Browser warning that the connection to port 48322 is not private](_static/cloudxr_accept_cert_not_private.png)
+![Browser warning that the connection to port 48322 is not private](../_images/cloudxr_accept_cert_not_private.png)
 
 Choose Advanced, then Proceed. The next page reads Certificate Accepted.
 
@@ -105,6 +115,8 @@ The workstation firewall must allow the CloudXR ports ([4. Whitelist ports for F
 device profiles, a detached service or opening the client over USB, see
 [CloudXR Service](../references/cloudxr.md). For PICO body tracking, set up the trackers first:
 [Body Tracking](../device/body_tracking/index.md).
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 

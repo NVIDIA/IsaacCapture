@@ -29,12 +29,8 @@ A standardized device interface removes custom integrations and their maintenanc
 modes determine which retargeters and control schemes are available.
 :doc:`Add a new device → </device/add_device>`
 
-.. The device tables are interactive HTML layout; the Markdown build for agents leaves them out.
-
-.. only:: not sphinx_llm_markdown
-
-   .. device-matrix::
-      :section: input
+.. device-matrix::
+   :section: input
 
 .. _data-factory:
 
@@ -46,10 +42,8 @@ Data Factory :device-count:`data_factory`
 Frameworks and services for collecting teleoperation data and turning it into training
 datasets.
 
-.. only:: not sphinx_llm_markdown
-
-   .. device-matrix::
-      :section: data_factory
+.. device-matrix::
+   :section: data_factory
 
 .. _cloud-infrastructure:
 
@@ -60,10 +54,8 @@ Cloud Infrastructure :device-count:`cloud`
 
 Cloud platforms available for running Isaac Capture workloads.
 
-.. only:: not sphinx_llm_markdown
-
-   .. device-matrix::
-      :section: cloud
+.. device-matrix::
+   :section: cloud
 
 .. rst-class:: eco-section
 

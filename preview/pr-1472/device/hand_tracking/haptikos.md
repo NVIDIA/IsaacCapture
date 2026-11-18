@@ -1,9 +1,11 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="haptikos-exoskeletons"></a>
+
 # Haptikos Exoskeletons
 
-<div style="margin-top: 1rem;"></div>![Haptikos exoskeletons used with Isaac Teleop](_static/haptikos-exoskeletons.gif)<div style="margin-bottom: 1.5rem;"></div>
+<div style="margin-top: 1rem;"></div>![Haptikos exoskeletons used with Isaac Teleop](../../_images/haptikos-exoskeletons.gif)<div style="margin-bottom: 1.5rem;"></div>
 
 Use the [Haptikos](https://haptikos.tech/) Exoskeletons with the Isaac Capture framework. Currently only Linux is supported. Tested on Meta Quest headsets. Other headsets with controllers may work as well.
 
@@ -19,10 +21,14 @@ Use the [Haptikos](https://haptikos.tech/) Exoskeletons with the Isaac Capture f
 > * [Important Information](#important-information)
 > * [License](#license)
 
+<a id="components"></a>
+
 ## Components
 
-- **Core library** (`haptikos_core`) — wraps the Haptikos Core App(`libHaptikosCore.so`) and provides access to per-joint tracking data and haptics.
-- **Plugin executable** (`haptikos_plugin`) — the primary plugin binary that enables integration with the Teleop system via CloudXR and OpenXR.
+- **Haptikos API** (`libHaptikosAPI.so` and `libHaptikosCore.so` from `HaptikosCpp_API_Shared/lib`) — the vendor libraries that read per-joint tracking data from the Haptikos Core App.
+- **Plugin executable** (`haptikos_hands_plugin`) — the plugin binary that injects the hand tracking data into the Teleop system via CloudXR and OpenXR.
+
+<a id="prerequisites"></a>
 
 ## Prerequisites
 
@@ -31,7 +37,11 @@ Use the [Haptikos](https://haptikos.tech/) Exoskeletons with the Isaac Capture f
 - **Source-build prerequisites** — the toolchain and system packages in
   [Build from Source](../../development/build_from_source/index.md).
 
+<a id="quick-start"></a>
+
 ## Quick Start
+
+<a id="step-1-get-the-haptikos-api"></a>
 
 ### Step 1: Get the Haptikos API
 
@@ -54,14 +64,18 @@ src/plugins/haptikos/
 └── README.md
 ```
 
+<a id="step-2-build-the-plugin"></a>
+
 ### Step 2: Build the plugin
 
+From the repository root:
+
 ```bash
-cd ../../..  # Navigate to TeleopCore root
 cmake -S . -B build
-cd build
-make haptikos_hands_plugin
+cmake --build build --target haptikos_hands_plugin
 ```
+
+<a id="step-3-build-the-entire-project"></a>
 
 ### Step 3: Build the entire project
 
@@ -77,6 +91,8 @@ We use the `-DENABLE_CLANG_FORMAT_CHECK=OFF` because the headers in the Haptikos
 clang-format -i src/plugins/haptikos/HaptikosCpp_API_Shared/include/*
 ```
 
+<a id="step-4-run-the-plugin"></a>
+
 ### Step 4: Run the plugin
 
 The Haptikos plugin connects to the Teleop session through the CloudXR / OpenXR runtime, so the runtime must be running and its environment sourced in the shell that launches the plugin.
@@ -90,7 +106,6 @@ python -m isaaccapture.cloudxr.service start --accept-eula
 In the shell that runs the plugin, source the environment file that the runtime writes on startup. This points the OpenXR loader at CloudXR:
 
 ```bash
-cd IsaacCapture/
 source ~/.cloudxr/run/cloudxr.env
 ```
 
@@ -100,12 +115,16 @@ In the same terminal, run the plugin with the following:
 ./install/plugins/haptikos/haptikos_hands_plugin
 ```
 
+<a id="important-information"></a>
+
 ## Important Information
 
 1. To use the plugin properly it is necessary to attach the controllers on our exoskeletons using the included mount.
 2. The orientation calibration defines the direction the Haptikos gloves define as forward. This needs to be aligned with the Head Mounted Display’s forward direction.
-3. To inject the hand tracking data and haptic feedback, the controllers, the Haptikos App and the exoskeletons need to be active.
+3. To inject the hand tracking data, the controllers, the Haptikos App and the exoskeletons need to be active.
 4. The executable will be located in the `build/src/plugins/haptikos`. If you installed the project by running `cmake --install build` the executable will also be found in the `install/plugins/haptikos` folder.
+
+<a id="license"></a>
 
 ## License
 

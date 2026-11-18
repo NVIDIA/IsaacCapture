@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="out-of-band-teleop-control"></a>
+
 # Out-of-Band Teleop Control
 
 The **OOB (out-of-band) teleop control hub** lets you coordinate Isaac Teleop
@@ -10,6 +12,8 @@ proxy.
 
 The hub shares the proxy TLS port (default **48322**, override with
 `PROXY_PORT`).
+
+<a id="quick-start"></a>
 
 ## Quick start
 
@@ -89,6 +93,39 @@ The headset must be:
 Streaming and web page access use WiFi, not USB tethering.
 `adb forward` is used only temporarily for CDP automation.
 
+<!-- Keep quick-start labels bold so they do not introduce a new RST title level. -->
+
+**Automatic presence recovery**
+
+While `--setup-oob` owns the selected headset, automatic power recovery runs
+in both Wi-Fi and USB-local streaming, with normal menus or headless clients.
+It stops with the OOB service. It requires authorized ADB access to that pinned
+device; a network-only connection does not provide automatic wake.
+
+On supported PICO hardware, the live `stk_stk3x1x` wakeup proximity sensor
+must report NEAR and Android must report Asleep before a wake request is sent.
+FAR, missing sensor data, or sensor privacy leave PICO wake to the operator.
+Quest presence probing is currently unsupported; positively identified Meta/Oculus
+headsets retain the existing one-shot wake request before browser automation,
+which still waits for confirmed Awake. Unknown devices require manual wake. The worker
+rechecks presence before each attempt, confirms Awake afterward, and allows
+at most three attempts five seconds apart. A brief Awake bounce does not reset
+that budget. Remove and put on the headset again, or press its power button,
+after a failed recovery. No headset settings are changed.
+
+Power recovery preserves the browser page and XR session. Awake does not prove
+that tracking resumed: the client reports paused/waking/recovery-failed status,
+and confirms restored head tracking only after fresh visible XR frames and head
+poses. Controller pose ages remain separate; absent controllers do not imply
+that head-only or hand-tracking modes failed.
+The hub’s `xrPresence` reports these independently of cached SDK metrics.
+The `xr` cadence contains `sessionActive`, `generation`, `visibility`
+(2 visible, 1 blurred, 0 hidden, -1 unknown), `frameAgeMs`, `headAgeMs`,
+`leftAgeMs`, `rightAgeMs`, and controller configuration flags. Client ages
+use a monotonic clock and -1 for unknown; the hub exposes unknown ages as null
+and adds monotonic receipt age. Session and visibility changes reset freshness.
+This heartbeat does not refresh stream-metric timestamps.
+
 **Step 2 — (Manual fallback) Open the web client on the headset**
 
 If the adb automation fails (e.g. headset not paired), you can manually open
@@ -97,7 +134,7 @@ parameters — `oobEnable`, `serverIP`, and `port` — plus the hub’s
 `controlToken`:
 
 ```default
-[https://nvidia.github.io/IsaacCapture/client/main/](https://nvidia.github.io/IsaacCapture/client/main/)?oobEnable=1&serverIP=<HOST_IP>&port=48322&controlToken=<CONTROL_TOKEN>
+https://nvidia.github.io/IsaacCapture/client/main/?oobEnable=1&serverIP=<HOST_IP>&port=48322&controlToken=<CONTROL_TOKEN>
 ```
 
 Replace `<HOST_IP>` with the streaming host’s LAN IP. The `port` must
@@ -172,6 +209,8 @@ watch -n 2 'curl -sk -H "X-Control-Token: <CONTROL_TOKEN>" https://<HOST_IP>:483
 
 The `metricsByCadence` field on each headset entry will now contain live streaming metrics.
 
+<a id="adb-automation"></a>
+
 ## ADB automation
 
 The `--setup-oob` flag automates headset setup via USB `adb`:
@@ -199,6 +238,8 @@ directly.  To re-open the page later without restarting the launcher, pass the
 bookmark URL above to `python -m isaaccapture.cloudxr.webclient` (see
 [CloudXR Service](cloudxr.md)).
 
+<a id="architecture"></a>
+
 ## Architecture
 
 | Role                   | Software                                                 | What it does                                                                                                                     |
@@ -207,11 +248,15 @@ bookmark URL above to `python -m isaaccapture.cloudxr.webclient` (see
 | **Streaming host**     | `python -m isaaccapture.cloudxr.service run --setup-oob` | Runs CloudXR runtime + WSS proxy + OOB hub on a single TLS port.<br/>Opens the teleop page and clicks CONNECT via USB adb + CDP. |
 | **Operator / scripts** | `curl`, browser, or custom tooling                       | Reads state via HTTP, optionally pushes config via HTTP.                                                                         |
 
+<a id="websocket-protocol"></a>
+
 ## WebSocket protocol
 
 Endpoint: `wss://<host>:<port>/oob/v1/ws`
 
 All messages are JSON text frames with `{"type": ..., "payload": ...}`.
+
+<a id="registration-first-message"></a>
 
 ### Registration (first message)
 
@@ -239,6 +284,8 @@ All messages are JSON text frames with `{"type": ..., "payload": ...}`.
 }
 ```
 
+<a id="headset-hub-clientmetrics"></a>
+
 ### Headset → hub: `clientMetrics`
 
 ```json
@@ -246,6 +293,7 @@ All messages are JSON text frames with `{"type": ..., "payload": ...}`.
   "type": "clientMetrics",
   "payload": {
     "t": 1712800000000,
+    "sampleAgeMs": 125,
     "cadence": "frame",
     "metrics": {
       "streaming.framerate": 72.0,
@@ -259,6 +307,13 @@ One message is sent per cadence per tick, carrying the last known value of every
 reported so far in that cadence. Metric names are the CloudXR.js `MetricsName` values,
 so they match the SDK documentation. The hub stores them as an arbitrary
 `{name: value}` map per cadence, so metrics added by a future SDK need no hub change.
+`sampleAgeMs` is the elapsed client monotonic time since the last SDK observation
+in that cadence. Repeating cached metrics increases their age rather than renewing
+freshness. The hub subtracts this age from receipt time, independently of the device’s
+wall clock. Older clients that omit the field retain receipt-time freshness; they
+must be updated to distinguish cached samples from new observations.
+
+<a id="browser-health-exchange"></a>
 
 ### Browser health exchange
 
@@ -319,8 +374,9 @@ and, in USB-local mode, TURN and reverse rules have been verified;
 matching browser health report was received; `connectDispatched` records a
 host CONNECT click; and `streamConfirmed` requires a streaming report with
 fresh metrics. `readinessStage` and `readinessSince` show the latest
-milestone and when it was entered. `lastMetricsAt` is the host-received
-metrics time in epoch milliseconds; the launcher accepts `streamConfirmed`
+milestone and when it was entered. `lastMetricsAt` is the latest metric observation
+time in host epoch milliseconds, derived from receipt time minus sample age;
+`lastSeenAt` remains the browser message receipt time. The launcher accepts `streamConfirmed`
 only while those metrics and the lifecycle status are less than five seconds
 old. Recovery can move the stage backward, and a surviving browser can resume
 a stream without another host CONNECT click.
@@ -377,9 +433,13 @@ Score metrics use the SDK’s `QualityScore` scale: 0 NoData, 1 Unsustainable,
 Metrics are cleared when the stream stops, so a new session never reports the previous
 session’s last known values.
 
+<a id="http-api"></a>
+
 ## HTTP API
 
 All endpoints use **GET** with query parameters on the proxy TLS port.
+
+<a id="get-api-oob-v1-state"></a>
 
 ### `GET /api/oob/v1/state`
 
@@ -414,6 +474,8 @@ Example response:
 }
 ```
 
+<a id="get-api-oob-v1-config"></a>
+
 ### `GET /api/oob/v1/config`
 
 Push config to connected headsets via query parameters:
@@ -437,12 +499,16 @@ Supported query keys: `serverIP`, `port`, `panelHiddenAtStart`, `codec`.
 Optional `targetClientId` restricts the push to a single headset (returns 404
 if not connected).
 
+<a id="get-api-oob-v1-connect"></a>
+
 ### `GET /api/oob/v1/connect`
 
 Releases headset setup on a service started with `--defer-oob-connect`.
 Returns `{"connectRequested": true, "alreadyRequested": false}`; repeating
 it is harmless (`"alreadyRequested": true`). A service that was not started
 deferred answers 409.
+
+<a id="authentication"></a>
 
 ## Authentication
 
@@ -458,13 +524,15 @@ The headset bookmark carries the token as `controlToken` in the URL query, so
 the hosting server and any proxy logs can see it. Treat bookmark URLs as
 secrets and prefer a client served from the streaming host (`--host-client`).
 
+<a id="web-client-integration"></a>
+
 ## Web client integration
 
 The web client connects to the hub when the page URL contains
 `oobEnable=1` plus `serverIP` and `port`:
 
 ```default
-[https://nvidia.github.io/IsaacCapture/client/main/](https://nvidia.github.io/IsaacCapture/client/main/)?oobEnable=1&serverIP=10.0.0.1&port=48322&controlToken=<CONTROL_TOKEN>
+https://nvidia.github.io/IsaacCapture/client/main/?oobEnable=1&serverIP=10.0.0.1&port=48322&controlToken=<CONTROL_TOKEN>
 ```
 
 The client builds `wss://{serverIP}:{port}/oob/v1/ws` and:
@@ -472,6 +540,8 @@ The client builds `wss://{serverIP}:{port}/oob/v1/ws` and:
 1. Registers as role `"headset"`
 2. Reports `clientMetrics` periodically (default every 500 ms)
 3. Receives `config` pushes from operator
+
+<a id="url-query-parameter-overrides"></a>
 
 ### URL query parameter overrides
 
@@ -488,6 +558,8 @@ When no URL override is present, form fields restore from `localStorage`, with o
 exception: a saved device profile other than `Custom` is re-applied from the current
 profile table at startup, so profile default updates (frame rate, bitrate, codec)
 reach returning clients. Only `Custom` keeps manually edited values.
+
+<a id="environment-variables"></a>
 
 ## Environment variables
 
@@ -516,6 +588,8 @@ reach returning clients. Only `Custom` keeps manually edited values.
 | `TELEOP_CLIENT_RECONNECT_DELAY_MS`      | Non-negative delay between browser-local attempts in milliseconds<br/>(default `3000`). The host derives its bounded recovery grace from<br/>this value and the maximum-attempt count.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `USB_BACKEND_PORT`                      | CloudXR backend port the headset reaches via `adb reverse` in<br/>`--usb-local` mode (default `49100`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `USB_TURN_PORT`                         | coturn TURN-server port for WebRTC ICE relay in `--usb-local`<br/>mode (default `3478`). `adb reverse`-mapped to the headset.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+
+<a id="usb-local-mode-setup-oob-usb-local"></a>
 
 ## USB-local mode (`--setup-oob --usb-local`)
 
@@ -566,7 +640,11 @@ no-op when the headset browser isn’t running yet.
 Required apt packages: `adb` (`android-tools-adb`) and `coturn`.
 No Node.js / `npm` is required at runtime.
 
+<a id="troubleshooting"></a>
+
 ## Troubleshooting
+
+<a id="teleop-client-error-no-local-connection-candidates-0xc0f2220f"></a>
 
 ### Teleop client error: “No local connection candidates” (0xC0F2220F)
 
@@ -591,6 +669,8 @@ host is listening. A successful command with no non-loopback interface
 reports a network block; a failed ADB command reports cable/transport loss
 and never claims that Wi-Fi dropped. Wi-Fi restoration resumes recovery.
 
+<a id="web-client-ui-has-no-text-oob-host-client"></a>
+
 ### Web client UI has no text (OOB / `--host-client`)
 
 **Cause:** Production webpack emits `bundle.js` (main app, including UIKit MSDF text)
@@ -602,6 +682,8 @@ and `bundle.emulator.js` (desktop emulation only). If the static cache under
 under the static dir — run the launcher once with network, copy a full `npm run build`
 output, or use the GitHub Pages URL directly. See
 [Build WebXR Client](../development/build_from_source/webxr.md).
+
+<a id="cdp-startbutton-marked-failed-not-actionable"></a>
 
 ### CDP: startButton marked failed / not actionable
 
@@ -617,6 +699,8 @@ causes: launched in WebLayer instead of Meta Quest Browser (no WebXR
 support → IWER fallback silently activates); WebGL2 disabled by device
 policy.
 
+<a id="coturn-not-found-turn-server-failed-to-start"></a>
+
 ### `coturn` not found / TURN server failed to start
 
 **Cause:** `--usb-local` requires coturn to relay WebRTC media between
@@ -631,6 +715,8 @@ Inspect `/tmp/coturn-cloudxr-3478.log` for bind errors or credential
 mismatches; the launcher truncates this file on every start so only the
 current session’s output is present.
 
+<a id="tab-not-found-within-timeout"></a>
+
 ### Tab not found within timeout
 
 **Cause:** The headset’s default URL handler is something other than Meta
@@ -640,6 +726,8 @@ URL in a browser with remote-debugging exposed.
 **Fix:** Open `chrome://inspect#devices` on this PC, inspect the
 headset tab manually, and click CONNECT. Or set a different default
 browser on the headset.
+
+<a id="webxr-static-download-fails-offline-proxy"></a>
 
 ### WebXR static download fails (offline / proxy)
 

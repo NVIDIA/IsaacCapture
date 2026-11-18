@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="build-from-source"></a>
+
 # Build from Source
 
 This page describes how to build Isaac Capture from source, including core libraries, plugins, and
@@ -18,6 +20,8 @@ examples. The instructions align with the project’s CMake configuration and th
 
 #### Next Steps
 - To build and serve the **WebXR client** locally, see [Build WebXR Client](webxr.md).
+
+<a id="prerequisites"></a>
 
 ## Prerequisites
 
@@ -49,9 +53,11 @@ on Windows). On Linux, GLFW’s Wayland backend also requires **wayland-scanner*
 These dependencies do not gate the auto-default: if one is missing, configure fails
 naming it rather than quietly dropping the module. Most users do not need any of this:
 `pip install isaaccapture` already ships the compiled `isaaccapture.viz` module. See
-[Other Build options]() for the full option table.
+[Other Build options](#other-build-options) for the full option table.
 
 <a id="one-time-setup"></a>
+
+<a id="id1"></a>
 
 ## One time setup
 
@@ -93,6 +99,8 @@ export PATH="$HOME/.local/bin:$PATH"
 While the build system uses [uv](https://docs.astral.sh/uv/), the final Python packages can be installed via any Python package manager
 such as [pip](https://pip.pypa.io/) or [conda](https://conda.io/).
 
+<a id="clone-the-repository"></a>
+
 ## 1. Clone the repository
 
 ```bash
@@ -104,6 +112,8 @@ cd IsaacCapture
 Dependencies (OpenXR SDK, pybind11, yaml-cpp) are automatically downloaded
 during CMake configuration using FetchContent. No manual dependency installation or
 git submodule initialization is required.
+
+<a id="pre-download-cloudxr-sdk-optional"></a>
 
 ### Pre-download CloudXR SDK (Optional)
 
@@ -138,6 +148,8 @@ The experimental runtime is packaged into the wheel as `isaaccapture.cloudxr_exp
 Select it at runtime with `ISAAC_TELEOP_CLOUDXR_EXP`.
 See [CloudXR Service](../../references/cloudxr.md#dedicated-cloudxr-runtime).
 
+<a id="cmake-configure-and-build"></a>
+
 ## 2. CMake: Configure and build
 
 From the project root:
@@ -170,6 +182,8 @@ This will:
 4. Build examples (if enabled)
 5. Install to `./install` (default prefix set in root `CMakeLists.txt`)
 
+<a id="c-formatting-enforcement-linux"></a>
+
 ### C++ Formatting Enforcement (Linux)
 
 On Linux, **clang-format** is enforced by default; the build fails if formatting changes would be applied. The project
@@ -190,6 +204,8 @@ Useful targets:
 cmake --build build --target clang_format_check
 cmake --build build --target clang_format_fix
 ```
+
+<a id="other-build-options"></a>
 
 ### Other Build options
 
@@ -220,6 +236,8 @@ The CMake options (defined in root [CMakeLists.txt](https://github.com/NVIDIA/Is
 | **Plugins master switch**    | `BUILD_PLUGINS`             | `ON`                                                                                                                                                                                                                              |
 | **OAK camera plugin**        | `BUILD_PLUGIN_OAK_CAMERA`   | `OFF`; when `ON`, builds DepthAI v3.x and pulls its dependencies through<br/>vcpkg, so it also needs `CMAKE_TOOLCHAIN_FILE` on a fresh build directory.<br/>See [OAK Camera Plugin](../../device/cameras/oak.md). |
 | **Teleop ROS2 example only** | `BUILD_EXAMPLE_TELEOP_ROS2` | `OFF`; when `ON`, only `examples/teleop_ros2` (e.g. Docker)                                                                                                                                                                       |
+
+<a id="examples"></a>
 
 ### Examples
 
@@ -277,6 +295,8 @@ cmake -B build --fresh
 cmake --build build
 ```
 
+<a id="running-tests"></a>
+
 ## 3. Running tests
 
 When `BUILD_TESTING` is `ON`, CTest is enabled at the top level. Run all tests either via the CMake `test` target or with `ctest`:
@@ -291,6 +311,8 @@ ctest --test-dir build --output-on-failure --parallel
 The CI uses `ctest` (see [build-ubuntu.yml](https://github.com/NVIDIA/IsaacCapture/blob/main/.github/workflows/build-ubuntu.yml)).
 
 <a id="build-from-source-install-package"></a>
+
+<a id="install-the-isaaccapture-pip-package"></a>
 
 ## 4. Install the `isaaccapture` pip package
 
@@ -329,15 +351,29 @@ uv pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./
 
 <a id="build-from-source-editable-examples"></a>
 
-An example whose `pyproject.toml` points `[tool.uv.sources]` at this checkout replaces this
-wheel with an editable build of the checkout when you install it. Its first install compiles the
-extensions, and uv reuses that build afterwards, so after a C++ change reinstall the example with
-`uv pip install -e ./examples/<name> --reinstall-package isaaccapture`.
+Install an example into this venv with `--no-sources`:
+
+```bash
+uv pip install -e ./examples/<name> --no-sources
+```
+
+On aarch64 this command fails for `deviceio_live_view`, because SOMA-X pulls in `cholespy`,
+which has no aarch64 wheel. Use the aarch64 install in
+[examples/deviceio_live_view/README.md](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md) instead.
+
+Without `--no-sources`, an example whose `pyproject.toml` points `[tool.uv.sources]` at this checkout
+replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
+an example that starts CloudXR stops with `The CloudXR service exited during startup` and the
+service log reads `CloudXR SDK missing native/libcloudxr.so`. After a rebuild, run
+`cmake --install build` so `./install/wheels/` holds the new wheel, then rerun the wheel install
+above; the example does not need reinstalling.
 
 The wheel carries the `isaacteleop` compatibility alias, which will be removed
 in 1.9, so
 `import isaacteleop` resolves without installing anything else. See
 [Migrating to isaaccapture](../migration.md).
+
+<a id="alternative-install-directly-from-source-with-pip"></a>
 
 ### Alternative: install directly from source with pip
 
@@ -352,6 +388,11 @@ the released wheels) is unchanged, so the two coexist.
 pip install .            # build + install the compiled wheel from source
 pip install -e .         # editable / developer install
 ```
+
+#### WARNING
+Neither install carries the CloudXR runtime (`isaaccapture/cloudxr/native/`), so
+`python -m isaaccapture.cloudxr.service` and every example that starts CloudXR fail under
+this path. Use the wheel from step 4 for those.
 
 #### NOTE
 The CMake build tree is kept under `build-wheel/<cache-tag>/` (e.g.

@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="oglo-tactile-glove-plugin"></a>
+
 # OGLO Tactile Glove Plugin
 
 C++ plugin that streams **OGLO** tactile gloves over BLE into the standard
@@ -11,7 +13,7 @@ plugin README: [src/plugins/oglo_tactile/README.md](https://github.com/NVIDIA/Is
 This plugin follows the [Add a New Device](../add_device.md) pattern (FlatBuffer schema → plugin
 `SchemaPusher` → tracker → MCAP) and is modeled on the OAK camera plugin.
 
-![image](_static/oglo-demo.gif)
+![image](../../_images/oglo-demo.gif)
 
 Both OGLO gloves driving a live per-finger contact heatmap while manipulating
 an object — 80 taxels + a 6-axis IMU per hand, streamed over BLE at 100 Hz and
@@ -26,6 +28,8 @@ time-synced with the operator’s hand/head tracking.
 > * [IMU frame](#imu-frame)
 > * [Tests](#tests)
 
+<a id="components"></a>
+
 ## Components
 
 - **Schema** — [src/core/schema/fbs/oglo_tactile.fbs](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/oglo_tactile.fbs)
@@ -35,6 +39,8 @@ time-synced with the operator’s hand/head tracking.
   `LiveOgloTactileTrackerImpl`. Both are generated at configure time from the
   `oglo_tactile` entry in
   [src/core/deviceio_trackers/trackers.toml](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml).
+
+<a id="build"></a>
 
 ## Build
 
@@ -57,6 +63,8 @@ transport is isolated behind the `OgloBleClient` interface
 alternative backend can be dropped in via `make_ble_client()` without
 touching the parser, schema, or tracker.
 
+<a id="usage"></a>
+
 ## Usage
 
 The plugin streams one glove (`--side`) and pushes it via OpenXR for a host
@@ -70,6 +78,8 @@ The plugin streams one glove (`--side`) and pushes it via OpenXR for a host
 The packet parser reads the device **Config characteristic** first and branches
 on the notify `flags` byte (`0x04` packed12 v5 — primary; `0x02`/`0x01`
 legacy schema-4 fallback), so payload sizes are never hardcoded.
+
+<a id="recorded-data"></a>
 
 ## Recorded data
 
@@ -100,6 +110,8 @@ A complete data-collection demo (MetaQuest hand/head + both gloves + a live
 in-headset tactile heatmap) lives at
 [examples/oglo_tactile](https://github.com/NVIDIA/IsaacCapture/tree/main/examples/oglo_tactile); see its `README.md`.
 
+<a id="imu-frame"></a>
+
 ## IMU frame
 
 Each sample includes a 6-axis IMU reading — a 3-axis accelerometer and 3-axis
@@ -109,6 +121,8 @@ wrist-mounted, so its axes form a single **wrist-fixed frame** — they track th
 wrist, not individual fingers, and are the sensor’s own raw axes (not aligned to
 an anatomical hand frame). For absolute orientation, apply the IMU-to-hand
 extrinsic supplied with the hardware, or calibrate against gravity for just “up”.
+
+<a id="tests"></a>
 
 ## Tests
 

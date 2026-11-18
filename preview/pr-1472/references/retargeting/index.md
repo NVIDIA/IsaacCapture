@@ -1,10 +1,14 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="retargeting-interface"></a>
+
 # Retargeting Interface
 
 Isaac Capture provides the graph-based retargeting pipeline used by Isaac Teleop. Data flows from **source nodes** through
 **retargeters** and is combined into a single action tensor.
+
+<a id="source-nodes"></a>
 
 ## Source Nodes
 
@@ -20,6 +24,8 @@ Isaac Capture provides the graph-based retargeting pipeline used by Isaac Teleop
   runs upstream FK for rotations or directly maps evaluated poses, then emits
   an optional `SomaBodyInput` containing the 77 global SOMA joint poses.
   See [Spatial Trackers and Device Data](../../device/trackers/index.md) and [examples/deviceio_live_view/README.md](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md).
+
+<a id="available-retargeters"></a>
 
 ## Available Retargeters
 
@@ -272,6 +278,8 @@ tensor. The `output_order` must match the action space expected by the environme
 
 <a id="isaac-teleop-pipeline-builder"></a>
 
+<a id="build-a-retargeting-pipeline"></a>
+
 ## Build a Retargeting Pipeline
 
 A pipeline builder is a callable that constructs the retargeting graph and returns an
@@ -345,6 +353,8 @@ The `output_order` of the `TensorReorderer` must match the action space of your 
 Mismatches will cause silent control errors.
 
 <a id="isaac-teleop-new-retargeter"></a>
+
+<a id="add-a-new-retargeter"></a>
 
 ## Add a New Retargeter
 

@@ -3,6 +3,8 @@
 
 <a id="dedicated-cloudxr-runtime"></a>
 
+<a id="cloudxr-service"></a>
+
 # CloudXR Service
 
 A host runs **one** CloudXR runtime, and the CloudXR service owns it, together
@@ -38,6 +40,8 @@ GitHub Pages client instead. Start the service yourself when you want to:
 > * [Configuration](#configuration)
 > * [Troubleshooting](#troubleshooting)
 
+<a id="start-the-service"></a>
+
 ## Start the service
 
 With the `isaaccapture` package installed (including the `cloudxr` extra,
@@ -64,7 +68,7 @@ container entrypoint wants. `run` does prompt when it has a terminal.
 
 You should see output similar to:
 
-![CloudXR service startup output](_static/cloudxr-run-output.png)
+![CloudXR service startup output](../_images/cloudxr-run-output.png)
 
 **Figure:** CloudXR service startup output
 
@@ -75,6 +79,8 @@ removed in Isaac Capture 1.7.
 
 Take note of the `source ~/.cloudxr/run/cloudxr.env` path in the output. You
 will need it in [Load CloudXR environment variables](#load-cloudxr-environment-variables).
+
+<a id="manage-the-service"></a>
 
 ## Manage the service
 
@@ -91,6 +97,8 @@ Every command below is a subcommand of
 
 `status` reports the session that is actually running, recovered from the
 service’s own command line — not the defaults of the command you just typed.
+
+<a id="optional-launch-modes"></a>
 
 ## Optional launch modes
 
@@ -109,6 +117,8 @@ control how the headset connects and how the web client is delivered.
 [Out-of-Band Teleop Control](oob_teleop_control.md) for full OOB documentation. The OOB hub
 prints a banner as it comes up, so `run` is often the more useful command
 while setting those modes up for the first time.
+
+<a id="usb-local-startup-checks"></a>
 
 ## USB-local startup checks
 
@@ -139,6 +149,8 @@ goodput or USB line rate. Neither metric measures headset-to-host traffic or
 CloudXR stream throughput. A faster root hub is a topology clue, not proof
 that an accessible physical port is free.
 
+<a id="re-open-the-client-on-the-headset"></a>
+
 ## Re-open the client on the headset
 
 If the headset browser is closed or navigated away, re-open the client from
@@ -159,6 +171,8 @@ It only *opens* the page; accepting the certificate and clicking CONNECT remain
 `--setup-oob`’s CDP automation.
 
 <a id="load-cloudxr-environment-variables"></a>
+
+<a id="id1"></a>
 
 ## Load CloudXR environment variables
 
@@ -181,6 +195,8 @@ to open a new terminal, source the CloudXR environment variables again.
 Applications that embed `CloudXRLauncher` — the teleop examples — do this
 for themselves and need no sourcing.
 
+<a id="run-teleop-examples-against-the-service"></a>
+
 ## Run teleop examples against the service
 
 Nothing to pass. The examples under `examples/teleop` attach to
@@ -195,6 +211,8 @@ python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 The example leaves the service running when it exits, so the headset stays
 connected and the next run reattaches to the same session.
+
+<a id="use-a-system-openxr-runtime-no-cloudxr-attach"></a>
 
 ## Use a system OpenXR runtime (no CloudXR attach)
 
@@ -214,6 +232,8 @@ export XR_RUNTIME_JSON=/path/to/your/openxr.json
 export ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS=1
 python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple --no-launch-cloudxr-runtime
 ```
+
+<a id="run-the-service-in-a-container-or-ci"></a>
 
 ## Run the service in a container or CI
 
@@ -248,10 +268,12 @@ them at it with `XR_RUNTIME_JSON` and `NV_CXR_RUNTIME_DIR`;
 `deps/cloudxr/docker-compose.test.yaml` mounts it read-only into the test
 container that way.
 
-Setting `CI` skips the interactive pause described under [Configuration](),
+Setting `CI` skips the interactive pause described under [Configuration](#configuration),
 alongside the check for a non-interactive stdin, so automated runs never wait.
 
 <a id="cloudxr-deferred-oob-connect"></a>
+
+<a id="connect-the-oob-headset-after-application-startup"></a>
 
 ## Connect the OOB headset after application startup
 
@@ -262,6 +284,8 @@ after the OpenXR session and renderer are ready.
 Requires `setup_oob=True` and a fixed `NV_DEVICE_PROFILE` (not `auto*`).
 For `CloudXRLauncher`, also set `run_embedded=True`. The default `False`
 keeps immediate connection.
+
+<a id="configuration"></a>
 
 ## Configuration
 
@@ -330,9 +354,13 @@ To inspect the active settings after startup:
 cat ~/.cloudxr/run/cloudxr.env
 ```
 
+<a id="troubleshooting"></a>
+
 ## Troubleshooting
 
 <a id="cloudxr-web-client-refresh"></a>
+
+<a id="pico-4-ultra-keeps-failing-when-retrying-a-connection"></a>
 
 ### PICO 4 Ultra keeps failing when retrying a connection
 
@@ -357,6 +385,8 @@ storage to be available. A restored error does not itself trigger another refres
 click **Connect** to retry from the refreshed page.
 
 <a id="cloudxr-form-factor-unavailable"></a>
+
+<a id="xrgetsystem-fails-with-xr-error-form-factor-unavailable-35"></a>
 
 ### `xrGetSystem` fails with `XR_ERROR_FORM_FACTOR_UNAVAILABLE` (-35)
 

@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="manus-gloves"></a>
+
 # MANUS Gloves
 
 A Linux-only plugin for integrating [MANUS](https://www.manus-meta.com/) gloves
@@ -22,13 +24,17 @@ tensors and consumes inbound haptic commands for vibration gloves.
 >   * [1. Start the CloudXR runtime and load its environment](#start-the-cloudxr-runtime-and-load-its-environment)
 >   * [2. Verify with the CLI tool](#verify-with-the-cli-tool)
 >   * [3. Run the plugin](#run-the-plugin)
+>   * [4. Load glove calibration files (optional)](#load-glove-calibration-files-optional)
 > * [Data paths](#data-paths)
 >   * [Human (OpenXR hand injection)](#human-openxr-hand-injection)
 >   * [Sensors (flex tips via SchemaPusher)](#sensors-flex-tips-via-schemapusher)
 >   * [Haptic (inbound vibration)](#haptic-inbound-vibration)
 > * [Wrist Positioning — Controllers vs Optical Hand Tracking](#wrist-positioning-controllers-vs-optical-hand-tracking)
+>   * [Controller offsets](#controller-offsets)
 > * [Troubleshooting](#troubleshooting)
 > * [License](#license)
+
+<a id="components"></a>
 
 ## Components
 
@@ -40,6 +46,10 @@ tensors and consumes inbound haptic commands for vibration gloves.
   that prints tracked joint data to the terminal and opens a real-time
   **MANUS Data Visualizer** window showing the hand skeleton from two orthographic
   views per hand.
+- **Calibration worker** (`manus_glove_calibrator`) — runs the Manus SDK glove
+  calibration for the browser calibration example and exports MCAL files.
+
+<a id="prerequisites"></a>
 
 ## Prerequisites
 
@@ -47,21 +57,24 @@ tensors and consumes inbound haptic commands for vibration gloves.
 - **Manus SDK** for Linux — downloaded automatically by the install script.
 - **System dependencies** — the install script installs required packages automatically.
 
+<a id="installation"></a>
+
 ## Installation
 
 MANUS access has two halves: **device permissions** (kernel/udev, lives on the
 host) and **SDK + plugin build** (lives wherever you build, typically a
 container). The two scripts below split along that line.
 
+<a id="step-1-grant-the-host-access-to-the-manus-dongle-one-time"></a>
+
 ### Step 1: grant the host access to the Manus dongle (one-time)
 
 Run this **on the host machine**, not inside a container. udev rules are
 processed by `systemd-udevd`, which does not run inside Docker — so
-installing rules from a container has no effect.
+installing rules from a container has no effect. From the repository root:
 
 ```bash
-cd src/plugins/manus
-./install_udev_rules.sh
+./src/plugins/manus/install_udev_rules.sh
 # then unplug + replug the Manus dongle
 ```
 
@@ -69,13 +82,16 @@ If you’re using the Isaac ROS dev container (`isaac_ros run_dev`), it
 bind-mounts `/dev/bus/usb` from the host, so once the host has the rules
 applied the container will see the dongle with the right permissions.
 
+<a id="step-2-build-the-sdk-and-plugin"></a>
+
 ### Step 2: build the SDK and plugin
 
-Run this **inside the build environment** (devcontainer or Isaac ROS container):
+Run this from the repository root wherever you build Isaac Capture: on a host
+that has the [source-build prerequisites](../../development/build_from_source/index.md),
+or inside a build container such as the Isaac ROS dev container:
 
 ```bash
-cd src/plugins/manus
-./install_manus.sh
+./src/plugins/manus/install_manus.sh
 ```
 
 Pass `--build-dir <path>` to reuse a non-default top-level CMake build
@@ -92,6 +108,8 @@ When run inside a container, `install_manus.sh` skips the udev step and
 reminds you to run `install_udev_rules.sh` on the host. Pass `--container`
 when the build environment does not expose standard container markers, such as
 during a Docker BuildKit build.
+
+<a id="manual-installation-fallback-only"></a>
 
 ### Manual installation (fallback only)
 
@@ -135,13 +153,16 @@ Then, after the [source-build prerequisites](../../development/build_from_source
 build from the root:
 
 ```bash
-cd ../../..  # navigate to root
 cmake -S . -B build
-cmake --build build --target manus_hand_plugin manus_hand_tracker_printer -j
+cmake --build build --target manus_hand_plugin manus_hand_tracker_printer manus_glove_calibrator -j
 cmake --install build --component manus
 ```
 
+<a id="running-the-plugin"></a>
+
 ## Running the Plugin
+
+<a id="start-the-cloudxr-runtime-and-load-its-environment"></a>
 
 ### 1. Start the CloudXR runtime and load its environment
 
@@ -153,7 +174,7 @@ Start the CloudXR runtime. It runs as a background service that outlives
 this shell, until you stop it with `python -m isaaccapture.cloudxr.service stop`:
 
 ```bash
-python -m isaaccapture.cloudxr.service start
+python -m isaaccapture.cloudxr.service start --accept-eula
 ```
 
 In the shell you will use to run the plugin, source the environment file
@@ -167,6 +188,8 @@ See [CloudXR Service](../../references/cloudxr.md#dedicated-cloudxr-runtime) for
 including EULA acceptance, and [4. Whitelist ports for Firewall](../../teleop/quick_start.md#whitelist-firewall-ports) in the Quick
 Start for firewall configuration.
 
+<a id="verify-with-the-cli-tool"></a>
+
 ### 2. Verify with the CLI tool
 
 Verify that the gloves are working using the CLI tool. It runs from the build
@@ -179,6 +202,8 @@ from the same build:
 
 The tool prints joint positions to the terminal and opens a **MANUS Data
 Visualizer** window showing a top-down and side view of each hand.
+
+<a id="run-the-plugin"></a>
 
 ### 3. Run the plugin
 
@@ -199,13 +224,43 @@ haptic read. Restrict datasets with `--datasets=` (comma-separated):
 ./install/plugins/manus/manus_hand_plugin --datasets=sensors        # flex sensors only
 ```
 
+<a id="load-glove-calibration-files-optional"></a>
+
+### 4. Load glove calibration files (optional)
+
+The plugin can apply a Manus glove calibration (MCAL) file to each glove when
+MANUS Core reports that glove. Pass each file with `=`; the plugin ignores
+the space-separated form:
+
+```bash
+./install/plugins/manus/manus_hand_plugin \
+   --left-calibration=/path/to/left.mcal \
+   --right-calibration=/path/to/right.mcal
+```
+
+Either flag can be used alone. A file that cannot be read stops the plugin at
+startup with `Failed to open Manus calibration file: <path>`. A file that
+MANUS Core rejects is logged as `Failed to apply <side> glove calibration file`
+and that glove is reported as calibration failed.
+
+To record MCAL files, run the browser calibration page in
+[examples/manus_calibration/README.md](https://github.com/NVIDIA/IsaacCapture/blob/main/examples/manus_calibration/README.md). Its worker,
+`manus_glove_calibrator`, is installed next to the plugin in
+`./install/plugins/manus/`.
+
+<a id="data-paths"></a>
+
 ## Data paths
+
+<a id="human-openxr-hand-injection"></a>
 
 ### Human (OpenXR hand injection)
 
 The Manus raw skeleton stream is mapped to 26 OpenXR hand joints and pushed
 through `HandInjector` (requires `XR_NVX1_device_interface_base`). Downstream
 hosts consume hands via `HandsSource` as with any other hand-tracking plugin.
+
+<a id="sensors-flex-tips-via-schemapusher"></a>
 
 ### Sensors (flex tips via SchemaPusher)
 
@@ -234,7 +289,7 @@ from isaaccapture.schema import JointName, JointType
 
 left = JointSe3PoseTracker("manus_sensors_left")
 # ... register with a DeviceIOSession, then each tick:
-data = left.get_data(session).data
+data = left.get_data(session)  # None until the plugin pushes a frame
 assert data is None or data.type == JointType.HAND_RAW
 thumb = data.lookup(JointName.HAND_RAW_THUMB_TIP) if data else None
 if thumb is not None:
@@ -245,12 +300,16 @@ See [examples/mcap_record_replay/python/isaaccapture_examples/mcap_record_replay
 runnable recorder. Run `python -m isaaccapture_examples.mcap_record_replay.replay_joint_se3_pose`
 to play one back without hardware.
 
+<a id="haptic-inbound-vibration"></a>
+
 ### Haptic (inbound vibration)
 
 The plugin reads `HapticCommand` on collection `manus_glove_haptic`
 (`XR_NVX1_tensor_data`) and drives five finger motors via the Manus SDK.
 See the haptic feedback example and
 `isaaccapture.haptic_devices.glove.haptic_glove_device`.
+
+<a id="wrist-positioning-controllers-vs-optical-hand-tracking"></a>
 
 ## Wrist Positioning — Controllers vs Optical Hand Tracking
 
@@ -270,20 +329,45 @@ When using controller adapters it is advisable to disable the HMD’s automatic
 hand-tracking–to–controller switching to avoid unexpected source changes
 mid-session.
 
+<a id="controller-offsets"></a>
+
+### Controller offsets
+
+When the wrist comes from a controller, the plugin applies a fixed per-hand
+offset from the controller’s aim pose to the wrist. To use a different
+controller or mount, pass your own offsets to the plugin:
+
+```bash
+./install/plugins/manus/manus_hand_plugin \
+    --left-aim-to-wrist=px,py,pz,qx,qy,qz,qw \
+    --right-aim-to-wrist=px,py,pz,qx,qy,qz,qw
+```
+
+Each value is the wrist pose in the controller’s aim frame: position in
+meters, then an `(x, y, z, w)` quaternion. For mirror-image mounts, the left
+value is the right one with `px`, `qy` and `qz` negated. When
+`TeleopSession` starts the plugin, add the same flags to
+`PluginConfig.plugin_args`. The plugin logs each offset it applies and exits
+with an error on a value it cannot use.
+
+<a id="troubleshooting"></a>
+
 ## Troubleshooting
 
-| Symptom                                                                                    | Resolution                                                                                                                                                                                                                                                        |
-|--------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| SDK download fails                                                                         | Check your internet connection and re-run the install script.                                                                                                                                                                                                     |
-| `uv not found. Please install uv: ...`                                                     | Install uv and re-run: `curl -LsSf https://astral.sh/uv/install.sh | sh`.<br/>It installs to `~/.local/bin`, so also add that to `PATH` for the<br/>current shell (and `~/.bashrc`, to make it stick):<br/>`export PATH="$HOME/.local/bin:$PATH"`.                |
-| `Missing build tools: ... patchelf ...`                                                    | CMake’s dependency preflight lists every missing tool and the exact<br/>install command in the same message, e.g.<br/>`sudo apt-get install -y patchelf`. Run the printed command and<br/>re-run the install script.                                              |
-| Manus SDK not found at build time                                                          | With manual installation, ensure `ManusSDK` is inside<br/>`src/plugins/manus/` or set `MANUS_SDK_ROOT` to your installation path.                                                                                                                                 |
-| Manus SDK not found at runtime                                                             | The build configures RPATH automatically. If you moved the SDK after<br/>building, set `LD_LIBRARY_PATH` to its `lib/` directory.                                                                                                                                 |
-| No data received                                                                           | Ensure MANUS Core is running and the gloves are connected and calibrated.<br/>The plugin logs `Left glove connected (ID <n>); start streaming.` (or<br/>`Right ...`) when MANUS Core reports a glove; without that line it has<br/>no glove to stream.            |
-| CloudXR runtime errors                                                                     | Check that a runtime is serving with `python -m isaaccapture.cloudxr.service status`,<br/>and that `~/.cloudxr/run/cloudxr.env` has been sourced in the same<br/>terminal as the plugin.                                                                          |
-| Permission denied for USB devices                                                          | udev rules must be installed on the host. Run `./install_udev_rules.sh`<br/>from the host (not inside a container), then unplug and replug the<br/>MANUS dongle. Verify on the host with `ls -l /dev/hidraw*` — entries for the<br/>dongle should be mode `0666`. |
-| `udevadm control --reload-rules` fails with “No such file or directory”                    | You’re inside a container. `systemd-udevd` doesn’t run in containers,<br/>so this command can never succeed there. Run `install_udev_rules.sh`<br/>on the host instead.                                                                                           |
-| Dongle not visible inside the Isaac ROS container (`lsusb` doesn’t<br/>show vendor `3325`) | The container needs `/dev/bus/usb` bind-mounted from the host. The<br/>Isaac ROS dev container does this automatically; for a custom<br/>`docker run`, add `-v /dev/bus/usb:/dev/bus/usb` (or<br/>`--device=/dev/hidraw<N>` for a specific device).               |
+| Symptom                                                                                    | Resolution                                                                                                                                                                                                                                                                          |
+|--------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| SDK download fails                                                                         | Check your internet connection and re-run the install script.                                                                                                                                                                                                                       |
+| `uv not found. Please install uv: ...`                                                     | Install uv and re-run: `curl -LsSf https://astral.sh/uv/install.sh | sh`.<br/>It installs to `~/.local/bin`, so also add that to `PATH` for the<br/>current shell (and `~/.bashrc`, to make it stick):<br/>`export PATH="$HOME/.local/bin:$PATH"`.                                  |
+| `Missing build tools: ... patchelf ...`                                                    | CMake’s dependency preflight lists every missing tool and the exact<br/>install command in the same message, e.g.<br/>`sudo apt-get install -y patchelf`. Run the printed command and<br/>re-run the install script.                                                                |
+| Manus SDK not found at build time                                                          | With manual installation, ensure `ManusSDK` is inside<br/>`src/plugins/manus/` or set `MANUS_SDK_ROOT` to your installation path.                                                                                                                                                   |
+| Manus SDK not found at runtime                                                             | The build configures RPATH automatically. If you moved the SDK after<br/>building, set `LD_LIBRARY_PATH` to its `lib/` directory.                                                                                                                                                   |
+| No data received                                                                           | Ensure MANUS Core is running and the gloves are connected and calibrated.<br/>The plugin logs `Left glove connected (ID <n>); start streaming.` (or<br/>`Right ...`) when MANUS Core reports a glove; without that line it has<br/>no glove to stream.                              |
+| CloudXR runtime errors                                                                     | Check that a runtime is serving with `python -m isaaccapture.cloudxr.service status`,<br/>and that `~/.cloudxr/run/cloudxr.env` has been sourced in the same<br/>terminal as the plugin.                                                                                            |
+| Permission denied for USB devices                                                          | udev rules must be installed on the host. Run `./src/plugins/manus/install_udev_rules.sh`<br/>from the host (not inside a container), then unplug and replug the<br/>MANUS dongle. Verify on the host with `ls -l /dev/hidraw*` — entries for the<br/>dongle should be mode `0666`. |
+| `udevadm control --reload-rules` fails with “No such file or directory”                    | You’re inside a container. `systemd-udevd` doesn’t run in containers,<br/>so this command can never succeed there. Run `install_udev_rules.sh`<br/>on the host instead.                                                                                                             |
+| Dongle not visible inside the Isaac ROS container (`lsusb` doesn’t<br/>show vendor `3325`) | The container needs `/dev/bus/usb` bind-mounted from the host. The<br/>Isaac ROS dev container does this automatically; for a custom<br/>`docker run`, add `-v /dev/bus/usb:/dev/bus/usb` (or<br/>`--device=/dev/hidraw<N>` for a specific device).                                 |
+
+<a id="license"></a>
 
 ## License
 

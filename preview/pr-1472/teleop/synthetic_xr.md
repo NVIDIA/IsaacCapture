@@ -1,12 +1,16 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="synthetic-xr-teleoperation"></a>
+
 # Synthetic XR Teleoperation
 
 **Build and automate teleoperation from your desktop, without an XR headset.**
 Supply virtual controller inputs through IWER and use the same WebXR, CloudXR
 and native robot-control path as a human operator. Start with Franka stacking,
 then bring your own task logic.
+
+<a id="franka-simulation-example"></a>
 
 ## Franka simulation example
 
@@ -27,13 +31,15 @@ left; Isaac Lab is on the right. After each native export, Lab randomizes the
 cube layout and the same action logic starts the next episode. The original
 full-speed recording and native artifacts are retained with the run evidence.
 
+<a id="one-shared-robot-control-path"></a>
+
 ## One shared robot-control path
 
 A human observes the streamed scene and moves a physical controller. Automation
 reads numerical scene feedback and generates virtual controller poses. Both
 feed the same downstream path in this Franka example:
 
-[![Human: streamed scene, visual decisions, physical controller movement and tracked poses. Automation: numerical Lab feedback, task logic, coordinate conversion and IWER poses. Both converge at WebXR and CloudXR, then native retargeting, Lab IK and simulated robot motion. Rendered images return to the browser; added numerical feedback returns to the script.](_static/synthetic-xr-shared-flow.svg)](../_static/synthetic-xr-shared-flow.svg)
+[![Human: streamed scene, visual decisions, physical controller movement and tracked poses. Automation: numerical Lab feedback, task logic, coordinate conversion and IWER poses. Both converge at WebXR and CloudXR, then native retargeting, Lab IK and simulated robot motion. Rendered images return to the browser; added numerical feedback returns to the script.](../_images/synthetic-xr-shared-flow.svg)](../_static/synthetic-xr-shared-flow.svg)
 
 Different input producers; shared transport, retargeting, IK and simulation.
 Open the diagram to view it at full size.
@@ -48,13 +54,15 @@ world and XR coordinates and the controller/gripper offsets. Native retargeting
 maps the resulting controller poses back to robot targets; IK acts inside Lab.
 Trigger values close or open the gripper, just as a physical trigger would.
 
+<a id="try-the-example"></a>
+
 ## Try the example
 
 Use the fresh-install recipe linked below, this branch’s built WebXR client
 and the example’s optional Franka dependencies. A headset and ADB are not needed;
 CloudXR’s GPU, network and certificate requirements still apply.
 
-Follow the [`Franka setup and run commands`](_downloads/5fd5cecaf218f6785f3190fa875d8af4/README.md):
+Follow the [`Franka setup and run commands`](../_downloads/5fd5cecaf218f6785f3190fa875d8af4/README.md):
 
 1. Start the CloudXR service and Lab recording task with the read-only observer.
 2. Connect the desktop WebXR client with `syntheticXR=1` enabled.
@@ -71,8 +79,10 @@ and a trusted localhost certificate. A separate customer-application acceptance 
 success callback and native dataset export. The earlier preview recording above
 shows three randomized stacking episodes; it is not a reliability measurement
 of the new interface. See the
-[`validation scope`](_downloads/61e3831cb784f2681a864254ad4e079b/VALIDATION.txt) for
+[`validation scope`](../_downloads/61e3831cb784f2681a864254ad4e079b/VALIDATION.txt) for
 component identities and evidence limits.
+
+<a id="bring-your-own-task-logic"></a>
 
 ## Bring your own task logic
 
@@ -82,7 +92,7 @@ region instead of another cube as the placement target.
 
 **Reuse task logic across input sources.** Keep approach, grasp, transfer and
 release decisions separate from input generation. The example’s
-[`shared task logic`](_downloads/1cda1e5930b2cc921ea8b6143646c282/task_plan.py)
+[`shared task logic`](../_downloads/1cda1e5930b2cc921ea8b6143646c282/task_plan.py)
 uses input-specific adapters for XR controller poses, keyboard events or gamepad
 values. XR uses the WebXR/CloudXR path; the keyboard/gamepad adapters target
 Lab’s native input path. See the example README for integration contracts.
@@ -100,7 +110,7 @@ Robot-specific pose bridge -> browser API / IWER
 Shared WebXR -> CloudXR -> retargeting -> IK -> robot simulation
 ```
 
-Start with the shipped [`stacking implementation`](_downloads/56701fff770c6f15b32b2e85600ece18/stack_logic.py).
+Start with the shipped [`stacking implementation`](../_downloads/56701fff770c6f15b32b2e85600ece18/stack_logic.py).
 It uses `FrankaTaskSession` to observe the scene, move the tool and operate the
 gripper. Replace its task decisions while keeping the session interface:
 
@@ -133,7 +143,7 @@ consecutive-success requirement and performs the native episode export.
 forces a successful result. Without a callback, the original stacking success
 criterion remains in effect.
 
-The [`setup and interface contract`](_downloads/5fd5cecaf218f6785f3190fa875d8af4/README.md)
+The [`setup and interface contract`](../_downloads/5fd5cecaf218f6785f3190fa875d8af4/README.md)
 contains the exact launch sequence, observation fields, callback contract and
 shutdown instructions. The session retains command receipts, native-action
 acknowledgements and named observations so you can inspect an unexpected result.

@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="generic-joint-space-device"></a>
+
 # Generic Joint-Space Device
 
 This page has moved to [Generic Joint-Space Device](joint_space/index.md).

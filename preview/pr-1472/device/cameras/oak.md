@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="oak-camera-plugin"></a>
+
 # OAK Camera Plugin
 
 C++ plugin that captures H.264 video from OAK cameras and saves to raw H.264
@@ -23,6 +25,8 @@ files. Source and plugin README:
 >   * [Device USB Connection](#device-usb-connection)
 >   * [Inspect the Recording](#inspect-the-recording)
 
+<a id="features"></a>
+
 ## Features
 
 - **Hardware H.264 Encoding** — Uses OAK’s built-in video encoder
@@ -30,6 +34,8 @@ files. Source and plugin README:
   container overhead)
 - **OpenXR Integration** — Optional CloudXR runtime integration
 - **Self-contained build** — DepthAI built automatically via CMake
+
+<a id="build"></a>
 
 ## Build
 
@@ -39,6 +45,8 @@ the build downloads **DepthAI’s own vcpkg manifest** for the pinned tag at con
 time (see `cmake/DepthAIVcpkgManifest.cmake`) and enables its `usb` feature for
 libusb. The first build takes ~10–15 minutes (mostly vcpkg deps + DepthAI);
 subsequent builds are fast.
+
+<a id="prerequisites"></a>
 
 ### Prerequisites
 
@@ -54,6 +62,8 @@ git clone https://github.com/microsoft/vcpkg ~/.vcpkg
 ~/.vcpkg/bootstrap-vcpkg.sh
 echo 'export VCPKG_ROOT=~/.vcpkg' >> ~/.bashrc && source ~/.bashrc
 ```
+
+<a id="configure-and-build"></a>
 
 ### Configure and Build
 
@@ -72,6 +82,8 @@ cmake -B build -DBUILD_PLUGIN_OAK_CAMERA=ON \
     -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 cmake --build build --target camera_plugin_oak --parallel
 ```
+
+<a id="usage"></a>
 
 ## Usage
 
@@ -95,11 +107,15 @@ cmake --build build --target camera_plugin_oak --parallel
 
 Press `Ctrl+C` to stop recording.
 
+<a id="record-camera-metadata-in-mcap"></a>
+
 ### Record camera metadata in MCAP
 
 Each captured frame emits metadata (sequence number, timestamps) as FlatBuffer
 `FrameMetadataOak` messages. There are two ways to record it —
 `--collection-prefix` and `--mcap-filename` are **mutually exclusive**.
+
+<a id="local-mcap-file-mcap-filename"></a>
 
 #### Local MCAP file (`--mcap-filename`)
 
@@ -112,6 +128,8 @@ tracker or TeleopSession is required.
   --add-stream=camera=MonoLeft,output=./left.h264 \
   --mcap-filename=./metadata.mcap
 ```
+
+<a id="teleopsession-multi-device-recording"></a>
 
 #### TeleopSession (multi-device recording)
 
@@ -188,6 +206,8 @@ cmake --install build
 python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
 ```
 
+<a id="configuration"></a>
+
 ## Configuration
 
 | Option                                     | Default                 | Description                                                                                |
@@ -200,6 +220,8 @@ python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
 | `--preview`                                | off                     | Open a live SDL2 window showing the color camera feed                                      |
 | `--collection-prefix=PREFIX`               |                         | Push per-frame metadata via OpenXR tensor extensions                                       |
 | `--mcap-filename=PATH`                     |                         | Record per-frame metadata to an MCAP file                                                  |
+
+<a id="architecture"></a>
 
 ## Architecture
 
@@ -216,6 +238,8 @@ python tests/python/xr_runtime/test_oak_camera.py --mode schema-pusher
                      └──────────────────┘
 ```
 
+<a id="dependencies"></a>
+
 ## Dependencies
 
 Transitive dependencies via **vcpkg**, DepthAI and SDL2 via FetchContent:
@@ -225,6 +249,8 @@ Transitive dependencies via **vcpkg**, DepthAI and SDL2 via FetchContent:
 - **vcpkg** — DepthAI’s transitive deps (nlohmann-json, spdlog, libusb,
   libarchive, etc.), resolved from DepthAI’s own auto-downloaded manifest
   (`usb` feature enabled for libusb)
+
+<a id="output-format"></a>
 
 ## Output Format
 
@@ -242,7 +268,11 @@ ffmpeg -f h264 -i recording.h264 -c copy output.mp4
 ffmpeg -f h264 -framerate 30 -i recording.h264 -c copy output.mp4
 ```
 
+<a id="troubleshooting"></a>
+
 ## Troubleshooting
+
+<a id="device-usb-connection"></a>
 
 ### Device USB Connection
 
@@ -253,6 +283,8 @@ lsusb | grep 03e7
 
 For more connection troubleshooting, see the
 [OAK USB deployment guide](https://docs.luxonis.com/hardware/platform/deploy/usb-deployment-guide).
+
+<a id="inspect-the-recording"></a>
 
 ### Inspect the Recording
 

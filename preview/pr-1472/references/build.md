@@ -1,4 +1,8 @@
+<a id="build-system"></a>
+
 # Build System
+
+<a id="project-structure"></a>
 
 ## Project structure
 
@@ -50,9 +54,13 @@ IsaacCapture/
     └── native_openxr/
 ```
 
+<a id="cmake-integration"></a>
+
 ## CMake integration
 
 The project uses a modern CMake target-based approach. Libraries export namespaced alias targets (e.g. `oxr::oxr_core`, `deviceio::deviceio_session`, `isaacteleop_schema`); include directories are propagated. Package config files are generated for use after install. See the respective `CMakeLists.txt` in `src/core` and under `examples/` for target names and usage.
+
+<a id="using-the-python-wheel"></a>
 
 ## Using the Python wheel
 
@@ -74,6 +82,8 @@ The wheel carries the `isaacteleop` compatibility alias, which will be removed
 in 1.9, so
 `import isaacteleop` resolves without a second install; see [Migrating to isaaccapture](../development/migration.md).
 
+<a id="installing-from-source-with-pip-scikit-build-core"></a>
+
 ## Installing from source with pip (scikit-build-core)
 
 In addition to the classic CMake flow above (which stages the package
@@ -88,10 +98,13 @@ pip install .            # build + install the compiled wheel from source
 pip install -e .         # editable / developer install
 ```
 
+This path installs no CloudXR runtime, so nothing that starts CloudXR runs under it.
 For the walkthrough — how this scoped build differs from the classic flow (ABI,
 omitted type stubs, versioning) and the caveat on iterating on pure-Python
 subpackages under an editable install — see
 [Build from Source](../development/build_from_source/index.md).
+
+<a id="build-directory-layout-and-per-python-version-builds"></a>
 
 ## Build directory layout and per-Python-version builds
 
@@ -119,6 +132,8 @@ two build paths therefore never share a directory:
 
 `build/` and `build-wheel/` are gitignored.
 
+<a id="output-locations"></a>
+
 ## Output locations
 
 After a successful build and install, relative to your build directory:
@@ -131,7 +146,11 @@ After a successful build and install, relative to your build directory:
   - Wheels: `install/wheels/`
   - Examples: `install/examples/`
 
+<a id="troubleshooting"></a>
+
 ## Troubleshooting
+
+<a id="dependencies-fail-to-download"></a>
 
 ### Dependencies fail to download
 
@@ -144,6 +163,8 @@ FetchContent in `deps/third_party/CMakeLists.txt` requires network access. If do
 
 You can inspect the `_deps` directory in your build tree for fetch logs.
 
+<a id="cmake-can-t-find-openxr"></a>
+
 ### CMake can’t find OpenXR
 
 OpenXR is fetched automatically; it is not a system package. If configuration fails, try a clean configure
@@ -153,17 +174,23 @@ OpenXR is fetched automatically; it is not a system package. If configuration fa
 cmake -B build --fresh
 ```
 
+<a id="examples-or-tests-can-t-find-the-library"></a>
+
 ### Examples or tests can’t find the library
 
 When building from the top-level, examples and tests use the build tree. Ensure you run
 `cmake --build build` from the project root and run executables from the build directory
 (or use `cmake --install build` and run from `install/`).
 
+<a id="uv-or-python-version"></a>
+
 ### uv or Python version
 
 `cmake/SetupPython.cmake` requires **uv** and uses `ISAAC_TELEOP_PYTHON_VERSION`. Install uv as
 in [One time setup](../development/build_from_source/index.md#one-time-setup) and pass `-DISAAC_TELEOP_PYTHON_VERSION=3.12` (or 3.11,
 3.13) if you need a specific version.
+
+<a id="reference"></a>
 
 ## Reference
 

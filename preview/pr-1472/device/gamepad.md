@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="gamepad-plugin"></a>
+
 # Gamepad Plugin
 
 C++ plugin that streams a **gamepad** (USB or Bluetooth) into the standard DeviceIO path in one
@@ -31,6 +33,8 @@ tracker → MCAP).
 > * [Troubleshooting](#troubleshooting)
 > * [Tests](#tests)
 
+<a id="components"></a>
+
 ## Components
 
 - **Schema** — [src/core/schema/fbs/gamepad.fbs](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/schema/fbs/gamepad.fbs): `GamepadInputState`, the standard
@@ -41,6 +45,8 @@ tracker → MCAP).
   [src/core/deviceio_trackers/trackers.toml](https://github.com/NVIDIA/IsaacCapture/blob/main/src/core/deviceio_trackers/trackers.toml).
 - **Source node** — `GamepadSource` turns the tracker’s data into a `gamepad` tensor group
   (`GamepadInput`, indexed by `GamepadInputIndex`) for retargeters.
+
+<a id="standard-layout"></a>
 
 ## Standard layout
 
@@ -62,11 +68,15 @@ The other buttons are `shoulder_[left|right]_click`, `thumbstick_[left|right]_cl
 inputs every standard pad has, the same set as OpenXR’s `xbox_controller` profile; pad-specific
 extras such as the guide button, paddles and touchpad are not reported.
 
+<a id="device-access"></a>
+
 ## Device access
 
 On a desktop session udev grants the logged-in user access to gamepad nodes, so no setup is
 needed. Without a local seat (SSH, a service, a container), add the user to the `input` group,
 and pass the pad’s `/dev/input/event*` node into a container.
+
+<a id="build"></a>
 
 ## Build
 
@@ -78,6 +88,8 @@ time, linking it statically with only its joystick and HIDAPI subsystems:
 cmake -B build
 cmake --build build --target gamepad_plugin --parallel
 ```
+
+<a id="usage"></a>
 
 ## Usage
 
@@ -116,6 +128,8 @@ next to any reader of the same collection:
 ./install/plugins/gamepad/gamepad_plugin
 ```
 
+<a id="multiple-pads"></a>
+
 ### Multiple pads
 
 Run one plugin per pad. `--player=N` reads the Nth connected pad, and each plugin pushes to its
@@ -134,6 +148,8 @@ plugins = [
 sources = [GamepadSource(name=f"gamepad_{n}", collection_id=f"gamepad_{n}") for n in (1, 2)]
 ```
 
+<a id="published-data"></a>
+
 ## Published data
 
 The plugin pushes `GamepadSnapshot` to collection `gamepad` (`--collection-id` changes it;
@@ -145,12 +161,16 @@ While no pad is open the plugin keeps pushing snapshots without `inputs`, so a
 reader never holds the last stick deflection of an unplugged pad; `GamepadSource` then reports
 its outputs as absent. Recordings use MCAP channels `gamepad` and `gamepad_tracked`.
 
+<a id="retargeters"></a>
+
 ## Retargeters
 
 `GamepadToSe3RelRetargeter` (end-effector delta from the sticks and D-pad),
 `GamepadToSe2Retargeter` (base velocity from the sticks) and `GamepadGripperRetargeter`
 (toggle on `WEST`) consume `GamepadSource`. Their dead zone defaults to 0.15: an idle pad’s
 sticks rest up to 0.14 off center.
+
+<a id="device-status"></a>
 
 ## Device status
 
@@ -159,14 +179,18 @@ When `TeleopSession` starts the plugin, it reports device `<plugin_root_id>/game
 `CONNECTED`, `DISCONNECTED` when no pad is connected for its player, or `FAILED` when SDL
 finds the pad but cannot open it.
 
+<a id="troubleshooting"></a>
+
 ## Troubleshooting
 
 - **Status DISCONNECTED with the pad connected** — SDL lists a device as a gamepad only when it
   has a mapping. Find the pad’s line in SDL_GameControllerDB (or write one) and set it in the
   `SDL_GAMECONTROLLERCONFIG` environment variable of the process that starts the plugin.
 - **Status DISCONNECTED over SSH or in a container** — the user cannot read the pad’s
-  `/dev/input/event*` node; see [Device access]().
+  `/dev/input/event*` node; see [Device access](#device-access).
 - **The robot drifts with the pad at rest** — raise the retargeter’s `dead_zone`.
+
+<a id="tests"></a>
 
 ## Tests
 

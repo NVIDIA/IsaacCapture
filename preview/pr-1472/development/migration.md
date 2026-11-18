@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="migrating-to-isaaccapture"></a>
+
 # Migrating to `isaaccapture`
 
 In 1.6 the Python import package and the distribution were both renamed from
@@ -14,6 +16,8 @@ to stay available while you migrate imports.
 Isaac Capture is the umbrella library; Isaac Teleop remains its teleoperation
 component. The package migration does not deprecate the Isaac Teleop brand.
 
+<a id="in-short"></a>
+
 ## In short
 
 1. Upgrade with `pip install -U isaaccapture[...]` – see
@@ -22,6 +26,8 @@ component. The package migration does not deprecate the Isaac Teleop brand.
    and dependency pins; `isaacteleop_examples` to `isaaccapture_examples`.
 
 <a id="migration-upgrading"></a>
+
+<a id="upgrading-an-existing-install"></a>
 
 ## Upgrading an existing install
 
@@ -36,6 +42,8 @@ $ pip install -U "isaaccapture[cloudxr]"
 The same command works on a fresh environment. Both import names resolve to
 `isaaccapture`. Existing `pip install -U isaacteleop[...]` commands also
 install `isaaccapture` and forward the requested extras.
+
+<a id="imports"></a>
 
 ## Imports
 
@@ -61,11 +69,15 @@ does **not** cover it – it serves `isaacteleop` alone. Every
 `ModuleNotFoundError` and no notice attached. The example distributions
 renamed with it: `isaacteleop-examples-*` to `isaaccapture-examples-*`.
 
+<a id="what-importing-the-old-name-does"></a>
+
 ## What importing the old name does
 
 Until 1.9 the old name emits a standard `DeprecationWarning` on first import.
 Python’s warning filters control its visibility; use `-W default` to see it.
 With `-W error::DeprecationWarning`, the import raises until migrated or filtered.
+
+<a id="installing"></a>
 
 ## Installing
 
@@ -89,6 +101,8 @@ A `sys.meta_path` finder is invisible to a type checker, so everything under
 `isaacteleop` is typed `Any` and **pyright reports every submodule import as
 unresolved** (`reportMissingImports`). The alias promises runtime identity only.
 
+<a id="logging"></a>
+
 ## Logging
 
 Loggers are named after the module they live in, and the alias hands back the
@@ -101,6 +115,8 @@ matching – the logger is created, and nothing ever logs to it:
 -logging.getLogger("isaacteleop.cloudxr").setLevel(logging.DEBUG)
 +logging.getLogger("isaaccapture.cloudxr").setLevel(logging.DEBUG)
 ```
+
+<a id="the-asset-cache"></a>
 
 ## The asset cache
 

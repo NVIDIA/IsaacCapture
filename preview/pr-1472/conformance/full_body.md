@@ -3,6 +3,8 @@
 
 <a id="cts-full-body"></a>
 
+<a id="full-body-suite"></a>
+
 # Full-Body Suite
 
 The full-body suite records one take of ten standing poses and motions, then checks the
@@ -25,9 +27,11 @@ The full-body suite records one take of ten standing poses and motions, then che
 
 <a id="cts-full-body-pacing"></a>
 
+<a id="how-each-step-runs"></a>
+
 ## How each step runs
 
-![The ten timed steps in a row, and step 2 zoomed in: spoken cue, get into the pose with no time limit, press, beep, hold for the countdown, tick.](_static/cts/full-body-pacing.svg)
+![The ten timed steps in a row, and step 2 zoomed in: spoken cue, get into the pose with no time limit, press, beep, hold for the countdown, tick.](../_images/full-body-pacing.svg)
 - **Audio is optional.** The capture panel shows each cue as text. To hear the cues, connect
   speakers to the workstation; they do not play in the headset.
 - Once the capture panel reads *ready when you are*, press the controller trigger, or space in
@@ -39,13 +43,15 @@ The full-body suite records one take of ten standing poses and motions, then che
 
 <a id="cts-full-body-steps"></a>
 
+<a id="the-ten-steps"></a>
+
 ## The ten steps
 
 In each motion step, the step’s main joint must swing at least 15°
 (`segmentation.labelled_step_actually_performed`). Checks marked *measured* only report a
 number; they do not decide the verdict.
 
-![A figure standing still with straight arms angled down and out, in an A shape.](_static/cts/full_body/01-a_pose_still.gif)
+![A figure standing still with straight arms angled down and out, in an A shape.](../_images/01-a_pose_still.gif)
 
 **1 · A-pose, still**
 
@@ -57,7 +63,7 @@ still until the tick.
 Not judged on its own; the signal and geometry checks cover the whole take, this window
 included.
 
-![A figure holding both arms straight out to the sides.](_static/cts/full_body/02-t_pose_hold_open.gif)
+![A figure holding both arms straight out to the sides.](../_images/02-t_pose_hold_open.gif)
 
 **2 · T-pose**
 
@@ -68,7 +74,7 @@ Both arms straight out to the sides, level with the floor, palms down. Hold stil
 Measured: how far the arms sit below horizontal and how the two arms differ
 (`posture.tpose_arm_droop`, `posture.tpose_left_right_asymmetry`).
 
-![A figure standing relaxed with arms down.](_static/cts/full_body/03-neutral_stance.gif)
+![A figure standing relaxed with arms down.](../_images/03-neutral_stance.gif)
 
 **3 · Neutral stance**
 
@@ -79,7 +85,7 @@ Lower your arms from the T-pose and stand relaxed and still.
 Measured: the resting hip angles that the knee raises are compared with
 (`posture.contralateral_crosstalk_single_leg_raise`).
 
-![A figure raising its left arm sideways to overhead and lowering it.](_static/cts/full_body/04-left_arm_raise.gif)
+![A figure raising its left arm sideways to overhead and lowering it.](../_images/04-left_arm_raise.gif)
 
 **4 · Left arm up**
 
@@ -91,7 +97,7 @@ Checked: hand at least 60° above the shoulder (`posture.arm_raise_range_of_moti
 torso lean 6° or less (`performance.arm_raise_torso_stability`), and no other arm or leg
 swings 10° more (`segmentation.step_order_matches_labels`).
 
-![A figure raising its right arm sideways to overhead and lowering it.](_static/cts/full_body/05-right_arm_raise.gif)
+![A figure raising its right arm sideways to overhead and lowering it.](../_images/05-right_arm_raise.gif)
 
 **5 · Right arm up**
 
@@ -103,7 +109,7 @@ Checked: hand at least 60° above the shoulder (`posture.arm_raise_range_of_moti
 torso lean 6° or less (`performance.arm_raise_torso_stability`), and no other arm or leg
 swings 10° more (`segmentation.step_order_matches_labels`).
 
-![A figure lifting its left knee to about hip height and putting it down.](_static/cts/full_body/06-left_leg_raise.gif)
+![A figure lifting its left knee to about hip height and putting it down.](../_images/06-left_leg_raise.gif)
 
 **6 · Left knee up**
 
@@ -115,7 +121,7 @@ Checked: the left hip swings at least 15° and no other arm or leg swings 10° m
 (`segmentation.labelled_step_actually_performed`, `segmentation.step_order_matches_labels`).
 Measured: how much the still hip moves (`posture.contralateral_crosstalk_single_leg_raise`).
 
-![A figure lifting its right knee to about hip height and putting it down.](_static/cts/full_body/07-right_leg_raise.gif)
+![A figure lifting its right knee to about hip height and putting it down.](../_images/07-right_leg_raise.gif)
 
 **7 · Right knee up**
 
@@ -127,7 +133,7 @@ Checked: the right hip swings at least 15° and no other arm or leg swings 10° 
 (`segmentation.labelled_step_actually_performed`, `segmentation.step_order_matches_labels`).
 Measured: how much the still hip moves (`posture.contralateral_crosstalk_single_leg_raise`).
 
-![A figure squatting slowly and standing up, twice.](_static/cts/full_body/08-squat_x2.gif)
+![A figure squatting slowly and standing up, twice.](../_images/08-squat_x2.gif)
 
 **8 · Squat twice**
 
@@ -139,7 +145,7 @@ Checked: hip flexion reaches at least 20° (`performance.squat_depth_sufficient`
 two reps agree within 20% (`posture.squat_rep_repeatability`), and the knees agree
 within 10° at the bottom (`posture.squat_knee_symmetry`).
 
-![A figure marching on the spot, lifting its knees in turn.](_static/cts/full_body/09-march_in_place.gif)
+![A figure marching on the spot, lifting its knees in turn.](../_images/09-march_in_place.gif)
 
 **9 · March in place**
 
@@ -151,7 +157,7 @@ Checked: the legs alternate (`posture.march_ankle_antiphase`), and the left knee
 at least three times with intervals varying 25% or less
 (`performance.march_cadence_steady`).
 
-![A figure holding both arms straight out to the sides again.](_static/cts/full_body/10-t_pose_hold_close.gif)
+![A figure holding both arms straight out to the sides again.](../_images/10-t_pose_hold_close.gif)
 
 **10 · T-pose again**
 
@@ -164,6 +170,8 @@ Measured: how far the same pose has drifted since step 2
 
 <a id="cts-full-body-rehearse"></a>
 
+<a id="rehearse"></a>
+
 ## Rehearse
 
 - **Work in pairs.** One person performs; the other stands at the screen and presses space.
@@ -174,6 +182,8 @@ Measured: how far the same pose has drifted since step 2
 - **Practice takes cost nothing.** Every take gets its own directory; nothing is overwritten.
 
 <a id="cts-full-body-record"></a>
+
+<a id="record"></a>
 
 ## Record
 
@@ -230,6 +240,8 @@ Keep the four files together and never rename them: the labels cannot be regener
 
 <a id="cts-full-body-check"></a>
 
+<a id="check"></a>
+
 ## Check
 
 Point the checker at the `.mcap` inside its take directory, so it finds the labels file
@@ -265,6 +277,8 @@ verdict  PASS
 
 <a id="cts-full-body-view"></a>
 
+<a id="view"></a>
+
 ## View
 
 The viewer needs the checker environment built with
@@ -283,9 +297,11 @@ checks in a *Decides the take* folder on top. Its
 **package for submission** button builds the archive you send: see [Submit Your Results](submit.md).
 
 ![The full-body viewer: a skeleton in a T-pose on a floor grid, and a sidebar with a
-green PASS banner, playback controls, the package for submission button and the checks.](_static/cts/full-body-checker-panel.png)
+green PASS banner, playback controls, the package for submission button and the checks.](../_images/full-body-checker-panel.png)
 
 The viewer on a synthetic reference take, during the T-pose.
+
+<a id="troubleshooting"></a>
 
 ## Troubleshooting
 

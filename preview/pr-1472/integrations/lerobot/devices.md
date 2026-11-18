@@ -1,11 +1,15 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
+<a id="supported-teleop-devices"></a>
+
 # Supported Teleop devices
 
 Isaac Teleop drives the SO-101 from two input devices today. Both command the same SO-101 follower
 arm and produce the same LeRobot-format demonstrations — pick the one that matches the hardware you
 have and the control feel you want.
+
+<a id="xr-controller"></a>
 
 ## XR controller
 
@@ -29,6 +33,8 @@ The XR controller is **self-calibrating** — there is no leader arm and no manu
 and it works in both simulation and on real hardware. You will need a CloudXR-connected headset; see
 the [Quick Start](../../teleop/quick_start.md) for headset setup.
 
+<a id="so-101-leader"></a>
+
 ## SO-101 Leader
 
 A second, back-drivable SO-101 arm used as a **leader**: you move the leader by hand and the SO-101
@@ -51,6 +57,8 @@ that streams joint positions directly instead of an end-effector pose. The inter
 the SO-101 Leader is just the starting point; feature requests and/or contributions that add more
 joint-space devices are highly welcome.
 
+<a id="choosing-a-device"></a>
+
 ## Choosing a device
 
 |                | XR controller                                                                               | SO-101 Leader                     |
@@ -58,6 +66,8 @@ joint-space devices are highly welcome.
 | Hardware       | XR headset (CloudXR) that can be reused to teleoperate other robots                         | A leader arm dedicated to SO-101  |
 | Mapping        | End-effector pose → IK, with a clutch                                                       | Direct joint-space mirror (1:1)   |
 | Extra Features | - No dedicated space needed for setting up a second arm<br/>- Haptics support (coming soon) | - No clutch or IK weights to tune |
+
+<a id="prerequisites-and-calibration"></a>
 
 ## Prerequisites and calibration
 
@@ -77,6 +87,8 @@ Both devices share the same high-level setup — see the per-flow steps in
   ```
 
   The result is stored under `so_leader/<id>.json` and reused on every run.
+
+<a id="learn-more"></a>
 
 ## Learn more
 
