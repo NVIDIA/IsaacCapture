@@ -581,9 +581,11 @@ def test_the_scripts_set_the_environment_and_name_what_is_missing(
     ]
 
 
-# run_workstation.sh: the console and the view wait for the service's socket.
-# The console and the live view attach once to the robot link service's local
-# socket and end when nothing listens there.
+# run_workstation.sh: five panes, and what waits for the service's socket. The
+# live view is the viewer's page with its live picture showing: the pane
+# viewer serves it, and no other page is started. The console attaches once to
+# the robot link service's local socket and ends when nothing listens there;
+# the viewer attaches by itself, also to a service that starts later.
 
 WORKSTATION_SCRIPT = EXAMPLE / "run_workstation.sh"
 
@@ -650,6 +652,14 @@ class TmuxStand:
             if call[0] == "send-keys"
         ]
 
+    def panes(self) -> list[str]:
+        """The names of the panes the script made, in the order it made them."""
+        text = self.log.read_text() if self.log.exists() else ""
+        calls = [line.split("\x1f")[:-1] for line in text.splitlines()]
+        return [
+            call[4] for call in calls if call[0] == "select-pane" and len(call) == 5
+        ]
+
     def sent(self, pane: str) -> tuple[str, bool] | None:
         """(command, whether Enter followed) of that pane; None while not sent."""
         found = [key[1:] for key in self.keys() if key[0] == pane]
@@ -676,28 +686,40 @@ def tmux_stand(
             process.wait(10)
 
 
-def test_the_workstation_script_starts_the_console_and_the_view_behind_the_service(
-    tmux_stand: TmuxStand,
-) -> None:
+FIVE_PANES = ["console", "agent", "service", "camera", "viewer"]
+# What the script says of the live view, at the end of what it prints.
+LIVE_VIEW = (
+    "live view: the viewer's page with its live picture showing, in a visible "
+    "browser tab; a person's takeover needs it"
+)
+
+
+def started_behind_the_service(
+    stand: TmuxStand, behind: list[str], *arguments: str
+) -> str:
+    """Run the script while a service comes up late; what the script printed.
+
+    The panes of `behind` get their commands only once the service listens on
+    its socket, with Enter.
+    """
     import socket
 
-    stand = tmux_stand
-    process = stand.start("--thor", "192.0.2.7", "--socket-wait", "30")
+    process = stand.start(*arguments, "--thor", "192.0.2.7", "--socket-wait", "30")
     until(lambda: stand.sent("agent") is not None, "the commands sent at once")
     assert stand.sent("service")[1] and stand.sent("viewer")[1]
     assert stand.sent("camera")[1] and not stand.sent("agent")[1]
-    # Nothing listens on the service's socket yet: neither command is sent.
+    # Nothing listens on the service's socket yet: no such command is sent.
     time.sleep(0.7)
-    assert stand.sent("console") is None and stand.sent("view") is None
-    # A socket file a dead service left takes no connection: still neither.
+    assert all(stand.sent(pane) is None for pane in behind)
+    # A socket file a dead service left takes no connection: still none.
     stand.socket.parent.mkdir()
     dead = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     dead.bind(str(stand.socket))
     dead.close()
     time.sleep(0.7)
     assert process.poll() is None
-    assert stand.sent("console") is None and stand.sent("view") is None
-    # The service listens: both are sent, with Enter.
+    assert all(stand.sent(pane) is None for pane in behind)
+    # The service listens: each is sent, with Enter.
     stand.socket.unlink()
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -707,15 +729,81 @@ def test_the_workstation_script_starts_the_console_and_the_view_behind_the_servi
     finally:
         listener.close()
     assert (process.returncode, errors) == (0, "")
-    console, view = stand.sent("console"), stand.sent("view")
-    assert console[1] and console[0].endswith(" ./run_console.sh")
-    assert view[1] and view[0].endswith(" ./run_view.sh --config configs/view.yaml")
+    assert all(stand.sent(pane)[1] for pane in behind)
     assert "took no connection" not in output
     order = [pane for pane, _, _ in stand.keys()]
-    assert order.index("service") < min(order.index("console"), order.index("view"))
+    assert order.index("service") < min(order.index(pane) for pane in behind)
+    return " ".join(output.split())
 
 
-def test_the_workstation_script_leaves_both_commands_typed_when_no_service_listens(
+def test_the_workstation_script_starts_five_panes_and_the_viewer_is_the_live_view(
+    tmux_stand: TmuxStand,
+) -> None:
+    stand = tmux_stand
+    told = started_behind_the_service(stand, ["console"])
+    # Five panes, one command each. The page of the live view program of
+    # before is started by none of them.
+    assert stand.panes() == FIVE_PANES
+    commands = {pane: command for pane, command, _ in stand.keys()}
+    assert sorted(commands) == sorted(FIVE_PANES) and len(stand.keys()) == 5
+    assert commands["console"].endswith(" ./run_console.sh")
+    for pane, command in commands.items():
+        assert "run_view.sh" not in command and "view.yaml" not in command, pane
+        assert "AGENTIC_REMOTE_VIEW_PYTHON" not in command, pane
+    # The viewer is started at once, not behind the service: it attaches to
+    # the service by itself. It finds the service's socket as the console does.
+    viewer, entered = stand.sent("viewer")
+    assert entered and viewer.endswith(" ./run_viewer.sh")
+    order = [pane for pane, _, _ in stand.keys()]
+    assert order.index("viewer") < order.index("console")
+    # Four splits, each set as tiles: rows of two, the fifth pane in the third.
+    calls = [line.split("\x1f")[0] for line in stand.log.read_text().splitlines()]
+    assert calls.count("split-window") == calls.count("select-layout") == 4
+    panes = "panes console, agent, service, camera, viewer"
+    assert f"tmux session 'agentic_remote': {panes} attach with: " in told
+    # The script says what the live view is, and nothing of a page left out.
+    assert told.endswith(f" {LIVE_VIEW}")
+    assert "not started" not in told and "see the arm" not in told
+
+
+def test_the_workstation_script_has_no_live_view_option_and_names_no_other_page(
+    tmux_stand: TmuxStand,
+) -> None:
+    stand = tmux_stand
+    process = stand.start("--live-view")
+    output, errors = process.communicate(timeout=30)
+    assert (process.returncode, output) == (2, "")
+    known = "--env FILE, --thor ADDRESS, --session NAME, --socket-wait SECONDS"
+    assert errors == (
+        f"run_workstation.sh: unknown argument '--live-view' ({known}, --print)\n"
+    )
+    assert stand.keys() == []
+    script = WORKSTATION_SCRIPT.read_text(encoding="utf-8")
+    for gone in (
+        "--live-view",
+        "run_view.sh",
+        "view.yaml",
+        "VIEW_PYTHON",
+        "live_view=",
+    ):
+        assert gone not in script, gone
+    assert "see the arm" not in script
+    # The help says what the live view is and what needs it.
+    process = stand.start("--help")
+    told, errors = process.communicate(timeout=30)
+    assert (process.returncode, errors) == (0, "")
+    said = " ".join(told.split())
+    assert (
+        "The viewer's page with its live picture showing is the live view: the "
+        "viewer tells the robot how fresh that picture is, and a person's takeover "
+        "needs it where the robot app's file on the Thor says "
+        "human.require_live_view: true, as the rig's files do."
+    ) in said
+    assert told.startswith("Start the workstation's programs of demo 1")
+    assert said.endswith("no tmux, or a session of this name that exists already.")
+
+
+def test_the_workstation_script_leaves_the_commands_typed_when_no_service_listens(
     tmux_stand: TmuxStand,
 ) -> None:
     stand = tmux_stand
@@ -725,13 +813,17 @@ def test_the_workstation_script_leaves_both_commands_typed_when_no_service_liste
     assert (process.returncode, errors) == (0, "")
     assert 1.0 <= time.monotonic() - began < 15.0  # the wait is bounded
     # Typed into their panes, as the agent's command: not started.
-    for pane in ("console", "view", "agent"):
+    for pane in ("console", "agent"):
         command, entered = stand.sent(pane)
         assert command and not entered, pane
-    assert stand.sent("service")[1]
+    # The service and the viewer are started all the same: the viewer attaches
+    # once the service runs.
+    assert stand.sent("service")[1] and stand.sent("viewer")[1]
+    assert stand.panes() == FIVE_PANES
     told = " ".join(output.split())
     assert f"took no connection on {stand.socket} within 1 s" in told
-    assert "wait for Enter in their panes" in told
+    waits = "The console's command waits for Enter in its pane"
+    assert f"look at the pane service. {waits}: press it once" in told
 
 
 def test_the_workstation_script_waits_on_the_socket_the_service_makes(
@@ -753,7 +845,11 @@ def test_the_workstation_script_waits_on_the_socket_the_service_makes(
         output, errors = process.communicate(timeout=30)
         assert (process.returncode, errors) == (0, "")
         once = f"(once the service takes a connection on {local.default_socket_path()})"
-        assert f"# console {once}\n" in output and f"# view {once}\n" in output
+        assert f"# console {once}\n" in output
+        # Five commands, and none of the page of before.
+        assert output.count("\n# ") == 5 and "view.yaml" not in output
+        assert "# view" not in output.replace("# viewer", "")
+        assert "run_view.sh" not in output and "VIEW_PYTHON" not in output
     assert stand.keys() == []  # --print starts nothing
 
 
@@ -804,8 +900,8 @@ def test_the_workstation_script_serves_the_viewer_on_the_address_its_file_names(
     file.write_text("\n".join([*lines, f"{VIEWER_HOST}=192.0.2.9", ""]))
     after, said = panes_started(stand, "after.log", "--env", str(file))
     assert after.pop("viewer") == (f"{command} --host 192.0.2.9 --no-auth", True)
-    # The other five panes get the commands they got without it.
-    assert sorted(after) == ["agent", "camera", "console", "service", "view"]
+    # The other four panes get the commands they got without it.
+    assert sorted(after) == ["agent", "camera", "console", "service"]
     assert after == before
     assert f"\n  viewer: http://192.0.2.9:8766/ {PAGE_OPEN}\n" in said
     assert "token=" not in said

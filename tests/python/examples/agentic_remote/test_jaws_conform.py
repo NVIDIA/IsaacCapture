@@ -46,6 +46,7 @@ from link_bench import until
 from repo_paths import repo_root
 from test_apai_backend import GuardTime, MotorSdk, make_config, rs_arm
 from test_arm_adapter import SimRig
+from test_rest_end_to_end import Thor
 
 from conftest import AppHarness
 
@@ -914,6 +915,140 @@ def test_silence_of_every_joint_motor_still_latches_joint_feedback_lost(
     assert latched < LOST_FEEDBACK_S + 0.15, latched
     # Once a joint read has failed, no jaw reading takes the bus from the joints.
     assert [read for read in list(bus.jaw_reads) if read[0] > began + 0.1] == []
+
+
+# The rest close measured on the rig: with nothing between the jaws the
+# driver's close before a torque release stalls 0.12 rad short of the closed
+# stop, more than the driver's reach of 0.1 rad from its target.
+REST_STALL_RAD = 0.12
+REST = [0.0] * 6
+
+
+class RigRest:
+    """The robot app on the rig's robot file as it stands, and an agent on it.
+
+    The driver is APAI's over the stand-in motors; the motors can be switched
+    on again. The agent is the control owner.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, profile: Any) -> None:
+        home = [float(value) for value in profile.arm_cfg.home_q]
+        self.thor = Thor(monkeypatch, home)
+        self.h, self.motors = self.thor.h, self.thor.motors
+        self.config = self.thor.config
+        jaws = profile.arm_cfg.gripper
+        self.travel = abs(float(jaws.open_pos) - float(jaws.closed_pos))
+        self.stall = REST_STALL_RAD / self.travel  # as an opening
+        self.rig = SimRig(
+            self.h,
+            expected_profile_id=self.config.profile_id,
+            calibration_id=self.config.camera_calibration_id,
+        )
+        self.typed = self.h.thor_terminal()
+        self.rig.own()
+
+    def rest_tool_closes(self, stall_rad: float = REST_STALL_RAD) -> Any:
+        """The close of APAI's rest tool stalls at stall_rad; the state after."""
+        jaws = self.motors.gripper
+        self.rig.adapter.open_gripper()
+        jaws.stop = stall_rad
+        mark = len(jaws.sent)
+        assert self.rig.adapter.close_gripper_torque() is True
+        # The driver took the stall as contact and went to its light hold.
+        assert jaws.at() == stall_rad and jaws.light_after(mark)
+
+        def shown() -> bool:
+            state = self.rig.link.state().gripper
+            return state.valid and state.opening == pytest.approx(
+                stall_rad / self.travel
+            )
+
+        until(shown, "the jaw reading after the close")
+        state = self.rig.link.state()
+        assert state.gripper.last_target == 0.0
+        return state
+
+    def off(self) -> bool:
+        state = self.rig.link.state()
+        return state.torque_on is False and state.motion == "rest_unpowered"
+
+    def close(self) -> None:
+        self.rig.close()
+        self.thor.close()
+        tolerance = self.config.rest.rest_tol_rad
+        for pose in self.motors.cuts():
+            assert pose == pytest.approx(REST, abs=tolerance), "torque cut off rest"
+
+
+@pytest.fixture
+def rig_rest(monkeypatch: pytest.MonkeyPatch, rs_profile: Any) -> Iterator[RigRest]:
+    made = RigRest(monkeypatch, rs_profile)
+    try:
+        yield made
+    finally:
+        made.close()
+
+
+def test_on_the_rig_file_a_rest_close_that_stalls_short_of_the_stop_is_closed_on_nothing(
+    rig_rest: RigRest,
+) -> None:
+    r, jaws = rig_rest, rig_rest.config.gripper
+    # Beyond the driver's reach of the closed target, below the closed line.
+    assert jaws.target_tol < r.stall < jaws.closed_frac
+    state = r.rest_tool_closes()
+    assert (state.gripper.load, state.gripper.may_be_holding) == ("empty", False)
+    assert r.h.app.jaws_not_proven() is None
+    # The rest tool's end: the motors go off at measured rest.
+    r.rig.adapter.disconnect()
+    until(r.off, "rest with the motors off")
+    assert r.rig.link.request_owner("nobody", reason="done").status == "completed"
+    # On again: a new driver, whose jaws are referenced where they stalled.
+    assert r.typed.ask("on", "yes", answer="on: ") == "on: completed"
+    until(lambda: r.rig.link.state().torque_on, "the motors on again")
+    state = r.rig.link.state()
+    assert len(r.thor.drivers) == 2 and state.gripper.referenced
+    assert (state.gripper.load, state.stop_level) == ("empty", "none")
+    # The typed rest closes the jaws anew and switches the motors off.
+    told = r.typed.ask("rest", "path is clear", answer="rest: ")
+    assert told == "rest: completed"
+    until(r.off, "rest with the motors off")
+    assert r.typed.written("rest was refused") == []
+    assert not r.h.app._jaw_state.word_given
+    assert r.motors.names() == ["close_gripper_torque", "disconnect"] * 2
+    assert r.motors.gripper.at() == REST_STALL_RAD
+
+
+@pytest.mark.parametrize("command", ["rest", "release", "quit"])
+def test_on_the_rig_file_nothing_is_asked_about_jaws_a_rest_closed_short_of_the_stop(
+    rig_rest: RigRest, command: str
+) -> None:
+    r = rig_rest
+    r.rest_tool_closes()
+    # The motors stayed on, and the agent's task ended.
+    assert r.rig.link.request_owner("nobody", reason="done").status == "completed"
+    typed = [command, "path is clear"] if command == "rest" else [command]
+    told = r.typed.ask(*typed, answer=f"{command}: ")
+    assert told.startswith(f"{command}: completed")
+    assert r.typed.written(f"{command} was refused") == []
+    assert not r.h.app._jaw_state.word_given
+    until(lambda: r.motors.disconnects == 1, "the torque cut")
+    assert r.motors.names() == ["close_gripper_torque"] * 2 + ["disconnect"]
+
+
+# Just above the closed line (0.04 of 6.2 rad is 0.248 rad), and the wallet.
+@pytest.mark.parametrize("stall_rad", [0.28, WALLET_RAD])
+def test_on_the_rig_file_jaws_a_rest_closed_above_the_closed_line_are_still_asked_about(
+    rig_rest: RigRest, stall_rad: float
+) -> None:
+    r = rig_rest
+    assert stall_rad / r.travel > r.config.gripper.closed_frac
+    jaws = r.rest_tool_closes(stall_rad).gripper
+    assert (jaws.load, jaws.may_be_holding) == ("loaded", True)
+    assert r.rig.link.request_owner("nobody", reason="done").status == "completed"
+    told = r.typed.ask("rest", "path is clear", answer="rest: ")
+    assert told.startswith("rest: refused: the jaws are not proven empty (loaded)")
+    r.typed.wait_line("rest was refused because the jaws are not proven")
+    assert r.motors.disconnects == 0 and r.rig.link.state().torque_on
 
 
 def test_the_adapters_jaw_routines_are_the_drivers(rs_profile: Any) -> None:

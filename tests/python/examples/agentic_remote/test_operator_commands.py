@@ -9,6 +9,7 @@ console that does not use the protocol module could send it.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 
@@ -1602,6 +1603,78 @@ def test_the_thor_terminals_question_about_the_jaws_stands_for_one_line(robot_ap
     assert thor.ask("jaws are empty", answer="unknown command") == unknown
     assert len(thor.written("release: ")) == 1
     assert h.arm.torque_on()
+
+
+# Jaws told to close that read at or below the closed line: closed on nothing
+
+# The rig's numbers. "At the target" is the driver's reach, 0.1 rad of the
+# 6.2 rad jaw travel. The driver's close before a torque release stalled 0.12
+# rad short of the closed stop with nothing between the jaws.
+RIG_TARGET_TOL = 0.1 / 6.2
+REST_STALL = 0.0194
+
+
+@pytest.fixture
+def rig_jaws_app(make_robot_app, config):
+    """A robot app whose jaws are at their target within the rig's reach."""
+    gripper = dataclasses.replace(config.gripper, target_tol=RIG_TARGET_TOL)
+    assert gripper.closed_frac > REST_STALL > gripper.target_tol
+    return make_robot_app(dataclasses.replace(config, gripper=gripper))
+
+
+def closed_short(h, target: float, at: float, mode: str = "close_torque"):
+    """The agent's close to `target` stalls at `at`; then it gives the arm back."""
+    h.new_task()
+    h.arm.jaw_object(at)
+    closed = final(h, h.client.gripper(target, 0.6, mode=mode))
+    assert closed.status == "completed", closed.reason
+    assert closed.detail == {"outcome": "stalled", "opening": at}
+    assert final(h, h.client.request_owner("nobody")).status == "completed"
+    state = h.client.wait_state(lambda s: s.owner == "nobody" and s.gripper.valid)
+    assert (state.gripper.opening, state.gripper.last_target) == (at, target)
+    return state
+
+
+@pytest.mark.parametrize("command", ["release", "rest", "quit"])
+def test_jaws_that_closed_below_the_closed_line_are_empty_and_nothing_is_asked(
+    rig_jaws_app, command
+):
+    h = rig_jaws_app
+    jaws = closed_short(h, 0.0, REST_STALL).gripper
+    assert (jaws.load, jaws.may_be_holding) == ("empty", False)
+    assert h.app.jaws_not_proven() is None
+    if command == "rest":
+        h.arm.set_pose(RAISED)
+    thor = h.thor_terminal()
+    typed = [command, "path is clear"] if command == "rest" else [command]
+    assert thor.ask(*typed, answer=f"{command}: ").startswith(f"{command}: completed")
+    assert thor.written(f"{command} was refused") == []
+    assert not h.app._jaw_state.word_given
+    assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
+    # A rest ends with the motors on; the other two switch them off at rest.
+    assert h.arm.torque_on() is (command == "rest")
+
+
+@pytest.mark.parametrize(
+    ("target", "at", "mode"),
+    [
+        (0.0, 0.045, "close_torque"),  # above the closed line
+        (0.05, 0.112, "close_until_contact"),  # the rig's wallet grasp
+    ],
+)
+def test_jaws_that_closed_above_the_closed_line_are_loaded_and_a_rest_asks(
+    rig_jaws_app, target, at, mode
+):
+    h = rig_jaws_app
+    jaws = closed_short(h, target, at, mode).gripper
+    assert (jaws.load, jaws.may_be_holding) == ("loaded", True)
+    h.arm.set_pose(RAISED)
+    thor = h.thor_terminal()
+    line = thor.ask("rest", "path is clear", answer="rest: ")
+    assert line.startswith("rest: refused: the jaws are not proven empty (loaded)")
+    asked = thor.wait_line("rest was refused because the jaws are not proven")
+    assert asked == ASK_JAWS_EMPTY.format(what="rest")
+    assert h.arm.torque_on() and h.arm.sent == []
 
 
 # The operator console: the typed close, and the question about the jaws

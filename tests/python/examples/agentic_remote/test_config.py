@@ -413,11 +413,10 @@ def test_load_config_accepts_a_string_path():
         ),
         (
             "robot_app_human_check.yaml",
-            # The speed limit and the step limit of the rig's file for a person,
-            # who stands at the arm as on the rig: no live view is asked for.
+            # The speed limit and the step limit of the rig's file for a
+            # person; the live view stays required, as on the rig.
             {
                 "human.enabled": True,
-                "human.require_live_view": False,
                 "limits.human.max_joint_speed": 0.8,
                 "limits.human.max_step_rad": 0.05,
             },
@@ -443,6 +442,10 @@ def test_the_demo_2_robot_files_are_the_shipped_file_with_the_keys_they_list(
     loaded = load_config(path)
     assert loaded == _load_changed(tmp_path, *changes)
     assert loaded.human.enabled is True
+    # Only the one-machine recipe's file asks for no live view.
+    asked = differs.get("human.require_live_view", True)
+    assert loaded.human.require_live_view is asked
+    assert asked is (name == "robot_app_human_check.yaml")
     if "limits.human.max_joint_speed" in differs:
         rig = load_config(CONFIG_YAML.with_name("robot_app_rebot.yaml"))
         speed = loaded.limits.human.max_joint_speed

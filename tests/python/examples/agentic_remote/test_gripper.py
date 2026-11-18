@@ -208,10 +208,11 @@ def test_the_default_jaw_settings(config):
 def test_the_jaw_tolerances_are_separate_settings(clock):
     cfg = GripperConfig(target_tol=0.016, reach_tol=0.03, full_open_tol=0.05)
     state = JawState(cfg, clock)
-    # Proven empty: the readings against the last jaw target, target_tol.
-    assert state.classify(ScriptedJaws([0.015] * 3, 0.0)) is JawLoad.EMPTY
-    assert state.classify(ScriptedJaws([0.02] * 3, 0.0)) is JawLoad.LOADED
-    assert state.load_reason == "the jaws are at 0.020, not at their target 0.000"
+    # Proven empty: the readings against the last jaw target, target_tol. The
+    # target lies above the closed line, so the distance to it counts.
+    assert state.classify(ScriptedJaws([0.035] * 3, 0.05)) is JawLoad.EMPTY
+    assert state.classify(ScriptedJaws([0.03] * 3, 0.05)) is JawLoad.LOADED
+    assert state.load_reason == "the jaws are at 0.030, not at their target 0.050"
     # At a full-open target the reading may lie full_open_tol short of it:
     # where the driver's guarded opening may end.
     assert state.classify(ScriptedJaws([0.95] * 3, 1.0)) is JawLoad.EMPTY
@@ -473,6 +474,9 @@ def test_the_mode_does_not_decide_what_a_close_is(jaw_state):
         ([0.0, 0.0, 0.0], 0.0),  # closed on nothing
         ([0.03, 0.02, 0.03], 0.0),
         ([0.04, 0.04, 0.04], 0.02),  # at closed_frac
+        # Told to close and at or below closed_frac: target_tol does not count.
+        ([0.035, 0.02, 0.02], 0.0),
+        ([0.0, 0.0, 0.0], 0.04),
     ],
 )
 def test_classify_proves_the_jaws_empty(jaw_state, readings, target):
@@ -492,7 +496,8 @@ def test_classify_proves_the_jaws_empty(jaw_state, readings, target):
         ([0.96, 0.96, 0.96], 1.0, "the jaws are at 0.960, not at their target 1.000"),
         ([0.5, 0.5, 0.5], 1.0, "the jaws are at 0.500, not at their target 1.000"),
         # Every reading counts, not only the last one.
-        ([0.035, 0.02, 0.02], 0.0, "the jaws are at 0.035, not at their target 0.000"),
+        ([0.045, 0.03, 0.03], 0.0, "the jaws are at 0.045, not at their target 0.000"),
+        ([0.435, 0.42, 0.42], 0.4, "the jaws are at 0.435, not at their target 0.400"),
         ([0.96, 0.975, 0.975], 1.0, "the jaws are at 0.960, not at their target 1.000"),
         ([0.035, 0.045, 0.045], 0.03, "the jaws are part open at 0.045"),
         ([1.0, 1.0, 0.97], 1.0, "the jaw readings disagree: 0.970 to 1.000"),
@@ -634,6 +639,121 @@ def test_the_flag_outlives_a_close_that_reaches_closed(arm, worker, jaw_state):
     assert jaw_state.may_be_holding is True
     assert jaw_state.classify(arm) is JawLoad.LOADED
     assert jaw_state.load_reason == "the jaws may be holding something"
+
+
+# Jaws told to close that read at or below the closed line: closed on nothing
+
+# The rig's numbers. "At the target" is the driver's reach, 0.1 rad of the
+# 6.2 rad jaw travel. The driver's close before a torque release stalled 0.12
+# rad short of the closed stop with nothing between the jaws.
+RIG_TARGET_TOL = 0.1 / 6.2
+REST_STALL = 0.0194
+
+
+@pytest.fixture
+def rig_cfg(config) -> GripperConfig:
+    assert config.gripper.closed_frac > REST_STALL > RIG_TARGET_TOL
+    return dataclasses.replace(config.gripper, target_tol=RIG_TARGET_TOL)
+
+
+@pytest.fixture
+def rig_jaws(rig_cfg, clock) -> JawState:
+    return JawState(rig_cfg, clock)
+
+
+def test_a_close_that_stalls_below_the_closed_line_is_closed_on_nothing(rig_jaws):
+    ended = DriverOutcome("stalled", REST_STALL, closed=True)
+    rig_jaws.note_command_result(0.0, CLOSE_TORQUE, ended)
+    assert rig_jaws.may_be_holding is False
+    jaws = ScriptedJaws([REST_STALL] * 3, 0.0)
+    assert rig_jaws.classify(jaws) is JawLoad.EMPTY
+    assert rig_jaws.load_reason == ""
+    state = rig_jaws.gripper_state(jaws)
+    assert (state.load, state.may_be_holding) == ("empty", False)
+    assert rig_jaws.not_proven(jaws) is None
+
+
+@pytest.mark.parametrize(
+    ("target", "stall"),
+    [
+        (0.0, 0.045),  # a close to the stop that ends above the closed line
+        (0.05, 0.112),  # the rig's wallet grasp
+    ],
+)
+def test_a_close_that_stalls_above_the_closed_line_is_still_loaded(
+    rig_jaws, target, stall
+):
+    rig_jaws.note_command_result(target, CLOSE_TORQUE, outcome("stalled", stall))
+    assert rig_jaws.may_be_holding is True
+    jaws = ScriptedJaws([stall] * 3, target)
+    assert rig_jaws.classify(jaws) is JawLoad.LOADED
+    assert rig_jaws.load_reason == "the jaws may be holding something"
+    state = rig_jaws.gripper_state(jaws)
+    assert (state.load, state.may_be_holding) == ("loaded", True)
+    assert rig_jaws.not_proven(jaws) == "loaded: the jaws may be holding something"
+
+
+@pytest.mark.parametrize(
+    ("readings", "target", "reason"),
+    [
+        # Told to open, and they did not: not where they were sent.
+        ([0.019] * 3, 0.5, "the jaws are at 0.019, not at their target 0.500"),
+        ([0.019] * 3, 1.0, "the jaws are at 0.019, not at their target 1.000"),
+        ([0.019] * 3, 0.045, "the jaws are at 0.019, not at their target 0.045"),
+        # Told to close, and above the closed line: by one reading, by all.
+        ([0.045, 0.03, 0.03], 0.0, "the jaws are at 0.045, not at their target 0.000"),
+        ([0.045] * 3, 0.0, "the jaws are at 0.045, not at their target 0.000"),
+        # Below the line, and the readings do not agree or there is no target.
+        ([0.0, 0.03, 0.0], 0.0, "the jaw readings disagree: 0.000 to 0.030"),
+        ([0.019] * 3, None, "no jaw target was sent yet"),
+    ],
+)
+def test_the_closed_line_proves_nothing_else_empty(rig_jaws, readings, target, reason):
+    jaws = ScriptedJaws(readings, target)
+    assert rig_jaws.classify(jaws) is JawLoad.LOADED
+    assert rig_jaws.load_reason == reason
+    assert rig_jaws.gripper_state(jaws).load == "loaded"
+
+
+def test_closed_jaws_that_are_not_read_or_not_referenced_stay_unknown(rig_jaws):
+    assert rig_jaws.classify(ScriptedJaws([0.019, None], 0.0)) is JawLoad.UNKNOWN
+    assert rig_jaws.load_reason == "a jaw read failed"
+    lost = ScriptedJaws([0.019] * 3, 0.0, referenced=False)
+    assert rig_jaws.classify(lost) is JawLoad.UNKNOWN
+    assert rig_jaws.gripper_state(lost).load == "unknown"
+
+
+def test_a_flag_set_before_is_not_cleared_by_jaws_below_the_closed_line(rig_jaws):
+    rig_jaws.note_command_result(0.05, CLOSE_UNTIL_CONTACT, outcome("stalled", 0.112))
+    # What they held slipped out: the close before a torque release ends low.
+    ended = DriverOutcome("stalled", REST_STALL, closed=True)
+    rig_jaws.note_command_result(0.0, CLOSE_TORQUE, ended)
+    assert rig_jaws.may_be_holding is True
+    assert rig_jaws.classify(ScriptedJaws([REST_STALL] * 3, 0.0)) is JawLoad.LOADED
+
+
+@pytest.mark.parametrize(
+    ("stall", "load", "holding"),
+    [(REST_STALL, JawLoad.EMPTY, False), (0.045, JawLoad.LOADED, True)],
+)
+def test_the_close_before_a_torque_release_that_stalls_short_of_the_stop(
+    arm, rig_cfg, authority, clock, stall, load, holding
+):
+    state = JawState(rig_cfg, clock)
+    worker = GripperWorker(arm, state, authority, clock)
+    try:
+        arm.jaw_object(stall)  # where the close's push fades, or an object
+        done = Done()
+        assert worker.submit(0.0, 0.6, CLOSE_TORQUE, Owner.AGENT, done) is None
+        assert done.wait() == outcome("stalled", stall)
+        assert arm.gripper_last_target() == 0.0
+        assert len(arm.light_holds) == 1  # the close ends in the light hold
+        assert state.may_be_holding is holding
+        assert state.classify(arm) is load
+        assert state.gripper_state(arm).load == load.value
+        assert (state.not_proven(arm) is None) is (load is JawLoad.EMPTY)
+    finally:
+        worker.close()
 
 
 # JawState: gripper_state

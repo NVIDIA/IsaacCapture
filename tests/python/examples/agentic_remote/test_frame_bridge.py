@@ -27,7 +27,14 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
-from camera_bench import SOF_NS, STREAMS, FakeReceiver, notification, open_file_slots
+from camera_bench import (
+    BRIDGE_CHILD,
+    SOF_NS,
+    STREAMS,
+    FakeReceiver,
+    notification,
+    open_file_slots,
+)
 from repo_paths import repo_root
 
 from isaaccapture_examples.agentic_remote.agent.camera import bridge_wire as wire
@@ -39,6 +46,10 @@ from isaaccapture_examples.agentic_remote.agent.camera.frame_bridge import (
     StreamRefused,
     StreamRules,
     check_catalog,
+)
+from isaaccapture_examples.agentic_remote.agent.camera.frame_source import (
+    BridgeSource,
+    CameraError,
 )
 
 CONFIGS = repo_root() / "examples" / "agentic_remote" / "configs"
@@ -936,6 +947,213 @@ def test_the_bridge_program_sets_the_gpu_itself(receiver, tmp_path, monkeypatch)
     assert code == frame_bridge.EXIT_NOT_RUN
     assert seen["CUDA_DEVICE_ORDER"] == "PCI_BUS_ID"
     assert seen["CUDA_VISIBLE_DEVICES"] == "0"
+
+
+# A second bridge that starts beside a bridge at work
+
+# Keys that make a notification as long as the rig's, about 2.5 kB: 13 of those
+# fill the socket of a subscriber that does not read.
+RIG_SIZED = {f"receiver_latency_field_{n:02d}_ns": 10**18 + n for n in range(38)}
+
+# Stand-ins for the camera consumer's client and for CuPy, for the bridge program
+# as it is started on the rig. The slots are FakeReceiver's files. LOAD_S is how
+# long CuPy takes to load, OPEN_S how long the slots take to open.
+STAND_IN_CONSUMER = """
+import base64
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))  # where the stand-in CuPy is
+
+
+class Slot:
+    def __init__(self, array):
+        self.array = array
+
+
+class CudaIpcClient:
+    def __init__(self, socket_path, streams=None):
+        self.slots = {}
+
+    def _open_streams(self, subscribed):
+        import cupy
+        import numpy
+
+        time.sleep(OPEN_S)
+        for stream in subscribed["streams"]:
+            with cupy.cuda.Device(stream["gpu_id"]):
+                for slot in stream["slots"]:
+                    path = base64.b64decode(slot["handle"]).decode()
+                    self.slots[(stream["name"], slot["slot"])] = Slot(
+                        numpy.memmap(
+                            path, dtype=numpy.uint8, mode="r", shape=tuple(slot["shape"])
+                        )
+                    )
+"""
+STAND_IN_CUPY = """
+import time
+
+time.sleep(LOAD_S)
+import numpy
+
+asnumpy = numpy.array
+
+
+class cuda:
+    class Device:
+        def __init__(self, device=0):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *problem):
+            return False
+
+    class runtime:
+        @staticmethod
+        def memGetInfo():
+            return (1, 1)
+"""
+
+
+def stand_in_camera_pr(folder: Path, *, load_s: float, open_s: float) -> Path:
+    """A camera streamer folder with the stand-in client and the stand-in CuPy."""
+    consumer = folder / "cuda_ipc_consumer"
+    (consumer / "cupy").mkdir(parents=True)
+    (consumer / "consumer.py").write_text(
+        STAND_IN_CONSUMER.replace("OPEN_S", repr(open_s)), encoding="utf-8"
+    )
+    (consumer / "cupy" / "__init__.py").write_text(
+        STAND_IN_CUPY.replace("LOAD_S", repr(load_s)), encoding="utf-8"
+    )
+    return folder
+
+
+class Taking:
+    """Takes a pair from a bridge every period_s, on a thread; when each came."""
+
+    def __init__(self, source: BridgeSource, period_s: float = 0.05) -> None:
+        self.times: list[float] = []
+        self.failed = ""
+        self._source = source
+        self._period_s = period_s
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        due = time.monotonic()
+        while not self._stop.is_set():
+            try:
+                pair = self._source.next_pair(1.0)
+            except CameraError as problem:
+                self.failed = str(problem)
+                return
+            now = time.monotonic()
+            if pair is not None:
+                self.times.append(now)
+            due = max(due + self._period_s, now)
+            time.sleep(due - now)
+
+    def longest_gap(self, since: float, until: float) -> float:
+        """The longest time without a pair between these two times."""
+        marks = [since, *(at for at in self.times if since < at < until), until]
+        return max(later - earlier for earlier, later in zip(marks, marks[1:]))
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(5.0)
+
+
+def a_second_bridge_starts(
+    folder: Path,
+    *,
+    load_s: float = 0.0,
+    open_s: float = 0.0,
+    second_command: list[str] | None = None,
+) -> tuple[float, float, str]:
+    """A bridge program starts beside one that hands out 20 pairs a second.
+
+    The receiver publishes 60 pairs a second with notifications of the rig's
+    size. The first bridge's longest time without a pair before the second one
+    started and from then on, and what the second one did.
+    """
+    (folder / "rx").mkdir()
+    receiver = FakeReceiver(folder / "rx", **RIG_SIZED)
+    note = notification(STREAMS[0], 1, 0, time.monotonic_ns(), **RIG_SIZED)
+    assert 2400 < len(json.dumps(note, separators=(",", ":"))) < 2700
+    child = folder / "bridge_child.py"
+    child.write_text(BRIDGE_CHILD, encoding="utf-8")
+    camera_pr = stand_in_camera_pr(folder / "pr", load_s=load_s, open_s=open_s)
+    fields = {
+        "python": sys.executable,
+        "receiver_socket": receiver.socket_path,
+        "width": receiver.width,
+        "height": receiver.height,
+    }
+    first = BridgeSource(
+        run_dir=folder / "first", command=[sys.executable, str(child)], **fields
+    )
+    # The program as the rig starts it: python -m <the bridge's module>.
+    second = BridgeSource(
+        run_dir=folder / "second",
+        camera_pr=camera_pr,
+        command=second_command,
+        **fields,
+    )
+    publisher = Publisher(receiver, 1 / 60)
+    taking = None
+    try:
+        first.open()
+        taking = Taking(first)
+        began = time.monotonic()
+        time.sleep(1.0)
+        started = time.monotonic()
+        try:
+            second.open()
+            pair = second.next_pair(2.0)
+            assert pair is not None, second.last_none
+            assert int(pair.left[0, 0]) == receiver.pixel(pair.seq, 0)
+            assert int(pair.right[-1, -1]) == receiver.pixel(pair.seq, 1)
+            did = "gave a verified pair"
+        except CameraError as problem:
+            did = str(problem)
+        time.sleep(0.5)
+        ended = time.monotonic()
+        assert not taking.failed, taking.failed
+        return (
+            taking.longest_gap(began, started),
+            taking.longest_gap(started, ended),
+            did,
+        )
+    finally:
+        if taking is not None:
+            taking.stop()
+        second.close()
+        first.close()
+        publisher.stop()
+        receiver.stop()
+
+
+def test_a_bridge_that_loads_cupy_slowly_holds_no_other_bridge_up(tmp_path):
+    alone, beside, did = a_second_bridge_starts(tmp_path, load_s=3.0)
+    assert did == "gave a verified pair"
+    # 0.05 s is the first bridge's own period.
+    assert alone < 0.2 and beside < 0.2, (alone, beside)
+
+
+def test_a_subscriber_that_does_not_read_holds_the_other_bridge_up_for_2_s(tmp_path):
+    """What the bridge avoids by loading CuPy before it subscribes.
+
+    Here the 3 s are spent after subscribing, in the opening of the slots: the
+    receiver waits 2 s on the bridge that does not read, then drops it.
+    """
+    alone, beside, did = a_second_bridge_starts(tmp_path, open_s=3.0)
+    assert alone < 0.2, alone
+    assert 1.8 < beside < 3.0, beside
+    assert did == "camera frame bridge: the camera receiver closed its socket"
 
 
 def test_the_bridge_needs_only_the_standard_library_to_start():

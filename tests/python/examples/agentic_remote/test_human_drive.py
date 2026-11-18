@@ -785,7 +785,7 @@ NO_START_READ = {
     "no view": (
         _no_view,
         "view",
-        "the live view is not fresh (no live view is reported)",
+        "the live view is not fresh (the viewer reports no live picture)",
     ),
     "old view": (
         _old_view,
@@ -1210,7 +1210,10 @@ def test_a_view_that_is_no_longer_live_ends_the_drive(rig):
     rig.grip_until(GOAL, 5, rig.lose_view)
     end = rig.run()
     assert end == DriveEnd(
-        "view", "the live view is not fresh (no live view is reported)", 5, None
+        "view",
+        "the live view is not fresh (the viewer reports no live picture)",
+        5,
+        None,
     )
 
 

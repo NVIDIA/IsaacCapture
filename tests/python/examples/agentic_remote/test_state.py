@@ -1064,6 +1064,7 @@ def test_robot_state_shows_the_stage_the_controller_age_the_takeover_and_the_rou
     no_data = "no fresh controller data: no HUMAN_SETPOINT has arrived"
     assert state.health["human"] == {
         "enabled": True,
+        "live_view_required": True,
         "takeover_open": False,
         "driving": False,
         "needs_release": True,
@@ -1113,8 +1114,8 @@ def test_robot_state_shows_the_stage_the_controller_age_the_takeover_and_the_rou
     human = state.health["human"]
     assert human["round_trip_s"] is None  # this one named no ROBOT_STATE
     assert human["takeover"] == (
-        "the live view is not fresh: no VIEW_STATUS has arrived; open the live "
-        "view page in a visible browser tab"
+        "the live view is not fresh: no VIEW_STATUS has arrived; show the "
+        "viewer's live picture in a visible browser tab"
     )
     # With a live view nothing speaks against a takeover.
     feed(h)

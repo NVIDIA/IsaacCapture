@@ -994,8 +994,8 @@ def test_takeover_text_repeats_the_thors_reason() -> None:
         "no fresh controller data: stage waiting_for_headset",
         "a synthetic controller may drive only a simulated arm; this robot app "
         "declares driver real",
-        "the live view is not fresh: no VIEW_STATUS has arrived; open the live "
-        "view page in a visible browser tab",
+        "the live view is not fresh: no VIEW_STATUS has arrived; show the "
+        "viewer's live picture in a visible browser tab",
     ):
         refused = with_human(takeover=why)
         assert takeover_text(refused, WITH_PROGRAM) == f"takeover: not possible: {why}"
@@ -1092,8 +1092,8 @@ def test_an_open_takeover_without_a_headset_tells_the_operator_how_to_end_it() -
     # Nobody owns the arm and the Thor would refuse right B: its word, no
     # button. A person who owns the arm needs no new takeover.
     view = (
-        "the live view is not fresh: the view is not live; open the live view "
-        "page in a visible browser tab"
+        "the live view is not fresh: the view is not live; show the viewer's "
+        "live picture in a visible browser tab"
     )
     facts = {"takeover_open": True, "takeover": view}
     assert takeover_text(with_human(stopped, **facts), WITH_PROGRAM) == (
@@ -1239,14 +1239,14 @@ def test_no_missing_live_view_is_shown_where_the_robot_app_asks_for_none() -> No
     def line(required: Any, view_age_s: float | None = None) -> str:
         return status_line(None, state(required, view_age_s), WITH_PROGRAM, 0.04)
 
-    # The rig: the person at the controller sees the arm and no view runs.
+    # A robot app whose file asks for no live view, with no viewer attached.
     assert line(False).endswith(
         " | permit none | live view not required | headset ready | "
         "controller 0.03 s | state 0.04 s"
     )
     assert "view none" not in line(False)
     assert takeover_text(state(False), WITH_PROGRAM) == POSSIBLE
-    # A view that runs all the same shows its age.
+    # A viewer's page that shows its live picture all the same shows its age.
     assert " | permit none | view 0.3 s | headset ready | " in line(False, 0.31)
     # Required, or a robot app that does not say: the missing view shows.
     for required in (True, None, "false", 0):

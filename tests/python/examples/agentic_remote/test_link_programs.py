@@ -1463,20 +1463,42 @@ def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
         ["bash", "-n", str(WORKSTATION_SCRIPT)], capture_output=True, check=False
     )
     assert parsed.returncode == 0, parsed.stderr
-    done = workstation_script(tmp_path, "--thor", "192.0.2.7")
-    assert (done.returncode, done.stderr) == (0, "")
-    lines = done.stdout.splitlines()
-    printed = {
-        line[2:].split()[0].rstrip(":"): command
-        for line, command in zip(lines, lines[1:])
-        if line.startswith("# ")
-    }
-    # The panes the script makes are the rows of the README's table.
+
+    def commands(*arguments: str) -> tuple[dict[str, str], list[str]]:
+        """Each pane's command as --print gives it, and the lines printed."""
+        done = workstation_script(tmp_path, "--thor", "192.0.2.7", *arguments)
+        assert (done.returncode, done.stderr) == (0, "")
+        lines = done.stdout.splitlines()
+        named = {
+            line[2:].split()[0].rstrip(":"): command
+            for line, command in zip(lines, lines[1:])
+            if line.startswith("# ")
+        }
+        return named, lines
+
+    printed, lines = commands()
+    # The panes the script makes are the rows of the README's table: five. The
+    # viewer's page is the live view; no pane is the live view program's.
     panes = re.findall(r"-T (\w+)$", script, re.M)
     panes += re.findall(r"\$\(pane (\w+)\)", script)
     rows = dict(re.findall(r"^\| `([a-z]+)` \| `([^`]+)`", told, re.M))
     assert sorted(rows) == sorted(panes) == sorted(printed)
-    assert len(rows) == 6 and rows["viewer"] == "./run_viewer.sh"
+    assert len(rows) == 5 and rows["viewer"] == "./run_viewer.sh"
+    assert "view" not in rows and "| `view` |" not in told
+    assert not any("view.yaml" in line or "run_view.sh" in line for line in lines)
+    assert "--live-view" not in told and "--live-view" not in script
+    assert "The window has five panes, all visible together" in one_line(told)
+    assert "**The pane `viewer` is the live view.**" in told
+    said = (
+        "`live view: the viewer's page with its live picture showing, in a visible "
+        "browser tab; a person's takeover needs it`"
+    )
+    assert said in one_line(told)
+    for line in said.strip("`").split(", in a visible browser tab; "):
+        assert line in one_line(script), line
+    assert "The live view program (`run_view.sh`) is started by nothing on the rig" in (
+        one_line(told)
+    )
     variables = workstation_variables()
     assert len(variables) == 6
     for pane, command in rows.items():
@@ -1512,11 +1534,17 @@ def test_the_readme_describes_the_workstation_script_as_it_prints_its_commands(
     no_number = workstation_script(tmp_path, "--socket-wait", "soon")
     assert (no_number.returncode, no_number.stdout) == (2, "")
     assert no_number.stderr.count("\n") == 1
-    once = [line for line in lines if line.startswith(("# console ", "# view "))]
-    assert len(once) == 2
-    for line in once:
-        assert "once the service takes a connection on " in line, line
-    assert "**The console and the view start once the service listens.**" in told
+    # Only the console waits for the service: the viewer attaches by itself.
+    once = [line for line in lines if "once the service takes a connection on " in line]
+    assert len(once) == 1 and once[0].startswith("# console ")
+    assert "**The console starts once the service listens.**" in told
+    assert "The viewer attaches to the service by itself" in told
+    # An option of before is an unknown argument now.
+    gone = workstation_script(tmp_path, "--live-view")
+    assert (gone.returncode, gone.stdout) == (2, "")
+    assert gone.stderr.startswith(
+        "run_workstation.sh: unknown argument '--live-view' ("
+    )
     for name in variables:
         unset = workstation_script(tmp_path, **{name: None})
         assert (unset.returncode, unset.stdout) == (2, ""), name
@@ -1765,7 +1793,9 @@ def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it()
     usage = section[section.index("```text") : section.index("\n```\n")]
     named = set(re.findall(r"^#   (--[a-z-]+)", head, re.M))
     assert named == set(re.findall(r"--[a-z-]+", usage))
-    assert named == {"--runs", "--host", "--port", "--token-file", "--no-auth"}
+    live = {"--no-live", "--live-fps", "--live-width", "--receiver-socket"}
+    live |= {"--link-socket"}  # the live view: where the robot link service is
+    assert named == {"--runs", "--host", "--port", "--token-file", "--no-auth"} | live
     # What the script gives the viewer: this machine, and its own two places.
     assert "defaults=(--host 127.0.0.1)" in script
     assert 'runs="${state}/runs"' in script
@@ -1777,9 +1807,10 @@ def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it()
     link = '`echo "http://127.0.0.1:8766/?token=$(cat .state/viewer.token)"`'
     assert link in told
     assert "default: the viewer's own, 8766" in head
-    # Its three variables, and every refusal the script has.
+    # Its three variables and the one of the live picture, and every refusal
+    # the script has.
     variables = re.findall(r"^#   (AGENTIC_REMOTE_\w+)", head, re.M)
-    assert len(variables) == 3
+    assert len(variables) == 4 and variables[3] == "AGENTIC_REMOTE_CAMERA_PR"
     for name in variables:
         assert f"`{name}`" in told, name
     refusals = told[told.index("**Exit code 2 and one line, nothing started**") :]
@@ -1788,7 +1819,7 @@ def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it()
     for piece in (
         "one of the three variables cannot be used",
         "the experiment folder holds no `thor_viewer.py`",
-        "`--runs` or `--token-file` has no value",
+        "an argument that takes a value has none",
         "`--runs` names no folder",
         "the state folder cannot be made",
     ):
@@ -1797,7 +1828,108 @@ def test_the_readme_tells_the_experiments_viewer_as_its_start_script_starts_it()
     listed = f"holds `debug/events.jsonl` and `{agent_config.RESOLVED_CONFIG}`"
     assert listed in told
     assert "**The picture of the obstacle map needs `--record-debug`.**" in told
-    assert "**It reads files only.**" in told
+    # The live picture: shown and not stored, its buttons and its first values,
+    # as the launcher and the page's block have them.
+    package = CONFIGS.parent / "python" / "isaaccapture_examples" / "agentic_remote"
+    program = (package / "viewer_live" / "live.py").read_text(encoding="utf-8")
+    block = (package / "viewer_live" / "page_block.html").read_text(encoding="utf-8")
+    assert "**It only looks.**" in told
+    assert "It is **shown and not stored**" in told
+    assert "DEFAULT_FPS = 30.0" in program and "up to 30 a second" in told
+    fps = "`--live-fps N` is the most pictures a second, 1 to 60, 30 by default"
+    assert "FPS_RANGE = (1.0, 60.0)" in program and fps in told
+    width = "`--live-width PIXELS` is the picture's greatest width, 64 to 4096, 960"
+    assert "WIDTH_RANGE_PX = (64, 4096)" in program and width in told
+    # The pause after a failed try, and the line that names it.
+    pauses = "5 s, then 10, 20 and 40 s, and 60 s from then on; once pictures arrived"
+    assert "RETRY_PAUSES_S = (5.0, 10.0, 20.0, 40.0, 60.0)" in program
+    assert f"{pauses} it is 5 s again" in told
+    assert "trying again in {pause_s:g} s" in program
+    assert "(`trying again in 5 s`), once for each reason and each pause" in told
+    # The viewer beside a running agent: its bridge loads before it subscribes.
+    assert "It can be started and ended at any time" not in told
+    assert "loads CuPy and makes its CUDA context before it subscribes" in told
+    assert "STALE_S = 2.0" in program and "no camera picture younger than 2 s" in told
+    for path in ("/api/live.mjpg", "/api/live.json", "/api/live.jpg"):
+        assert f'"{path}"' in program and path in told, path
+    assert '"/api/live/shown"' in program and "`/api/live/shown`" in told
+    # The page fetches numbered pictures and acknowledges them: no stream.
+    for path in ("/api/live.json", "/api/live.jpg", "/api/live/shown"):
+        assert f"'{path}'" in block, path
+    assert "/api/live.mjpg" not in block
+    # The live view: the viewer's page with its live picture, and its word to
+    # the robot app.
+    assert "The page with its live picture showing is the **live view**" in told
+    link = (package / "viewer_live" / "view_link.py").read_text(encoding="utf-8")
+    assert "RETRY_PAUSES_S = (5.0, 10.0, 20.0, 40.0, 60.0)" in link
+    view = one_line(readme_section("### The live view"))
+    assert view.startswith(
+        "### The live view The live view is the page of the experiment's viewer "
+        "with its live picture showing, in a visible browser tab."
+    )
+    for piece in (
+        "`viewer: live view: not reported to the robot: cannot attach to the robot "
+        "link service: ...; trying again every 5 to 60 s. The page is served as "
+        "before`",
+        "`viewer: live view: attached to the robot link service at <socket>; the "
+        "robot is told how fresh the page's live picture is`",
+        "Its tries are 5, 10, 20 and 40 s apart and then 60 s",
+        "`--link-socket PATH` names another socket",
+        "`GET /api/live.jpg?after=N`",
+        "`POST /api/live/shown`",
+        "`This page was loaded again, here or in another tab: reload it for the "
+        "live picture.`",
+        "`The robot is told: live view, N s old.`",
+        "It is no longer part of the rig's set-up: nothing on the rig starts it.",
+    ):
+        assert piece in view, piece
+    for piece in (
+        "not reported to the robot: {why}; trying",
+        "attached to the robot link service at ",
+        "the robot is told how fresh the page's live",
+    ):
+        assert piece in link, piece
+    for piece in (
+        "This page was loaded again, here or in another tab: reload it for the live "
+        "picture.",
+        "The robot is told: live view, ${view.age_s.toFixed(2)} s old.",
+    ):
+        assert piece in block, piece
+    # Why the page does not tell the robot "live": the block's words, the
+    # share of the picture that must be inside the window, and the watch-only
+    # page of another machine.
+    for words in (
+        "Map picture showing",
+        "tab hidden",
+        "scroll the live picture into view",
+        "watch only: see below",
+        "watch only: the live view is the page opened on the workstation",
+    ):
+        assert f"'{words}'" in block and f"`{words}`" in view, words
+    assert "const SHARE = 0.75;" in block
+    for piece in (
+        "with at least three quarters of it inside the browser window",
+        "less than three quarters of the live picture are inside the browser window",
+        "**Only a page opened on the workstation is the live view.**",
+        "the client's address is a loopback address or the address the request "
+        "arrived on, both read off the connection and not off a header",
+        "`GET /api/live.jpg?after=N&watch=1`, which counts for nothing",
+        "A second page opened on the workstation still replaces the first.",
+    ):
+        assert piece in view, piece
+    assert "it is then the page loaded last" not in view
+    for key in ("available", "reason", "fps_asked", "fps_measured", "width", "age_s"):
+        assert f'"{key}":' in program and f"`{key}`" in told, key
+    for text in ("Map picture", "Live picture", "no live picture"):
+        assert f"'{text}'" in block and text in told, text
+    assert "`viewer: no live picture: <why>`" in told
+    assert 'f"{PROGRAM}: no live picture: {why}.' in program
+    said = "`viewer: live picture: the camera's pictures arrive`"
+    assert said in told and said.strip("`").split(": ", 1)[1] in program
+    step = readme_section("### 10. After a run: the viewer and the run's files")
+    step = one_line(step)
+    assert "**The page's picture is live.**" in step and "`no live picture`" in step
+    assert "`./run_viewer.sh --no-live` starts the viewer without" in step
     folders = one_line(readme_section("### `state_dir` and the run folders"))
     assert f"`{agent_config.RESOLVED_CONFIG}` (APAI's whole configuration" in folders
 

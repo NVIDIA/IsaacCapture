@@ -601,9 +601,14 @@ def test_the_start_script_gives_the_viewer_its_runs_its_token_and_this_machine(
     # folder, never in the experiment folder, and 127.0.0.1.
     done = script_run(script, **env, LD_LIBRARY_PATH="/somewhere")
     assert (done.returncode, done.stderr) == (0, "")
-    said, token_line, *given = done.stdout.splitlines()
+    said, token_line, live_line, *given = done.stdout.splitlines()
     assert said.startswith(f"run_viewer.sh: the runs in {state / 'runs'}; ")
     assert f"the text of {state / 'viewer.token'} behind it" in token_line
+    # Without the camera streamer's variable there is no live picture, and the
+    # viewer is started alone.
+    assert live_line.startswith(
+        "run_viewer.sh: live picture: off (AGENTIC_REMOTE_CAMERA_PR is not set); "
+    )
     assert given == [
         *environment,
         str(viewer_file),

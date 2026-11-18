@@ -1112,6 +1112,54 @@ def test_gate_a_return_to_rest_is_refused_with_loaded_jaws(robot_app):
     assert h.arm.gripper_read() == pytest.approx(0.4)
 
 
+# The rig's "at the target": the driver's reach, 0.1 rad of 6.2 rad jaw travel.
+RIG_TARGET_TOL = 0.1 / 6.2
+
+
+def rest_close_stalls(h, at: float) -> RobotState:
+    """The agent's close before a torque release stalls at this opening."""
+    h.new_task()
+    h.arm.jaw_object(at)
+    close_id = h.client.gripper(0.0, 0.6, mode="close_torque")
+    closed = final(h, close_id)
+    assert closed.status == "completed", closed.reason
+    assert closed.detail == {"outcome": "stalled", "opening": at}
+    state = state_after(h, close_id)
+    assert (state.gripper.opening, state.gripper.last_target) == (at, 0.0)
+    return state
+
+
+@pytest.mark.parametrize("command", ["rest", "release", "shutdown"])
+def test_jaws_that_closed_below_the_closed_line_are_empty_to_what_follows(
+    make_robot_app, config, command
+):
+    h = make_robot_app(with_config(config, gripper={"target_tol": RIG_TARGET_TOL}))
+    # As on the rig: the close stalls 0.12 rad short of the closed stop, more
+    # than the driver's reach from its target, with nothing between the jaws.
+    jaws = rest_close_stalls(h, 0.0194).gripper
+    assert (jaws.load, jaws.may_be_holding) == ("empty", False)
+    assert final(h, h.client.request_owner("nobody")).status == "completed"
+    if command != "release":
+        h.arm.set_pose(RAISED)
+    # Not sent on the operator's word that the jaws are empty.
+    result = final(h, getattr(h.client, command)())
+    assert result.status == "completed", result.reason
+    assert not h.app._jaw_state.word_given
+    assert h.arm.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
+    # A rest ends with the motors on; the other two switch them off at rest.
+    assert h.arm.torque_on() is (command == "rest")
+
+
+def test_gate_a_return_to_rest_is_refused_with_jaws_that_closed_above_the_closed_line(
+    make_robot_app, config
+):
+    h = make_robot_app(with_config(config, gripper={"target_tol": RIG_TARGET_TOL}))
+    h.arm.set_pose(RAISED)
+    jaws = rest_close_stalls(h, 0.045).gripper
+    assert (jaws.load, jaws.may_be_holding) == ("loaded", True)
+    assert_rest_refused(h, "the jaws are not proven empty (loaded)")
+
+
 def test_gate_a_return_to_rest_is_refused_with_jaws_that_were_never_referenced(
     make_robot_app,
 ):

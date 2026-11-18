@@ -4,7 +4,8 @@
 """The agent program's options of the experiment's own launcher.
 
 --batch-milestones, --record-debug, --debug-max-gib, --no-timing and
---motion-approval. The experiment is the folder of the rig's earlier, single
+--motion-approval, and the program's own --debug-map-hz for the debug
+recording. The experiment is the folder of the rig's earlier, single
 machine program; its launcher is thor_runtime.py. Stand-ins take the place of
 the four modules the options load (thor_timing, thor_model_trace,
 thor_recording, thor_milestones), and the runs put the launcher on APAI's mock
@@ -259,6 +260,18 @@ def parsed(settings: Any, *arguments: str) -> RunOptions:
     return launcher._run_options(args, settings)
 
 
+def map_hz(settings: Any, *arguments: str) -> float:
+    """The map pictures a second the debug recording of such a run stores."""
+    args = launcher._parser().parse_args(["--config", "unused", *arguments])
+    return launcher._debug_map_hz(args, settings)
+
+
+def at_limit(settings: Any, *arguments: str) -> str:
+    """What the debug recording of such a run does at its size."""
+    args = launcher._parser().parse_args(["--config", "unused", *arguments])
+    return launcher._debug_at_limit(args, settings)
+
+
 # What a run takes, from its arguments and its file
 
 
@@ -280,6 +293,40 @@ def test_the_full_stack_times_and_transcribes_by_default_and_the_minimal_does_no
     )
     # Without --record-debug the size does nothing, as in the experiment's launcher.
     assert parsed(full, "--debug-max-gib", "4").record_debug is False
+    # The debug recording stores 2 pictures of the obstacle map a second
+    # unless the run names another rate; 0 stores every one. The rate is the
+    # program's own: it is no field of what the experiment's launcher takes.
+    assert map_hz(full) == map_hz(full, "--record-debug") == 2.0
+    assert map_hz(full, "--record-debug", "--debug-map-hz", "0") == 0.0
+    assert map_hz(full, "--debug-map-hz", "0.5") == 0.5
+    assert parsed(full, "--record-debug", "--debug-map-hz", "0") == parsed(
+        full, "--record-debug"
+    )
+    # At its size the debug recording drops its oldest map pictures unless
+    # the run asks for the experiment's stop. Also the program's own.
+    assert at_limit(full) == at_limit(full, "--record-debug") == "drop-oldest"
+    assert at_limit(full, "--debug-at-limit", "drop-oldest") == "drop-oldest"
+    assert at_limit(full, "--record-debug", "--debug-at-limit", "stop") == "stop"
+    assert parsed(full, "--record-debug", "--debug-at-limit", "stop") == parsed(
+        full, "--record-debug"
+    )
+    with pytest.raises(SystemExit) as refused:
+        at_limit(full, "--debug-at-limit", "drop-newest")
+    assert refused.value.code == 2
+    recorded = parsed(full, "--record-debug")
+    assert launcher._options_row(recorded, 0.5) == {
+        **dataclasses.asdict(recorded),
+        "debug_map_hz": 0.5,
+        "debug_at_limit": "drop-oldest",
+    }
+    assert launcher._options_row(recorded, 0.0, "stop") == {
+        **dataclasses.asdict(recorded),
+        "debug_map_hz": 0.0,
+        "debug_at_limit": "stop",
+    }
+    plain = RunOptions(timing=True, model_trace=True)
+    assert launcher._options_row(plain, 0.5) == dataclasses.asdict(plain)
+    assert launcher._options_row(plain, 0.5, "stop") == dataclasses.asdict(plain)
     # The file switches either recording off.
     for key in ("timing", "model_trace"):
         off = agent_config.load_settings(
@@ -290,7 +337,8 @@ def test_the_full_stack_times_and_transcribes_by_default_and_the_minimal_does_no
     # The minimal stack takes nothing, and the approval the program has is "task".
     minimal = agent_config.load_settings(settings_file(tmp_path))
     assert parsed(minimal) == parsed(minimal, "--motion-approval", "task")
-    assert parsed(minimal) == RunOptions()
+    assert parsed(minimal) == RunOptions() and map_hz(minimal) == 2.0
+    assert at_limit(minimal) == "drop-oldest"
     assert parsed(full, "--motion-approval", "task") == parsed(full)
 
 
@@ -400,6 +448,36 @@ def test_the_shipped_files_name_the_two_recordings(
             {"stack": "full"},
             "--debug-max-gib must be a finite number above 0",
         ),
+        (
+            ["--debug-map-hz", "1"],
+            {},
+            "--debug-map-hz needs experiment.stack full (it is minimal)",
+        ),
+        (
+            ["--record-debug", "--debug-map-hz", "-1"],
+            {"stack": "full"},
+            "--debug-map-hz must be a finite number, 0 or above, not -1.0",
+        ),
+        (
+            ["--debug-map-hz", "nan"],
+            {"stack": "full"},
+            "--debug-map-hz must be a finite number, 0 or above",
+        ),
+        (
+            ["--debug-map-hz", "inf"],
+            {"stack": "full"},
+            "--debug-map-hz must be a finite number, 0 or above",
+        ),
+        (
+            ["--debug-at-limit", "stop"],
+            {},
+            "--debug-at-limit needs experiment.stack full (it is minimal)",
+        ),
+        (
+            ["--debug-at-limit", "drop-oldest"],
+            {},
+            "--debug-at-limit needs experiment.stack full (it is minimal)",
+        ),
         (["--motion-approval", "tool"], {}, "--motion-approval tool is not built"),
         (
             ["--speed-profile", "conservative"],
@@ -458,6 +536,17 @@ def test_without_an_option_a_run_loads_nothing_of_the_experiment_and_leaves_no_f
     assert stage.run("--check") == launcher.EXIT_OK
     report = json.loads(capsys.readouterr().out)
     assert report["run_options"] == dataclasses.asdict(RunOptions())
+    # With the debug recording it also names the map pictures a second and
+    # what the recording does at its size.
+    recorded = RunOptions(timing=True, record_debug=True, debug_max_gib=2.0)
+    monkeypatch.setattr(launcher, "_run_options", lambda args, settings: recorded)
+    assert stage.run("--check") == launcher.EXIT_OK
+    report = json.loads(capsys.readouterr().out)
+    assert report["run_options"] == {
+        **dataclasses.asdict(recorded),
+        "debug_map_hz": 2.0,
+        "debug_at_limit": "drop-oldest",
+    }
 
 
 # Every option, on the mock scene, with stand-ins for the experiment's modules
@@ -536,13 +625,25 @@ def test_each_option_installs_its_hook_once_in_the_order_of_the_experiments_laun
     assert "Not timed here: the motor reads and sends" in timing
     (recording,) = stage.said("debug recording: ")
     assert f"{stage.run_dir / 'debug'}, at most 2 GiB" in recording
+    # What happens at that size, and how long it holds at the rate of the
+    # map pictures.
+    assert (
+        "at most 2 GiB: when that is reached the oldest map pictures are dropped "
+        "and the viewer keeps following. That size holds about 4 min at 2 map "
+        "pictures a second, which --debug-map-hz sets; with --debug-at-limit "
+        "stop the recording ends there instead; ./run_viewer.sh"
+    ) in recording
     assert "./run_viewer.sh shows it in a browser" in recording
     assert "Not recorded here: the motor commands and the single motor reads" in (
         recording
     )
     assert "robot.feedback, is what this program read from ROBOT_STATE" in recording
     written = json.loads((stage.run_dir / "run-options.json").read_text())
-    assert written == dataclasses.asdict(ALL)
+    assert written == {
+        **dataclasses.asdict(ALL),
+        "debug_map_hz": 2.0,
+        "debug_at_limit": "drop-oldest",
+    }
 
 
 @apai

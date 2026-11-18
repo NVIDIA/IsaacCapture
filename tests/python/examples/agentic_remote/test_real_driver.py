@@ -47,6 +47,7 @@ from test_apai_backend import (
     MotorGroup,
 )
 from test_main import quick_config
+from test_takeover import setpoint
 
 CONFIGS = repo_root() / "examples" / "agentic_remote" / "configs"
 RIG_YAML = CONFIGS / "robot_app_rebot.yaml"
@@ -1522,6 +1523,212 @@ def test_the_real_driver_runs_the_typed_reference_only_with_the_setting(
         assert app.allow_reference is True
         session.typed.type("quit")
         assert session.running.result() == 0
+    assert left_threads() == []
+
+
+# A person on the real driver. A takeover makes a person the control owner; a
+# human drive is one stretch of human motion toward the joint targets of
+# HUMAN_SETPOINT link messages. The live view is the viewer's page on the
+# workstation with its live picture showing; the viewer reports its age in
+# VIEW_STATUS link messages. The rig file requires it. No viewer runs below:
+# no VIEW_STATUS is sent.
+
+NO_LIVE_VIEW_LINE = (
+    "robot app: human driving is not tied to a live view "
+    "(human.require_live_view false)"
+)
+VIEW_NOT_FRESH = (
+    "the live view is not fresh: no VIEW_STATUS has arrived; show the viewer's "
+    "live picture in a visible browser tab"
+)
+# Off the two joint stops the arm rests on: the first motion of a squeeze.
+OFF_THE_STOPS = [0.0, 0.03, 0.03, 0.0, 0.0, 0.0]
+
+
+def a_person_on_the_rig_file(bench: Bench, monkeypatch, tmp_path, **human: Any) -> None:
+    """Run the program on a copy of the rig file with human driving switched on."""
+    data = yaml.safe_load(RIG_YAML.read_text(encoding="utf-8"))
+    # As shipped: human driving off, and the live view required.
+    assert data["human"]["enabled"] is False
+    assert data["human"]["require_live_view"] is True
+    data["human"].update({"enabled": True, **human})
+    changed = tmp_path / "robot_app_person.yaml"
+    changed.write_text(yaml.safe_dump(data), encoding="utf-8")
+    argv = bench.argv
+    monkeypatch.setattr(
+        bench,
+        "argv",
+        lambda *extra: [
+            str(changed) if word == str(RIG_YAML) else word for word in argv(*extra)
+        ],
+    )
+
+
+class Controller:
+    """Stands in for the human program: 50 HUMAN_SETPOINTs per second.
+
+    Attached to the robot link service in the role human, with the headset's
+    source. Each quotes the numbers of the newest ROBOT_STATE. goal is the
+    joint target of a squeezed grip; None: the grip is released.
+    """
+
+    def __init__(self, socket_path: str) -> None:
+        from isaaccapture_examples.agentic_remote.link_service.local import (
+            connect_local,
+        )
+
+        self.goal: list[float] | None = None
+        self.clock = SystemClock()
+        self.end = connect_local(socket_path, "human", "test-human", WAIT_S)
+        self.ws = WorkstationClient(self.end, self.clock, name="human")
+        self._ended = threading.Event()
+        self._thread = threading.Thread(target=self._feed, daemon=True)
+        self._thread.start()
+
+    def _feed(self) -> None:
+        while not self._ended.wait(0.02):
+            state = self.ws.state
+            if state is None:
+                continue
+            quoted = types.SimpleNamespace(snapshot=lambda state=state: state)
+            self.ws.send(
+                setpoint(types.SimpleNamespace(app=quoted, clock=self.clock), self.goal)
+            )
+
+    def right_b(self) -> Any:
+        """Ask for the takeover, as the human program does on right B; the RESULT."""
+        asked = self.ws.request_owner("human", reason="right B held 1.0 s")
+        return self.ws.wait_result(asked, timeout_s=WAIT_S)
+
+    def close(self) -> None:
+        self._ended.set()
+        self._thread.join(WAIT_S)
+        self.ws.close()
+        self.end.close()
+
+
+def human(state: Any) -> dict[str, Any]:
+    return state.health["human"]
+
+
+@rig
+@pytest.mark.link
+def test_a_person_takes_over_and_drives_on_the_real_driver_with_no_live_view(
+    bench, folder, capsys, caplog, monkeypatch, tmp_path
+):
+    # The robot app takes a file that requires no live view with any driver.
+    a_person_on_the_rig_file(bench, monkeypatch, tmp_path, require_live_view=False)
+    with (
+        caplog.at_level("INFO", logger=LOGGER),
+        program(bench, folder, monkeypatch, "yes", "yes", "yes") as session,
+    ):
+        assert session.client.wait_welcome(WAIT_S).driver == "real"
+        session.client.wait_state(lambda s: s.gripper.referenced, WAIT_S)
+        (app,) = session.apps
+        (sdk,) = bench.sdks
+        hand = Controller(str(folder / "s.sock"))
+        try:
+            # Fresh controller data are all a takeover waits for: no view.
+            ready = session.client.wait_state(
+                lambda s: s.teleop_stage == "ready" and human(s)["takeover"] == "",
+                WAIT_S,
+            )
+            assert ready.view_age_s is None
+            assert human(ready)["live_view_required"] is False
+            taken = hand.right_b()
+            assert taken.status == "completed", taken.reason
+            owned = session.client.wait_state(
+                lambda s: s.owner == "human" and not human(s)["needs_release"], WAIT_S
+            )
+            assert human(owned)["takeover_open"] and "send_mit arm" not in bench.calls
+            # A squeeze: the arm follows the hand off its stops. The released
+            # grip ends the drive in a hold.
+            hand.goal = list(OFF_THE_STOPS)
+            session.client.wait_until(
+                lambda: (
+                    bool(sdk.arm.sent)
+                    and sdk.arm.sent[-1][0] == pytest.approx(OFF_THE_STOPS, abs=1e-9)
+                ),
+                WAIT_S,
+            )
+            hand.goal = None
+            held = session.client.wait_state(
+                lambda s: not human(s)["driving"] and human(s)["ended"] != "", WAIT_S
+            )
+            assert human(held)["ended"] == "the grip was released"
+            assert (held.owner, held.motion, held.torque_on) == ("human", "hold", True)
+            assert human(held)["refusal"] == ""
+            # Every setpoint lay within the Thor's speed clamp for a person.
+            rig_file = load_config(RIG_YAML)
+            clamp = rig_file.limits.human.max_joint_speed * rig_file.executor.period_s
+            sent = np.array([[0.0] * 6, *[q for q, _ in sdk.arm.sent]])
+            assert np.abs(np.diff(sent, axis=0)).max() <= clamp + 1e-12
+            # A STOP on right B wins: nobody owns the arm, which holds.
+            hand.ws.stop(reason="right B", sender="controller")
+            stopped = session.client.wait_state(lambda s: s.stop_number == 1, WAIT_S)
+            assert (stopped.owner, stopped.torque_on) == ("nobody", True)
+        finally:
+            hand.close()
+        # No VIEW_STATUS arrived at any time.
+        assert app._view is None
+        # The program ends where the arm holds, off the rest pose with the
+        # takeover open: nothing moves and no torque is cut.
+        app.close()
+        assert session.running.result() == 0
+    assert sdk.disconnects == 0 and sdk.released_at == []
+    out = capsys.readouterr().out.splitlines()
+    said = [line for line in out if line.startswith("robot app: ")]
+    # After the line on the connect, before the session's.
+    at = said.index(robot_main.CONNECTING)
+    assert said[at + 1].startswith(CONNECTED)
+    assert said[at + 2] == NO_LIVE_VIEW_LINE and said.count(NO_LIVE_VIEW_LINE) == 1
+    assert said[at + 3].startswith("robot app: session ")
+    logged = [record.getMessage() for record in caplog.records]
+    assert logged.count(NO_LIVE_VIEW_LINE.removeprefix("robot app: ")) == 1
+    # Nothing told the operator of a live view that is not wanted.
+    assert not any("live view is not fresh" in line for line in out)
+    assert left_threads() == []
+
+
+@rig
+@pytest.mark.link
+def test_the_same_takeover_is_refused_on_the_real_driver_where_the_view_is_required(
+    bench, folder, capsys, monkeypatch, tmp_path
+):
+    # The rig file as it ships, with human driving switched on: without the
+    # viewer's page and its live picture no takeover is taken.
+    a_person_on_the_rig_file(bench, monkeypatch, tmp_path)
+    with program(bench, folder, monkeypatch, "yes", "yes", "yes") as session:
+        session.client.wait_state(lambda s: s.gripper.referenced, WAIT_S)
+        hand = Controller(str(folder / "s.sock"))
+        try:
+            waiting = session.client.wait_state(
+                lambda s: (
+                    s.teleop_stage == "ready"
+                    and human(s)["takeover"].startswith("the live view")
+                ),
+                WAIT_S,
+            )
+            assert human(waiting)["takeover"] == VIEW_NOT_FRESH
+            assert human(waiting)["live_view_required"] is True
+            refused = hand.right_b()
+            assert (refused.status, refused.reason) == ("refused", VIEW_NOT_FRESH)
+            # A squeeze moves nothing: nobody took the arm over.
+            hand.goal = list(OFF_THE_STOPS)
+            time.sleep(0.3)
+            state = session.client.wait_state(lambda s: s.seq > waiting.seq, WAIT_S)
+            assert (state.owner, human(state)["takeover_open"]) == ("nobody", False)
+            assert "send_mit arm" not in bench.calls
+        finally:
+            hand.close()
+        session.typed.type("quit")
+        assert session.running.result() == 0
+    out = capsys.readouterr().out.splitlines()
+    assert NO_LIVE_VIEW_LINE not in out
+    said = [line for line in out if line.startswith("robot app: ")]
+    at = said.index(robot_main.CONNECTING)
+    assert said[at + 1].startswith(CONNECTED)
+    assert said[at + 2].startswith("robot app: session ")
     assert left_threads() == []
 
 

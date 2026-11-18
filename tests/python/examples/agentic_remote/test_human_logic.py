@@ -2843,7 +2843,7 @@ def test_a_long_note_is_cut_and_every_setpoint_stays_under_600_bytes_as_it_is_se
     for remedy in (
         "; type rest first",
         "; type stop, then open, then yes, then hold right A again",
-        "; open the live view page in a visible browser tab",
+        "; show the viewer's live picture in a visible browser tab",
     ):
         reason = f"the arm is not at rest: {measured}{remedy}"
         note = refused_handback(bench, reason, age=age).note

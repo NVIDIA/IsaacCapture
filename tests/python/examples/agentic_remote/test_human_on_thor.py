@@ -1319,8 +1319,8 @@ def test_the_human_program_on_the_thor_runs_as_processes(
 
 
 NO_LIVE_VIEW_LINE = (
-    "robot app: human driving needs no live view: the person at the controller "
-    "must see the arm itself"
+    "robot app: human driving is not tied to a live view "
+    "(human.require_live_view false)"
 )
 
 
@@ -1333,11 +1333,11 @@ def test_right_b_reaches_the_robot_app_process_with_the_robot_connection_down(
     """The robot app and the human program alone: nobody listens for the app.
 
     The STOP of right B arrives. On configs/robot_app_human_check.yaml, which
-    asks for no live view as the rig's file does, the takeover that right B
-    asks for a second later is taken, the squeeze moves the arm, and a rest
-    typed at the Thor terminal and right A end the takeover. With that file
-    changed to require the live view the takeover is refused: VIEW_STATUS
-    comes over the robot connection.
+    requires the live view as the rig's file does, the takeover that right B
+    asks for a second later is refused: VIEW_STATUS, the viewer's word on its
+    live picture, comes over the robot connection. With that file changed to
+    require no live view the takeover is taken, the squeeze moves the arm,
+    and a rest typed at the Thor terminal and right A end the takeover.
     """
     demo2 = pytest.importorskip("test_demo2_programs")
     from isaaccapture_examples.agentic_remote.protocol.confirm import PATH_IS_CLEAR
@@ -1346,8 +1346,8 @@ def test_right_b_reaches_the_robot_app_process_with_the_robot_connection_down(
 
     folder = tmp_path_factory.mktemp("th")
     robot = demo2.ROBOT_HUMAN_CHECK
-    if live_view:
-        asked = {"\n  require_live_view: false\n": "\n  require_live_view: true\n"}
+    if not live_view:
+        asked = {"\n  require_live_view: true\n": "\n  require_live_view: false\n"}
         robot = fitted(robot, folder, asked)
     _, thor_socket, _, human_file = thor_files(folder, robot)
     # A port this process holds and never listens on: every dial is refused.
@@ -1362,7 +1362,7 @@ def test_right_b_reaches_the_robot_app_process_with_the_robot_connection_down(
         )  # fmt: skip
         programs.append(app)
         if not live_view:
-            # Said before the session's line: nothing checks what the person sees.
+            # Said before the session's line.
             assert app.wait_line("live view") == NO_LIVE_VIEW_LINE
         app.wait_line(f"robot app: the human program's socket is {thor_socket}")
         app.wait_line("robot app: no robot connection: ")
@@ -1374,7 +1374,10 @@ def test_right_b_reaches_the_robot_app_process_with_the_robot_connection_down(
         assert app.wait_line(STOP_LINE, 2 * WAIT_S).endswith(f"{STOP_LINE}1")
         if live_view:
             refused = app.wait_line("[refused] owner request 'human' refused: ")
-            assert "the live view is not fresh: no VIEW_STATUS has arrived" in refused
+            assert refused.endswith(
+                "the live view is not fresh: no VIEW_STATUS has arrived; show the "
+                "viewer's live picture in a visible browser tab"
+            )
         else:
             # The takeover, the squeeze and the lift, with no VIEW_STATUS at all.
             app.wait_line(f"[owner] {TAKEN_OVER.format(number=2)}")

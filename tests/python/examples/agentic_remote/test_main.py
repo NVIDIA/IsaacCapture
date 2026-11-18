@@ -890,8 +890,8 @@ def test_a_tilde_in_human_socket_is_taken_from_the_home_folder(
 
 
 NO_LIVE_VIEW_LINE = (
-    "robot app: human driving needs no live view: the person at the controller "
-    "must see the arm itself"
+    "robot app: human driving is not tied to a live view "
+    "(human.require_live_view false)"
 )
 
 
@@ -919,7 +919,7 @@ def test_a_file_without_a_live_view_runs_on_every_driver_and_says_so(
 ):
     # A file that lets a person drive without a live view is taken with any
     # driver, the real one included. The program says once, at the Thor
-    # terminal and in the log, that the person must see the arm.
+    # terminal and in the log, that human driving is not tied to a live view.
     monkeypatch.setattr(robot_main, "LinkCarrier", Dialed())
     unseen = human_config(RobotAppConfig.default(), require_live_view=False)
     with caplog.at_level("INFO", logger=LOGGER):

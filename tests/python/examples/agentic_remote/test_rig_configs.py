@@ -189,10 +189,9 @@ def test_the_rig_robot_file_keeps_the_shipped_values_elsewhere(robot_rig):
         "connection",
     ):
         assert getattr(robot_rig, block) == getattr(default, block), block
-    # The person at the controller stands at the arm: no live view is asked for.
-    assert robot_rig.human == dataclasses.replace(
-        default.human, require_live_view=False
-    )
+    # The human block is the shipped default's: human driving off, and the
+    # live view required.
+    assert robot_rig.human == default.human
     # An idle joint is read as often as the experiment reads it.
     assert robot_rig.state == dataclasses.replace(
         default.state, idle_read_period_s=0.01
@@ -270,21 +269,31 @@ def test_the_human_settings_ship_in_the_safe_position(robot_rig):
         assert "\nhuman:\n  enabled: false" in text, name
 
 
-def test_the_rig_files_ask_for_no_live_view_and_the_shipped_default_does(robot_rig):
-    # On the rig the person at the controller stands at the arm and sees it
-    # (the owner's decision of 2026-11-17): the rig's robot file and the file
-    # of the headset checks before power hold false, and say why.
+def test_the_rig_files_ask_for_the_live_view_as_the_shipped_default_does(robot_rig):
+    # The live view is the viewer's page with its live picture: the rig's robot
+    # file and the file of the headset checks before power require it, and say
+    # in one line what it is.
     said = (
-        "  # false: the person at the controller stands at the arm and sees it "
-        "(the owner's decision of 2026-11-17); true asks for a fresh live view "
-        "(run_workstation.sh --live-view).\n  require_live_view: false\n"
+        "  # The live view is the viewer's page with its live picture "
+        "(run_viewer.sh).\n  require_live_view: true\n"
     )
-    assert robot_rig.human.require_live_view is False
+    assert robot_rig.human.require_live_view is True
     for name in ("robot_app_rebot.yaml", "robot_app_human_check.yaml"):
-        assert shipped(name)["human"]["require_live_view"] is False, name
-        assert said in (CONFIGS / name).read_text(encoding="utf-8"), name
+        assert shipped(name)["human"]["require_live_view"] is True, name
+        text = (CONFIGS / name).read_text(encoding="utf-8")
+        assert said in text, name
+        # Neither says any more that the person needs no live view, nor names
+        # the option that started the page of before.
+        for gone in (
+            "sees it",
+            "see the arm",
+            "--live-view",
+            "require_live_view: false",
+        ):
+            assert gone not in text, (name, gone)
     assert shipped("robot_app_human_check.yaml")["human"]["enabled"] is True
-    # The shipped default keeps the live view required.
+    assert robot_rig.human.view_age_limit_s == 0.5
+    # As the shipped default.
     assert shipped("robot_app.yaml")["human"]["require_live_view"] is True
     assert RobotAppConfig.default().human.require_live_view is True
     # No robot file says any more that false needs a simulated driver.
@@ -616,15 +625,16 @@ def test_a_takeover_and_a_lift_run_from_each_rig_reading_with_the_rig_file(
         sdk.arm._mm[motor].value = value
     checkers = backend.build_apai_checkers(config, profile, clock)
     # As on the rig: the robot app declares the real driver, and the rig file
-    # asks for no live view. No VIEW_STATUS is sent from here to the end.
-    assert config.human.require_live_view is False
+    # requires the live view. A live VIEW_STATUS, the viewer's word that its
+    # page shows the live picture, goes with every HUMAN_SETPOINT below.
+    assert config.human.require_live_view is True
     h = AppHarness(config, arm, checkers, clock, app_options={"driver": "real"})
     solver = Solver(profile.kinematics)
     try:
         h.start()
         assert h.client.welcome.driver == "real"
         # The takeover at measured rest sends the motors nothing.
-        feed(h, view=False)  # fresh controller data: the grip is released
+        feed(h)  # fresh controller data, the grip released, and a live view
         assert human_facts(h)["takeover"] == ""
         taken = ask_takeover(h)
         assert taken.status == "completed", taken.reason
@@ -635,13 +645,13 @@ def test_a_takeover_and_a_lift_run_from_each_rig_reading_with_the_rig_file(
         # A squeeze, then 3 cm straight up, ended by the released grip.
         ended = drives(h)
         hand = LiftingHand(h, sdk, solver)
-        keep_human_fed(h, hand, view=False)
-        feed(h, view=False)
-        feed(h, hand.squeeze(reading), view=False)
+        keep_human_fed(h, hand)
+        feed(h)
+        feed(h, hand.squeeze(reading))
         h.idle()
         assert hand.problem == ""
         assert h.heard("human") == []
-        assert h.app._view is None and state_now(h).view_age_s is None
+        assert state_now(h).view_age_s is not None
         sent = [q for q, _ in sdk.arm.sent]
         assert [(end.status, end.sent) for end in ended] == [("released", len(sent))]
         # APAI's human checker of the rig's profile approved every setpoint.
@@ -685,19 +695,18 @@ def test_a_takeover_and_a_lift_run_from_each_rig_reading_with_the_rig_file(
         # The hand-back sends the motors nothing, the jaw motor included.
         assert (len(sdk.arm.sent), len(sdk.gripper.sent)) == count
         assert sdk.disconnects == 0 and arm.torque_on()
-        assert h.app._view is None  # no VIEW_STATUS, to the end
     finally:
         h.close()
 
 
 @apai
-def test_the_same_takeover_is_refused_on_the_rig_where_the_live_view_is_required(
+def test_the_same_takeover_is_refused_on_the_rig_without_the_viewers_live_picture(
     robot_rig, clock, monkeypatch, tmp_path
 ):
-    # For a person who drives from where they cannot see the arm: the rig
-    # file with human.require_live_view true, on APAI's driver.
+    # The rig file as it ships, with human driving switched on, on APAI's
+    # driver: without a VIEW_STATUS of the viewer no takeover is taken.
     backend = rs.apai_backend
-    on = dataclasses.replace(robot_rig.human, enabled=True, require_live_view=True)
+    on = dataclasses.replace(robot_rig.human, enabled=True)
     profile = rig_profile(tmp_path)
     config = backend.config_for_profile(
         dataclasses.replace(robot_rig, human=on), profile
@@ -710,8 +719,8 @@ def test_the_same_takeover_is_refused_on_the_rig_where_the_live_view_is_required
         before = h.app.snapshot()
         feed(h, view=False)
         none = (
-            "the live view is not fresh: no VIEW_STATUS has arrived; open the "
-            "live view page in a visible browser tab"
+            "the live view is not fresh: no VIEW_STATUS has arrived; show the "
+            "viewer's live picture in a visible browser tab"
         )
         assert human_facts(h)["takeover"] == none
         refused = ask_takeover(h)

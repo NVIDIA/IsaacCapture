@@ -2735,17 +2735,19 @@ def test_the_operators_open_ends_where_it_is_stopped(
 @pytest.mark.parametrize(
     ("object_rad", "release", "reason"),
     [
-        # Thinner than 0.1 rad: within the design's known limit, it reads as empty.
+        # At or below the closed line (0.04 of the travel, 0.248 rad): jaws told
+        # to close count as closed on nothing.
         (0.08, "completed", ""),
+        (0.15, "completed", ""),
         (
-            0.15,
+            0.3,
             "refused",
-            "the jaws are not proven empty (loaded): the jaws are at 0.024, not at "
+            "the jaws are not proven empty (loaded): the jaws are at 0.048, not at "
             "their target 0.000",
         ),
     ],
 )
-def test_jaws_more_than_a_tenth_rad_from_their_target_are_not_proven_empty(
+def test_jaws_closed_above_the_closed_line_are_not_proven_empty(
     rs_app: tuple[AppHarness, MotorSdk], object_rad: float, release: str, reason: str
 ) -> None:
     h, sdk = rs_app

@@ -1705,9 +1705,9 @@ DIFFERS: dict[Path, dict[str, Any]] = {
         "human.require_live_view": False,
         **INSIDE_REGION,
     },
+    # The live view stays required, as in the rig's file.
     ROBOT_HUMAN_CHECK: {
         "human.enabled": True,
-        "human.require_live_view": False,
         "limits.human.max_joint_speed": 0.8,
         "limits.human.max_step_rad": 0.05,
         **INSIDE_REGION,
@@ -1761,13 +1761,15 @@ def test_the_demo_2_robot_files_differ_from_the_shipped_one_only_where_listed(
         ):
             load_config(wide)
 
-    # Neither asks for a live view: the recipe's view is never live, and at
-    # the headset checks the person stands at the arm, as on the rig. Every
-    # driver takes such a file and the robot app says so at its start.
+    # The one-machine recipe asks for no live view: it runs no camera, so no
+    # view is ever live there. Every driver takes such a file and the robot
+    # app says so at its start. The headset checks require the live view, the
+    # viewer's page with its live picture, as the rig's file does.
     demo, check = load_config(ROBOT_DEMO2), load_config(ROBOT_HUMAN_CHECK)
-    for file in (demo, check):
-        assert file.human.require_live_view is False
-        assert app_module.no_live_view_notice(file) == app_module.NO_LIVE_VIEW
+    assert demo.human.require_live_view is False
+    assert app_module.no_live_view_notice(demo) == app_module.NO_LIVE_VIEW
+    assert check.human.require_live_view is True
+    assert app_module.no_live_view_notice(check) is None
     # The speed of the headset checks is the rig's, and so is the farthest a
     # human target may lie from the last joint target sent: the checks run
     # with the rig's human file, whose own limit lies below that one.

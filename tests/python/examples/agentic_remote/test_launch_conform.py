@@ -328,6 +328,165 @@ def test_the_workstation_script_types_the_experiment_launchers_command(
     }
     for option in (word for word in given if word.startswith("--")):
         assert f'"{option}"' in source and option in ours, option
+    # The rate of the debug recording's map pictures is the agent program's
+    # own argument: the launcher has none, and the script types none.
+    assert "--debug-map-hz" in ours and "debug-map-hz" not in source
+    assert "--debug-map-hz" not in script
+    # So is what the debug recording does at its size.
+    assert "--debug-at-limit" in ours and "debug-at-limit" not in source
+    assert "--debug-at-limit" not in script
+
+
+@experiment
+def test_the_debug_recordings_limit_stands_on_the_experiments_recorder_and_viewer(
+    experiment_dir: Path,
+) -> None:
+    from isaaccapture_examples.agentic_remote.agent import debug_recording
+
+    # The default rate is what the viewer's page can show: it asks for the
+    # state once per period.
+    page = (experiment_dir / "thor_viewer.html").read_text()
+    period_ms = re.search(r"setInterval\(tick,(\d+)\)", page)
+    assert period_ms is not None
+    assert debug_recording.DEBUG_MAP_HZ == 1000 / int(period_ms.group(1))
+    # The size's default is the launcher's own.
+    theirs = (experiment_dir / "thor_runtime.py").read_text()
+    size = re.search(r'"--debug-max-gib",\s+type=float,\s+default=(\d+)', theirs)
+    assert size is not None and float(size.group(1)) == agent_config.DEBUG_MAX_GIB
+    # Every kind of event the experiment records is either one the limit may
+    # leave out or one of these, which are stored whatever the rate.
+    recorder = (experiment_dir / "thor_recording.py").read_text()
+    routes = (experiment_dir / "thor_route_diagnostic.py").read_text()
+    families = "map|mask|bridge|object|robot|safety|verification|session"
+    kinds = set(re.findall(rf'"((?:{families})\.[a-z_.]+)"', recorder))
+    kinds |= set(re.findall(r'recorder\.record\(\s*"([a-z_.]+)"', routes))
+    always = {
+        "session.start",
+        "session.end",
+        "robot.feedback",
+        "robot.call",
+        "robot.return",
+        "safety.refusal",
+        "verification.measurement",
+        "route.segment.begin",
+        "route.segment.end",
+    }
+    assert kinds - debug_recording.MAP_KINDS == always
+    assert debug_recording.MAP_KINDS <= kinds
+    assert {debug_recording.REFUSAL, *debug_recording.SEGMENTS} <= always
+    assert launcher.STATE_EVENT not in debug_recording.MAP_KINDS
+    # The fields the limit reads of them, as the recorder's hooks write them:
+    # the map revision a refusal and a segment name, and the ids that join
+    # the events of one refresh.
+    for written in (
+        '"map_id": id(obj.occupancy)',
+        '"gate_refreshes": ctx.refreshes',
+        '"map_id": id(obj)',
+        '"refreshes": obj.refreshes',
+        '"query_request_id": getattr(rec.local, "query_id", None)',
+        'rec.emit("bridge.response", request_id=request_id, result=result)',
+        "rec.local.refresh_id = rec.record(",
+        '"refresh_id": getattr(self.local, "refresh_id", None)',
+    ):
+        assert written in recorder, written
+    assert '"map": map_state(args[0] if args else kwargs["harness"])' in routes
+    assert '"map_id": None if occupancy is None else id(occupancy)' in routes
+    assert '"refreshes",' in routes and '"call_id": event_id' in routes
+    # What the viewer shows as the map of a refusal: the newest commit before
+    # it, compared by the revision the refusal's report names.
+    viewer = (experiment_dir / "thor_viewer.py").read_text()
+    assert 'report.get("gate_refreshes")' in viewer
+    assert '== mapped["commit"]["data"]["refreshes"]' in viewer
+    # What the line of a full recording is said for: the writer's own words.
+    words = "recording size limit reached (conservative uncompressed reservation)"
+    assert f'self.writer_error = "{words}"' in recorder
+    assert debug_recording._SIZE_REASON in words
+    assert "self.disabled = True" in recorder and "self.start_mono_ns" in recorder
+
+
+@experiment
+def test_the_debug_recordings_keeper_stands_on_the_experiments_writer_and_viewer(
+    experiment_dir: Path,
+) -> None:
+    from isaaccapture_examples.agentic_remote.agent import debug_recording
+
+    recorder = (experiment_dir / "thor_recording.py").read_text()
+    writer = recorder[
+        recorder.index("    def _writer(self):") : recorder.index(
+            "    def _status(self, finalized):"
+        )
+    ]
+    # Where the keeper stands: the recorder's thread takes an event from its
+    # queue and then checks it against the size, by these words.
+    taken = "row, arrays, size = self.events.get(timeout=0.1)"
+    check = (
+        f"if self.written_bytes + size + {debug_recording._CHECK_BYTES} "
+        "> self.max_bytes:"
+    )
+    assert "self.events = queue.Queue(" in recorder
+    assert writer.count(taken) == 1 == writer.count(check)
+    assert writer.index(taken) < writer.index(check)
+    # The written bytes are that thread's alone: it adds to them, the status
+    # reads them, and nothing else of the recorder names them.
+    assert recorder.count("self.written_bytes") == 5
+    assert writer.count("self.written_bytes += ") == 2
+    assert "self.seq = self.pending_bytes = self.written_bytes = 0" in recorder
+    assert '"written_bytes": self.written_bytes,' in recorder
+    # The file the keeper removes is the one the thread wrote, by the event's
+    # id, and it wrote it before the event's row: a row whose arrays are not
+    # there is one the keeper dropped.
+    named = "rel = f\"arrays/{row['id']:09d}.npz\""
+    assert named in writer and named.count("09d") == 1
+    assert writer.index("self._write_arrays(path, arrays)") < writer.index(
+        "stream.write(line)"
+    )
+    assert "self.written_bytes += path.stat().st_size" in writer
+    # The marks of a tick: the recorder numbers its events one after another,
+    # in the order its thread writes them, and each row names the thread that
+    # recorded it.
+    emit = recorder[recorder.index("    def emit(self, kind, **data):") :]
+    emit = emit[: emit.index("    def record(self, kind, builder):")]
+    numbered = "self.seq += 1\n                event_id = self.seq\n"
+    assert emit.count(numbered) == 1 and recorder.count("self.seq +=") == 1
+    assert emit.index("with self.lock:") < emit.index(numbered)
+    assert emit.index(numbered) < emit.index("self.events.put_nowait(")
+    assert '"id": event_id,' in emit
+    assert '"thread": threading.current_thread().name,' in emit
+    # The status: the names of its file, what makes it "complete", and that
+    # the thread writes the last one itself, also after it stopped.
+    assert f'temp = self.path / "{debug_recording._STATUS_PARTIAL}"' in recorder
+    assert f'temp.replace(self.path / "{debug_recording.STATUS_FILE}")' in recorder
+    assert re.search(
+        r'"finalized": finalized,\s+"complete": bool\(\s+finalized\b', recorder
+    )
+    assert "self._status(self.stop.is_set() and self.events.empty())" in writer
+    assert "self.start_wall_ns" in recorder
+    # The viewer. Its index reads rows only; the state of a time reads the
+    # arrays of the bridge's answer, the picture those of the camera frame
+    # and the map's input. So the pictures can go first.
+    viewer = (experiment_dir / "thor_viewer.py").read_text()
+    index = viewer[
+        viewer.index("    def consume(self, row):") : viewer.index("    def load(")
+    ]
+    assert "load(" not in index and "arrays" not in index
+    assert 'query = self.load(mapped["query"]).get("result", {})' in viewer
+    assert 'frame = self.load(mapped["frame"])["frame"]' in viewer
+    assert 'inp = self.load(mapped["input"])' in viewer
+    pictures = debug_recording.PICTURE_KINDS
+    assert {"map.frame", "map.depth_input"} <= pictures < debug_recording.MAP_KINDS
+    assert "bridge.response" not in pictures and "mask.pose" not in pictures
+    # A file that is not there is an error of that one request, by its name.
+    assert "except (ValueError, FileNotFoundError, KeyError) as error:" in viewer
+    assert "self.send_error(400, str(error))" in viewer
+    # The page: a failed state leaves what is shown and its time, so "Play
+    # recording" would stand still at a time without state; "Follow live"
+    # asks for the newest again.
+    page = (experiment_dir / "thor_viewer.html").read_text()
+    assert "if(!res.ok)throw Error(await res.text());" in page
+    assert "render();$('error').textContent='';if(playing){at=Math.min(" in page
+    assert "catch(e){$('error').textContent=String(e);}" in page
+    assert "follow=true;playing=false;at=null;initial=false;imageKey='';" in page
+    assert "$('photo').src='/api/image?'" in page
 
 
 # APAI's configuration

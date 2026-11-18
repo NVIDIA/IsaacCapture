@@ -2995,12 +2995,11 @@ def test_the_app_refuses_a_driver_name_it_does_not_know(
 def test_a_file_without_a_live_view_is_taken_with_every_driver(
     config, sim_arm, checkers, clock
 ):
-    # The person at the controller may stand at the arm and see it: nothing
-    # shows the robot app whether they do, so every driver takes the file.
+    # Every driver takes the file. The line says what the file says, and
+    # nothing of where the person stands or what they see.
     unseen = human_config(config, require_live_view=False)
     assert NO_LIVE_VIEW == (
-        "human driving needs no live view: the person at the controller must "
-        "see the arm itself"
+        "human driving is not tied to a live view (human.require_live_view false)"
     )
     assert app_module.no_live_view_notice(unseen) == NO_LIVE_VIEW
     for driver in DRIVERS:
