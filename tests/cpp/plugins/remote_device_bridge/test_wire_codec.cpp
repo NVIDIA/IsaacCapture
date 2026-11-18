@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <string>
 #include <utility>
 #include <vector>
@@ -24,6 +25,11 @@ constexpr size_t kWristHandOffset = sizeof(int64_t);
 constexpr size_t kWristValidOffset = kWristHandOffset + sizeof(uint8_t);
 //! SCHEMA_SAMPLE payload: two i64 sample times, then the u32 byte count.
 constexpr size_t kSchemaByteCountOffset = 2 * sizeof(int64_t);
+
+std::vector<uint8_t> bytes_of(std::initializer_list<uint8_t> values)
+{
+    return values;
+}
 
 bool same_pose(const XrPosef& a, const XrPosef& b)
 {
@@ -76,12 +82,12 @@ std::vector<uint8_t> reference_hand_payload(const protocol::HandSample& sample)
 
 std::vector<uint8_t> hand_payload(const protocol::HandSample& sample)
 {
-    return protocol::split_frame(protocol::encode_hand_sample_frame(1, sample.joints.data(), sample.sample_time_ns)).payload;
+    return protocol::split_frame(protocol::encode_hand_sample_frame(1, sample.joints, sample.sample_time_ns)).payload;
 }
 
 std::vector<uint8_t> schema_payload(const protocol::SchemaSample& sample)
 {
-    return protocol::split_frame(protocol::encode_schema_sample_frame(1, sample.bytes.data(), sample.bytes.size(),
+    return protocol::split_frame(protocol::encode_schema_sample_frame(1, sample.bytes,
                                                                       sample.sample_time_local_common_clock_ns,
                                                                       sample.sample_time_raw_device_clock_ns))
         .payload;
@@ -201,11 +207,11 @@ TEST_CASE("OPEN_HAND encodes both hands and rejects others", "[remote_device_bri
 {
     REQUIRE(protocol::encode_open_hand(XR_HAND_LEFT_EXT) == std::vector<uint8_t>{ 0 });
     REQUIRE(protocol::encode_open_hand(XR_HAND_RIGHT_EXT) == std::vector<uint8_t>{ 1 });
-    REQUIRE(protocol::decode_open_hand({ 0 }) == XR_HAND_LEFT_EXT);
-    REQUIRE(protocol::decode_open_hand({ 1 }) == XR_HAND_RIGHT_EXT);
-    REQUIRE_THROWS_AS(protocol::decode_open_hand({ 2 }), protocol::DecodeError);
-    REQUIRE_THROWS_AS(protocol::decode_open_hand({}), protocol::DecodeError);
-    REQUIRE_THROWS_AS(protocol::decode_open_hand({ 0, 0 }), protocol::DecodeError);
+    REQUIRE(protocol::decode_open_hand(bytes_of({ 0 })) == XR_HAND_LEFT_EXT);
+    REQUIRE(protocol::decode_open_hand(bytes_of({ 1 })) == XR_HAND_RIGHT_EXT);
+    REQUIRE_THROWS_AS(protocol::decode_open_hand(bytes_of({ 2 })), protocol::DecodeError);
+    REQUIRE_THROWS_AS(protocol::decode_open_hand(bytes_of({})), protocol::DecodeError);
+    REQUIRE_THROWS_AS(protocol::decode_open_hand(bytes_of({ 0, 0 })), protocol::DecodeError);
 }
 
 TEST_CASE("OPEN_SCHEMA round-trips SchemaPusherConfig", "[remote_device_bridge][unit]")
@@ -319,7 +325,7 @@ TEST_CASE("ERROR carries a message and empty payloads decode", "[remote_device_b
 {
     REQUIRE(protocol::decode_error(protocol::encode_error("boom")) == "boom");
     REQUIRE(protocol::decode_error(protocol::encode_error("")).empty());
-    REQUIRE_THROWS_AS(protocol::decode_error({ 4, 0, 0, 0, 'a' }), protocol::DecodeError);
+    REQUIRE_THROWS_AS(protocol::decode_error(bytes_of({ 4, 0, 0, 0, 'a' })), protocol::DecodeError);
 }
 
 TEST_CASE("PING and PONG round-trip and PONG records its send time", "[remote_device_bridge][unit]")
@@ -327,7 +333,7 @@ TEST_CASE("PING and PONG round-trip and PONG records its send time", "[remote_de
     const std::vector<uint8_t> ping = protocol::encode_ping(-123456789012345LL);
     REQUIRE(ping.size() == 8);
     REQUIRE(protocol::decode_ping(ping) == -123456789012345LL);
-    REQUIRE_THROWS_AS(protocol::decode_ping({ 1, 2, 3 }), protocol::DecodeError);
+    REQUIRE_THROWS_AS(protocol::decode_ping(bytes_of({ 1, 2, 3 })), protocol::DecodeError);
 
     const std::vector<uint8_t> payload = protocol::encode_pong(protocol::Pong{ 1, 2, 3 });
     REQUIRE(payload.size() == 24);
@@ -352,8 +358,8 @@ TEST_CASE("PING and PONG round-trip and PONG records its send time", "[remote_de
     std::vector<uint8_t> ping_frame =
         protocol::encode_frame(protocol::FrameType::Ping, protocol::kSessionChannelId, ping);
     REQUIRE_THROWS_AS(protocol::set_pong_sent_time(ping_frame, 42), std::invalid_argument);
-    REQUIRE_THROWS_WITH(protocol::decode_ping({ 1, 2, 3 }), Catch::Matchers::ContainsSubstring("PING"));
-    REQUIRE_THROWS_WITH(protocol::decode_pong({ 1 }), Catch::Matchers::ContainsSubstring("PONG"));
+    REQUIRE_THROWS_WITH(protocol::decode_ping(bytes_of({ 1, 2, 3 })), Catch::Matchers::ContainsSubstring("PING"));
+    REQUIRE_THROWS_WITH(protocol::decode_pong(bytes_of({ 1 })), Catch::Matchers::ContainsSubstring("PONG"));
 }
 
 TEST_CASE("Contiguous frame builders match header + payload encoder byte for byte", "[remote_device_bridge][unit]")
@@ -361,8 +367,7 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
     SECTION("SCHEMA_SAMPLE against a hand-built golden frame")
     {
         const std::vector<uint8_t> bytes = { 0xDE, 0xAD };
-        std::vector<uint8_t> frame =
-            protocol::encode_schema_sample_frame(3, bytes.data(), bytes.size(), 0x0102030405060708LL, -1);
+        std::vector<uint8_t> frame = protocol::encode_schema_sample_frame(3, bytes, 0x0102030405060708LL, -1);
         // clang-format off
         const std::vector<uint8_t> golden = {
             0x52, 0x50, 0x53, 0x30,                         // magic "RPS0"
@@ -409,7 +414,7 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
         }
         const std::vector<uint8_t> payload = reference_hand_payload(sample);
         REQUIRE(payload.size() == protocol::kHandSamplePayloadSize);
-        const std::vector<uint8_t> frame = protocol::encode_hand_sample_frame(0x0102, sample.joints.data(), -42);
+        const std::vector<uint8_t> frame = protocol::encode_hand_sample_frame(0x0102, sample.joints, -42);
         REQUIRE(frame.size() == protocol::kHeaderSize + protocol::kHandSamplePayloadSize);
         const protocol::FrameHeader header = protocol::decode_header(frame);
         REQUIRE(header.type == protocol::FrameType::HandSample);
@@ -430,7 +435,6 @@ TEST_CASE("Contiguous frame builders match header + payload encoder byte for byt
     SECTION("payloads above the limit are refused at build time")
     {
         std::vector<uint8_t> too_big(protocol::kMaxPayloadSize + 1);
-        REQUIRE_THROWS_AS(
-            protocol::encode_schema_sample_frame(1, too_big.data(), too_big.size(), 0, 0), std::invalid_argument);
+        REQUIRE_THROWS_AS(protocol::encode_schema_sample_frame(1, too_big, 0, 0), std::invalid_argument);
     }
 }

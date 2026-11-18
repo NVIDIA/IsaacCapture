@@ -104,9 +104,9 @@ public:
         m_out.insert(m_out.end(), value.begin(), value.end());
     }
 
-    void bytes(const uint8_t* data, size_t size)
+    void bytes(std::span<const uint8_t> data)
     {
-        m_out.insert(m_out.end(), data, data + size);
+        m_out.insert(m_out.end(), data.begin(), data.end());
     }
 
     void pose(const XrPosef& value)

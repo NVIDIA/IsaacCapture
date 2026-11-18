@@ -113,7 +113,7 @@ std::vector<uint8_t> build_payload(Write write)
 
 //! Runs `read` over `payload` and rejects trailing bytes; the payload-side mirror of build_payload.
 template <typename Read>
-auto parse_payload(const std::vector<uint8_t>& payload, const char* what, Read read)
+auto parse_payload(std::span<const uint8_t> payload, const char* what, Read read)
 {
     Reader reader(payload, what);
     auto value = read(reader);
@@ -123,36 +123,33 @@ auto parse_payload(const std::vector<uint8_t>& payload, const char* what, Read r
 
 } // namespace
 
-std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
-                                              const XrHandJointLocationEXT* joints,
-                                              int64_t sample_time_ns)
+std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id, HandJoints joints, int64_t sample_time_ns)
 {
     return build_frame(FrameType::HandSample, channel_id, kHandSamplePayloadSize,
                        [&](Writer& writer)
                        {
                            writer.i64(sample_time_ns);
-                           for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; ++i)
+                           for (const XrHandJointLocationEXT& joint : joints)
                            {
-                               writer.u64(joints[i].locationFlags);
-                               writer.pose(joints[i].pose);
-                               writer.f32(joints[i].radius);
+                               writer.u64(joint.locationFlags);
+                               writer.pose(joint.pose);
+                               writer.f32(joint.radius);
                            }
                        });
 }
 
 std::vector<uint8_t> encode_schema_sample_frame(uint16_t channel_id,
-                                                const uint8_t* bytes,
-                                                size_t size,
+                                                std::span<const uint8_t> bytes,
                                                 int64_t sample_time_local_common_clock_ns,
                                                 int64_t sample_time_raw_device_clock_ns)
 {
-    return build_frame(FrameType::SchemaSample, channel_id, kSchemaSampleFixedSize + size,
+    return build_frame(FrameType::SchemaSample, channel_id, kSchemaSampleFixedSize + bytes.size(),
                        [&](Writer& writer)
                        {
                            writer.i64(sample_time_local_common_clock_ns);
                            writer.i64(sample_time_raw_device_clock_ns);
-                           writer.u32(static_cast<uint32_t>(size));
-                           writer.bytes(bytes, size);
+                           writer.u32(static_cast<uint32_t>(bytes.size()));
+                           writer.bytes(bytes);
                        });
 }
 
@@ -246,7 +243,7 @@ void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns)
     detail::store_le(pong_frame.data() + kPongSentOffset, pong_sent_ns);
 }
 
-Hello decode_hello(const std::vector<uint8_t>& payload)
+Hello decode_hello(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "HELLO",
                          [](Reader& reader)
@@ -267,7 +264,7 @@ Hello decode_hello(const std::vector<uint8_t>& payload)
                          });
 }
 
-HelloAck decode_hello_ack(const std::vector<uint8_t>& payload)
+HelloAck decode_hello_ack(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "HELLO_ACK",
                          [](Reader& reader)
@@ -279,12 +276,12 @@ HelloAck decode_hello_ack(const std::vector<uint8_t>& payload)
                          });
 }
 
-XrHandEXT decode_open_hand(const std::vector<uint8_t>& payload)
+XrHandEXT decode_open_hand(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "OPEN_HAND", [](Reader& reader) { return from_wire_hand(reader.u8()); });
 }
 
-core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload)
+core::SchemaPusherConfig decode_open_schema(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "OPEN_SCHEMA",
                          [](Reader& reader)
@@ -299,7 +296,7 @@ core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload)
                          });
 }
 
-HandSample decode_hand_sample(const std::vector<uint8_t>& payload)
+HandSample decode_hand_sample(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "HAND_SAMPLE",
                          [](Reader& reader)
@@ -316,7 +313,7 @@ HandSample decode_hand_sample(const std::vector<uint8_t>& payload)
                          });
 }
 
-SchemaSample decode_schema_sample(const std::vector<uint8_t>& payload)
+SchemaSample decode_schema_sample(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "SCHEMA_SAMPLE",
                          [](Reader& reader)
@@ -330,7 +327,7 @@ SchemaSample decode_schema_sample(const std::vector<uint8_t>& payload)
                          });
 }
 
-WristSample decode_wrist_sample(const std::vector<uint8_t>& payload)
+WristSample decode_wrist_sample(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "WRIST_SAMPLE",
                          [](Reader& reader)
@@ -345,17 +342,17 @@ WristSample decode_wrist_sample(const std::vector<uint8_t>& payload)
                          });
 }
 
-std::string decode_error(const std::vector<uint8_t>& payload)
+std::string decode_error(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "ERROR", [](Reader& reader) { return reader.str(); });
 }
 
-int64_t decode_ping(const std::vector<uint8_t>& payload)
+int64_t decode_ping(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "PING", [](Reader& reader) { return reader.i64(); });
 }
 
-Pong decode_pong(const std::vector<uint8_t>& payload)
+Pong decode_pong(std::span<const uint8_t> payload)
 {
     return parse_payload(payload, "PONG",
                          [](Reader& reader)

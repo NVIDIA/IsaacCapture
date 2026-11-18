@@ -11,6 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -76,6 +77,9 @@ static_assert(kJointSize == 40);
 static_assert(kHandSamplePayloadSize == 1048);
 static_assert(kSchemaSampleFixedSize == 20);
 
+//! One hand's joints, as IHandTrackingPushChannel::push receives them.
+using HandJoints = std::span<const XrHandJointLocationEXT, XR_HAND_JOINT_COUNT_EXT>;
+
 std::vector<uint8_t> encode_hello(const Hello& value);
 std::vector<uint8_t> encode_hello_ack(const HelloAck& value);
 //! One byte: 0 = left, 1 = right.
@@ -90,25 +94,22 @@ std::vector<uint8_t> encode_pong(const Pong& value);
 void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns);
 
 // Sample frames are only built this way: the builders read the plugin's buffers directly so a push copies once.
-std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
-                                              const XrHandJointLocationEXT* joints,
-                                              int64_t sample_time_ns);
+std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id, HandJoints joints, int64_t sample_time_ns);
 std::vector<uint8_t> encode_schema_sample_frame(uint16_t channel_id,
-                                                const uint8_t* bytes,
-                                                size_t size,
+                                                std::span<const uint8_t> bytes,
                                                 int64_t sample_time_local_common_clock_ns,
                                                 int64_t sample_time_raw_device_clock_ns);
 
 // Parsers throw DecodeError, naming the frame, on truncated, over-long or out-of-range payloads.
-Hello decode_hello(const std::vector<uint8_t>& payload);
-HelloAck decode_hello_ack(const std::vector<uint8_t>& payload);
-XrHandEXT decode_open_hand(const std::vector<uint8_t>& payload);
-core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload);
-HandSample decode_hand_sample(const std::vector<uint8_t>& payload);
-SchemaSample decode_schema_sample(const std::vector<uint8_t>& payload);
-WristSample decode_wrist_sample(const std::vector<uint8_t>& payload);
-std::string decode_error(const std::vector<uint8_t>& payload);
-int64_t decode_ping(const std::vector<uint8_t>& payload);
-Pong decode_pong(const std::vector<uint8_t>& payload);
+Hello decode_hello(std::span<const uint8_t> payload);
+HelloAck decode_hello_ack(std::span<const uint8_t> payload);
+XrHandEXT decode_open_hand(std::span<const uint8_t> payload);
+core::SchemaPusherConfig decode_open_schema(std::span<const uint8_t> payload);
+HandSample decode_hand_sample(std::span<const uint8_t> payload);
+SchemaSample decode_schema_sample(std::span<const uint8_t> payload);
+WristSample decode_wrist_sample(std::span<const uint8_t> payload);
+std::string decode_error(std::span<const uint8_t> payload);
+int64_t decode_ping(std::span<const uint8_t> payload);
+Pong decode_pong(std::span<const uint8_t> payload);
 
 } // namespace remote_plugin_protocol

@@ -76,7 +76,7 @@ public:
 FrameHeader decode_header(std::span<const uint8_t> in);
 
 //! Writes header + payload into one contiguous buffer. seq and t_send stay zero until stamp_header().
-std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload);
+std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, std::span<const uint8_t> payload);
 //! Patches seq and t_send into an encoded frame's header in place.
 void stamp_header(std::vector<uint8_t>& frame, uint32_t seq, int64_t t_send_monotonic_ns);
 //! Splits one complete message into header and payload. The payload keeps `message`'s buffer (its bytes are

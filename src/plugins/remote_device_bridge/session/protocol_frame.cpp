@@ -83,10 +83,9 @@ Frame split_frame(std::vector<uint8_t> message)
     return frame;
 }
 
-std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, const std::vector<uint8_t>& payload)
+std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, std::span<const uint8_t> payload)
 {
-    return build_frame(
-        type, channel_id, payload.size(), [&payload](Writer& writer) { writer.bytes(payload.data(), payload.size()); });
+    return build_frame(type, channel_id, payload.size(), [payload](Writer& writer) { writer.bytes(payload); });
 }
 
 FrameHeader decode_header(std::span<const uint8_t> in)
