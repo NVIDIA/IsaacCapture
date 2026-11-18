@@ -13,11 +13,16 @@ import logging
 import select
 import signal
 import socket
+import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("isaaccapture.camera_streamer.consumer")
+
+# ipc_protocol is a sibling of cuda_ipc_consumer; import it from the source tree without an install step.
+_STREAMER_ROOT = str(Path(__file__).resolve().parents[1])
 
 
 @dataclass
@@ -57,6 +62,8 @@ class CudaIpcClient:
         self.slots: dict[tuple[str, int], IpcSlot] = {}
         self.stream_order: list[str] = []
         self.stream_info: dict[str, dict] = {}
+        self.markers = None
+        self._marker_streams: dict[str, int] = {}
 
     def connect(self) -> dict:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -65,6 +72,11 @@ class CudaIpcClient:
         hello = self._read_json_blocking()
         if hello is None or hello.get("type") != "hello":
             raise RuntimeError(f"expected hello message, got {hello!r}")
+        if "slot_write_generation" not in (hello.get("features") or []):
+            raise RuntimeError(
+                "the publisher does not provide slot write generations, so a copied "
+                "picture cannot be validated; update camera_receiver"
+            )
         self._send_json({"type": "subscribe", "streams": self.requested_streams})
         subscribed = self._read_json_blocking()
         if subscribed is None:
@@ -73,6 +85,7 @@ class CudaIpcClient:
             raise RuntimeError(str(subscribed.get("error", "subscription failed")))
         if subscribed.get("type") != "subscribed":
             raise RuntimeError(f"expected subscribed message, got {subscribed!r}")
+        self._open_markers(subscribed)
         self._open_streams(subscribed)
         sock.setblocking(False)
         return {"hello": hello, "subscribed": subscribed}
@@ -90,6 +103,35 @@ class CudaIpcClient:
             slot.owner.close()
         self.slots.clear()
         self.recv_buf.clear()
+        if self.markers is not None:
+            self.markers.close()
+            self.markers = None
+
+    def slot_unchanged(self, stream: str, slot: int, generation: int) -> bool:
+        """Whether no write has begun on the slot since ``generation`` was announced.
+
+        Accept a copied picture only if this is true after every GPU read of the slot has
+        completed; checking before the copy only saves work.
+        """
+        return self.markers.unchanged(self._marker_streams[stream], slot, generation)
+
+    def _open_markers(self, subscribed: dict) -> None:
+        info = subscribed.get("slot_markers")
+        if not isinstance(info, dict):
+            raise RuntimeError("the publisher did not offer slot write generations")
+        if _STREAMER_ROOT not in sys.path:
+            sys.path.append(_STREAMER_ROOT)
+        import ipc_protocol
+
+        self.markers = ipc_protocol.SlotMarkers.attach(
+            str(info["name"]),
+            int(info["size"]),
+            int(info["layout_version"]),
+            int(info["epoch"]),
+        )
+        self._marker_streams = {
+            str(name): int(index) for name, index in info["stream_indexes"].items()
+        }
 
     def read_messages(self, timeout_s: float = 0.05) -> Optional[list[dict]]:
         """Return all currently available messages, or None on socket EOF."""
@@ -500,13 +542,12 @@ def run(args: argparse.Namespace) -> int:
 
     latest_cpu: dict[str, object] = {}
     latest_metadata_by_stream: dict[str, dict] = {}
-    latest_generation_by_slot: dict[tuple[str, int], int] = {}
     counts: dict[str, int] = dict.fromkeys(client.stream_order, 0)
     stats_interval = max(1, args.stats_every)
     last_report = time.monotonic()
     last_counts = dict(counts)
     frames_seen = 0
-    overwritten = 0
+    discarded = 0
     csv_file = None
     csv_writer = None
     if args.latency_csv:
@@ -528,12 +569,6 @@ def run(args: argparse.Namespace) -> int:
                 msg = _annotate_consumer_receive(msg)
                 stream = str(msg["stream"])
                 slot_id = int(msg["slot"])
-                generation = int(msg.get("slot_generation", 0))
-                key = (stream, slot_id)
-                previous = latest_generation_by_slot.get(key)
-                if previous is not None and generation > previous + 1:
-                    overwritten += generation - previous - 1
-                latest_generation_by_slot[key] = generation
                 counts[stream] = counts.get(stream, 0) + 1
                 frames_seen += 1
                 latest_msg_by_stream[stream] = msg
@@ -555,11 +590,19 @@ def run(args: argparse.Namespace) -> int:
                 if slot is None:
                     print(f"unknown frame slot: {stream}[{slot_id}]", flush=True)
                     continue
-                updated_display = True
                 if cv2 is not None:
-                    latest_cpu[stream] = _to_bgr_cpu(
-                        slot.array, client.stream_info.get(stream, {})
-                    )
+                    generation = int(msg.get("slot_generation", 0))
+                    if not client.slot_unchanged(stream, slot_id, generation):
+                        discarded += 1
+                        continue
+                    # The device-to-host copy has finished when this returns; a write that
+                    # began meanwhile has changed the marker, and the copy is discarded.
+                    image = _to_bgr_cpu(slot.array, client.stream_info.get(stream, {}))
+                    if not client.slot_unchanged(stream, slot_id, generation):
+                        discarded += 1
+                        continue
+                    latest_cpu[stream] = image
+                updated_display = True
 
             if cv2 is None:
                 for msg in sampled_messages:
@@ -572,7 +615,11 @@ def run(args: argparse.Namespace) -> int:
                     metadata_text = _format_stream_metadata(msg.get("metadata"))
                     mean_text = ""
                     if args.sample_mean:
+                        generation = int(msg.get("slot_generation", 0))
                         mean = float(cp.mean(slot.array).get())
+                        if not client.slot_unchanged(stream, slot_id, generation):
+                            discarded += 1
+                            continue
                         mean_text = f" mean={mean:.2f}"
                     print(
                         f"{stream}[{slot_id}] gen={msg.get('slot_generation')} "
@@ -603,9 +650,9 @@ def run(args: argparse.Namespace) -> int:
                     prev = last_counts.get(name, 0)
                     rates.append(f"{name}: {current - prev} fps")
                     last_counts[name] = current
-                if overwritten:
-                    rates.append(f"overwritten_slots={overwritten}")
-                    overwritten = 0
+                if discarded:
+                    rates.append(f"discarded_frames={discarded}")
+                    discarded = 0
                 metadata_text = _format_summary_metadata(
                     _latest_metadata(latest_metadata_by_stream, client.stream_order)
                 )

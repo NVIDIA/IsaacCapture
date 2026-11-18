@@ -6,11 +6,15 @@ Protocol v2 uses a newline-delimited JSON control socket:
 
 1. Publisher -> client: ``hello`` stream catalog, no CUDA handles yet.
 2. Client -> publisher: ``subscribe`` with stream names, or omitted/empty for all.
-3. Publisher -> client: ``subscribed`` with CUDA IPC handles for selected streams.
+3. Publisher -> client: ``subscribed`` with CUDA IPC handles for selected streams
+   and the shared write-generation markers for their slots.
 4. Publisher -> client: ``frame`` notifications for selected streams only.
 
 Image bytes stay in same-host CUDA IPC memory. The socket only carries control
-messages and per-frame metadata.
+messages and per-frame metadata. The receiver advances a slot's marker before it
+touches the slot's pixels and announces that generation once the write is
+complete, so a reader that finds the marker unchanged after its copy finished
+holds a picture that no write overlapped (see ``ipc_protocol``).
 """
 
 from __future__ import annotations
@@ -22,10 +26,14 @@ import os
 import queue
 import signal
 import socket
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+
+# ipc_protocol is a sibling of camera_receiver; import it from the source tree without an install step.
+_STREAMER_ROOT = str(Path(__file__).resolve().parents[1])
 
 logger = logging.getLogger("isaaccapture.camera_streamer.ipc")
 
@@ -33,6 +41,15 @@ _CLIENT_SEND_TIMEOUT_S = 2.0
 _CLIENT_SUBSCRIBE_TIMEOUT_S = 5.0
 _MAX_CONTROL_BYTES = 1024 * 1024
 _SEND_FLAGS = getattr(socket, "MSG_NOSIGNAL", 0)
+
+
+def _markers_module():
+    """The native slot-marker module, imported on first use."""
+    if _STREAMER_ROOT not in sys.path:
+        sys.path.append(_STREAMER_ROOT)
+    import ipc_protocol
+
+    return ipc_protocol
 
 
 @dataclass(frozen=True)
@@ -73,6 +90,8 @@ class CudaIpcFramePublisher:
     ) -> None:
         self._socket_path = str(socket_path)
         self._owner_name = owner_name
+        self._stream_order: list[str] = []
+        self._markers: Any = None
         self._queue: "queue.Queue[dict[str, Any]]" = queue.Queue(maxsize=queue_size)
         self._streams: dict[str, _StreamInfo] = {}
         self._clients: list[_ClientState] = []
@@ -132,6 +151,9 @@ class CudaIpcFramePublisher:
         with self._lock:
             if name in self._streams:
                 raise ValueError(f"CUDA IPC stream {name!r} registered twice")
+            if self._started:
+                raise RuntimeError("CUDA IPC streams must be registered before start()")
+            self._stream_order.append(name)
             self._streams[name] = _StreamInfo(
                 name=name,
                 width=int(width),
@@ -157,8 +179,14 @@ class CudaIpcFramePublisher:
         self._ignore_sigpipe()
         self._stop.clear()
         try:
+            if self._stream_order:
+                self._markers = _markers_module().SlotMarkers.create(
+                    "/camera_receiver_slots",
+                    [len(self._streams[n].slots) for n in self._stream_order],
+                )
             self._open_server()
         except Exception:
+            self._close_markers()
             with self._lock:
                 self._started = False
             raise
@@ -205,6 +233,7 @@ class CudaIpcFramePublisher:
                 thread.join(timeout=2.0)
         self._accept_thread = None
         self._broadcast_thread = None
+        self._close_markers()
         try:
             if os.path.exists(self._socket_path):
                 os.unlink(self._socket_path)
@@ -212,6 +241,22 @@ class CudaIpcFramePublisher:
             logger.debug(
                 "CUDA IPC: failed to unlink %s", self._socket_path, exc_info=True
             )
+
+    def begin_write(self, stream_name: str, slot: int) -> int:
+        """Record a write attempt on ``slot`` and return its generation.
+
+        Call before the first GPU operation that may touch the slot, for every stream the
+        attempt writes. Publish the returned generation only if the attempt succeeds; a failed
+        attempt is never undone, so earlier notices for the slot stay invalid.
+        """
+        if self._markers is None:
+            raise RuntimeError("CUDA IPC publisher is not started")
+        return self._markers.begin_write(self._stream_order.index(stream_name), slot)
+
+    def _close_markers(self) -> None:
+        markers, self._markers = self._markers, None
+        if markers is not None:
+            markers.close()
 
     def publish(
         self,
@@ -296,6 +341,18 @@ class CudaIpcFramePublisher:
         ]
         return msg
 
+    def _markers_descriptor(self) -> Optional[dict[str, Any]]:
+        markers = self._markers
+        if markers is None:
+            return None
+        return {
+            "name": markers.name,
+            "size": markers.size,
+            "layout_version": markers.layout_version,
+            "epoch": markers.epoch,
+            "stream_indexes": {n: i for i, n in enumerate(self._stream_order)},
+        }
+
     def _hello_message(self) -> dict[str, Any]:
         with self._lock:
             streams = list(self._streams.values())
@@ -308,6 +365,7 @@ class CudaIpcFramePublisher:
                 "avs1_metadata",
                 "latency_metadata",
                 "slot_generation",
+                "slot_write_generation",
                 "nv12",
             ],
             "owner": self._owner_name,
@@ -329,6 +387,7 @@ class CudaIpcFramePublisher:
             {
                 "type": "subscribed",
                 "version": 2,
+                "slot_markers": self._markers_descriptor(),
                 "streams": [
                     self._stream_with_slots(all_streams[name])
                     for name in selected_names

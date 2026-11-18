@@ -41,8 +41,11 @@ else
   "$PYTHON_EXE" -m pip check
 fi
 
+echo "setup.sh: building slot marker module"
+IPC_PROTOCOL_PYTHON="$PYTHON_EXE" "${HERE}/../ipc_protocol/build.sh"
+
 echo "setup.sh: verifying imports"
-"$PYTHON_EXE" - <<'PY'
+IPC_PARENT="$(cd "${HERE}/.." && pwd)" "$PYTHON_EXE" - <<'PY'
 import cupy
 import cv2
 import numpy
@@ -50,6 +53,12 @@ import numpy
 print(f"numpy={numpy.__version__}")
 print(f"cupy={cupy.__version__}")
 print(f"opencv={cv2.__version__}")
+
+import os
+import sys
+
+sys.path.append(os.environ["IPC_PARENT"])
+import ipc_protocol  # noqa: E402,F401
 PY
 
 echo

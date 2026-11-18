@@ -932,6 +932,8 @@ def test_ensure_receiver_environment_runs_setup_only_when_something_is_missing(m
     receiver_dir = tmp_path / "examples/camera_streamer/camera_receiver"
     (receiver_dir / ".venv/bin").mkdir(parents=True)
     (receiver_dir / "codec").mkdir()
+    markers_dir = tmp_path / "examples/camera_streamer/ipc_protocol"
+    markers_dir.mkdir()
     monkeypatch.setattr(ss, "REPO_ROOT", tmp_path)
     calls = []
     monkeypatch.setattr(ss.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
@@ -940,6 +942,11 @@ def test_ensure_receiver_environment_runs_setup_only_when_something_is_missing(m
     calls.clear()
     (receiver_dir / ".venv/bin/python").write_text("")
     (receiver_dir / "codec/_camera_receiver_codec.cpython-313-x86_64-linux-gnu.so").write_text("")
+    # Only the slot marker module is missing.
+    ss.ensure_receiver_environment()
+    assert calls == [["bash", str(receiver_dir / "setup.sh")]]
+    calls.clear()
+    (markers_dir / "_slot_markers.cpython-313-x86_64-linux-gnu.so").write_text("")
     ss.ensure_receiver_environment()
     assert calls == []
 

@@ -588,11 +588,13 @@ def control_token(log: Path) -> str | None:
 
 
 def ensure_receiver_environment() -> None:
-    """Run the receiver's own ``setup.sh`` when its venv or its native decoder is missing; it is idempotent."""
+    """Run the receiver's own ``setup.sh`` when its venv or a native module is missing; it is idempotent."""
     receiver_dir = REPO_ROOT / "examples/camera_streamer/camera_receiver"
     has_venv = receiver_venv_python(receiver_dir).is_file()
     has_codec = any((receiver_dir / "codec").glob("_camera_receiver_codec*.so"))
-    if has_venv and has_codec:
+    # The slot marker module is shared with the readers, so it lives beside the receiver, not in it.
+    has_markers = any((receiver_dir.parent / "ipc_protocol").glob("_slot_markers*.so"))
+    if has_venv and has_codec and has_markers:
         return
     print("setting up the camera receiver environment (first run)", flush=True)
     subprocess.run(["bash", str(receiver_dir / "setup.sh")], check=True)

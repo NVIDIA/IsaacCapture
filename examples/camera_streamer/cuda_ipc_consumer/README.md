@@ -26,7 +26,8 @@ cd ../cuda_ipc_consumer
 ```
 
 Each directory has its own `.venv`; the consumer does not use the
-`camera_receiver` Python environment.
+`camera_receiver` Python environment. Both build the shared slot marker module
+from [`ipc_protocol/`](../ipc_protocol/README.md).
 
 ## Run
 
@@ -48,6 +49,12 @@ Subscribe to only a subset of streams:
 ```bash
 ./run.sh --streams head.left,head.right --scale 0.35
 ```
+
+The consumer refuses a publisher that does not provide slot write generations.
+It checks the slot's marker after each copy has finished and discards a picture
+whose slot was rewritten meanwhile, counted as `discarded_frames` in the
+one-second stats. Other applications reading the pixels must do the same through
+`CudaIpcClient.slot_unchanged`.
 
 For a headless smoke test:
 

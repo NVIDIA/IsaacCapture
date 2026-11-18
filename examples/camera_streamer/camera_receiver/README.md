@@ -25,10 +25,12 @@ The setup script creates:
 ```text
 .venv/
 codec/_camera_receiver_codec*.so
+../ipc_protocol/_slot_markers*.so
 ```
 
-It installs the Python dependencies from `requirements.txt` and builds the
-local native decoder from `codec/`.
+It installs the Python dependencies from `requirements.txt`, builds the local
+native decoder from `codec/` and builds the shared slot marker module from
+[`ipc_protocol/`](../ipc_protocol/README.md).
 
 ## Run
 
@@ -101,9 +103,15 @@ rotation during that existing output write. HEVC NV12 rotation replaces the
 normal NVDEC-to-ring device copy with a rotation kernel; RGBA rotation is fused
 into color conversion, so neither path adds a second full-frame pass.
 
-`ring_depth` controls how many slots each physical IPC stream owns. Frame
-notifications include `slot_generation`; consumers can detect if a slot was
-overwritten before they consumed it.
+`ring_depth` controls how many slots each physical IPC stream owns. The receiver
+cycles through them without waiting for consumers, so a slot is rewritten
+`ring_depth` pictures after it was announced. It advances the slot's shared
+write-generation marker before it touches the pixels and announces that
+generation in the frame notice's `slot_generation` once the write is complete. A
+consumer copies the pixels, waits for its copy to finish, and accepts the copy
+only if the marker still equals the notified generation. Generations skip a value
+when a write attempt fails, so a gap is not a lost picture; use the frame
+sequence for that. See [`ipc_protocol/`](../ipc_protocol/README.md).
 
 ## Downstream consumers
 
@@ -117,8 +125,10 @@ already remapped by the sender, so consumers must not apply the wrist remap agai
 See the bundled [remap geometry and calibration](../argus_sender/remaps/README.md).
 
 Notifications include frame sequence, slot generation, source timing and local
-publish timing. Validate frame identity and generation when associating frames
-with metadata. The rings are bounded live buffers, not a durable recording queue.
+publish timing. A consumer that reads the pixels must validate its copy against
+the slot's marker, as described above; one that ignores the marker can receive a
+picture that mixes two frames. The rings are bounded live buffers, not a durable
+recording queue.
 
 ## Latency
 
