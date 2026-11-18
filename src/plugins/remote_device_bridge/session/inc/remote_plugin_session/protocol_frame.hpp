@@ -77,6 +77,12 @@ public:
 //! payload; and if `in` ends before a field it reads.
 FrameHeader decode_header(std::span<const uint8_t> in);
 
+//! What framing needs: the payload size from the first kHeaderSize bytes of `in`, checking only the magic and the
+//! payload limit, which sit at the same offsets in every protocol version. Version and type are left to
+//! decode_header, so a frame from another version still reaches the decoder and fails there with a readable reason.
+//! Throws DecodeError if `in` is shorter than a header, on bad magic or an oversized payload.
+uint32_t frame_payload_size(std::span<const uint8_t> in);
+
 //! Writes header + payload into one contiguous buffer. seq and t_send stay zero until stamp_header(), which the
 //! sender calls at the moment it writes the frame: t_send is the send time PING/PONG clock exchanges use.
 std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, std::span<const uint8_t> payload);

@@ -140,6 +140,17 @@ TEST_CASE("Frame header round-trips and validates", "[remote_device_bridge][unit
     {
         std::memset(bytes + protocol::kPayloadSizeOffset, 0xFF, sizeof(uint32_t));
         REQUIRE_THROWS_AS(protocol::decode_header({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
+        REQUIRE_THROWS_AS(protocol::frame_payload_size({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
+    }
+    SECTION("framing reads the size and checks only magic and limit")
+    {
+        REQUIRE(protocol::frame_payload_size({ bytes, protocol::kHeaderSize }) == protocol::kHandSamplePayloadSize);
+        bytes[protocol::kTypeOffset] = 200;
+        bytes[protocol::kVersionOffset] = 0;
+        REQUIRE(protocol::frame_payload_size({ bytes, protocol::kHeaderSize }) == protocol::kHandSamplePayloadSize);
+        REQUIRE_THROWS_AS(protocol::frame_payload_size({ bytes, protocol::kHeaderSize - 1 }), protocol::DecodeError);
+        bytes[0] ^= 0xFF;
+        REQUIRE_THROWS_AS(protocol::frame_payload_size({ bytes, protocol::kHeaderSize }), protocol::DecodeError);
     }
 }
 
@@ -158,6 +169,9 @@ TEST_CASE("A version-0 peer's frames are rejected by version, never decoded", "[
 
     std::vector<uint8_t> old_pong = { 0x52, 0x50, 0x53, 0x30, 14, 0, 0, 0, 0, 0, 0, 0, 24, 0, 0, 0 };
     old_pong.resize(protocol::kHeaderSize + 24, 0);
+    // Framing still finds both frames' lengths, so a transport delivers them to the decoder above.
+    REQUIRE(protocol::frame_payload_size(old_hello) == 9);
+    REQUIRE(protocol::frame_payload_size(old_pong) == 24);
     REQUIRE_THROWS_WITH(protocol::split_frame(old_pong), Catch::Matchers::ContainsSubstring("protocol version 0"));
 }
 

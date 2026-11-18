@@ -88,6 +88,26 @@ std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, std::span
     return build_frame(type, channel_id, payload.size(), [payload](Writer& writer) { writer.bytes(payload); });
 }
 
+uint32_t frame_payload_size(std::span<const uint8_t> in)
+{
+    Reader reader(in, "header");
+    if (reader.u32() != kMagic)
+    {
+        throw DecodeError("protocol: bad frame magic");
+    }
+    reader.u8(); // type
+    reader.u8(); // version
+    reader.u16(); // channel
+    reader.u32(); // seq
+    const uint32_t payload_size = reader.u32();
+    reader.i64(); // t_send: the whole header must be there
+    if (payload_size > kMaxPayloadSize)
+    {
+        throw DecodeError("protocol: payload size " + std::to_string(payload_size) + " exceeds limit");
+    }
+    return payload_size;
+}
+
 FrameHeader decode_header(std::span<const uint8_t> in)
 {
     Reader reader(in, "header");
