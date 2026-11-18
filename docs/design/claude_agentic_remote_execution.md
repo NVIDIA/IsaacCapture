@@ -7,11 +7,20 @@ SPDX-License-Identifier: Apache-2.0
 
 Status: proposal by Claude (an AI assistant), revised 2026-11-13 after the project owner's decisions of that day.
 Phases P0 to P2 of section 17 are built, as example code and one library wrapper (section 5), and pass the parts of
-their gates that need no hardware; phase P3 is built and its gate has not been run. None of it has moved a real arm,
-no headset has been connected to it, and nothing of it has run on the Thor. Every duration is an estimate, and so is
-every line count that is not marked "as built". Section 21 states where the build departs from this file in the human
-path (how a person drives the arm with the headset's controller, section 2), and sections 16 and 21 list what waits
-for the project owner's decision.
+their gates that need no hardware; phase P3 is built, and tests have run its gate on one machine with a synthetic
+controller, a script that stands in for the headset's controller (section 17). The example's README
+(`examples/agentic_remote/README.md`) reports what has run on the rig, the real arm on the Thor with its camera
+(section 2). Sessions of 2026-11-16 and 2026-11-17 ran the programs on both machines. By the report of the rig owner,
+the person who is responsible for the rig, the agent ran a pick, a lift, a hold and a place of an object on the real
+arm on 2026-11-16, at 0.1 rad/s, with the agent program on the workstation and the robot app on the Thor; the
+repository holds no record of that run. A run folder of 2026-11-17 was made on the rig with the agent program's full
+stack (section 4), the camera connection and the robot connection between the two machines, and holds the
+measurements of 14 moves and 4 jaw commands. The README marks no step of its checklist for the rig as run: no record
+of the session of 2026-11-16 says which steps passed. No headset has been connected to any of it, no person has
+driven the arm, and the human program, the program that turns a person's hand motion into joint targets (section
+21), has not run on a Thor. Every duration is an estimate, and so is every line count that is not marked "as built".
+Section 21 states where the build departs from this file in the human path (how a person drives the arm with the
+headset's controller, section 2), and sections 16 and 21 list what waits for the project owner's decision.
 
 Another proposal, written by another agent, `agentic_remote_execution.md`, exists as an uncommitted file in the main
 checkout. This document calls it "the first proposal" and was compared with it as saved on 2026-11-13 at 16:22. The aim,
@@ -29,8 +38,9 @@ keep the Thor small:
 
 - Demo 1: the agent on the workstation receives camera frames and robot state, and commands the arm.
 - Demo 2: when the agent fails, a person is prompted, takes over with the Quest headset and its right controller (gloves
-  only if the chosen demo profile needs them, section 12), and finishes the task. Section 20 names what the first
-  build leaves out of this: the person moves the arm and gives it back, and the trigger does not move the jaws.
+  only if the chosen demo profile needs them, section 12), and finishes the task. In the first build the person moves
+  the arm, moves the jaws with the controller's trigger, brings the arm to rest and gives it back; section 20 names
+  what the first build leaves out of this.
 
 The overriding instruction is to get something running quickly and refine afterwards.
 
@@ -53,7 +63,7 @@ owner's decision.
 | power, calibration and hold confirmations | What the robot app requires at the Thor terminal before it connects to the motors of the real arm, as today's launcher does: checks that ask nothing (the camera calibration named at the start is the one in the robot app's configuration; no hold marker, the file APAI writes when a run leaves the arm powered and holding, is on file) and three questions, each answered with a typed `yes` (section 13). |
 | robot link service | A workstation program that holds the robot connection to the Thor and offers a local API. New. |
 | arm adapter | A class in the agent program with the methods of APAI's arm class; it sends robot link messages through the robot link service instead of motor commands. |
-| operator console | A small workstation terminal program for the operator: `stop`, `reset`, `rest`, `release`, `open`, `shutdown`, `state` (prints the newest robot state and sends nothing) and the takeover prompts. Ctrl+C there is a STOP and never ends the console; `quit` leaves the console and sends nothing. New. |
+| operator console | A small workstation terminal program for the operator: `stop`, `reset`, `rest`, `release`, `on`, `open`, `close`, `shutdown`, `state` (prints the newest robot state and sends nothing) and the takeover prompts. Ctrl+C there is a STOP and never ends the console; `quit` leaves the console and sends nothing. New. |
 | console command | A second operator program on the workstation: it sends one command of the operator console, asks the same typed confirmation, prints the answer and ends (section 13). New. |
 | viewer | The workstation program that serves the one browser page of this design and tells the Thor how fresh the live view is (VIEW_STATUS, section 6). It runs the current experiment's viewer (`thor_viewer.py`, the page that shows what a run of the agent recorded) unchanged, inside a wrapper of this example (`viewer_live`) that adds the live picture and the live arm to that page (section 13). One viewer reports at a time. |
 | live picture | The left camera frame as it arrives on the workstation, made small and packed as JPEG. The viewer's page shows it and nothing stores it. |
@@ -81,9 +91,10 @@ owner's decision.
 | hold | The arm stays where it is with motors on. |
 | limp | Motors off. Away from rest the arm falls, because it has no brakes. |
 | rest, return to rest | The folded pose in which the arm lies on its own stops; the move that brings it there. |
-| recovery region | The start poses from which a return to rest is allowed: a box in joint space in the Thor configuration. It is meant to hold only poses from which the straight move to rest has been run on the bench without touching anything. The first value for the rig is the agent's envelope, and no return to rest has been run on the bench from it (section 19). |
+| recovery region | The start poses from which a return to rest is allowed: a box in joint space in the Thor configuration. It is meant to hold only poses from which the return to rest has been run on the bench without touching anything. The first value for the rig is the agent's envelope, and no return to rest has been run on the bench from it (section 19). |
 | jaws | The two fingers of the gripper. |
-| right A, right B, grip, trigger | Controls on the right Quest controller: two face buttons, the squeeze button under the middle finger and the index-finger trigger. In this design right B is STOP and takeover, right A gives the arm back at rest, the grip is the clutch (the arm follows the hand only while it is squeezed) and the trigger drives the jaws (the trigger is not in the first build, section 20). |
+| right A, right B, grip, trigger | Controls on the right Quest controller: two face buttons, the squeeze button under the middle finger and the index-finger trigger. In this design right B is STOP and takeover, right A gives the arm back at rest, the grip is the clutch (the arm follows the hand only while it is squeezed) and the trigger drives the jaws once it has reached the grip level (section 12 step 5). |
+| jaw opening, grip level | A jaw opening is how far the jaws are open, as a share of their travel: 1.0 is fully open, 0.0 closed. The grip level is the jaw opening in force when a person takes the arm over. |
 | closing stiffness, light holding stiffness | The two position gains APAI's driver uses on the jaw motor: a high one while the jaws close and a low one once they have stalled on an object, so that it is held with a light, steady force. |
 | guarded opening | APAI's driver routine for opening the jaws; it protects the mechanical open stops. |
 | referenced | After power-on the jaw motor knows its position only within one turn, and the jaws travel more than one turn. The driver finds the reference at start; without it a jaw reading counts as unknown. APAI's driver drops the reference after three failed jaw reads in a row, so it can be lost during a run (section 21). |
@@ -157,7 +168,7 @@ states where the build places it; that placement waits for the project owner's d
 | Motor commands, joint readings, gripper control, hold, return to rest | No | Yes |
 | Control owner, STOP, assistance wait | No | Yes |
 | Headset and controller input | Read by the Teleop Session Server | Turned into joint targets |
-| Tasks, consent, operator console, live view | Yes | A typed `stop` and Ctrl+C, each a STOP; the power, calibration and hold confirmations (at each start of the robot app; after a release the robot app is started again); `rest`, `release` and `quit`, which is the shutdown command at the Thor terminal, under the same checks as at the console |
+| Tasks, consent, operator console, live view | Yes | A typed `stop` and Ctrl+C, each a STOP; the power, calibration and hold confirmations (at each start of the robot app); `rest`, `release`, `on`, which switches the motors on again after they were switched off at rest (section 11), `reset`, `open`, `close` and `quit`, which is the shutdown command at the Thor terminal, under the same checks as at the console |
 
 The robot app is one process. It runs APAI's motor driver and APAI's checker, unmodified, created without an obstacle
 grid (its obstacle check is off and the permit check stands in for it); none of APAI's checks is copied or rewritten.
@@ -194,7 +205,7 @@ design "two logical links"; this file does not count the camera connection.
 |---|---|---|
 | Teleop | SAMPLES from headset and controller, workstation to Thor | Existing code, not edited |
 | Robot | Moves, permits, gripper commands and operator requests to the Thor; robot state, results and events back | New; same `core::Link` class |
-| Camera | Compressed stereo video and the time of each camera frame, Thor to workstation | Isaac Capture pull request #1410; temporary, the owner expects it to be replaced. The camera receiver on the workstation dials the camera sender on the Thor. The agent program and the viewer each read the receiver's decoded stereo pairs through a child process of their own, the camera frame bridge. No camera frame from the Thor has reached either: both are tested on recorded stereo pairs and on stereo pairs the tests make up |
+| Camera | Compressed stereo video and the time of each camera frame, Thor to workstation | Isaac Capture pull request #1410; temporary, the owner expects it to be replaced. The camera receiver on the workstation dials the camera sender on the Thor. The agent program and the viewer each read the receiver's decoded stereo pairs through a child process of their own, the camera frame bridge. In the tests no camera frame from a Thor reaches either: both are tested on recorded stereo pairs and on stereo pairs the tests make up. On the rig the agent program has run on the camera connection: the example's README names a run folder of 2026-11-17 that was made with the full stack, the camera connection and the robot connection between the two machines. The README reports no run of the viewer's live picture on the rig's camera |
 
 Why a second connection instead of one through the Teleop Session Server:
 
@@ -271,13 +282,13 @@ never newer ones, so that nothing of an ownership that has ended is accepted. Th
 | Link message | Direction | Delivery | Contents |
 |---|---|---|---|
 | WELCOME | Thor to workstation | Reliable | Sent first on every robot connection. Protocol version; session id; robot and profile identity; joint names; the joint limits of the agent limit set; the rest pose; the setpoint period and the largest number of setpoints a MOVE may hold; limit-set versions; the name of the camera calibration in use; the declared driver; the joint speed limit of the agent limit set (`agent_max_joint_speed`); and four optional fields that name what the Thor's human checker holds a person to (`human_max_joint_speed`, `human_tip_box`, `human_tip_floor`, `human_joint_box`; the paragraphs below the table). Joint signs, units and coordinate-system versions are not in the first build (section 20) |
-| ROBOT_STATE | Thor to workstation | Newest wins | Per joint the value, read start, read end and a valid flag (measured only, never a cached value and never the commanded target), and every joint reading of the last half second; the last target sent with its send time; the jaws: the opening with its own time and valid flag, whether the gripper is referenced, the last jaw target, the "may be holding" flag (section 11) and whether the jaws are proven empty, loaded or unknown; control owner, owner number, stop number, stop level with the reason of a fault-stop, and limit-set version in force; the motion state (idle, moving, hold, hold at rest, at rest with the motors off) and whether torque is on; the latest command outcome; the running move's id, the index of the setpoint sent, the number of its setpoints and whether the move waits for its first permit or is sending; the permit the Thor holds (its move, the last setpoint it covers, the age of its camera frame, the time to its expiry) and why the newest permit is refused; the time left of the assistance wait; human input (teleop connection up, the stage the Teleop Session Server last reported, READY seen, age of the newest SAMPLES) and the age of the live view; for a takeover: whether human driving is switched on, whether a takeover is open, whether the arm is following the hand, whether the next human motion needs a released grip first, why the last human motion ended and why a takeover would be refused; health (the age of the oldest joint reading, read failures per joint, whether the arm holds at a contact, motor and gripper faults, motor temperatures where the driver can read them, missed deadlines, clamping); and a clock pair |
+| ROBOT_STATE | Thor to workstation | Newest wins | Per joint the value, read start, read end and a valid flag (measured only, never a cached value and never the commanded target), and every joint reading of the last half second; the last target sent with its send time; the jaws: the opening with its own time and valid flag, whether the gripper is referenced, the last jaw target, the "may be holding" flag (section 11) and whether the jaws are proven empty, loaded or unknown; control owner, owner number, stop number, stop level with the reason of a fault-stop, and limit-set version in force; the motion state (`idle`, `moving`, `hold`, `rest_hold` for a hold at rest, `rest_unpowered` for rest with the motors off, and `release_failed` after a torque release whose driver call failed, when the motors may be on or off) and whether torque is on, which stays true in `release_failed`; the latest command outcome; the running move's id, the index of the setpoint sent, the number of its setpoints and whether the move waits for its first permit or is sending; the permit the Thor holds (its move, the last setpoint it covers, the age of its camera frame, the time to its expiry) and why the newest permit is refused; the time left of the assistance wait; human input (teleop connection up, the stage the Teleop Session Server last reported, READY seen, age of the newest SAMPLES) and the age of the live view; for a takeover: whether human driving is switched on, whether a takeover is open, whether the arm is following the hand, whether the next human motion needs a released grip first, why the last human motion ended and why a takeover would be refused; health (the age of the oldest joint reading, read failures per joint, whether the arm holds at a contact, motor and gripper faults, motor temperatures where the driver can read them, missed deadlines, clamping); and a clock pair |
 | MOVE | Agent to Thor | Reliable | The move id (its command id), the expected start pose with a tolerance, the setpoints (one for each setpoint period; the MOVE names the period), the grasp region if any, the Thor wall-clock time of the camera frame behind the grid the move was checked against, an expiry on the Thor's monotonic clock |
 | GRIPPER | Agent to Thor | Reliable | Target opening, maximum effort, plain or close-until-contact |
 | PERMIT | Agent to Thor | Newest wins | Move id, the session id, owner number and stop number of the agent's grant, the last setpoint it covers, the Thor wall-clock time of the camera frame behind the grid it was checked against, and an expiry on the Thor's monotonic clock |
 | CHECKER_STATE | Agent to Thor | Reliable | Tells the agent checker to forget its contact spots, or to end the grasp region of a grasp that was finished or given up, when APAI's skills do so on the workstation |
 | STOP | Any client to Thor | Reliable | Reason and sender |
-| OWNER_REQUEST | Agent, console or robot link service to Thor | Reliable | Requested control owner (agent for a new confirmed task, recovery for a typed `rest`, nobody) or "help needed" with the reason. For "agent" it also says whether the timed return to rest (the one at the end of the assistance wait, section 10) applies to this task (the link message's default is yes; the agent program's shipped files send no, section 11). For a typed `rest` it says whether the operator typed the confirmation that the path is clear (section 11); without it the request is refused. A takeover is not requested here; it comes from right B on the teleop connection (section 12) |
+| OWNER_REQUEST | Agent, console or robot link service to Thor | Reliable | Requested control owner (agent for a new confirmed task, recovery for a typed `rest`, nobody) or "help needed" with the reason. For "agent" it also says whether the timed return to rest (the one at the end of the assistance wait, section 10) applies to this task (the link message's default is yes; the agent program's shipped files send no, section 11). For a typed `rest` it says whether the operator typed the confirmation that the path is clear (section 11); without it the request is refused. A takeover is not requested here; it comes from right B on the teleop connection (section 12). Two requests are about the motors (section 11): "motors_off", which the agent program sends where APAI's rest tool ends, and "motors_on", which the operator console, the console command and the agent program send once the operator has typed the confirmation |
 | RESET, RELEASE, OPEN, SHUTDOWN | Console to Thor | Reliable | OPEN and SHUTDOWN say whether the operator typed the confirmation they need (the jaw opening, section 13; a clear path, section 11). RESET and RELEASE carry nothing more |
 | VIEW_STATUS | Viewer to Thor | Newest wins | Whether the view is live, which is whether a browser on the workstation is showing the live view (section 13 says when that holds); the age of the live picture shown; and when the link message was sent, on the Thor's monotonic clock as the viewer reads it off its newest ROBOT_STATE |
 | RESULT | Thor to workstation | Reliable | For each command id: accepted or refused with the reason, then completed, cancelled or failed with the reason and the measured end pose. Every command gets one final RESULT; one that cannot be decoded is refused under its command id |
@@ -495,8 +506,10 @@ terminal; `quit` at the console only leaves the console (section 13). The shutdo
 permitted torque release; if the return or the release is refused or fails, the arm holds and the app keeps running. A
 shutdown or a `release` sent from the console does not outlive the robot connection: if the connection is lost before
 the motors are off, they stay on. A shutdown that has to move the arm asks the same path-clear confirmation as a typed
-`rest` (section 11). The app also ends on a termination signal; it then closes with the motors left on, which is the
-row "Robot app dies" of section 10. The 48 V switch is the only hardware stop, and it drops the arm.
+`rest` (section 11). The app also ends on a termination signal, which never moves the arm. With the arm at measured
+rest and the jaws proven empty the app closes the jaws and switches the motors off before it closes (section 11).
+Anywhere else it closes with the motors left on, which is the row "Robot app dies" of section 10. The 48 V switch is
+the only hardware stop, and it drops the arm.
 
 ## 10. Faults and the assistance wait
 
@@ -564,20 +577,47 @@ A typed `rest`, the rest that ends a takeover and the return after the assistanc
    owner nobody, and the request for control that follows is accepted from there.
 3. The robot app records the stop number, the owner number and the recovery checker's halt count. The first setpoint and
    every later one are sent only if all three are unchanged, so a STOP at any moment wins.
-4. The move is one straight joint-space move from the measured pose to the saved rest pose at the recovery speed (first
-   value 0.1 rad/s; the rig's file has 0.2 rad/s, `rest.recovery_speed`; the planned time is printed). It follows a
-   minimum-jerk time law whose peak joint speed is 0.9 of the recovery speed and lasts at least 2 s: at 0.1 rad/s about
-   21 s per radian of the largest joint travel. The rig's recovery region is the agent's 120-degree envelope, so at
-   0.1 rad/s the longest straight return on the rig takes about 44 s, and a region that reaches a joint limit of
-   3.14 rad gives about 65 s; at the rig's 0.2 rad/s each takes half as long. The one recorded return at 0.1 rad/s
-   took about 37 s. The Thor plans no
-   route. The move is planned once more from the pose the Thor reads as it starts. The recovery checker checks the path
-   before the first setpoint and every setpoint while moving, with the contact monitor on. A path that the recovery
-   checker refuses is refused before anything moves (section 21 names what a person can meet there). The move ends at
-   the first contact.
-5. It ends at rest with motors on. Rest is proven by two full joint reads 0.2 s apart within 0.05 rad of the rest pose;
-   a return that does not prove it ends as failed and the arm holds. After the `rest` that ends a takeover the person
-   becomes the control owner again, so that the arm stays closed to the agent until right A (section 12 step 7). A
+4. The return runs as one or more legs. A leg is one straight joint-space move at the recovery speed (first value
+   0.1 rad/s; the rig's file has 0.2 rad/s, `rest.recovery_speed`; the planned time of each leg is printed). Which
+   legs a return has depends on the arm (`legs` in `robot_app/rest.py`):
+   - On the simulated arm, and where the route of APAI's rest tool cannot be read, the return is one leg, from the
+     measured pose to the saved rest pose.
+   - With APAI the return follows the route of APAI's rest tool, APAI's own return-to-rest skill
+     (`apai.skills.rest_pose`). The robot app reads from APAI the route's tracking tolerance, which is how far the
+     measured pose may lie from a leg's goal when that leg has ended, the shortest times of its legs and its fold
+     steps. The first leg goes up to the ready pose, the raised pose of the arm profile (`home_q`), and is left out
+     when the arm is within the tracking tolerance of that pose. The fold then brings the arm onto the rest pose in
+     the steps that APAI's rest tool gives, each a leg of its own.
+   - With APAI and no ready pose the arm folds from where it is. The robot app takes no ready pose on APAI's mock
+     arm, and a ready pose outside the recovery region is not driven to.
+
+   Each leg follows a minimum-jerk time law whose peak joint speed is 0.9 of the recovery speed, and lasts at least
+   its shortest time: 2 s for a return of one leg (`rest.min_duration_s`), and the times APAI's rest tool names for
+   the leg up and for a fold step. Above that shortest time a leg takes, at 0.1 rad/s, about 21 s per radian of its
+   largest joint travel, and half of that at the rig's 0.2 rad/s. One straight leg across the rig's recovery
+   region, which is the agent's 120-degree envelope, takes about 44 s at 0.1 rad/s and about 22 s at 0.2 rad/s,
+   and one across a region that reaches a joint limit of 3.14 rad about 65 s and about 33 s. These
+   durations hold for a return of one straight leg. On a route they hold for the leg up to the ready pose, by that
+   leg's own largest joint travel, and the legs of the fold add their times to it. The one recorded return at
+   0.1 rad/s took about 37 s. The Thor plans no route around an obstacle: it has no obstacle grid (section 8), and
+   the leg up to the ready pose is a straight joint-space move. For a typed `rest` it runs on the operator's `path
+   is clear`.
+
+   The recovery checker checks the path of every leg before the control owner changes, so a path that it refuses is
+   refused before anything moves (section 21 names what a person can meet there). Each leg is planned once more
+   from the pose the Thor reads as the leg starts, and the recovery checker checks every setpoint while the arm
+   moves, with the contact monitor on. After each leg but the last the measured pose must lie within the route's
+   tracking tolerance of that leg's goal; otherwise the return ends as failed and the arm holds. After the leg up
+   to the ready pose the fold is planned and checked again from the measured pose, and a fold that is refused then
+   ends the return as failed, with the arm holding where that leg left it. The return ends at the first contact.
+5. The return ends at rest with motors on. Rest is proven by two full joint reads 0.2 s apart within 0.05 rad of the
+   rest pose; a return that does not prove it ends as failed and the arm holds. What follows depends on what asked
+   for the return. A typed `rest`, at either terminal, goes on to the torque release below: the robot app closes the
+   jaws and switches the motors off there, and the motion state is `rest_unpowered`. If that release is refused,
+   the `rest` ends as failed with the arm at rest and the motors on. While a takeover is open a typed `rest` leaves
+   the motors on at rest, for the hand-back. The timed return leaves the motors on as well. After the `rest` that
+   ends a takeover the person becomes the control owner again, so that the arm stays closed to the agent until right
+   A (section 12 step 7). A
    `rest` typed after a STOP during a takeover, while nobody owns the arm, ends with control owner nobody; the takeover
    stays open, so the arm stays closed to the agent all the same. After a timed return, or a `rest` typed while nobody
    or the agent owned the arm, the control owner becomes nobody: a typed `rest` ends the agent's ownership. While an
@@ -603,21 +643,37 @@ is switched off, would be the one exception. Known limit: an object thinner than
 empty; that is about 3.6 mm if the configured 90 mm travel is right, which the arm profile itself questions. Not
 measured.
 
-**Torque release.** Torque is released only on an operator request (typed `release`, or the shutdown command), never by
-a wait, and only when two full joint reads 0.2 s apart are within 0.05 rad of rest and of each other, the jaws are
-proven empty and no move is running. A failed or interrupted return, a stale reading, a disconnect or a second Ctrl+C
-never leads to a release. The console asks for a typed `yes` before a `release`. The rig's motor library does not
-report a failed disable, so on the real arm the release is reported as `torque release sent at rest: the driver does
-not confirm that the motors are off`, and the torque value in ROBOT_STATE is what was commanded.
+**Torque release.** Torque is released in one place, the guarded release in `robot_app/rest.py`, and never by a
+wait. The guarded release runs at five ends: a typed `release`; the end of a typed `rest` outside a takeover (step
+5); the shutdown command; the end of APAI's rest tool in a task of the agent, where the agent program asks for the
+motors off (OWNER_REQUEST "motors_off"); and a termination signal (section 9). At each of them it runs only when two
+full joint reads 0.2 s apart are within 0.05 rad of rest and of each other, the jaws are proven empty, no move is
+running and no fault-stop is latched. Away from measured rest each of the five leaves the motors on and says why.
+Before the release the robot app closes the jaws with the driver's close; a close that fails is reported and the
+release follows, because at rest the jaws hold nothing up. After APAI's rest tool the robot app neither judges the
+jaws again nor sends them anything: that tool found no load before it folded the arm and has closed the jaws
+itself. A failed or interrupted return, a stale reading, a disconnect or a second Ctrl+C never leads to a release.
+The console asks for a typed `yes` before a `release`. The rig's motor library does not report a failed disable, so
+on the real arm the release is reported as `torque release sent at rest: the driver does not confirm that the
+motors are off`, and the torque value in ROBOT_STATE is what was commanded. A release whose driver call raises an
+error leaves the motors on or off, unknown to the robot app: the motion state becomes `release_failed`, a
+fault-stop latches, and nothing moves the arm or the jaws until a release has worked or the robot app was started
+again.
 
-After a release the robot app starts no motion: every command that needs the motors is refused with `the motors are
-off; restart the robot app`. Motors are switched on again only by a new start of the robot app, which asks its
-confirmations at the Thor terminal, connects with the arm measured at rest and picks a new session id; no earlier task
-is replayed. The alternative, switching the motors on again inside the running app, saves the restart and adds a second
-place that connects to the motors (section 20). An unpowered arm lies less close to the rest pose than a powered return
-leaves it, so the start has its own, wider tolerance (`rest.start_rest_tol_rad`; with APAI the arm profile's rest check
-tolerance, 0.12 rad on the rig). An arm that starts outside the 0.05 rad of a release is shown as holding, and a typed
-`rest` brings it inside before the first `release`.
+After a release the motion state is `rest_unpowered` and the robot app runs on with the same session id. It starts
+no motion: a move, a jaw command, a new task and a takeover are refused with `the motors are off; switch them on
+again: type on at the Thor terminal or run the console command on`. A typed `on`, at the Thor terminal, at the
+operator console or as a console command, switches the motors on again without a new start of the robot app, after
+a typed `yes`. The agent program asks for the same, after a question of its own, before the first skill that moves
+the arm once the motors are off. The robot app then connects the arm as at its start: the driver refuses an arm
+that it does not measure at rest, and the jaws are referenced again. `on` is refused while the motors are on, while
+a fault-stop is latched and after a release that failed. A new start of the robot app also switches the motors on:
+it asks its confirmations at the Thor terminal, connects with the arm measured at rest and picks a new session id;
+no earlier task is replayed. The cost of `on` is a second place that connects to the motors. An unpowered arm lies
+less close to the rest pose than a powered return leaves it, so the start has its own, wider tolerance
+(`rest.start_rest_tol_rad`; with APAI the arm profile's rest check tolerance, 0.12 rad on the rig). An arm that
+starts outside the 0.05 rad of a release is shown as holding, and a typed `rest` brings it inside before the first
+`release`.
 
 **Switch.** The timed return has a switch in the Thor configuration, `rest.auto_return`. It is on in the shipped files
 for the simulated arm and for APAI's mock arm, and off in the rig's file until the bench tests of section 19 have been
@@ -628,13 +684,15 @@ it ends (section 10). The owner's decision to implement the automatic return is 
 rig waits for those bench tests and for the owner (section 21). Before its first unattended use on an arm, the bench
 tests of section 19 are run on that arm with a person supporting it.
 
-Built from: the robot app's own straight joint-space planner and its move executor, the same executor that runs the
-agent's moves, so that one loop applies the stop number, the owner number, the halt count and the contact monitor
-before every setpoint; the recovery checker checks the whole path first, as `thor_shutdown.py` does. Not used:
+Built from: the robot app's own straight joint-space planner, which plans each leg, and its move executor, the same
+executor that runs the agent's moves, so that one loop applies the stop number, the owner number, the halt count and
+the contact monitor before every setpoint; the recovery checker checks the whole path first, as `thor_shutdown.py`
+does. With APAI the legs follow the route of APAI's rest tool (`move_to_rest` in `apai.skills.rest_pose`), from
+which the robot app reads the tracking tolerance, the shortest times and the fold steps. Not used:
 `SafeArm.move_joints` (it is the smaller reuse and costs a second send loop beside that one), `park_on_shutdown` (it
-works only while the app is exiting) and `move_to_rest` (it reads flags that live on the workstation and by default
-ends in torque-off). New: the planner, the recovery owner, the recovery checker instance, the jaw rule, the path-clear
-prompt, the wait and the release command.
+works only while the app is exiting) and a call of `move_to_rest` itself on the Thor (it reads flags that live on
+the workstation). New: the planner, the recovery owner, the recovery checker instance, the jaw rule, the path-clear
+prompt, the wait, the release command and `on`.
 
 ## 12. Human takeover
 
@@ -644,8 +702,10 @@ below that the first build leaves out.
 
 A takeover is accepted when right B was held for 1 s with the grip released and every sample in that second was fresh,
 nobody owns the arm, the motors are on, no motion and no jaw command is running or waiting, a full joint read taken now
-is valid, the live view in the workstation browser is fresh, and no fault is latched. Fresh means that the controller
-data are at most 0.25 s old and the live view at most 0.5 s (first values, Thor settings). A STOP or a change of
+is valid, the live view in the workstation browser is fresh, and no fault is latched. The condition on the live view
+holds where the Thor setting `human.require_live_view` is on, as it is in the rig's file; with it off a takeover
+needs no live view (section 13, and row 9 of the table in section 21). Fresh means that the controller data are at
+most 0.25 s old and the live view at most 0.5 s (first values, Thor settings). A STOP or a change of
 control owner that arrives while the joints are read wins, and the takeover is refused. A takeover needs no help
 request: it is accepted from control owner nobody at any time, also at rest. The build adds two conditions that wait
 for the project owner (section 21): human driving is switched on in the Thor configuration, and the human checker
@@ -677,11 +737,23 @@ a pressed right B stops nothing.
    forward, back and down have no solution there. The alternative, a start from the measured pose itself, moves nothing
    until the hand does, and APAI's checker then refuses every step that leaves a joint on its stop. While the grip is
    squeezed a typed `rest`, `release` or shutdown is refused; a STOP always works.
-5. Jaws: at the owner change no gripper command is sent, so a held object stays held. The trigger is ignored until it
-   reaches the agent's last grip level, and until the jaws have been fully opened once it cannot command more closing
-   than that. A close by the person ends like the agent's: when the jaws stall, the stiffness drops to the light holding
-   value. Opening uses the driver's guarded opening in small steps. In the first build the trigger does nothing and no
-   jaw command is sent while a person owns the arm (section 20).
+5. Jaws: at the owner change no gripper command is sent, so a held object stays held, and the robot app notes the
+   grip level: fully open when the jaws are proven empty and open, else the opening of the last jaw target, else the
+   remembered jaw reading. The trigger asks for a jaw opening, 1.0 less the trigger's value: fully open with the
+   trigger released, closed with it pulled all the way. The trigger is ignored until the opening it asks for has
+   reached the grip level, which is within 0.05 of the jaw travel of it (`human.jaw_match_tol`) or across it. From
+   then on the jaws follow the trigger, with the grip squeezed or not. Until the jaws have been measured fully open
+   once since the takeover, the trigger cannot command more closing than the grip level. A close by the person ends
+   in the light hold: when the jaws stall on an object, the stiffness drops to the light holding value. Opening
+   uses the driver's guarded opening in small steps (`gripper.open_step`, 0.05 of the jaw travel). A close needs a
+   fresh live view where `human.require_live_view` is on; an opening needs none. Whatever ends a person's jaw
+   motion, a STOP and stale controller data among them, leaves the jaws held lightly where they are, never opened,
+   and the trigger then has to reach the grip level again. Where the grip level is not known, because the jaws are
+   not referenced or have neither a target nor a reading, the trigger moves nothing. This is built, behind the Thor
+   setting `human.trigger_jaws`, which is on in every shipped file of the robot app and acts only where human
+   driving is switched on; with it off the trigger does nothing and no jaw command is sent while a person owns the
+   arm. The rule still awaits the project owner's yes (section 16), and no real controller's trigger has moved real
+   jaws.
 6. The person finishes the task or abandons it, puts down or releases any object, and asks for the return to rest
    (`rest` at the operator console). The console then asks "completed or abandoned?" and stores the answer in the task
    record (not in the first build, section 20). Until then the person stays the control owner; releasing the grip only
@@ -726,8 +798,8 @@ same time as the robot app, and it does not meet the never-go-limp rule today.
 | Terminal | What the operator types there | What it shows |
 |---|---|---|
 | Agent program (workstation) | Tasks, typed one after another at its prompt or given as one start argument; the typed `yes` at a task's first skill that moves the arm; Ctrl+C, which is a STOP | Task progress; the robot's state before the question; each refusal with what to do about it |
-| Operator console (workstation) | `stop`, `reset`, `rest`, `release`, `open`, `shutdown`; `state`, `attach` and `help`, which send nothing; `quit`, which leaves the console and sends nothing; Ctrl+C, which is a STOP; `takeover` and `handback`, which the shipped files switch off (section 21) | A status line (robot connection, control owner, stop level, motion, jaws, torque, assistance wait, permit, view age), printed when it changes and at least every 10 s; every EVENT; a block of lines for each help request; a takeover line; refusals with reasons, also those another client got; the loss of the robot connection, with the terminal bell |
-| Thor terminal | `stop` and Ctrl+C, each a STOP that needs no network; `rest`; `release`; `quit`, which is the shutdown; `help`; `reference`, which the shipped files switch off (section 21). It has no `reset` and no `open`. The power, calibration and hold confirmations at each start of the robot app on the real arm; after a release the robot app is started again and asks them again | Every EVENT of the robot app as a line: owner changes, STOPs, the countdown with the terminal bell, refusals with reasons. It prints no status line |
+| Operator console (workstation) | `stop`, `reset`, `rest`, `release`, `on`, `open`, `close`, `shutdown`; `state`, `attach` and `help`, which send nothing; `quit`, which leaves the console and sends nothing; Ctrl+C, which is a STOP; `takeover` and `handback`, which the shipped files switch off (section 21) | A status line (robot connection, control owner, stop level, motion, jaws, torque, assistance wait, permit, view age), printed when it changes and at least every 10 s; every EVENT; a block of lines for each help request; a takeover line; refusals with reasons, also those another client got; the loss of the robot connection, with the terminal bell |
+| Thor terminal | `stop` and Ctrl+C, each a STOP that needs no network; `rest`; `release`; `on`, which switches the motors on again after they were switched off at rest (section 11); `reset`; `open` and `close`, which move the jaws while nobody owns the arm; `quit`, which is the shutdown; `help`; `reference`, which the shipped files switch off (section 21). The power, calibration and hold confirmations at each start of the robot app on the real arm | Every EVENT of the robot app as a line: owner changes, STOPs, the countdown with the terminal bell, refusals with reasons. It prints no status line |
 
 - The "yes" is asked at the terminal that sent the task. In the first build only the agent program's terminal sends
   tasks, so it is asked there. It is asked once per task, at the task's first skill that moves the arm; skills that
@@ -745,8 +817,9 @@ same time as the robot app, and it does not meet the never-go-limp rule today.
   record is APAI's task report, one line per task in the agent program's run folder. It has no field for where a task
   came from; tasks from a second terminal need that field first.
 - A task that succeeds gives the arm back: the agent program sends OWNER_REQUEST with the control owner nobody, and the
-  arm holds where it is with motors on. The return to rest is the operator's `rest`. APAI's own return-to-rest skill is
-  refused in the agent program, because the return to rest belongs to the robot app (section 11). A task that is
+  arm holds where it is with motors on. The return to rest is the operator's `rest`, or APAI's rest tool in a task
+  that calls it: the agent program sends that tool's moves as moves of the agent and then asks the robot app for the
+  motors off, which the robot app switches off only with the arm measured at rest (section 11). A task that is
   cancelled with Ctrl+C at the agent program's terminal sends neither: its STOP ends the agent's ownership (section
   9). A task that ends any other way while the agent owns the arm sends "help needed" (section 10).
 - A skill stop ends the task with a help request and latches the checker in the agent program. The next task's
@@ -757,14 +830,14 @@ same time as the robot app, and it does not meet the never-go-limp rule today.
   true) selects between the two.
 - What the operator types to confirm. A return to rest is confirmed with the typed phrase `path is clear`: after `rest`
   at either terminal, and after the shutdown when the arm has to move. `yes` confirms everything else that asks: `open`,
-  `release` and a shutdown with the arm at rest at the operator console, and a task's first motion at the agent
-  program's terminal. One command is the exception: the typed `reference` of section 21, which is switched off, asks
-  for `jaws are empty`. At the Thor terminal `release`, and `quit` with the arm at rest, ask nothing. Case and spacing
-  do not count; any other answer confirms nothing and nothing is sent. `stop` typed where a question waits is a STOP
-  and confirms nothing. Whatever is typed before a question is written is dropped. A confirmation is typed by a person
-  at a terminal: the operator console, the agent program and the robot app on the real arm ask nothing from a pipe or
-  inside the environment of an AI coding agent. The alternative for a return to rest, a plain `yes`, lets one habitual
-  word start a motion of the arm.
+  `release` and a shutdown with the arm at rest at the operator console, `on` at either terminal, and a task's first
+  motion at the agent program's terminal. One command is the exception: the typed `reference` of section 21, which
+  is switched off, asks for `jaws are empty`. At the Thor terminal `release`, and `quit` with the arm at rest, ask
+  nothing. Case and spacing do not count; any other answer confirms nothing and nothing is sent. `stop` typed where a
+  question waits is a STOP and confirms nothing. Whatever is typed before a question is written is dropped. A
+  confirmation is typed by a person at a terminal: the operator console, the agent program and the robot app on the
+  real arm ask nothing from a pipe or inside the environment of an AI coding agent. The alternative for a return to
+  rest, a plain `yes`, lets one habitual word start a motion of the arm.
 - At the operator console `quit` leaves the console and sends nothing; the robot app runs on. The robot app's shutdown
   is `shutdown` at the console and `quit` at the Thor terminal. The alternative, `quit` as a second word for the
   shutdown, lets a person who only wants to close a window shut the robot down; the choice made costs one word with two
@@ -784,18 +857,19 @@ same time as the robot app, and it does not meet the never-go-limp rule today.
   `Is the arm powered?`, `Connecting cuts motor torque. Is the arm at rest and supported?` and `Is the calibration in
   use <name>?`. APAI's driver then reads every joint twice and refuses an arm that is not at rest before anything that
   cuts torque. A typed `yes` is a person's word; the reading is a measurement.
-- The console command sends one command of the operator console (`state`, `stop`, `reset`, `rest`, `open`, `release` or
-  `shutdown`, and `takeover` or `handback` where the setting of section 21 allows them). One module sends RESET, OPEN,
-  RELEASE, SHUTDOWN and the typed `rest` for both programs, so one place on the workstation can ask for a torque
-  release.
+- The console command sends one command of the operator console (`state`, `stop`, `reset`, `rest`, `open`, `close`,
+  `release`, `on` or `shutdown`, and `takeover` or `handback` where the setting of section 21 allows them). One
+  module sends RESET, OPEN, RELEASE, SHUTDOWN and the typed `rest` for both programs, so one place on the workstation
+  can ask for a torque release.
 - The person who wears the headset cannot read the console, so the console rings the terminal bell by kind of EVENT:
   once for a bell of the assistance wait and when the arm stops following the hand for a reason other than a released
   grip or a STOP; twice for a takeover that began or ended; three times for a refused takeover or hand-back. Whether a
   terminal rings three bells apart is not tested.
-- `open` opens the jaws through the driver's guarded opening after one typed `yes`. It is typed at the operator
-  console; the Thor terminal has no `open`. The robot app accepts it only with control owner nobody, no fault-stop, the
-  motors on and no other motion or jaw command running or waiting. It is the way to let go of an object without a
-  headset, and in the first build also during a takeover: `stop`, then `open`, then `yes` (section 20).
+- `open` opens the jaws through the driver's own opening after one typed `yes`. It is typed at the operator console
+  or at the Thor terminal. The robot app accepts it only with control owner nobody, no fault-stop, the motors on and
+  no other motion or jaw command running or waiting. It is the way to let go of an object without a headset. During
+  a takeover the person lets go with the trigger (section 12 step 5); without the trigger the way is `stop`, then
+  `open`, then `yes`, then right B again or `rest`.
 - View: the owner asked whether the browser view should be served from the workstation or the Thor. Opinion: the
   workstation, because the video and the perception data are already there and the Thor stays small; the first proposal
   does the same. Both demos show live camera video and robot state in a workstation browser, from a bounded in-memory
@@ -903,10 +977,10 @@ states where the build places it and the start-up that follows; that placement w
    is started after step 3. For demo 2 the operator also starts CloudXR's service and the Teleop Session Server, by
    hand.
 2. The Thor starts the robot app and the camera sender. The power, calibration and hold confirmations stay at the Thor
-   terminal (section 13). The robot app connects to the motors once, with the arm measured at rest, and never
-   reconnects by itself. After a torque release it is started again, with the same confirmations (section 11). The
-   robot link service and the robot app start in either order: the robot app dials again until the service answers
-   (section 5).
+   terminal (section 13). The robot app connects to the motors at its start, with the arm measured at rest, and
+   never reconnects by itself. After a torque release a typed `on` connects them again, with the arm measured at
+   rest (section 11). The robot link service and the robot app start in either order: the robot app dials again
+   until the service answers (section 5).
 3. The Thor dials the robot link service and, in the background, the Teleop Session Server. The robot app sends WELCOME,
    and state and video start. The operator then starts the agent program. It compares WELCOME with its own settings
    (protocol version, joint count, setpoint period, the arm profile where its configuration names one, and the name of
@@ -958,16 +1032,16 @@ open, states only a goal or is silent.
 | Return to rest after the robot app dies | Recorded as an unmet requirement | Hold; the project owner accepted that |
 | Floor of the assistance wait | 120 s at first, configurable; no floor | 120 s at first, never below 90 s; the project owner asked for 90 s or more (section 3) |
 | STOP | Reuses `SafeArm.stop()`, which calls the driver's `stop()` | Built on `halt()` and `estop()`; section 9 says why |
-| Return to rest | Reuses `move_to_rest()` | Neither `move_to_rest()` nor `SafeArm.move_joints`: the robot app plans the straight joint-space move itself and sends it through its own setpoint loop on the recovery checker, the loop that also sends the agent's moves; section 11 says why |
+| Return to rest | Reuses `move_to_rest()` | Neither a call of `move_to_rest()` nor `SafeArm.move_joints`: the robot app plans the straight joint-space legs of the return itself, with APAI along the route of APAI's rest tool, and sends them through its own setpoint loop on the recovery checker, the loop that also sends the agent's moves; section 11 says why |
 | Checker on the Thor | Extracts the camera-free checks from APAI's checker | No extraction: APAI's whole checker, created without a grid. That switches off only its grid checks, and the permit check of section 7 stands in for them. One instance per control owner (sections 4 and 8) |
-| Torque release | A normal return to rest or shutdown "may" release torque; keeping it on at rest is also allowed | Decides the open choice: a return to rest ends with motors on, and torque is released only on a typed `release` or the shutdown command (section 11) |
-| Rules | States goals or is silent | Proposes rules. They are this file's own, not owner decisions, and stand unless the owner objects: how "jaws empty" is measured, the straight recovery move and its speed, and the path-clear prompt (section 11); what STOP does to a closing gripper, the STOP key at the Thor terminal, Ctrl+C as STOP, the shutdown command and contact as a hold that is not latched (section 9); `rest`, `release` and shutdown at the Thor terminal (section 13); contact spots that do not bind a person (section 8); the warning bell and a new task that cancels the wait (section 10); building the shared part first on one machine (section 17); the typed phrases `yes`, `path is clear` and `jaws are empty` (sections 11, 13 and 21); Ctrl+C as STOP at the operator console and at the agent program's terminal as well as at the Thor terminal (section 9); `quit` at the operator console, which leaves the console and sends nothing (section 13); and the declared driver in WELCOME, which decides whether the agent program accepts settings meant for runs on one machine (sections 6 and 14). The same holds for detail the first proposal leaves to the build, such as the link message table (section 6), the recovery checker's settings (section 8), the first form of the live view (section 13) and the first values of limits, speeds and times. The trigger limit at takeover (section 12 step 5) is also this file's own rule; it is listed below because it awaits a yes |
+| Torque release | A normal return to rest or shutdown "may" release torque; keeping it on at rest is also allowed | Decides the open choice: a typed `rest` outside a takeover ends at measured rest with the jaws closed and the motors off, as a typed `release` and the shutdown command do; the timed return and a `rest` typed while a takeover is open end with the motors on; section 11 names every end at which torque is released |
+| Rules | States goals or is silent | Proposes rules. They are this file's own, not owner decisions, and stand unless the owner objects: how "jaws empty" is measured, the legs of the recovery move and its speed, and the path-clear prompt (section 11); what STOP does to a closing gripper, the STOP key at the Thor terminal, Ctrl+C as STOP, the shutdown command and contact as a hold that is not latched (section 9); `rest`, `release` and shutdown at the Thor terminal (section 13); contact spots that do not bind a person (section 8); the warning bell and a new task that cancels the wait (section 10); building the shared part first on one machine (section 17); the typed phrases `yes`, `path is clear` and `jaws are empty` (sections 11, 13 and 21); Ctrl+C as STOP at the operator console and at the agent program's terminal as well as at the Thor terminal (section 9); `quit` at the operator console, which leaves the console and sends nothing (section 13); and the declared driver in WELCOME, which decides whether the agent program accepts settings meant for runs on one machine (sections 6 and 14). The same holds for detail the first proposal leaves to the build, such as the link message table (section 6), the recovery checker's settings (section 8), the first form of the live view (section 13) and the first values of limits, speeds and times. The trigger limit at takeover (section 12 step 5) is also this file's own rule; it is listed below because it awaits a yes |
 
 Awaiting the project owner's yes:
 
 | Point | What is asked |
 |---|---|
-| Trigger limit at takeover (section 12 step 5; either proposal) | When a person takes over while the arm holds something, the trigger becomes the gripper control. Proposed: the trigger does nothing until it has been pulled as far as the agent had closed the jaws, and it cannot squeeze harder than the agent did until the jaws have been fully opened once. Taking over can then neither drop nor crush the object. Not in the first build (section 20): under a person the trigger does nothing |
+| Trigger limit at takeover (section 12 step 5; either proposal) | When a person takes over while the arm holds something, the trigger becomes the gripper control. Proposed: the trigger does nothing until it has been pulled as far as the agent had closed the jaws, and it cannot squeeze harder than the agent did until the jaws have been fully opened once. Taking over can then neither drop nor crush the object. The rule is built as section 12 step 5 states it, behind the Thor setting `human.trigger_jaws`, which is on in every shipped file of the robot app. With the setting off the trigger does nothing under a person. The owner's yes decides whether it stays on for the first session with the headset on the arm |
 | The robot link service (section 5; this proposal only) | One more workstation program. It is built (as built: about 2,250 lines of source) and it does more than hold the robot connection: it decides which local client may send which link message, it holds permits back after a STOP until the Thor shows the higher stop number, and it asks for help when the agent program is gone. It stays a separate program unless the owner objects |
 | Permits or the grid on the Thor | The owner chose permits as the easier start, and permits are built: the Thor's permit check and the workstation's check ahead hold, as built, about 2,300 lines with their tests, against this file's estimate of 700 to 1,100. Sending the grid to the Thor (section 20) comes on top of the permits, about 350 to 600 lines by the estimate behind this file. Permits stay unless the owner switches |
 | A silent agent after a hold | If a permit runs out during a move, the arm holds. When the workstation's check ahead has ended the permits, the agent program ends its task and asks for help, which starts the assistance wait, and the robot link service asks for help when the agent program's connection closes (section 5). What stays without a rule is an agent program that stops sending and keeps its connection open: nothing calls that "failed", so no assistance wait starts and the arm holds until someone types a command. Should some seconds without any agent command after such a hold count as failed? Model thinking before a move would still never count. The rule is not built: the arm holds until someone acts (section 21) |
@@ -983,7 +1057,7 @@ is the placement of the human path.
 | P0 | Robot app, control owners, STOP, hold, return to rest, torque rule and link message module on one machine, with a test arm over a loopback version of the three calls. Audit of every call that can disable a motor | Refused or expired commands cannot move the arm; no disable call is reachable away from rest |
 | P1 | The Python wrapper for `core::Link`; the robot connection over a real link with the robot link service and its local API (the phase where the two proposals differ most); the agent program on the workstation: its arm adapter, the check ahead that sends permits, the camera input and the start and end of a task | A test arm completes commands over a real link between programs on one machine; nothing replays after a reconnect. The camera frame bridge copies each stereo pair and discards a copy whose slot may have been overwritten meanwhile; stereo pairs and the calibration id are kept; both are tested against a stand-in for the camera receiver. The comparison of depth and one grasp pose from compressed camera frames with uncompressed ones needs the camera on the Thor and is a bench test of section 19 |
 | P2 | Demo 1 with the live view and the operator console; the start on the real arm at measured rest, the files for the rig and the workstation's Python environment for the full stack | On the rig: a repeatable task without a headset, three successes in a row at 0.1 rad/s; working `stop` and `rest`. Without hardware, on APAI's mock arm: the moves of a pick and place run under permits in every run with the console and the viewer attached, the task `open the gripper` ends with success, and `stop` and `rest` typed at the console work. The pick and place itself ends with a help request there, because APAI's mock scene confirms neither the grasp nor the place |
-| P3 | Demo 2, built on one machine with a synthetic controller and a simulated arm; the headset checks of section 19 come before the first human motion on the rig | Takeover and the assistance wait work without restarting the robot app; a STOP during the wait prevents the timed return. Tests inside one test process on the simulated arm cover both; the gate as a whole, with demo 2 as separate programs on one machine, has not been run. On the rig the timed return ships off (section 21), so there the STOP shows that the wait is cancelled |
+| P3 | Demo 2, built on one machine with a synthetic controller and a simulated arm; the headset checks of section 19 come before the first human motion on the rig | Takeover and the assistance wait work without restarting the robot app; a STOP during the wait prevents the timed return. Tests cover both on one machine, with the programs of demo 2 attached to the robot link service over a real link and a synthetic controller in place of the headset's (`test_demo2_programs.py`). Two of them run demo 2 as separate processes by the recipe of the example's README: on the simulated arm, and on APAI's mock arm with a task of the agent that fails first. Neither recipe has been run by hand. On the rig the timed return ships off (section 21), so there the STOP shows that the wait is cancelled |
 | P4 | Acceptance of both demos: without hardware by the tests and the runs on one machine that the example's README describes, on the rig by the checklist of that README with every value written down. Then the fault table under each control owner, measured delays, launch and recovery instructions | Results written down with what remains open |
 
 P0 needs no GPU, no Isaac Capture build and no robot. The tests run in a Python 3.12 environment of their own; those
@@ -1030,10 +1104,15 @@ the build has in its place.
 | Integration tests, instructions, fixes found on hardware | 7 to 15 h | 7 to 15 h |
 | Total | 30 to 55 h | 29 to 53.5 h |
 
-A first task running end to end on the rig without a headset needs the first session with the operator; the work
-before it, estimated at about 14 to 24 hours, is built (phases P0 to P2). On one machine, on APAI's mock arm, the task
+A first task running end to end on the rig without a headset needs a session with the operator; the work before it,
+estimated at about 14 to 24 hours, is built (phases P0 to P2). On one machine, on APAI's mock arm, the task
 `open the gripper` runs end to end with success, and a pick and place runs its moves and ends with a help request
-(section 17); no task has run on the rig. The line estimates of this file are low by a factor of two to three, as the
+(section 17). On the rig the example's README names one task on the real arm: the rig owner's report of 2026-11-16
+of a pick, a lift, a hold and a place of an object at 0.1 rad/s, with the agent program on the workstation and the
+robot app on the Thor. The repository holds no record of that run. Of the run of 2026-11-17 that the status
+paragraph at the top of this file names, the README states the count of its moves and jaw commands and not how its
+tasks ended. The gate of P2 on the rig, three successes in a row, is not recorded as passed. The line estimates of
+this file are low by a factor of two to three, as the
 two that have an as-built count show (the `core::Link` wrapper in section 5, the permits in section 16). The hours of
 the table are not checked against the build: the active hours are not recorded per row. Two to four sessions with the
 operator are needed in both designs. The link count changes the risk more than the hours: with two links nothing that
@@ -1053,9 +1132,16 @@ abort in every test is `stop` or Ctrl+C at the Thor terminal, which needs no net
 test itself and is not the abort. The 48 V switch drops the arm and is not the abort. The robot app is never ended or
 restarted with the arm raised.
 
-Before the first session the operator brings the code to the Thor (nothing is pushed), builds Isaac Capture and the
-camera sender there, and writes the Thor's address into the robot link service's file for the rig; the example's README
-lists the steps. None of them is done.
+Before a session on the rig the operator brings the code to the Thor (nothing is pushed), builds Isaac Capture and
+the camera sender there, and writes the Thor's address into the robot link service's file for the rig; the example's
+README lists the steps. The sessions of 2026-11-16 and 2026-11-17 ran the programs on both machines. The README's
+commands for bringing the code to the Thor, for the build there and for the variables of each machine were written
+after the first of those sessions and have not been run again as they stand there.
+
+The arm has moved under the robot app: the run of 2026-11-16 that the status paragraph at the top of this file
+names, at 0.1 rad/s. No record of that session says which steps of the README's checklist passed, and the README's
+tables of what was run hold no row for a test of this section on the rig. The lists below state what this design
+asks for.
 
 Before the arm moves under the robot app:
 
@@ -1130,13 +1216,11 @@ switched off for the rig.
 | The obstacle grid sent to the Thor, so that the Thor runs today's full check locally | That check reads no camera images, only the grid and the list of occupied cells (together about 0.6 MB for today's workspace box). With it: a backup check on the Thor for when the workstation fails, and moving checks between the machines as workloads move |
 | A timed return to rest after the headset or controller is lost while a person drives, or after the robot connection is lost | Both cases hold in the first demos (section 10) |
 | Human-only mode under the never-go-limp rule | It does not meet the rule today (section 12) |
-| The trigger as the gripper control during a takeover, with the trigger limit of section 12 step 5 | In the first build the trigger does nothing and no jaw command is sent while a person owns the arm: a held object stays held, and a person cannot grasp, so a task that needs a new grasp is not finished by the person. To let go of an object the operator types `stop`, then `open` and `yes`, at the operator console, waits for the opening to end, then takes over again or types `rest`. A takeover and a hand-back are refused while a jaw command runs or waits. The trigger limit still awaits the owner's yes (section 16). When the trigger is built, two more rules apply: no jaw target is assumed when none is known, and a jaw command of the person ends when their motion ends |
 | The question "completed or abandoned?" after a takeover (section 12 steps 6 and 7) | Not asked, and the robot app closes no task as "completed by human" or "abandoned": the task record does not say how a takeover ended. The hand-back sets the control owner to nobody and ends the takeover. Storing the answer needs a link message or a file, because the agent program may be down at that moment |
 | The takeover steps printed one at a time at the operator console, and whether a return to rest would be accepted (section 12 step 1) | At a help request the console prints the reason, the state of the jaws, the time left with what the arm does when it runs out, the commands that can be typed, and one line that says whether a takeover is possible or why not. No link message says whether a return to rest would be accepted; a refused `rest` gives its reason. The person learns the next step from that one line and from the bells |
 | A STOP that passes link messages already handed to the robot connection (section 6) | `core::Link` sends reliable link messages in order and has no priority, and the first build does not edit it. A STOP from the workstation waits behind a MOVE that is being sent: about 5 ms for the longest MOVE on a 1 Gbit/s cable and about 0.25 s at 20 Mbit/s. Until a priority path exists the demos run on a wired connection, and the STOP key at the Thor terminal needs no network |
 | APAI's own window and its own page server inside the agent program (section 13) | The agent program starts APAI without them (`--no-view`, `--no-serve`). The page for a run is the viewer's. It lists a run, with its obstacle grid, its refusals and its replay, only when the agent program recorded that run with `--record-debug`; without such a run it shows the live picture and the live arm |
 | A restart script for the Teleop Session Server (section 5) | The operator starts CloudXR's service and the Teleop Session Server by hand and starts them again by hand after a fault; after such a restart Headless is switched on again in the headset. A fault of either costs human input until a person acts |
-| Switching the motors on again without a restart of the robot app (section 11) | After a release the robot app answers `the motors are off; restart the robot app`, and the power, calibration and hold confirmations are asked at the next start. Every release costs a restart of the robot app |
 | A hold marker when the robot app ends with the arm raised (section 10) | The robot app writes none. Its next start measures the arm and refuses a raised one, which is the guard; without a marker nothing on the Thor's disk says that an arm is left held by motors that no program drives |
 | Joint signs, units and coordinate-system versions in WELCOME (section 6) | WELCOME carries none of them. Angles are in rad in the order of the joint names, the camera calibration is one name, and two Thor settings that the agent program needs, the wait for a first permit and the settle time, are copied by hand into its configuration: two files that can drift apart. The agent's speed limit is copied as well and is also named in WELCOME, and the agent program plans no faster than either (section 6) |
 
@@ -1146,111 +1230,142 @@ policies on the Thor; control with gloves alone.
 
 ## 21. The human path in the first build, and what waits for the project owner
 
-The build's human path departs from sections 4, 5, 12 and 14 in the machine on which the controller is read and hand
-motion becomes joint targets. The project owner has not agreed to that placement. Those sections, and the places in
-sections 2, 6, 8, 9, 10, 15, 18 and 19 that follow from them, state the design until the project owner decides. The
-lead of the build, the AI agent that directs it, chose the placement below for the first build; it is not a decision
-of the project owner. The table "What waits for the project owner" below lists the other choices that wait for the
-project owner (rows 2 to 25).
+On the rig the build's human path runs on the machine where sections 4, 5, 12 and 14 place it: the controller's
+data are read and hand motion becomes joint targets on the Thor, and the teleop connection crosses between the
+machines. The build departs from those sections in the process that does this work. It is a program of its own
+beside the robot app, the human program, where this design has a thread inside the robot app. In the runs on one
+machine the same program attaches to the robot link service. Sections 4, 5, 12 and 14, and the places in sections
+2, 6, 8, 9, 10, 15, 18 and 19 that follow from them, state the design until the project owner decides. The lead of
+the build, the AI agent that directs it, chose the placement below for the first build; it is not a decision of the
+project owner. The table "What waits for the project owner" below lists the other choices that wait for the project
+owner (rows 2 to 25).
 
-Terms of this section. The human program is a workstation program that the operator starts with `run_human.sh`: it
-reads the right controller through a remote session with the Teleop Session Server and sends robot link messages
-through the robot link service. HUMAN_SETPOINT is the robot link message that carries one joint target from the human
-program to the Thor. The clutch is engaged while the grip is squeezed and the human program lets the arm follow the
-hand. The sample age is how old the controller data behind a joint target are. The stage of the human program says how
-far it is with its controller data: `no_server`, `connecting_openxr`, `waiting_for_headset`, `ready`, `stale` or
-`no_controller`. The headset path is the way from the headset through CloudXR and the Teleop Session Server to the
-human program. The speed-limited target is the target of the gripper tip after the end-effector rate limiter. The
-round trip is the time from a ROBOT_STATE leaving the Thor to the arrival of the HUMAN_SETPOINT that is computed on it.
-A tick is one pass of the Teleop Session Server's loop, and the tick age of SAMPLES is the time since the tick that
-made them. A pass is one turn of the human program's loop. An engagement is one stretch in which the clutch is
-engaged, from a squeeze of the grip to its end. A human drive, or a person's drive, is the Thor's side of one
-engagement: one stretch of human motion. A human target is what the Thor takes from a HUMAN_SETPOINT: the joint target
-with its sample age and the numbers it quotes. The robot app's joint target is the last setpoint its drive sent. A
-step of the robot app is the farthest its speed clamp lets a joint move in one setpoint period. The gripper tip is low
-when it is below the table clearance (section 11) or inside the agent's last grasp region.
+Terms of this section. The human program is the program that the operator starts with `run_human.sh`: it reads the
+right controller through a remote session with the Teleop Session Server (a `TeleopSession` in
+`SessionMode.REMOTE`) and sends robot link messages to the robot app. The robot app's own socket is a Unix socket on
+the Thor that the robot app serves when it is started with `--human-socket`; it speaks the local API of section 5
+to one client, the human program. On the rig the human program runs on the Thor and attaches at that socket. The
+one-machine recipes are the runs of the example's README in which every program runs on one machine; in them the
+human program runs on that machine and attaches to the robot link service. HUMAN_SETPOINT is the robot link message
+that carries one joint target from the human program to the robot app. The clutch is engaged while the grip is
+squeezed and the human program lets the arm follow the hand. The sample age is how old the controller data behind a
+joint target are. The stage of the human program says how far it is with its controller data: `no_server`,
+`connecting_openxr`, `waiting_for_headset`, `ready`, `stale` or `no_controller`. The headset path is the way from
+the headset through CloudXR and the Teleop Session Server to the human program. The speed-limited target is the
+target of the gripper tip after the end-effector rate limiter. The round trip is the time from a ROBOT_STATE leaving
+the robot app to the arrival there of the HUMAN_SETPOINT that is computed on it. A tick is one pass of the Teleop
+Session Server's loop, and the tick age of SAMPLES is the time since the tick that made them. A pass is one turn of
+the human program's loop. An engagement is one stretch in which the clutch is engaged, from a squeeze of the grip to
+its end. A human drive, or a person's drive, is the Thor's side of one engagement: one stretch of human motion. A
+human target is what the Thor takes from a HUMAN_SETPOINT: the joint target with its sample age and the numbers it
+quotes. The robot app's joint target is the last setpoint its drive sent. A step of the robot app is the farthest
+its speed clamp lets a joint move in one setpoint period. The gripper tip is low when it is below the table
+clearance (section 11) or inside the agent's last grasp region.
 
-**The placement.** This design puts the client of the Teleop Session Server on the Thor: the teleop thread of the robot
-app dials the server, receives SAMPLES and turns them into joint targets there. The first proposal does the same, and
-it names a move of this code to the workstation as optional later work that follows measured compute and latency
-needs.
+**The placement.** This design puts the client of the Teleop Session Server on the Thor, inside the robot app: the
+teleop thread of the robot app dials the server, receives SAMPLES and turns them into joint targets there. The first
+proposal does the same, and it names a move of this code to the workstation as optional later work that follows
+measured compute and latency needs.
 
-The build puts that client on the workstation. The human program is the client of the Teleop Session Server on the
-workstation's own address (`127.0.0.1:47600`). It reads the right controller from SAMPLES, runs Isaac Capture's
-controller source, clutch and end-effector rate limiter and APAI's inverse kinematics, and sends each joint target to
-the Thor in a HUMAN_SETPOINT link message on the robot connection. The robot app takes the joint target from that link
-message, checks its owner number and stop number, the sample age, the live view, the size of the step and the speed,
-runs the human checker and the contact monitor, and holds whenever a person's motion ends. The robot app has no teleop
-thread and watches one connection. The teleop code stays unedited, and the robot connection stays separate from the
+On the rig the build puts that client on the Thor as well, in a process of its own. The human program dials the
+Teleop Session Server on the workstation from the Thor, at the address its file for the rig names
+(`teleop.endpoint` in `configs/human_rebot.yaml`, which ships with a placeholder for the workstation's address), so
+the teleop connection crosses between the machines as in this design. It reads the right controller from SAMPLES,
+runs Isaac Capture's controller source, clutch and end-effector rate limiter and APAI's inverse kinematics, and
+hands each joint target to the robot app in a HUMAN_SETPOINT link message at the robot app's own socket
+(`socket_path` in that file, and `--human-socket` of the robot app). What the human program sends on the rig, right
+B's STOP included, therefore passes neither the robot link service nor the robot connection. The robot app takes
+the joint target from that link message, checks its owner number and stop number, the sample age, the live view
+where `human.require_live_view` is on, the size of the step and the speed, runs the human checker and the contact
+monitor, and holds whenever a person's motion ends. The robot app has no teleop thread, and no retargeting and no
+inverse kinematics run in its process: its socket is served on threads that only hand link messages over
+(`robot_app/human_socket.py`). The teleop code stays unedited, and the robot connection stays separate from the
 Teleop Session Server.
+
+In the one-machine recipes and in the tests the same program attaches to the robot link service
+(`configs/human.yaml`: an empty `socket_path`, which stands for the service's socket, and the Teleop Session Server
+at `127.0.0.1:47600`). What it sends then crosses the robot connection, and the robot app handles it by the same
+handlers as what arrives at its own socket.
 
 ```text
             WORKSTATION                                           THOR (on the robot)
   agent program (APAI) --+
-  operator console ------+
-  viewer ----------------+-- local API --> robot link     robot connection
-  human program ---------+                 service  <--------------------------->  robot app
-        ^                                                                          (motor driver, checker,
-        |  teleop connection (SAMPLES), on the workstation                         hold, STOP, control owner,
-  headset -> CloudXR -> Teleop Session Server                                      assistance wait, return to
+  operator console ------+-- local API --> robot link     robot connection
+  viewer ----------------+                 service  <--------------------------->  robot app
+                                                                                   (motor driver, checker,
+                                                                                   hold, STOP, control owner,
+                                                                                   assistance wait, return to
                                                                                    rest, human motion)
+                                                                                     ^
+                                                                                     |  the robot app's own
+                                                                                     |  socket (local API)
+  headset -> CloudXR -> Teleop Session     teleop connection (SAMPLES)               |
+                        Server  ---------------------------------------------->  human program
+                                                                                   (controller source, clutch,
+                                                                                   rate limiter, inverse
+                                                                                   kinematics, buttons)
   camera receiver  <---------------------- camera connection --------------------  camera sender
 ```
 
-The case for the build's placement: on its first day on the Thor the process that holds the motors gets no second
-thread, no second connection, no `TeleopSession` and no inverse kinematics loop beside its 50 Hz motor loop; the
-hand-motion code is new in either placement; and the Thor's own checks (sample age, live view, step limit, speed
-clamp, human checker, contact monitor) are the same in both. What it costs:
+The diagram shows the rig. In the one-machine recipes the human program attaches to the local API of the robot link
+service, beside the operator console and the viewer, and every connection stays on that machine.
 
-1. Isaac Capture's remote session is not used between the machines. The teleop connection runs between two programs on
-   the workstation, so of the two links the project owner decided on (section 3) one crosses between the machines, and
-   that one carries all robot traffic, a person's joint targets included.
-2. The Thor adds only the time since arrival to an age that the human program reports. The transit of the robot
-   connection is in no age; it is shown as a round trip and nothing is enforced on it.
-3. The Thor sees neither the buttons nor the grip. The 1 s hold of right B, the released grip during it and the clutch
-   are the human program's word. The Thor checks the ages and the numbers a request quotes, and it follows the hand
-   only after a HUMAN_SETPOINT that quotes the current owner number has reported the grip released.
-4. A STOP by right B passes through the human program, the robot link service and the robot connection.
-5. One more workstation program has to be started; without it there is no right B and no takeover.
-6. The hand speed limit is a setting of the human program, not of the Thor's human limit set.
-7. One more stage at 50 passes per second and two more passages between programs on the workstation (from the Teleop
-   Session Server to the human program, and from the human program to the robot link service): an estimated 10 to
-   30 ms more delay, not measured.
+The case for a process of its own: the process that holds the motors gets no `TeleopSession`, no retargeting and no
+inverse kinematics loop beside its 50 Hz motor loop, so when that code fails or stalls it is the human program that
+ends or stalls, and the robot app holds the arm once the sample age has run out; one program serves the rig, the
+one-machine recipes and the tests; and the Thor's own checks (sample age, live view, step limit, speed clamp, human
+checker, contact monitor) are the same in both. What it costs:
 
-The case for this design's placement: both proposals say so; the Thor measures the age of the controller data on its
-own clock, network included; the Thor sees the buttons itself, so right B's STOP and the 1 s hold are not another
-program's word; there is one program fewer to start; and nothing more has to be installed on the Thor, because the
-Isaac Capture build that demo 1 needs holds the same modules. What it costs: a second thread, a second connection,
-`TeleopSession` and the inverse kinematics inside the process that holds the motors, and the bench test of the teleop
-thread beside the 50 Hz motor loop (section 19) has to pass before any human motion.
+1. A second program runs on the Thor beside the robot app, where the project owner decided on one program on the
+   Thor for now (section 3). It is started after the robot app, which serves its socket, and it ends when the robot
+   app ends. Without it there is no right B and no takeover.
+2. The robot app sees neither the buttons nor the grip. The 1 s hold of right B, the released grip during it and the
+   clutch are the human program's word. The robot app checks the ages and the numbers a request quotes, and it
+   follows the hand only after a HUMAN_SETPOINT that quotes the current owner number has reported the grip released.
+3. The sample age starts from an age that the human program reports. The human program also says when it sent the
+   HUMAN_SETPOINT, on the Thor's monotonic clock as it reads that clock off its newest ROBOT_STATE (`sent_mono_s`),
+   and the robot app adds the time since then on its own clock. The round trip is shown and nothing is enforced on
+   it.
+4. A link message from the robot app's own socket, right B's STOP among them, waits for the next pass of the robot
+   app's dispatcher: at most one of its step periods, 10 ms.
+5. The hand speed limit is a setting of the human program, not of the Thor's human limit set.
+6. One more stage at 50 passes per second and one passage between two programs on the Thor, from the human program
+   to the robot app. The delay they add is not measured.
 
-Moving to this design's placement later: the Thor's side takes a joint target with its sample age and the numbers it
-quotes, and assumes nothing about where the target is computed. The move is one thread in the robot app that runs the
-same code as the human program and hands its joint targets to the robot app directly, plus a local entry for the
-takeover and one for the hand-back: an estimated 150 to 250 lines for the thread and about 15 lines for each entry. No
-link message changes, and HUMAN_SETPOINT can stay for the synthetic controller.
+The case for this design's thread: both proposals say so; the robot app measures the age of the controller data
+itself; the robot app sees the buttons itself, so right B's STOP and the 1 s hold are not another program's word;
+and there is one program fewer to start on the Thor. What it costs: a second thread, a second connection,
+`TeleopSession`, the retargeting and the inverse kinematics inside the process that holds the motors, and the bench
+test of the teleop thread beside the 50 Hz motor loop (section 19) has to pass before any human motion.
+
+Moving into the robot app later: the robot app's side takes a joint target with its sample age and the numbers it
+quotes (`RobotApp.offer_human_target`), and assumes nothing about where the target is computed. The move is one
+thread in the robot app that runs the same code as the human program and hands its joint targets to the robot app
+directly, plus a local entry for the takeover and one for the hand-back: an estimated 150 to 250 lines for the
+thread and about 15 lines for each entry. No link message changes, and HUMAN_SETPOINT can stay for the synthetic
+controller.
 
 **What follows from that placement.**
 
 | Topic | This design | The build |
 |---|---|---|
-| Connections between the machines (sections 3, 5 and 15) | The teleop connection and the robot connection | The robot connection only. The teleop connection runs on the workstation alone, from the Teleop Session Server to the human program. Both are still separate `core::Link` connections |
-| Connections the robot app watches (sections 5 and 15) | Two, each with its own "alive" state | One, the robot connection. The human program watches the teleop connection, and the robot app learns that the headset path is lost from the stage and the sample age in HUMAN_SETPOINT |
-| Clients of the robot link service (section 5) | The agent program, the operator console, the console command and the viewer | One more role, the human program, one at a time. The service forwards from it HUMAN_SETPOINT, the OWNER_REQUESTs for a takeover and for a hand-back, and STOP, and nothing else |
-| A link message for a person's joint targets (section 6) | None: the joint targets are computed on the Thor | HUMAN_SETPOINT, human program to Thor, newest wins. It carries the session id and the owner number and stop number the human program last saw; a sequence number; the source of the controller data (the Teleop Session Server or a script); the human program's stage; the sample age; whether the clutch is engaged; whether the grip is released; the joint target, only while engaged; the clock value of the ROBOT_STATE it is computed on; and a note for the operator of at most 100 characters. No RESULT answers it. The human program sends one 50 times per second while a person owns the arm and 20 times per second otherwise, as a status without a joint target. The service drops it while a STOP is not confirmed. The Thor follows a joint target only when it quotes the current numbers, is engaged, comes with the stage `ready` and a sample age of at most 0.25 s (`human.sample_age_limit_s`) and, on the real arm, has the Teleop Session Server as its source |
+| Connections between the machines (sections 3, 5 and 15) | The teleop connection and the robot connection | On the rig the same two: the teleop connection, between the human program on the Thor and the Teleop Session Server on the workstation, and the robot connection. A person's joint targets cross neither as robot link messages: they are computed on the Thor and handed over at the robot app's own socket. In the one-machine recipes both connections stay on that machine and HUMAN_SETPOINT travels on the robot connection. Both are separate `core::Link` connections |
+| Connections the robot app watches (sections 5 and 15) | Two, each with its own "alive" state | One connection between the machines, the robot connection, and on the rig its own socket for the human program. The human program watches the teleop connection, and the robot app learns that the headset path is lost from the stage and the sample age in HUMAN_SETPOINT. ROBOT_STATE says whether a human program is attached at the robot app's own socket (`health.human.local_program`) |
+| Clients of the robot link service (section 5) | The agent program, the operator console, the console command and the viewer | One more role, the human program (`human`), one at a time. The service forwards from it HUMAN_SETPOINT, the OWNER_REQUESTs for a takeover and for a hand-back, and STOP, and nothing else. The one-machine recipes and the tests use that role. On the rig the human program is no client of the workstation's service: the robot app's own socket speaks the same local API, takes the same link messages from the role `human` alone, and refuses every other role and a second human program |
+| A link message for a person's joint targets (section 6) | None: the joint targets are computed on the Thor | HUMAN_SETPOINT, human program to robot app, newest wins. It carries the session id and the owner number and stop number the human program last saw; a sequence number; the source of the controller data (the Teleop Session Server or a script); the human program's stage; the sample age as the human program sends it; whether the clutch is engaged; whether the grip is released; the joint target, only while engaged; the jaw opening the trigger asks for, or none where the trigger is not usable (`jaw_opening`; the robot app refuses a value outside 0 to 1); the clock value of the ROBOT_STATE it is computed on; when it was sent, on the Thor's monotonic clock as the human program reads that clock off its newest ROBOT_STATE (`sent_mono_s`); and a note for the operator of at most 100 characters. No RESULT answers it. The human program sends one 50 times per second while a person owns the arm and 20 times per second otherwise, as a status without a joint target. The service that serves the human program's socket, the robot link service or the one inside the robot app, drops it from a STOP until a ROBOT_STATE shows the higher stop number. The Thor follows a joint target only when it quotes the current numbers, is engaged, comes with the stage `ready` and a sample age of at most 0.25 s (`human.sample_age_limit_s`) and, on the real arm, has the Teleop Session Server as its source |
 | How a takeover and the hand-back are requested (sections 6 and 12) | By no link message: the teleop thread reads right B and right A on the Thor | By OWNER_REQUEST. The human program sends the request "human" when right B has been held for 1 s with the grip released, and "handback" when right A has been held for 1 s with the grip released while a takeover is open. The check is split: the human program decides on the buttons and the fresh SAMPLES and sends the request once a ROBOT_STATE shows the STOP of that press; the Thor checks the numbers the request quotes, the sample age, the live view, the joint read and the fault latch |
-| Human input in ROBOT_STATE (section 6) | Teleop connection up, the stage the Teleop Session Server last reported, READY seen, the age of the newest SAMPLES | The human program's stage (`no_server`, `connecting_openxr`, `waiting_for_headset`, `ready`, `stale` or `no_controller`; empty once the program has been silent for 4 s, `human.stage_keep_s`) and the sample age of the newest HUMAN_SETPOINT; "connection up" and "READY seen" are part of the stage. Also the source of the controller data, the human program's note and the round trip |
-| The age of the controller data (section 8) | Measured by the Thor on its own clock, network included | The age the human program reports plus the time since the HUMAN_SETPOINT arrived on the Thor. The human checker's watchdog is fed with the time so computed. The round trip (the Thor's clock at the arrival of a HUMAN_SETPOINT minus the clock value of the ROBOT_STATE it is computed on) is shown and not enforced; counting it into the sample age needs a bench value first |
+| Human input in ROBOT_STATE (section 6) | Teleop connection up, the stage the Teleop Session Server last reported, READY seen, the age of the newest SAMPLES | The human program's stage (`no_server`, `connecting_openxr`, `waiting_for_headset`, `ready`, `stale` or `no_controller`; empty once the program has been silent for 4 s, `human.stage_keep_s`) and the sample age of the newest HUMAN_SETPOINT; "connection up" and "READY seen" are part of the stage. Also the source of the controller data, the human program's note, the round trip and, from a robot app that serves its own socket, whether a human program is attached there. While a takeover is open and `human.trigger_jaws` is on, also the state of the jaws under the trigger (`health.human.jaws`): the grip level, whether the trigger has reached it, whether the jaws were measured fully open since the takeover, the jaw opening the newest HUMAN_SETPOINT asked for, and why the trigger moves nothing |
+| The age of the controller data (section 8) | Measured by the Thor on its own clock, network included | The age the human program reports as it sends the HUMAN_SETPOINT plus the time since it was sent, which the robot app counts on its own monotonic clock from the send time the link message names (`sent_mono_s`). The way to the robot app and the wait there are so part of the age: on the rig that way is the robot app's own socket, in the one-machine recipes the robot connection. A HUMAN_SETPOINT that names no send time is counted from the ROBOT_STATE it is computed on, and one that names neither has no known sample age. The human checker's watchdog is fed with the time so computed. The round trip (the Thor's clock at the arrival of a HUMAN_SETPOINT minus the clock value of the ROBOT_STATE it is computed on) is shown and not enforced; a limit on it needs a bench value first |
 | The hand speed limit (section 8) | Part of the Thor's human limit set | A setting of the human program (`retarget.max_linear_velocity`, `retarget.max_angular_velocity`). The Thor's own bounds on a person's motion are the joint speed clamp, the step limit, the human checker and the contact monitor, applied to every HUMAN_SETPOINT whoever computes it. The hand speed limit bounds the target of the gripper tip only; the pace of the arm is set by the joint speed limit of the human limit set, which the human program reads from WELCOME (section 6). The human program also ends an engagement by itself, with a HUMAN_SETPOINT that says not engaged; the paragraph "A person driving the arm" below this table lists when |
-| Right B as STOP (sections 9 and 15) | Read on the Thor from SAMPLES | Read by the human program, whose STOP travels through the robot link service and the robot connection. Right B therefore stops the arm only while the human program runs, the robot link service runs and the robot connection is alive, besides the conditions of section 9. A press shorter than one pass of the human program (20 ms) can be missed, as in this design. When the human program ends while a person owns the arm, it sends a STOP first: the arm holds and nobody owns it. The human program ends when the robot link service goes away, and right B then stops nothing until the program is started again. A STOP sent between a new robot connection and its first ROBOT_STATE keeps HUMAN_SETPOINT at the service until a later STOP is confirmed; the person presses right B again. `stop` or Ctrl+C at the Thor terminal needs none of these programs |
-| Dialing the Teleop Session Server (section 5) | The teleop thread dials when the robot app starts, with the lower-level `RemoteSession` binding in a retry loop, without a time limit | The human program dials. Each attempt enters a `TeleopSession` in `SessionMode.REMOTE` with a time limit of 3 s and is repeated 5 s after a failure or a lost teleop connection; the `RemoteSession` binding is not used. An attempt holds up the human program's loop for up to 3 s, in which it sends nothing; an attempt on a thread of its own is not built. After READY the program steps the session 50 times per second, asks the server for a tick rate of 90 Hz and treats SAMPLES with a tick age above 0.15 s as stale. The attempts are counted (row 12 of the table below) |
-| How the console learns that a takeover is not possible (section 5) | At once when the server process is gone, after about 1 s when the controller is lost, after about 3 s when the teleop connection goes silent | From three places: ROBOT_STATE, in which the Thor names why a takeover would be refused; the robot link service, which says whether a human program is attached; and the loss of the robot connection. The console prints `takeover: possible now: hold right B for 1 s with the grip released`, or `takeover: not possible: ` and the reason, for example `no human program is attached: start run_human.sh`. Its status line shows `no human program`, or the human program's stage, the sample age and the human program's note, which tells the person the next step. The delays that this design gives are not measured for the build |
-| Faults of the headset path (sections 10 and 15) | The teleop thread treats its own error as controller signal lost | An error in one pass of the human program sends nothing for that pass, and right B stays a STOP. If the errors go on, the Thor ends the human motion in a hold once the sample age is above 0.25 s, and the person keeps control. When the Teleop Session Server, CloudXR or the human program is down, the agent, the console and the assistance wait go on. No end of the human program leads to a return to rest or cuts torque. Because the joint targets travel on the robot connection, a lost robot connection ends human input as well |
-| Agent before any headset (sections 5 and 15) | By the teleop thread, which waits in the background | Nothing on the Thor waits for a headset. The agent runs with no human program and no Teleop Session Server started |
-| Start-up (section 14) | The Thor dials the robot link service and the Teleop Session Server | The Thor dials the robot link service only. For demo 2 the operator starts, on the workstation, CloudXR's service, the Teleop Session Server and the human program; the human program can be started before the server and before any headset is connected |
-| Bench tests (sections 15 and 19) | The teleop thread beside the 50 Hz motor loop; controller samples that keep reaching the Thor | The first of these does not apply in the build, because the robot app has no teleop thread. In its place, on a simulated arm on the Thor before power: the human program started before any headset is connected, and READY reached without restarting it; the round trip of the robot connection, which must stay under 0.1 s; a typed `stop` and right B while 50 HUMAN_SETPOINT link messages per second are on the robot connection, each within 0.25 s; and the Teleop Session Server stopped and started again while the grip is squeezed. With Headless off the check reads whether controller samples keep reaching the human program |
-| Size (sections 16 and 18) | The teleop thread, half an hour in section 18; one new workstation program, the robot link service | One more workstation program, the human program: as built about 2,800 lines of source, and about 570 for the Thor's side of a person driving |
-| A later move to one connection (section 20) | The robot link messages move onto the teleop connection | The Teleop Session Server serves one client, and in the build that client is the human program on the workstation. The robot link messages can move onto the teleop connection only once the Thor is that client, so the move to this design's placement comes first |
+| Right B as STOP (sections 9 and 15) | Read on the Thor from SAMPLES | Read by the human program from SAMPLES. On the rig its STOP goes to the robot app at the robot app's own socket: it passes neither the robot link service nor the robot connection, the robot app takes it with the robot connection down as well, and it waits at most one step period of the robot app's dispatcher (10 ms). Right B therefore stops the arm only while the human program runs and the teleop connection brings it SAMPLES with the buttons, besides the conditions of section 9. With the teleop connection down, as when the cable between the machines is pulled, the human program reads no button; a person's drive then ends in a hold for want of fresh controller data. In the one-machine recipes the STOP travels through the robot link service and the robot connection. A press shorter than one pass of the human program (20 ms) can be missed, as in this design. When the human program ends while a person owns the arm, it sends a STOP first: the arm holds and nobody owns it. The human program ends when the program that serves its socket goes away, which on the rig is the robot app, and right B then stops nothing until the human program is started again. At the robot link service a STOP sent between a new robot connection and its first ROBOT_STATE keeps HUMAN_SETPOINT at the service until a later STOP is confirmed, and the person presses right B again; at the robot app's own socket the robot app's first ROBOT_STATE ends that hold. `stop` or Ctrl+C at the Thor terminal needs none of these programs |
+| Dialing the Teleop Session Server (section 5) | The teleop thread dials when the robot app starts, with the lower-level `RemoteSession` binding in a retry loop, without a time limit | The human program dials: on the rig from the Thor to the workstation's address, in the one-machine recipes to `127.0.0.1` (`teleop.endpoint`). Each attempt enters a `TeleopSession` in `SessionMode.REMOTE` with a time limit of 3 s and is repeated 5 s after a failure or a lost teleop connection; the `RemoteSession` binding is not used. An attempt holds up the human program's loop for up to 3 s, in which it sends nothing; an attempt on a thread of its own is not built. After READY the program steps the session 50 times per second, asks the server for a tick rate of 90 Hz and treats SAMPLES with a tick age above 0.15 s as stale. The attempts are counted (row 12 of the table below) |
+| How the console learns that a takeover is not possible (section 5) | At once when the server process is gone, after about 1 s when the controller is lost, after about 3 s when the teleop connection goes silent | From three places: ROBOT_STATE, in which the Thor names why a takeover would be refused and whether a human program is attached at the robot app's own socket; the robot link service, which says whether a human program is attached to it; and the loss of the robot connection. The console prints `takeover: possible now: hold right B for 1 s with the grip released`, or `takeover: not possible: ` and the reason, for example `no human program is attached: start run_human.sh` where none is attached at either place. Its status line shows `human program at the robot app` for one at the robot app's own socket, `no human program` where there is none, and the human program's stage, the sample age and the human program's note, which tells the person the next step. The delays that this design gives are not measured for the build |
+| Faults of the headset path (sections 10 and 15) | The teleop thread treats its own error as controller signal lost | An error in one pass of the human program sends nothing for that pass, and right B stays a STOP. If the errors go on, the Thor ends the human motion in a hold once the sample age is above 0.25 s, and the person keeps control. When the Teleop Session Server, CloudXR or the human program is down, the agent, the console and the assistance wait go on. No end of the human program leads to a return to rest or cuts torque. A lost robot connection ends a person's drive in a hold, and the person keeps the arm. On the rig the human program stays attached at the robot app's own socket meanwhile and the robot app takes right B's STOP; a new squeeze moves nothing where `human.require_live_view` is on, as in the rig's file, because VIEW_STATUS travels on the robot connection. In the one-machine recipes the joint targets travel on the robot connection, so a lost robot connection ends human input as well |
+| Agent before any headset (sections 5 and 15) | By the teleop thread, which waits in the background | The robot app waits for no headset. The agent runs with no human program and no Teleop Session Server started |
+| Start-up (section 14) | The Thor dials the robot link service and the Teleop Session Server | The robot app dials the robot link service only. For demo 2 on the rig the operator starts CloudXR's service and the Teleop Session Server on the workstation, the server listening on the address the Thor reaches. On the Thor the operator starts the robot app with `--human-socket` and then the human program with `configs/human_rebot.yaml`: the robot app first, because it serves the socket. The human program can be started before the server and before any headset is connected. In the one-machine recipes the human program is started after the robot link service, which serves its socket there |
+| Bench tests (sections 15 and 19) | The teleop thread beside the 50 Hz motor loop; controller samples that keep reaching the Thor | The first of these does not apply in the build, because the robot app has no teleop thread. In its place, on a simulated arm on the Thor before power: the human program started before any headset is connected, and READY reached without restarting it; the round trip through the robot app's own socket, which must stay under 0.1 s, and the tick age of SAMPLES that crossed between the machines; a typed `stop` and right B while 50 HUMAN_SETPOINT link messages per second arrive at the robot app's own socket, each within 0.25 s; right B with the robot link service ended, which must stop the arm all the same; and the Teleop Session Server stopped and started again, and the cable between the machines pulled, while the grip is squeezed. With Headless off the check reads whether controller samples keep reaching the human program |
+| Size (sections 16 and 18) | The teleop thread, half an hour in section 18; one new workstation program, the robot link service | One more program, the human program, on the Thor on the rig: as built about 4,250 lines of source (`human/`). The robot app's side of a person driving holds, as built, about 700 lines in `robot_app/human.py` and about 140 in `robot_app/human_socket.py`, beside what `robot_app/app.py` and `robot_app/gripper.py` hold of the takeover and of the jaws under the trigger |
+| A later move to one connection (section 20) | The robot link messages move onto the teleop connection | The Teleop Session Server serves one client, and in the build that client is the human program, on the rig a process on the Thor beside the robot app. The robot link messages can move onto the teleop connection only once the robot app is that client, so the move into the robot app comes first |
 
 **A person driving the arm.** The robot app's checks of a human target are the authority. Before every setpoint it
 checks the numbers the target quotes, the sample age, the live view where `human.require_live_view` is on, and the
@@ -1323,15 +1438,16 @@ drive.
 
 **What waits for the project owner.** Each row gives the position the build ships in, what that costs, and the
 strongest alternative with its cost. Nothing here needs an answer for the build to run: each choice with a setting can
-be changed in a shipped file. Row 1 is the first to decide. Rows 23 and 25 are needed before the first session with the
-operator, and rows 2, 5, 6, 10 and 11 before the first session with the headset. The open points of section 16 that the
-build leaves as they are (the robot link service as a separate program, and permits) are not repeated here.
+be changed in a shipped file. Row 1 is the first to decide. Rows 23 and 25 concern a session on the rig without a
+headset, and rows 2, 3, 5, 6, 10 and 11 are needed before the first session with the headset. The open points of
+section 16 that the build leaves as they are (the robot link service as a separate program, and permits) are not
+repeated here.
 
 | # | Choice | Ships as | What that costs | Alternative and its cost |
 |---|---|---|---|---|
-| 1 | Where the controller is read and hand motion becomes joint targets | On the workstation, in the human program (the placement above). No setting | The seven costs listed above | This design's placement on the Thor, with the costs listed above |
-| 2 | Human driving on the rig | The Thor setting `human.enabled` is off in the rig's file and in the file for the simulated arm, and on only in the file for APAI's mock arm. While it is off a takeover is refused with `human driving is switched off in this robot app's file (human.enabled)`, and no joint target from a person moves the arm. The owner switches it on for the session, after the headset checks of section 19 have passed on a simulated arm | No demo 2 on the rig until then | Ship it on: code that has never seen a headset is then reachable on the real arm in the first run of demo 1 |
-| 3 | The trigger and the jaws under a person (section 12 step 5) | Not built (section 20): the trigger does nothing. The trigger limit still awaits the owner's yes (section 16) | A person cannot grasp or let go with the trigger; letting go is `stop`, `open`, `yes` at the operator console | Build the trigger limit behind a setting that ships off: a new jaw rule on the arm before it is tried with real objects |
+| 1 | The process in which the controller is read and hand motion becomes joint targets | In the human program, a process of its own: on the rig on the Thor beside the robot app, in the one-machine recipes on that machine (the placement above). No setting switches between the two: the human program runs on the machine it is started on, and `socket_path` in its file names the socket it attaches to | The six costs listed above | This design's thread inside the robot app, with the costs listed above |
+| 2 | Human driving on the rig | The Thor setting `human.enabled` is off in the rig's file (`configs/robot_app_rebot.yaml`) and in the file for the simulated arm (`configs/robot_app.yaml`). It is on in the three other shipped files of the robot app: the file for APAI's mock arm (`configs/robot_app_mock.yaml`), the file for demo 2 on the simulated arm on one machine (`configs/robot_app_demo2.yaml`) and the file for the headset checks on a simulated arm (`configs/robot_app_human_check.yaml`). While it is off a takeover is refused with `human driving is switched off in this robot app's file (human.enabled)`, and no joint target from a person moves the arm. The owner switches it on for the session, after the headset checks of section 19 have passed on a simulated arm | No demo 2 on the rig until then | Ship it on: code that has never seen a headset is then reachable on the real arm in the first run of demo 1 |
+| 3 | The trigger and the jaws under a person (section 12 step 5) | Built, and switched on: the Thor setting `human.trigger_jaws` is on in every shipped file of the robot app, with `human.jaw_match_tol` at 0.05. It acts only where `human.enabled` is on. The trigger limit still awaits the owner's yes (section 16) | A jaw rule that no real controller's trigger has run on real jaws can be reached in the first session with the headset on the arm | Ship it off (`human.trigger_jaws: false`): a person can then neither grasp nor let go with the trigger, and letting go is `stop`, `open`, `yes` at the operator console |
 | 4 | A silent agent after a hold (section 16) | Not built: the arm holds until someone acts | No prompt when an agent program goes silent with its connection open | Ten seconds of silence count as failed and start the assistance wait: the arm can then move to rest by itself after an agent that is only slow |
 | 5 | Typed takeover and hand-back | The operator console has the commands `takeover` and `handback`, each sent after a typed `yes`, as a fallback for right B and right A. The robot link service forwards them only with its setting `operator.typed_takeover` on, which is off in both shipped files and is read when the service starts. The Thor makes the same checks as for the buttons | If right A or right B does not arrive, or the controller fails during a takeover, the takeover ends only after the setting is switched on and the robot link service is started again, or by a shutdown | Ship it on: a takeover then needs no 1 s button hold, and a hand-back can be typed, where the owner decided that the arm is given back with right A (section 3). A middle way allows the typed `handback` always, which moves nothing, and keeps only the typed `takeover` behind the setting |
 | 6 | The speed of a person's motion on the rig | The rig's file has 0.8 rad/s for the joint speed limit of the human limit set (`limits.human.max_joint_speed` in `configs/robot_app_rebot.yaml`), which is the speed cap of the rig's arm profile; a faster human limit set is refused. The Thor clamps a person's motion at 0.98 of it, and the human program moves its joint target at 0.9 of that clamp. The hand speed limit in the human program's file for the rig, `configs/human_rebot.yaml`, is 0.25 m/s and 1.0 rad/s (`retarget.max_linear_velocity`, `retarget.max_angular_velocity`); it bounds only the target of the gripper tip. The first values of section 8 are 1.5 rad/s, 0.10 m/s and 0.4 rad/s. The file marks the 0.8 rad/s as the owner's value | The arm follows a hand at up to 0.8 rad/s on each joint, a speed at which no person's motion has run on the arm | A lower `limits.human.max_joint_speed` for the first session with the headset: the human program follows the limit that WELCOME names, so this one key on the Thor slows the arm. It costs a slower arm under a person |
@@ -1344,43 +1460,59 @@ build leaves as they are (the robot link service as a separate program, and perm
 | 13 | A takeover where the human checker refuses the measured pose | Refused with `the arm is outside the human limits: `, the reason and `; type rest`, for every complaint of the human checker but a low gripper tip. Section 12 has no such condition. Where the agent stops with the gripper tip low, below the table clearance (0.02 m in the rig's file, `rest.table_clearance_m`) or inside its last grasp region, the takeover is accepted and the Thor follows only a lift (the paragraph "A person driving the arm" above). A typed `rest` and an agent task stay refused there until the tip is clear: the person lifts the gripper out, releases the grip and types `rest` | No takeover where the arm stands outside the human joint box or the workspace box, or with a link at the table. A low gripper is lifted out by a person only: with the headset path lost, what is left is the 48 V switch with the arm held by hand | Refuse a takeover with a low gripper tip as well: an arm that the agent left low in a grasp then takes no command that moves it. Or accept every takeover: a person then owns an arm that the human checker lets nobody move |
 | 14 | The human joint box on the rig | With human driving on, the robot app refuses a Thor configuration whose human joint box reaches outside the recovery region, and the rig's human joint box lies 0.02 rad inside that region, which is also the agent's envelope (`limits.human.joint_min`, `limits.human.joint_max`), on every bound but the lower bound of the second and the third joint, which lie on their stops at rest. The human program stops its joint target a further 0.01 rad inside the box. A joint driven to that edge can read a few milliradians further out and still lies inside the region, where a typed `rest` is taken | A person cannot turn the first and the sixth joint, or raise the second and the third, beyond 120 degrees less that margin. In the outer 0.02 rad of the agent's envelope a takeover is refused, and the operator types `rest` there | The full joint box of the arm's kinematic model for the person: a person can then leave the arm where a typed `rest` is refused, and with the headset path lost only the 48 V switch is left |
 | 15 | A typed `rest` from a contact hold while a takeover is open | Accepted when it is typed with `path is clear`. That confirmation also clears the contact spots the recovery checker holds, so that the agent's last contact spot does not refuse the path: only the agent can clear them, and the agent is refused while a takeover is open. The agent checker keeps its spots, and the return keeps its contact monitor and ends at the next contact. It has no setting of its own; it can be reached only where `human.enabled` is on. A shutdown that is confirmed with `path is clear` while a takeover is open takes the same exception (row 17). Section 11 refuses a return to rest while the arm holds at a contact | A return to rest can start at a contact, and pass a recorded contact spot, on a person's typed word | Section 11's rule: after a contact under a person with the headset path lost, the only way out is the 48 V switch with the arm held by hand |
-| 16 | A typed `rest` that is refused for its path | The straight joint path from a pose a person has reached can pass under the table clearance, leave the workspace box or bring a link to the table. The recovery checker then refuses the return with `the path to rest was refused: setpoint N: ` and the reason, before anything moves. The person squeezes the grip, brings the gripper back the way it came and types `rest` again. No setting | With no working controller no typed command moves the arm then: it holds with its motors on | The Thor plans a route for this case; section 11 plans none, and none is built |
+| 16 | A typed `rest` that is refused for its path | The legs of a return are straight joint-space moves (section 11): with APAI the leg up to the ready pose and then the fold of APAI's rest tool, on the simulated arm one move to the rest pose. From a pose a person has reached, such a path can pass under the table clearance, leave the workspace box or bring a link to the table. The recovery checker checks every leg before the control owner changes, and then refuses the return with `the path to rest was refused: setpoint N: ` and the reason, before anything moves. The person squeezes the grip, brings the gripper back the way it came and types `rest` again. No setting | With no working controller no typed command moves the arm then: it holds with its motors on | The Thor plans a route around what refuses the path. The route of APAI's rest tool goes around nothing on the Thor, which has no obstacle grid; section 11 plans no other, and none is built |
 | 17 | The shutdown command during a takeover | A confirmed shutdown is accepted while a person owns the arm with the grip released, and while a takeover is open with nobody owning the arm: the arm returns to rest, torque is released there and the robot app ends. The next start of the robot app has no takeover open | A takeover can end without right A, where the owner decided on right A at verified rest (section 3) | Refuse the shutdown until the hand-back: the robot app then cannot be shut down when the controller fails during a takeover |
 | 18 | The question "completed or abandoned?" (section 12 step 6) | Not built (section 20) | The task record does not say how a takeover ended | Build it in the console and the task record: it needs a link message or a file for the answer |
 | 19 | No obstacle check for a person (section 8, kept) | No setting | The person's eyes are the only obstacle check | A warning on the console when the hand's target is inside the obstacle grid: the human program would need the grid, which lives in the agent program |
 | 20 | The permit check has a switch (section 7) | `permits.required_for_agent` is on in every shipped file. The robot app accepts it off on any arm, the real arm included | Only the value in the rig's file keeps the permit check on for the rig | Accept it off only on a test arm: not built |
 | 21 | The timed return to rest (sections 10 and 11) | Built, tested on the simulated arm and on APAI's mock arm, and switched off for the rig: `rest.auto_return` is off in the rig's file, and `task.timed_return` is off in the agent program's shipped files. The owner's decision to implement the automatic return (section 3) is met in code | With the shipped files the arm keeps holding when the assistance wait runs out | Switch both on for the rig: the arm then moves by itself before the bench tests of section 19 have been run on it |
 | 22 | The typed `reference` at the Thor terminal | APAI's driver drops the jaw reference after three failed jaw reads in a row. Without the reference the jaws cannot be proven empty, so neither a return to rest nor a release is accepted. With the Thor setting `jaws.allow_reference` on, a person at the Thor terminal types `reference` and then `jaws are empty`, and the jaws close slowly to their stop to find the reference again; the command is accepted only with control owner nobody, no fault-stop, the motors on and nothing else running, and a STOP ends it. The setting is off in every shipped file, because the command moves the jaws on a person's word, which section 11 excludes | Such a read fault with the arm raised ends at the 48 V switch with the arm held by hand | Switch it on: a jaw rule that this design does not have |
-| 23 | The model client on the workstation | The full stack reaches its cloud language model through a command-line program that is not installed on the workstation, and that program needs a login. The agent program's setting `experiment.codex_bin` names the program once it is there. Installing it and using a login wait for the owner | No task runs on the full stack: demo 1 on the rig waits for it, the runs on one machine use the minimal stack, and demo 2 on the rig runs without the agent failing first | Install it and use the login that is on the workstation: the model calls then run on that login |
+| 23 | The model client on the workstation | The full stack reaches its cloud language model through a command-line program, the model client, and that program needs a login. The script that builds the workstation's Python environment (`setup_workstation_env.sh`) installs it only with its option `--with-model-client`, and no script of the example reads or writes the login. The agent program's setting `experiment.codex_bin` names the program; the rig's agent file (`configs/agent_rebot.yaml`) names the one that option installs. Installing it and using a login wait for the owner | Without the model client no task runs on the full stack: demo 1 on the rig needs it, the runs on one machine use the minimal stack, and demo 2 on the rig then runs without the agent failing first. The example's README names one run on the rig with the full stack, of 2026-11-17 (the status paragraph at the top of this file) | Install it and use the login that is on the workstation: the model calls then run on that login |
 | 24 | The obstacle grid stand-in for one machine | The agent program's setting `experiment.grid` is `bridge` (the obstacle grid that the experiment's code builds from camera frames) in its two main files and `clear` only in its file for APAI's mock arm. With `clear` the obstacle grid is a stand-in with nothing near: every setpoint still goes out under a permit, and no move is checked against obstacles. The agent program accepts it only with the minimal stack and against a robot app whose declared driver is a test arm | The demo by hand on one machine checks nothing against obstacles, and says so in a warning | No such setting: no pick and place by hand on one machine without a GPU |
 | 25 | The order of the bench tests (section 19) | The checklist of the first session moves the arm, slowly and supported, before five tests that section 19 puts before any motion | First moves on motors whose behaviour after a program death is not measured, on first values that nobody has measured | Section 19's order: one more session before any motion |
 
-**What is not tested without a headset.** The tests of the human path cover the build's placement only. Every takeover
-and every motion of a person in them comes from a synthetic controller inside the human program or from HUMAN_SETPOINT
-link messages that a test makes. No controller sample has passed through a Teleop Session Server into this code,
-because Isaac Capture has no way to send controller SAMPLES without a headset; the human program's entry into the
-remote session, READY, staleness and re-entry are tested against a stand-in for the server that carries no controller
-data. The first real controller data reach this code in the session with the headset. Also never run: right A and
-right B over a remote session; a recentre of the headset view; the typed `takeover` and `handback` at a real terminal;
-the viewer's page in a browser window with a person in front of it; demo 2 on one machine as separate programs or by
-hand; human driving with the rig's files; and anything between two machines. Not measured: the round trip of the robot
-connection and the delay the human program adds, estimated at 10 to 30 ms.
+**What is not tested without a headset.** The tests of the human path cover the build's placement only, on one
+machine: the human program attached to the robot link service, and attached at the robot app's own socket
+(`test_human_on_thor.py`). Every takeover and every motion of a person in them comes from a synthetic controller
+inside the human program or from HUMAN_SETPOINT link messages that a test makes. No controller sample has passed
+through a Teleop Session Server into this code, because Isaac Capture has no way to send controller SAMPLES without
+a headset; the human program's entry into the remote session, READY, staleness and re-entry are tested against a
+stand-in for the server that carries no controller data. The first real controller data reach this code in the
+session with the headset. Also never run: right A and right B over a remote session; a recentre of the headset
+view; the typed `takeover` and `handback` at a real terminal; the viewer's page in a browser window with a person
+in front of it; demo 2 on one machine by hand; the human program on a Thor, and its remote session between two
+machines; the trigger of a real controller on real jaws; and human driving on the rig. Not measured: the round trip
+through the robot app's own socket on a Thor, and the delay the human program adds.
 
 ## 22. Evidence
 
 Based on reading code at Isaac Capture commit `4a2b98420` (on the remote teleop session branch), the APAI checkout
 pinned at `3c8b773`, the uncommitted Thor adapter files of the experiment checkout, the LeRobot checkout used for
 today's remote teleop, the local checkout of Isaac Capture pull request #1410, and the hardware test record. The
-example is built through P3 and tested on the workstation alone; the example's README lists what has been run and what
-has never been run. Run: the automated tests on a simulated arm and on APAI's mock arm, with the robot connection as a
-real link between programs on one machine; the two self-tests of the robot app; the perception stack on recorded stereo
-pairs on GPU 0, with stand-ins for the model clients. Never run: any robot motion, any model call and any task on the
-full stack; anything between two machines; a camera frame from the Thor; the robot app's start for the real arm other
-than against a stand-in for the motor library; an Isaac Capture build on the Thor; a headset, CloudXR or the Teleop
-Session Server with any of it; the viewer's page in a browser window with a person in front of it, and the live view on
-the rig's camera and robot connection; a line typed by a person at a real terminal; the repository's pre-commit hooks
-and the CTest entries of the example and of the `core::Link` wrapper; the tests under Python 3.11 and 3.13. Every
-limit, speed and time in the shipped files is a first value, except the joint speeds in the rig's files, which are
-the owner's values (section 8). Statements about the headset view, the motors after a
-program death, permit timing and the timing of every other new path are unverified until the tests of section 19 are
-run.
+example is built through P3. Its tests run on the workstation alone, and the example's README lists what the tests
+ran, what ran on the rig and what has never been run.
+
+Run by tests: the automated tests on a simulated arm and on APAI's mock arm, with the robot connection as a real
+link between programs on one machine; the two self-tests of the robot app; the perception stack on recorded stereo
+pairs on GPU 0, with stand-ins for the model clients.
+
+Run on the rig, by the README's account: the programs on both machines, in sessions of 2026-11-16 and 2026-11-17;
+a pick, a lift, a hold and a place of an object by the agent on the real arm at 0.1 rad/s, with the agent program
+on the workstation and the robot app on the Thor, which the rig owner reported on 2026-11-16 and of which the
+repository holds no record; and a run of 2026-11-17 with the full stack, the camera connection and the robot
+connection between the two machines, whose run folder holds the measurements of 14 moves and 4 jaw commands. The
+README marks no step of its checklist for the rig as run: no record of the session of 2026-11-16 says which steps
+passed.
+
+Never run by a test: any motion of the real arm, any model call and any task on the full stack; anything between
+two machines; a camera frame from a Thor; the robot app's start for the real arm other than against a stand-in for
+the motor library; an Isaac Capture build on a Thor; the viewer's page in a browser window with a person in front
+of it; a line typed by a person at a real terminal. The README reports no run, by a test or on the rig, of: a
+headset, CloudXR or the Teleop Session Server with any of it; the human program on a Thor; a person's takeover or
+drive on the arm; the live view on the rig's camera and robot connection. The README names what else has not run
+on the real arm, the typed `rest` that ends with the motors off and the typed `on` among it. Also never run: the
+repository's pre-commit hooks and the CTest entries of the example and of the `core::Link` wrapper; the tests under
+Python 3.11 and 3.13. Every limit, speed and time in the shipped files is a first value, except the joint speeds
+in the rig's files, which are the owner's values (section 8). Statements about the headset view, the motors after
+a program death, permit timing and the timing of every other new path are unverified until the tests of section
+19 are run.
