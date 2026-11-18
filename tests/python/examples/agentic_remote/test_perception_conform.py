@@ -17,6 +17,7 @@ folder, its calibration files, and the OpenCV matcher on the CPU.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import time
 import types
@@ -76,8 +77,17 @@ def shipped_hand_eye(experiment_dir: Path) -> Path:
 
 @pytest.fixture(scope="module")
 def functional_profile(experiment_dir: Path) -> dict[str, Any]:
-    """The functional camera profile: the one beside the hand-eye file in use."""
-    file = shipped_hand_eye(experiment_dir).with_name("camera-candidate.yaml")
+    """The functional camera profile: the one beside the hand-eye file in use.
+
+    A fit exported from the Thor brings none: then the one of the newest fit
+    of this machine's copy, which names the same camera.
+    """
+    others = experiment_dir.glob(".state/thor/*/*/camera-candidate.yaml")
+    profiles = [
+        shipped_hand_eye(experiment_dir).with_name("camera-candidate.yaml"),
+        *sorted(others, key=lambda path: path.parent.name, reverse=True),
+    ]
+    file = next(path for path in profiles if path.is_file())
     return yaml.safe_load(file.read_text(encoding="utf-8"))
 
 
@@ -724,10 +734,18 @@ def test_the_rig_agent_file_names_a_hand_eye_fit_the_functional_launcher_would_t
     """thor_runtime.load_config takes a mounting only with accepted_fit true."""
     hand_eye = shipped_hand_eye(experiment_dir)
     assert hand_eye.is_file()
-    record = json.loads(hand_eye.with_name("result.json").read_text())
+    # A fit made here has result.json; one exported from the Thor summary.json.
+    records = [hand_eye.with_name(name) for name in ("result.json", "summary.json")]
+    record = json.loads(next(path for path in records if path.is_file()).read_text())
     assert record["accepted_fit"] is True
-    # The fit's own camera profile names this very file, on the Thor's paths.
-    named = Path(functional_profile["extrinsics"]["hand_eye_json"])
+    own_profile = hand_eye.with_name("camera-candidate.yaml")
+    if own_profile.is_file():
+        # The fit's own camera profile names this very file, on the Thor's paths.
+        named = Path(functional_profile["extrinsics"]["hand_eye_json"])
+    else:
+        # The export's record does, and names the file's SHA-256.
+        named = Path(record["handeye_file"])
+        assert record["sha256"] == hashlib.sha256(hand_eye.read_bytes()).hexdigest()
     assert named.parts[-2:] == hand_eye.parts[-2:]
     # The one camera number the agent file copies is the functional profile's.
     camera = shipped("agent_rebot.yaml")["camera"]

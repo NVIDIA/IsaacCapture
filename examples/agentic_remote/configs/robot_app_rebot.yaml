@@ -198,8 +198,8 @@ jaws:
 
 # The calibration in use on the rig, named by the first 12 hex digits of the
 # SHA-256 of the stereo calibration's manifest.json and of the camera mounting's
-# handeye.json (the fit 20261116T235557Z-live-629d_gvb), computed on 2026-11-16
+# handeye.json (the fit 20261118T015157Z-live-1rrfshus), computed on 2026-11-17
 # from the workstation's copies. The agent program builds the same name from
 # its copies and prints it with --check: if that prints another name, that one
 # is right. --calibration on the command line must repeat this name.
-camera_calibration_id: stereo-c50bf5b2b899+mount-fa6cfe676036
+camera_calibration_id: stereo-c50bf5b2b899+mount-6ba1cda8fdc3

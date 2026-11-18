@@ -880,7 +880,7 @@ def test_a_calibration_name_that_is_not_the_rig_files_is_refused(
     assert err.startswith(
         f"{NOT_CONNECTED}--calibration names "
         "'stereo-000000000000+mount-000000000000' but camera_calibration_id of "
-        "the file is 'stereo-c50bf5b2b899+mount-fa6cfe676036'"
+        "the file is 'stereo-c50bf5b2b899+mount-6ba1cda8fdc3'"
     )
 
 
@@ -1250,7 +1250,7 @@ def test_a_question_that_is_not_confirmed_leaves_the_real_driver_unconnected(
     assert out[0] == (
         f"robot app: APAI arm profile {bench.profile}, the real driver on can4: "
         "built, not connected. No hold marker; calibration "
-        "stereo-c50bf5b2b899+mount-fa6cfe676036; speed cap 0.4 rad/s; at rest at "
+        "stereo-c50bf5b2b899+mount-6ba1cda8fdc3; speed cap 0.4 rad/s; at rest at "
         "start within 0.12 rad"
     )
     assert len(out) == 2 + at and out[-1].startswith(f"Real driver, {at + 1} of 3: ")

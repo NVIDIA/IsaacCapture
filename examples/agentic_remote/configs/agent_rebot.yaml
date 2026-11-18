@@ -116,11 +116,11 @@ camera:
   receiver_socket: /tmp/camera_receiver_avs1_cuda_ipc.sock
   streams: [head.left, head.right]  # two different names
   # The workstation's copy of the stereo calibration folder and of the hand-eye
-  # file in use on the Thor: the fit of 2026-11-16 (run 20261116T235557Z), made
-  # after the camera was moved; result.json beside it says accepted_fit true.
-  # The robot app must name the same file (stereo-c50bf5b2b899+mount-fa6cfe676036).
+  # file in use on the Thor: the fit of 2026-11-17 (20261118T015157Z-live-1rrfshus);
+  # summary.json beside it says accepted_fit true.
+  # The robot app must name the same file (stereo-c50bf5b2b899+mount-6ba1cda8fdc3).
   calibration_dir: ${AGENTIC_REMOTE_EXPERIMENT_DIR}/.state/thor/calibration
-  hand_eye_json: ${AGENTIC_REMOTE_EXPERIMENT_DIR}/.state/thor/handeye/20261116T235557Z-live-629d_gvb/handeye.json
+  hand_eye_json: ${AGENTIC_REMOTE_EXPERIMENT_DIR}/.state/thor/mounting/20261118T015157Z-live-1rrfshus/handeye.json
   # The two eyes of a stereo pair lie at most this far apart. At most 50 ms.
   max_skew_ms: 5.0
   depth_backend: ffs

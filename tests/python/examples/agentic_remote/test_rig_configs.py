@@ -74,7 +74,7 @@ ROBOT_RIG = CONFIGS / "robot_app_rebot.yaml"
 AGENT_RIG = CONFIGS / "agent_rebot.yaml"
 SERVICE_RIG = CONFIGS / "link_service_rebot.yaml"
 RIG_FILES = (ROBOT_RIG, AGENT_RIG, SERVICE_RIG)
-CALIBRATION_ID = "stereo-c50bf5b2b899+mount-fa6cfe676036"
+CALIBRATION_ID = "stereo-c50bf5b2b899+mount-6ba1cda8fdc3"
 PROFILE_ID = "rebot-b601-rs-thor"
 # The owner's values of 2026-11-16, rad/s: the agent's moves and the return to
 # rest, and the bound on a person's motion.
@@ -1236,9 +1236,9 @@ def test_the_rig_agent_file_is_the_real_run(path_variables):
     camera, experiment = settings.camera, settings.experiment
     folder = path_variables[agent_config.EXPERIMENT_DIR_ENV]
     assert camera.calibration_dir == f"{folder}/.state/thor/calibration"
-    # The fit of 2026-11-16, made after the camera was moved.
+    # The fit of 2026-11-17.
     assert camera.hand_eye_json == (
-        f"{folder}/.state/thor/handeye/20261116T235557Z-live-629d_gvb/handeye.json"
+        f"{folder}/.state/thor/mounting/20261118T015157Z-live-1rrfshus/handeye.json"
     )
     camera_pr = path_variables["AGENTIC_REMOTE_CAMERA_PR"]
     assert camera.bridge_python == f"{camera_pr}/cuda_ipc_consumer/.venv/bin/python"
