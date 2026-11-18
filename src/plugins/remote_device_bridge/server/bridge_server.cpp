@@ -599,8 +599,10 @@ private:
                     break;
                 }
                 m_pings->on_pong();
+                // t1 = our PING's header t_send (echoed), t2 = client receive, t3 = the PONG's header t_send (stamped
+                // when the client wrote it), t4 = our receive.
                 m_clock.add_two_way_sample(
-                    pong.ping_sent_ns, pong.ping_received_ns, pong.pong_sent_ns, received.t_recv_ns);
+                    pong.ping_sent_ns, pong.ping_received_ns, header.t_send_monotonic_ns, received.t_recv_ns);
                 if (!std::exchange(m_logged_pong, true))
                 {
                     logger()->info(
@@ -692,8 +694,8 @@ private:
         switch (m_pings->poll(now_ns))
         {
         case PingScheduler::Action::Ping:
-            send(protocol::FrameType::Ping, protocol::kSessionChannelId,
-                 protocol::encode_ping(core::os_monotonic_now_ns()));
+            // No payload: t1 is the header t_send that send() stamps as it writes the frame.
+            send(protocol::FrameType::Ping, protocol::kSessionChannelId, {});
             break;
         case PingScheduler::Action::GiveUp:
             logger()->warn("{} clock: no PONG, falling back to one-way", m_tag);
