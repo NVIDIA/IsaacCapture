@@ -113,12 +113,13 @@ carry a timestamp; the rest do not), the last combined uncertainty and the clock
 under. These are runtime diagnostics only and are not recorded with the video. The caller of a recording should treat a
 frame without a timestamp as a timing fault.
 
-Recording eligibility is permissive in this bridge: an `over_budget` frame is converted validly, keeps its capture
-time and is published like a `qualified` one, so a recording that accepts every timestamped frame records it. The
-timestamp alone does not say the precision target was met, and the verdict and bound are not carried with the video.
-A frame without a timestamp (an invalid mapping, stale or unsynchronised evidence, or a wall-clock step) is the timing
-fault. A consumer that must reject frames above the precision target needs the bound from the bridge's diagnostics
-or a stricter publication policy; this bridge does not apply one.
+Recording precision is best-effort by design. An `over_budget` frame is converted validly, keeps its capture time and
+is published like a `qualified` one, so a recording that accepts every timestamped frame records it. The precision
+target (5 ms by default) classifies frames in the statistics; it is not an admission limit, and no frame is refused
+for being over it. The timestamp alone does not say the target was met, and the verdict and bound are not carried with
+the video or recorded with it. The only timing fault a recording sees is a frame without a timestamp (an invalid
+mapping, stale or unsynchronised evidence, or a wall-clock step). A deployment that must reject frames above the
+target needs the bound from the bridge's diagnostics or a stricter publication policy; this bridge does not apply one.
 
 `--source-full-range` says the receiver's pictures use the full 0-255 range, as SIPL sources do; the encoded stream
 then signals full range, so players and recordings keep the black and white levels. Without it the stream signals
