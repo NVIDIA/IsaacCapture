@@ -31,6 +31,7 @@ import math
 import os
 import queue
 import select
+import shutil
 import sys
 import tempfile
 import termios
@@ -46,6 +47,7 @@ from unittest.mock import patch
 
 from ..console_log import set_console_level
 from . import config as agent_config
+from . import debug_recording
 from .arm_adapter import (
     AGENT_TERMINAL,
     ARM_TYPE,
@@ -397,6 +399,7 @@ def agent_hooks(
     task_input: Callable[[str], str] = terminal_input,
     timing: Any = None,
     measures: Measures | None = None,
+    prompt_notes: Callable[[], list[str]] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """APAI's demo.main, while this is open, runs on the robot link.
 
@@ -407,6 +410,7 @@ def agent_hooks(
     wait for each task line. With thor_batch_milestones in cfg the agent gets
     the experiment's milestone batching. measures gets what the arm's moves
     and jaw commands measured and every camera frame the camera returns.
+    prompt_notes() gives the lines to say before a task prompt.
     """
     from apai.agent import orchestrator
     from apai.apps import demo
@@ -574,6 +578,8 @@ def agent_hooks(
             if gate.tell_end():
                 raise EOFError  # ends APAI's task prompt: no new task is taken
             gate.return_late_ownership()
+            for line in prompt_notes() if prompt_notes is not None else ():
+                say(line)
             if task_input is terminal_input:
                 line = terminal_input(prompt, idle=gate.return_late_ownership)
             else:
@@ -1708,14 +1714,24 @@ def _measure_line(run_dir: Path) -> str:
 
 @contextmanager
 def experiment_sessions(
-    options: RunOptions, run_dir: Path, ask: Callable[[str], str]
+    options: RunOptions,
+    run_dir: Path,
+    ask: Callable[[str], str],
+    *,
+    map_hz: float = debug_recording.DEBUG_MAP_HZ,
+    at_limit: str = debug_recording.AT_LIMIT_DROP,
+    notice: debug_recording.FullNotice | None = None,
 ) -> Iterator[tuple[Callable[[str], str], Any, Any]]:
     """The experiment's recordings around a run, in its own launcher's order.
 
     The timing, then the model transcript, then the debug recording, each
     only when its option is on; they end in the reverse order. Yields the
     question the task gate asks with, which is timed while the timing runs,
-    the timing's recorder or None, and the debug recorder or None.
+    the timing's recorder or None, and the debug recorder or None. The debug
+    recorder stores map_hz map pictures a second (debug_recording.MapRate; 0:
+    every one). At its size it drops its oldest map pictures
+    (debug_recording.Keeper) or, with at_limit "stop", stops; notice says
+    which happened.
     """
     parts = _TimedParts(ask)
     timing = None
@@ -1735,11 +1751,47 @@ def experiment_sessions(
             session = experiment_module("thor_recording").recording_session
             limit = int(options.debug_max_gib * 1024**3)
             recording = stack.enter_context(session(run_dir, max_bytes=limit))
+            limits = stack.enter_context(
+                debug_recording.limited(recording, map_hz, at_limit)
+            )
+            if notice is not None:
+                stack.enter_context(notice.watching(recording, limits.keeper))
         yield parts.operator_answer, timing, recording
 
 
-def _option_lines(options: RunOptions, run_dir: Path) -> list[str]:
-    """What this run records, and what it cannot; said at the start."""
+# The experiment's recorder stops for good when the disk has less than this free.
+_RECORDER_FREE_GIB = 2.0
+
+
+def _disk_warning(run_dir: Path, max_gib: float) -> str:
+    """A sentence when the disk cannot hold a whole recording, else ""."""
+    folder = run_dir
+    while not folder.exists() and folder != folder.parent:
+        folder = folder.parent
+    try:
+        free_gib = shutil.disk_usage(folder).free / 1024**3
+    except OSError:
+        return ""
+    if free_gib >= max_gib + _RECORDER_FREE_GIB:
+        return ""
+    return (
+        f". WARNING: only {free_gib:.0f} GiB are free on this disk: the "
+        "recording stops for the disk before it reaches that size, and the "
+        "viewer then no longer updates. Delete old run folders first"
+    )
+
+
+def _option_lines(
+    options: RunOptions,
+    run_dir: Path,
+    map_hz: float = debug_recording.DEBUG_MAP_HZ,
+    at_limit: str = debug_recording.AT_LIMIT_DROP,
+) -> list[str]:
+    """What this run records, and what it cannot; said at the start.
+
+    map_hz is the map pictures a second the debug recording stores, at_limit
+    what it does at its size.
+    """
     lines = []
     if options.timing:
         lines.append(
@@ -1751,9 +1803,25 @@ def _option_lines(options: RunOptions, run_dir: Path) -> list[str]:
     if options.model_trace:
         lines.append(f"model transcript: {run_dir / 'model-trace' / 'report.txt'}")
     if options.record_debug:
+        lasts = debug_recording.expected_text(options.debug_max_gib, map_hz)
+        size = f"at most {options.debug_max_gib:g} GiB"
+        if at_limit == debug_recording.AT_LIMIT_DROP:
+            size += (
+                ": when that is reached the oldest map pictures are dropped "
+                f"and the viewer keeps following. That size holds {lasts}, "
+                "which --debug-map-hz sets; with --debug-at-limit stop the "
+                "recording ends there instead"
+            )
+        else:
+            size += (
+                f", expected to last {lasts}, which --debug-map-hz sets; then "
+                "the recording stops and the viewer no longer updates, as "
+                "--debug-at-limit stop asks"
+            )
+        size += _disk_warning(run_dir, options.debug_max_gib)
         lines.append(
-            f"debug recording: {run_dir / 'debug'}, at most "
-            f"{options.debug_max_gib:g} GiB; ./run_viewer.sh shows it in a "
+            f"debug recording: {run_dir / 'debug'}, {size}; ./run_viewer.sh "
+            "shows it in a "
             "browser while the run goes on. Not recorded here: the motor "
             "commands and the single motor reads (robot.call, robot.return, "
             "mask.state_source), which are the robot app's on the Thor. Its "
@@ -1862,8 +1930,27 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="GIB",
-        help="the debug recording's size on disk at which it stops (default "
-        f"{agent_config.DEBUG_MAX_GIB:g})",
+        help="the most the debug recording takes on disk (default "
+        f"{agent_config.DEBUG_MAX_GIB:g}); --debug-at-limit says what happens "
+        "there",
+    )
+    parser.add_argument(
+        "--debug-at-limit",
+        default=None,
+        choices=debug_recording.AT_LIMITS,
+        help="what the debug recording does at --debug-max-gib. "
+        f"{debug_recording.AT_LIMIT_DROP} (default): its oldest map pictures "
+        "are dropped and the viewer keeps following; "
+        f"{debug_recording.AT_LIMIT_STOP}: it stops, as the experiment's does",
+    )
+    parser.add_argument(
+        "--debug-map-hz",
+        type=float,
+        default=None,
+        metavar="HZ",
+        help="how many pictures of the obstacle map the debug recording stores "
+        f"a second (default {debug_recording.DEBUG_MAP_HZ:g}, what the viewer's "
+        "page can show; 0: every one). The map itself is not changed",
     )
     parser.add_argument(
         "--log-level",
@@ -1929,7 +2016,7 @@ def _check(
             speed_profile=args.speed_profile,
             mounting=args.mounting,
         )
-    report["run_options"] = asdict(options)
+    report["run_options"] = _options_row(options, _map_hz(args), _at_limit(args))
     say(json.dumps(report, indent=2, default=str))
     return EXIT_OK
 
@@ -2062,6 +2149,59 @@ def _run_options(args: argparse.Namespace, settings: AgentSettings) -> RunOption
     )
 
 
+def _debug_map_hz(args: argparse.Namespace, settings: AgentSettings) -> float:
+    """--debug-map-hz of a run, or its default; ConfigError when refused."""
+    given = getattr(args, "debug_map_hz", None)
+    if given is not None and settings.minimal:
+        raise ConfigError(
+            f"--debug-map-hz needs experiment.stack {agent_config.STACK_FULL} (it "
+            f"is {agent_config.STACK_MINIMAL}): the minimal stack loads none of "
+            "the experiment's modules"
+        )
+    try:
+        return debug_recording.map_hz_of(given)
+    except ValueError as problem:
+        raise ConfigError(str(problem)) from None
+
+
+def _map_hz(args: argparse.Namespace) -> float:
+    """The map pictures a second the debug recording stores, as main() took it."""
+    return debug_recording.map_hz_of(getattr(args, "debug_map_hz", None))
+
+
+def _debug_at_limit(args: argparse.Namespace, settings: AgentSettings) -> str:
+    """--debug-at-limit of a run, or its default; ConfigError when refused."""
+    given = getattr(args, "debug_at_limit", None)
+    if given is not None and settings.minimal:
+        raise ConfigError(
+            f"{debug_recording.AT_LIMIT_OPTION} needs experiment.stack "
+            f"{agent_config.STACK_FULL} (it is {agent_config.STACK_MINIMAL}): "
+            "the minimal stack loads none of the experiment's modules"
+        )
+    try:
+        return debug_recording.at_limit_of(given)
+    except ValueError as problem:
+        raise ConfigError(str(problem)) from None
+
+
+def _at_limit(args: argparse.Namespace) -> str:
+    """What the debug recording does at its size, as main() took it."""
+    return debug_recording.at_limit_of(getattr(args, "debug_at_limit", None))
+
+
+def _options_row(
+    options: RunOptions,
+    map_hz: float,
+    at_limit: str = debug_recording.AT_LIMIT_DROP,
+) -> dict[str, Any]:
+    """What a run takes, as run-options.json and --check name it."""
+    row = asdict(options)
+    if options.record_debug:
+        row["debug_map_hz"] = map_hz
+        row["debug_at_limit"] = at_limit
+    return row
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -2083,6 +2223,8 @@ def main(
         _check_arguments(args)
         settings = agent_config.load_settings(args.config)
         options = _run_options(args, settings)
+        args.debug_map_hz = _debug_map_hz(args, settings)
+        args.debug_at_limit = _debug_at_limit(args, settings)
         if settings.minimal and args.speed_profile is not None:
             agent_config.joint_speed(settings, args.speed_profile)  # refused
         invented = agent_config.invented_times(settings, args.camera)
@@ -2145,7 +2287,10 @@ def _program(
     agent_config.write_json(run_dir / "agent-settings.json", settings.as_dict())
     _record_resolved_config(run_dir, cfg)
     if options != RunOptions():
-        agent_config.write_json(run_dir / "run-options.json", asdict(options))
+        agent_config.write_json(
+            run_dir / "run-options.json",
+            _options_row(options, _map_hz(args), _at_limit(args)),
+        )
     say(f"run folder {run_dir}; camera calibration {calibration or '(unnamed)'}")
     for line in told:
         say(line)
@@ -2171,15 +2316,24 @@ def _program(
             "declares a simulated driver"
         )
 
-    for line in _option_lines(options, run_dir):
+    for line in _option_lines(options, run_dir, _map_hz(args), _at_limit(args)):
         say(line)
+    # Says what the debug recording did at its size, and again at the next prompt.
+    notice = debug_recording.FullNotice(say, options.debug_max_gib)
     # The recordings stand around the whole robot connection: a STOP and the
     # close of the link come before any of them writes its report.
     code = EXIT_FAILED
     try:
         with ExitStack() as sessions:
             try:
-                recordings = experiment_sessions(options, run_dir, ask)
+                recordings = experiment_sessions(
+                    options,
+                    run_dir,
+                    ask,
+                    map_hz=_map_hz(args),
+                    at_limit=_at_limit(args),
+                    notice=notice,
+                )
                 ask, timing, recording = sessions.enter_context(recordings)
             except Exception as problem:
                 _log.debug("the recordings did not start", exc_info=True)
@@ -2205,6 +2359,7 @@ def _program(
                     task_input,
                     timing,
                     measures,
+                    notice.prompt_lines,
                 )
             finally:
                 measures.close(say)
@@ -2229,11 +2384,13 @@ def _drive(
     task_input: Callable[[str], str],
     timing: Any,
     measures: Measures | None = None,
+    prompt_notes: Callable[[], list[str]] | None = None,
 ) -> int:
     """Attach to the robot link service, run APAI's command line, close the link.
 
     run is (APAI's configuration, the run folder, the camera calibration's
-    name, whether the camera's capture times are invented).
+    name, whether the camera's capture times are invented). prompt_notes()
+    gives the lines to say before a task prompt.
     """
     cfg, run_dir, calibration, invented = run
     link: AgentLink | None = None
@@ -2303,6 +2460,7 @@ def _drive(
             task_input=task_input,
             timing=timing,
             measures=measures,
+            prompt_notes=prompt_notes,
         ):
             status = demo.main(arguments)
         if status == 0 and not gate.restart_told and not gate.wrong_robot_app:
