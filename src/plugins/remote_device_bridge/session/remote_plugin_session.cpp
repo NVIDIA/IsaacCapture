@@ -478,8 +478,8 @@ private:
             {
             case protocol::FrameType::WristSample:
             {
-                // sample_time_ns is dropped: core::WristTrackingSample has no timestamp field and queries return
-                // the latest sample.
+                // sample_time_local_common_clock_ns is dropped: core::WristTrackingSample has no timestamp field and
+                // queries return the latest sample.
                 const protocol::WristSample sample = protocol::decode_wrist_sample(frame.payload);
                 m_wrist_rx.fetch_add(1);
                 std::lock_guard<std::mutex> lock(m_wrist_mutex);

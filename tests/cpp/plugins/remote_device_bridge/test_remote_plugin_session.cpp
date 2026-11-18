@@ -425,7 +425,7 @@ TEST_CASE("RemotePluginSession forwards OPEN_HAND, HAND_SAMPLE and CLOSE bit-exa
         REQUIRE(sample.has_value());
         REQUIRE(sample->header.channel_id == channel_id);
         const protocol::HandSample decoded = protocol::decode_hand_sample(sample->payload);
-        REQUIRE(decoded.sample_time_ns == 123456789LL);
+        REQUIRE(decoded.sample_time_local_common_clock_ns == 123456789LL);
         for (size_t i = 0; i < joints.size(); ++i)
         {
             REQUIRE(std::memcmp(&decoded.joints[i], &joints[i], sizeof(XrHandJointLocationEXT)) == 0);
@@ -491,7 +491,7 @@ TEST_CASE("RemotePluginSession exposes bridge wrist samples through the pull cha
     REQUIRE_FALSE(before.tracked);
 
     protocol::WristSample wrist;
-    wrist.sample_time_ns = 1000;
+    wrist.sample_time_local_common_clock_ns = 1000;
     wrist.hand = XR_HAND_LEFT_EXT;
     wrist.sample.valid = true;
     wrist.sample.tracked = true;
@@ -701,7 +701,7 @@ TEST_CASE("RemotePluginSession keeps the newest samples per channel while the li
             continue;
         }
         (frame->header.channel_id == fast_id ? fast_times : slow_times)
-            .push_back(protocol::decode_hand_sample(frame->payload).sample_time_ns);
+            .push_back(protocol::decode_hand_sample(frame->payload).sample_time_local_common_clock_ns);
     }
 
     // Each channel delivered its newest sample, in order, from a queue that never held more than 4.
