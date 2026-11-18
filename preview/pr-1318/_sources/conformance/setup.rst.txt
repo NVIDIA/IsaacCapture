@@ -7,8 +7,8 @@ Set Up the Tools
 ================
 
 This page gets a workstation ready to record: the repository built, the CTS tool environments
-created and a headset streaming through CloudXR. Do it once per clone. Run the commands from the
-repository root.
+created and a headset streaming through CloudXR. Do it once per clone; both suites share every step.
+Run the commands from the repository root.
 
 .. contents:: Steps
    :local:
@@ -47,9 +47,10 @@ repository root.
    * - Your plugin, installed
      - ``cmake --install build`` installs every built plugin into ``install/plugins/``; add
        ``--component <name>`` to install one, if its plugin declares a component. Headset hand
-       tracking needs no plugin.
+       tracking and PICO body tracking need no plugin.
    * - Space and a helper
-     - A table and a chair. A second person at the screen makes the take easier.
+     - Hand: a table and a chair. Full body: room to stand, raise both arms and squat. A second
+       person at the screen makes either suite easier.
 
 2. Build the repository
 -----------------------
@@ -72,14 +73,15 @@ A plugin behind a ``BUILD_PLUGIN_<NAME>`` option builds only when you add
 3. Create the tool environments
 -------------------------------
 
-The suite has a checker environment and a capture environment. This line sets up the checker
-first, because the capture environment reads recordings through the bindings the checker
-generates:
+Each suite has a checker environment and a capture environment. Run the line for each suite you
+need; it sets up the checker first, because the capture environment reads recordings through the
+bindings the checker generates:
 
 .. code-block:: bash
 
    CTS=src/python/isaaccapture/cts
    $CTS/hand/checker/setup_env.sh --panel && $CTS/hand/capture/setup_env.sh
+   $CTS/full_body/checker/setup_env.sh --panel && $CTS/full_body/capture/setup_env.sh
 
 ``--panel`` adds the viewer, which replays a take and packages it for submission. To only check
 takes on another machine, such as a Mac, run the checker script alone there. The scripts are
@@ -91,12 +93,13 @@ idempotent and write only inside their own directory; re-run them after pulling 
 ----------------------
 
 CloudXR is the OpenXR runtime the capture runs on. **Start recording** waits until a headset has
-connected, even when your device produces the joints. Use the capture interpreter, and set ``PY``
-in each terminal you open:
+connected, even when your device produces the joints. Use the capture interpreter of either suite,
+and set ``PY`` in each terminal you open:
 
 .. code-block:: bash
 
    PY=$PWD/src/python/isaaccapture/cts/hand/capture/.venv/bin/python
+   # or …/cts/full_body/capture/.venv/bin/python
 
 #. Start the CloudXR service in a terminal of its own and leave it open. The first time, it shows a
    link to the CloudXR licence and asks you to accept it; your acceptance is remembered.
@@ -132,7 +135,8 @@ in each terminal you open:
 
 The workstation firewall must allow the CloudXR ports (:ref:`whitelist-firewall-ports`). For
 device profiles, a detached service or opening the client over USB, see
-:doc:`/references/cloudxr`.
+:doc:`/references/cloudxr`. For PICO body tracking, set up the trackers first:
+:doc:`/device/body_tracking/index`.
 
 Troubleshooting
 ---------------
@@ -162,4 +166,4 @@ Troubleshooting
      - One is already running. ``$PY -m isaaccapture.cloudxr.service status`` reports it;
        ``service stop`` ends a detached one, Ctrl+C a foreground one.
 
-Next, record a take: :doc:`hand`.
+Next, record a take: :doc:`hand` or :doc:`full_body`.

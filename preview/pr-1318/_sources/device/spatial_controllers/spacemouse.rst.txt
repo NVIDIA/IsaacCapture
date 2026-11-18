@@ -53,7 +53,8 @@ read-only for all users. No group membership is needed.
 Build
 -----
 
-Linux only. The plugin builds with the default plugin set:
+Linux only. Complete the :doc:`source-build prerequisites </development/build_from_source/index>`
+first. The plugin builds with the default plugin set:
 
 .. code-block:: bash
 
@@ -65,7 +66,7 @@ Usage
 
 Start the plugin with the session through ``TeleopSessionConfig.plugins``, from the copy bundled
 with ``isaaccapture`` (wheel installs included), and read it with ``SpaceMouseSource``, as
-:code-file:`examples/teleop/python/spacemouse_printer_example.py` does:
+:code-file:`examples/teleop/python/isaaccapture_examples/teleop/spacemouse_printer_example.py` does:
 
 .. code-block:: python
 

@@ -24,6 +24,15 @@ manage them directly:
 #. Runs retargeting pipeline with automatic updates
 #. Handles cleanup via RAII
 
+If resource cleanup fails during entry rollback or exit, ``cleanup_failed``
+becomes true. Hosts lending OpenXR handles must retain their renderer/session
+while this is true. If stopping the retarget worker was interrupted or failed,
+calling ``__exit__`` again retries that stop before releasing any resources.
+Successful retry clears the failure flag. Failures while unwinding the resource
+stack remain terminal: later entry, stepping and exit raise the stored error.
+An entry failure with successful rollback still permits reuse; the original
+setup error remains primary in either case.
+
 Quick Start
 -----------
 
@@ -113,7 +122,7 @@ details.
 When ``oxr_handles`` is provided (live mode), ``TeleopSession`` uses the
 supplied handles instead of creating its own OpenXR session. The caller is
 responsible for the external session's lifetime. Construct handles with
-``OpenXRSessionHandles(instance, session, space, proc_addr)`` where each
+``OpenXRSessionHandles(instance, session, space, xr_get_instance_proc_addr)`` where each
 argument is a ``uint64`` handle value.
 
 .. code-block:: python
@@ -172,8 +181,13 @@ Per application frame in pipelined mode, ``step()`` submits the current request
 and returns the latest completed ``RetargeterIO``. On a normal hit this is often
 the previous application frame's output. If that returned output came from
 request N-1, then ``session.last_context`` also comes from N-1: tracker data,
-control messages, execution events, outputs, and context stay self-consistent
-for the completed frame that is returned. Use ``mode="sync"`` when the
+control messages, execution state, outputs, and context stay self-consistent
+for the completed frame that is returned. Reset is an exception: a reset edge
+from replaced pending work or an earlier completed frame remains latched until
+a successful ``step()`` return delivers it through ``last_context``. Repeated
+undelivered reset pulses collapse to one idempotent reset. Reading the latest
+worker result does not consume that edge, and a failed output snapshot does
+not acknowledge it. This is not command-history replay. Use ``mode="sync"`` when the
 application needs exact current-frame sample/compute/return behavior.
 
 The return type is unchanged; inspect ``session.last_step_info`` for age and
@@ -332,18 +346,27 @@ Practical tuning:
 PluginConfig
 ^^^^^^^^^^^^
 
-Configure plugins:
+Configure plugins and pass them as ``TeleopSessionConfig(plugins=[...])``:
 
 .. code-block:: python
 
-   PluginConfig(
+   from pathlib import Path
+
+   from isaaccapture.teleop_session_manager import PluginConfig
+
+   plugin = PluginConfig(
        plugin_name="controller_synthetic_hands",
        plugin_root_id="synthetic_hands",
-       search_paths=[Path("/path/to/plugins")],
+       search_paths=[Path("/path/to/IsaacCapture/install/plugins")],
        enabled=True,
        plugin_args=["--arg1=val1", "--arg2=val2"],
        required=True,
    )
+
+A source build installs ``controller_synthetic_hands`` and the other plugins
+into ``install/plugins/``. The plugins shipped inside the ``isaaccapture``
+wheel are under ``BUNDLED_PLUGINS_DIR``, which you import from
+``isaaccapture.teleop_session_manager`` and pass as a search path instead.
 
 Plugins are optional by default: if none of their search paths exist or the
 configured plugin is not discovered, session startup continues without them.
@@ -456,14 +479,18 @@ Examples
 Complete Examples
 ^^^^^^^^^^^^^^^^^
 
-#. **Simplified Gripper Example**: ``examples/teleop/python/gripper_retargeting_example_simple.py``
+#. **Simplified Gripper Example**: ``examples/teleop/python/isaaccapture_examples/teleop/gripper_retargeting_example_simple.py``
    -- Shows the minimal configuration approach and demonstrates auto-creation
-   of input sources. Run it from the project root, with the environment set up
-   as in the :doc:`Quick Start <quick_start>`:
+   of input sources. Install ``isaaccapture`` into the active environment first:
+   from your source build as in
+   :doc:`step 4 of Build from source </development/build_from_source/index>`, or
+   from the package index as in the :doc:`Quick Start <quick_start>`. Then install
+   this example from the project root:
 
    .. code-block:: bash
 
-      python examples/teleop/python/gripper_retargeting_example_simple.py
+      uv pip install -e ./examples/teleop
+      python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 Before vs After
 ^^^^^^^^^^^^^^^
@@ -472,8 +499,9 @@ Before vs After
 
 .. code-block:: python
 
-   # Create trackers
-   controller_tracker = deviceio.ControllerTracker()
+   # Create source and its tracker
+   controllers = ControllersSource(name="controllers")
+   controller_tracker = controllers.get_tracker()
 
    # Get extensions
    required_extensions = deviceio.DeviceIOSession.get_required_extensions([controller_tracker])
@@ -492,7 +520,6 @@ Before vs After
    plugin_context = plugin_manager.start(...)
 
    # Setup pipeline
-   controllers = ControllersSource(name="controllers")
    gripper_left = GripperRetargeter(
        GripperRetargeterConfig(hand_side="left"),
        name="gripper_left",
@@ -516,14 +543,7 @@ Before vs After
    while True:
        deviceio_session.update()
        # Manual data injection needed for new sources
-       left_controller = controller_tracker.get_left_controller(deviceio_session)
-       right_controller = controller_tracker.get_right_controller(deviceio_session)
-       inputs = {
-           "controllers": {
-               "deviceio_controller_left": [left_controller],
-               "deviceio_controller_right": [right_controller]
-           }
-       }
+       inputs = {"controllers": controllers.poll_tracker(deviceio_session)}
        result = pipeline(inputs)
        # ... error handling, cleanup ...
 

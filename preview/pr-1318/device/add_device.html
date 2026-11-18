@@ -35,8 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=36007acf" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=9c450ab6" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -345,6 +345,8 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
 </ul>
@@ -541,6 +543,9 @@ which uses <code class="docutils literal notranslate"><span class="pre">SchemaPu
 <code class="docutils literal notranslate"><span class="pre">Pack()</span></code>, then call <code class="docutils literal notranslate"><span class="pre">pusher_.push_buffer(ptr,</span> <span class="pre">size,</span> <span class="pre">sample_time_local_common_clock_ns,</span>
 <span class="pre">sample_time_raw_device_clock_ns)</span></code>. Use a monotonic clock (e.g. <code class="docutils literal notranslate"><span class="pre">core::os_monotonic_now_ns()</span></code>)
 for the local common clock; use the device’s own clock for the raw device clock if available.</p></li>
+<li><p><strong>Shutdown</strong> — To stop a plugin, the plugin manager sends <code class="docutils literal notranslate"><span class="pre">SIGINT</span></code> and kills the process if
+it is still running 2 seconds later. A plugin that needs longer to close its files sets
+<code class="docutils literal notranslate"><span class="pre">shutdown_</span><wbr><span class="pre">timeout_</span><wbr><span class="pre">seconds</span></code> (greater than 0, at most 3600) in its <code class="docutils literal notranslate"><span class="pre">plugin.yaml</span></code>.</p></li>
 </ul>
 <p>Reference implementation: <a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/generic_3axis_pedal" rel="noopener noreferrer" target="_blank">src/plugins/generic_3axis_pedal</a>. The plugin holds a
 <code class="docutils literal notranslate"><span class="pre">core::SchemaPusher</span></code> member, opens the Linux joystick device, maps axes to
@@ -682,11 +687,17 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 cmake<span class="w"> </span>--install<span class="w"> </span>build
 </pre></div>
 </div>
-<p><strong>Run</strong> pusher and printer in separate terminals:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Terminal 1: Start printer</span>
+<p><strong>Run</strong> pusher and printer in separate terminals. Neither starts CloudXR, so
+start the runtime first (see <a class="reference internal" href="../references/cloudxr.html#dedicated-cloudxr-runtime"><span class="std std-ref">CloudXR Service</span></a>) and source its
+environment in each terminal:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula<span class="w">   </span><span class="c1"># runs in the background</span>
+
+<span class="c1"># Terminal 1: Start printer</span>
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/pedal_printer
 
 <span class="c1"># Terminal 2: Start pusher</span>
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
 ./install/examples/schemaio/pedal_pusher
 </pre></div>
 </div>
@@ -718,7 +729,7 @@ trackers during the update loop.</p></li>
 <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> and <a class="reference internal" href="../development/contributing.html"><span class="doc">Contributing</span></a>.</p>
 <div class="admonition seealso">
 <p class="admonition-title">See also</p>
-<p>Once your device publishes hand poses, prove it with <a class="reference internal" href="../conformance/overview.html"><span class="doc">Device Conformance Testing</span></a>.</p>
+<p>Once your device publishes hand or full-body poses, prove it with <a class="reference internal" href="../conformance/overview.html"><span class="doc">Device Conformance Testing</span></a>.</p>
 </div>
 </section>
 </section>
@@ -863,7 +874,7 @@ trackers during the update loop.</p></li>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on October 27, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 18, 2026.
       <br/>
     
   </p>

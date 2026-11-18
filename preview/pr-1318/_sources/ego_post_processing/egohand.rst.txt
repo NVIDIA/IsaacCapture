@@ -8,7 +8,7 @@ EgoHand reconstructs SOMA hand poses, 3D joints, and meshes from egocentric
 video, camera calibration, and 2D hand boxes. It runs directly on decoded video
 frames, and the code lives in :code-dir:`src/python/isaaccapture_egopost`.
 The method is described in the
-:code-file:`EgoHand paper <src/python/isaaccapture_egopost/docs/EgoHand.pdf>`.
+`EgoHand paper <https://arxiv.org/abs/2610.30293>`_.
 
 .. figure:: ../_static/egohand-showcase.gif
    :alt: EgoHand showcase: video frames, skeleton overlays, a hand close-up, and 3D meshes
