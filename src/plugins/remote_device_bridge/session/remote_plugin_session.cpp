@@ -20,6 +20,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -582,7 +583,8 @@ public:
             return;
         }
         m_impl.push_sample(m_channel_id, protocol::encode_hand_sample_frame(
-                                             m_channel_id, joint_locations, sample_time_local_common_clock_ns));
+                                             m_channel_id, protocol::HandJoints(joint_locations, XR_HAND_JOINT_COUNT_EXT),
+                                             sample_time_local_common_clock_ns));
     }
 
 private:
@@ -616,9 +618,9 @@ public:
         {
             return;
         }
-        m_impl.push_sample(m_channel_id, protocol::encode_schema_sample_frame(m_channel_id, buffer, size,
-                                                                              sample_time_local_common_clock_ns,
-                                                                              sample_time_raw_device_clock_ns));
+        m_impl.push_sample(m_channel_id, protocol::encode_schema_sample_frame(
+                                             m_channel_id, std::span<const uint8_t>(buffer, size),
+                                             sample_time_local_common_clock_ns, sample_time_raw_device_clock_ns));
     }
 
 private:
