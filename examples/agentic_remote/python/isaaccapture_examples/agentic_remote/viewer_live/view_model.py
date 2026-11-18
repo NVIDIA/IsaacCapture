@@ -4,8 +4,9 @@
 """What the live view knows: the newest camera picture, the robot's state and
 whether a browser is showing the view.
 
-A camera picture is a camera frame made small and packed as JPEG. The page
-acknowledges each picture it has drawn; VIEW_STATUS says "live" only on such an
+The live view is the viewer's page with its live picture showing. A camera
+picture is a camera frame made small and packed as JPEG. The page acknowledges
+each picture it has drawn; VIEW_STATUS says "live" only on such an
 acknowledgement. The view token is the secret a page gets when it is loaded:
 only the page loaded last has the valid one, and only that page's
 acknowledgements of pictures it was served count. The model reads no clock and
@@ -41,7 +42,7 @@ EVENTS_KEPT = 10
 # Pictures whose times are kept for an acknowledgement that comes late.
 PICTURES_REMEMBERED = 64
 
-# What the page writes over the picture.
+# What status_json() says of the picture, for a page to write over it.
 NO_PICTURE = "NO PICTURE"
 STALE = "STALE"
 RECORDED = "RECORDED, NOT LIVE"
@@ -124,7 +125,7 @@ class ViewModel:
             self._service_alive = bool(alive)
 
     def set_camera_note(self, text: str) -> None:
-        """What the page says about the camera pictures' source; "" for nothing."""
+        """What status_json() says about the camera pictures' source; "" for nothing."""
         with self._lock:
             self._camera_note = text
 
@@ -219,7 +220,7 @@ class ViewModel:
             return True
 
     def note_sent(self, status: ViewStatus) -> None:
-        """Remember the VIEW_STATUS that was sent last, for the page."""
+        """Remember the VIEW_STATUS that was sent last, for status_json()."""
         with self._lock:
             self._sent = status
 
@@ -278,7 +279,7 @@ class ViewModel:
     def status_json(
         self, now_mono: float, thor_wall_now: float | None
     ) -> dict[str, Any]:
-        """Everything the page shows over and under the picture, as JSON values.
+        """The robot's status and the picture's, as JSON values.
 
         The view token is not among them.
         """
@@ -409,9 +410,9 @@ def _state_json(state: RobotState) -> dict[str, Any]:
         "move_stage": state.move_stage,
         "jaw_load": state.gripper.load,
         "torque_on": state.torque_on,
-        # The page's Torque row: what the robot app says of the motors, and
-        # whether it is written as a warning. torque_on alone says only that
-        # the robot app has not released the motors.
+        # What the robot app says of the motors, and whether it is a warning.
+        # torque_on alone says only that the robot app has not released the
+        # motors.
         "torque": torque.removeprefix("torque "),
         "torque_bad": torque in (TORQUE_NOT_HOLDING, TORQUE_UNKNOWN),
         "assistance_wait_s": state.assistance_wait_s,
@@ -484,7 +485,7 @@ def _human_driving(state: RobotState | None) -> bool:
 
 
 def _permit_json(permit: Any) -> dict[str, Any] | None:
-    """The held permit's facts when they are of the kinds the page shows."""
+    """The held permit's facts when they are of the kinds status_json() gives."""
     if not isinstance(permit, dict):
         return None
     move_id, through = permit.get("move_id"), permit.get("through_index")
@@ -509,7 +510,7 @@ def _number_or_none(value: Any) -> float | None:
 
 
 def _count_or_none(value: Any) -> int | None:
-    """A count as the page shows it: a whole number of 0 or more, else None."""
+    """A count as status_json() gives it: a whole number of 0 or more, else None."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return None
     return value

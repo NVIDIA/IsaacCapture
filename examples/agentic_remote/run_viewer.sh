@@ -15,9 +15,9 @@
 # --record-debug: the obstacle map, the measured joints, refused poses, the
 # collision volumes, the clearance points and the timing graph, while a run goes
 # on and afterwards. It reads files and connects to no robot.
-# The live picture is the camera's picture as it arrives, on the same page: the
-# launcher reads the camera receiver through a camera frame bridge of its own.
-# It is shown and never stored.
+# The live picture is the camera's picture as it arrives, on the same page,
+# through a camera frame bridge of the launcher's own. The live arm is the arm
+# of each ROBOT_STATE as it arrives, in the page's 3D view. Neither is stored.
 # The viewer's page with its live picture showing is the live view: the
 # launcher attaches to the robot link service and tells the robot, with
 # VIEW_STATUS, how fresh the picture on that page is. A person's takeover needs
@@ -25,7 +25,7 @@
 # robot link service the viewer serves everything and attaches once one runs.
 #   ./run_viewer.sh                    # the runs in .state/runs, on 127.0.0.1
 #   ./run_viewer.sh --runs FOLDER --port 8767 --no-auth
-#   ./run_viewer.sh --no-live          # the experiment's viewer alone: no live view
+#   ./run_viewer.sh --no-live          # the experiment's viewer alone: nothing live
 #
 # Arguments, all optional; any other goes to the viewer as it is:
 #   --runs FOLDER      the folder that holds the run folders. Default: .state/runs
@@ -36,8 +36,8 @@
 #   --token-file FILE  where the viewer keeps its access token. Default:
 #                      .state/viewer.token beside this script
 #   --no-auth          serve without a token
-#   --no-live          no live picture and no live view: the experiment's
-#                      viewer is started alone
+#   --no-live          no live picture, no live arm and no live view: the
+#                      experiment's viewer is started alone
 #   --live-fps N       the most live pictures a second, 1 to 60. Default: 30
 #   --live-width PIXELS
 #                      the live picture's greatest width, 64 to 4096. Default: 960
@@ -52,7 +52,7 @@
 #                                  and PyYAML
 #   AGENTIC_REMOTE_EXPERIMENT_DIR  the experiment folder, which holds thor_viewer.py
 #   AGENTIC_REMOTE_APAI_SRC        the src folder of the APAI checkout
-# For the live picture and the live view, which are off without it:
+# For everything live (the picture, the arm, the live view), off without it:
 #   AGENTIC_REMOTE_CAMERA_PR       the camera_streamer example of the camera
 #                                  streamer's pull request
 #
@@ -169,9 +169,9 @@ if ((auth)); then
 fi
 
 if ((live)); then
-  echo "run_viewer.sh: live picture: on; the page shows the camera's pictures as they arrive and stores none (--no-live turns it off)"
+  echo "run_viewer.sh: live picture: on; the page shows the camera's pictures and the arm of each ROBOT_STATE as they arrive, and stores neither (--no-live turns it off, and the live arm with it)"
 else
-  echo "run_viewer.sh: live picture: off (${live_off}); the page shows the stored pictures of the runs only, and the robot is told of no live view"
+  echo "run_viewer.sh: live picture: off (${live_off}); no live arm either: the page shows the stored pictures and the recorded arm of the runs only, and the robot is told of no live view"
 fi
 
 # The viewer needs no GPU. Should a package it imports look for one, it finds

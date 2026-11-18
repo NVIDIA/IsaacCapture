@@ -12,6 +12,11 @@ slots: no GPU, no CuPy. Everything is asked over HTTP on 127.0.0.1, on a port
 the system picks; the page's script is run by node on a stand-in for the page,
 where node is installed.
 
+The live arm is the arm of each ROBOT_STATE as it arrives, drawn by the
+experiment's own page: /api/live/robot.json and the block's second part. A
+stand-in for the robot app gives the viewer 20 ROBOT_STATEs a second; with
+readings that stand still, as with the motors off, the arm is not called live.
+
 The viewer's page with its live picture showing is the live view: the viewer
 tells the robot app, with VIEW_STATUS link messages, how fresh the picture is
 that the page loaded last has drawn and acknowledged. A takeover makes a person
@@ -52,6 +57,7 @@ import test_launcher
 import test_viewer
 import yaml
 from camera_bench import BRIDGE_CHILD, FakeReceiver
+from isaaccapture_examples.agentic_remote.agent import config as agent_config
 from isaaccapture_examples.agentic_remote.agent import launcher
 from isaaccapture_examples.agentic_remote.agent.camera import frame_source
 from isaaccapture_examples.agentic_remote.agent.camera.frame_source import (
@@ -60,7 +66,7 @@ from isaaccapture_examples.agentic_remote.agent.camera.frame_source import (
     StereoPair,
 )
 from test_frame_source import Publishing
-from test_launcher import EXAMPLE, QUICK
+from test_launcher import EXAMPLE, QUICK, SHIPPED, settings_file
 from test_viewer import RECORDED, ViewerProcess, record, script_run
 
 from conftest import APAI_SRC_ENV, CAMERA_PR_ENV
@@ -68,9 +74,6 @@ from conftest import APAI_SRC_ENV, CAMERA_PR_ENV
 # The live picture is packed with OpenCV; without it this file is skipped.
 cv2 = pytest.importorskip("cv2")
 
-from isaaccapture_examples.agentic_remote.view import (  # noqa: E402
-    __main__ as view_main,
-)
 from isaaccapture_examples.agentic_remote.viewer_live import (  # noqa: E402
     __main__ as live_main,
 )
@@ -79,6 +82,8 @@ from isaaccapture_examples.agentic_remote.link_service.local import (  # noqa: E
     connect_local,
 )
 from isaaccapture_examples.agentic_remote.protocol.messages import (  # noqa: E402
+    GripperState,
+    JointSample,
     ViewStatus,
     decode,
 )
@@ -88,34 +93,46 @@ from isaaccapture_examples.agentic_remote.robot_app import (  # noqa: E402
 from isaaccapture_examples.agentic_remote.robot_app.config import (  # noqa: E402
     load_config,
 )
-from isaaccapture_examples.agentic_remote.view.model import (  # noqa: E402
-    AGE_WHEN_NOT_LIVE_S,
-    CLOCK_STEP_QUIET_S,
-    ViewModel,
-)
-from isaaccapture_examples.agentic_remote.view.server import (  # noqa: E402
-    TOKEN_HEADER,
-    TOKEN_PLACE,
-)
 from isaaccapture_examples.agentic_remote.viewer_live import live as live_module  # noqa: E402
 from isaaccapture_examples.agentic_remote.viewer_live import (  # noqa: E402
+    settings as live_settings,
+)
+from isaaccapture_examples.agentic_remote.viewer_live import (  # noqa: E402
     view_link as link_module,
+)
+from isaaccapture_examples.agentic_remote.viewer_live import (  # noqa: E402
+    robot as robot_module,
 )
 from isaaccapture_examples.agentic_remote.viewer_live.live import (  # noqa: E402
     BOUNDARY,
     PICTURE_PATH,
+    ROBOT_PATH,
     SHOWN_PATH,
     STATE_PATH,
     STREAM_PATH,
+    TOKEN_HEADER,
+    TOKEN_PLACE,
     LivePicture,
     live_handler,
     with_page_block,
 )
+from isaaccapture_examples.agentic_remote.viewer_live.picture import (  # noqa: E402
+    encode_picture,
+)
+from isaaccapture_examples.agentic_remote.viewer_live.robot import (  # noqa: E402
+    ArmModel,
+    ArmModelError,
+    LiveRobot,
+)
 from isaaccapture_examples.agentic_remote.viewer_live.view_link import (  # noqa: E402
     ViewLink,
 )
+from isaaccapture_examples.agentic_remote.viewer_live.view_model import (  # noqa: E402
+    AGE_WHEN_NOT_LIVE_S,
+    CLOCK_STEP_QUIET_S,
+    ViewModel,
+)
 from link_bench import robot_state  # noqa: E402
-from test_view_program import Browser  # noqa: E402
 
 apai = pytest.mark.apai
 experiment = pytest.mark.experiment
@@ -311,6 +328,7 @@ def showing(
     view: Callable[[], dict[str, Any]] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     this_machine: Callable[[Any], bool] | None = None,
+    robot: LiveRobot | None = None,
     **settings: Any,
 ) -> Iterator[tuple[LivePicture, int]]:
     """A started LivePicture on this camera, served with `base`; it and the port."""
@@ -319,7 +337,7 @@ def showing(
     live.start()
     try:
         handler = live_handler(
-            base, token, live, authorized, view, monotonic, this_machine
+            base, token, live, authorized, view, monotonic, this_machine, robot
         )
         with serving(handler) as port:
             yield live, port
@@ -2307,22 +2325,19 @@ class Attaching:
         return self.wires.pop(0)
 
 
-def test_the_viewers_first_values_are_the_live_view_programs() -> None:
-    # What the live view program of view/ runs with by its shipped file.
-    shipped = yaml.safe_load((CONFIGS / "view.yaml").read_text(encoding="utf-8"))
-    settings = view_main.ViewSettings()
-    status = shipped["status"]
-    assert link_module.PERIOD_S == settings.period_s == status["period_s"]
-    assert settings.ack_timeout_s == status["ack_timeout_s"]
-    assert settings.state_max_age_s == status["state_max_age_s"]
+def test_the_viewers_values_for_view_status_are_its_fixed_ones() -> None:
+    # One VIEW_STATUS every 0.2 s; an acknowledgement counts for 1 s, and so
+    # does a ROBOT_STATE as the source of the Thor's wall clock.
+    assert link_module.PERIOD_S == live_settings.STATUS_PERIOD_S == 0.2
+    assert (live_settings.ACK_TIMEOUT_S, live_settings.STATE_MAX_AGE_S) == (1.0, 1.0)
     model = LivePicture(lambda: Camera()).model
     assert type(model) is ViewModel
-    assert model._ack_timeout_s == status["ack_timeout_s"]
-    assert model._state_max_age_s == status["state_max_age_s"]
-    # The attach is tried again with the camera's pauses, in the role and
-    # with the time limit of the live view program.
+    assert model._ack_timeout_s == live_settings.ACK_TIMEOUT_S
+    assert model._state_max_age_s == live_settings.STATE_MAX_AGE_S
+    # The attach is tried again with the camera's pauses, in the role
+    # "viewer" and with a time limit of 5 s.
     assert link_module.RETRY_PAUSES_S == live_module.RETRY_PAUSES_S
-    assert link_module.ATTACH_TIMEOUT_S == view_main.ATTACH_TIMEOUT_S
+    assert link_module.ATTACH_TIMEOUT_S == live_settings.ATTACH_TIMEOUT_S == 5.0
     wire = Wire()
     attach = Attaching(wire)
     link = ViewLink(
@@ -2335,7 +2350,7 @@ def test_the_viewers_first_values_are_the_live_view_programs() -> None:
         link.close()
     assert attach.calls == [("/tmp/somewhere.sock", "viewer", "viewer", 5.0)]
     assert link.socket_path == "/tmp/somewhere.sock"
-    # Without a path: the one the console and the live view program attach to.
+    # Without a path: the one the console attaches to.
     assert ViewLink(ViewModel()).socket_path == local.default_socket_path()
 
 
@@ -2422,7 +2437,7 @@ def test_a_second_live_view_on_the_service_keeps_the_viewer_silent() -> None:
     try:
         until(lambda: lines, "the line")
         assert taken.closed and taken.sent == []
-        assert link.state()["why"] == view_main.SECOND_VIEW
+        assert link.state()["why"] == live_settings.SECOND_VIEW
         assert lines == [
             "viewer: live view: not reported to the robot: another live view is "
             "attached; trying again every 30 s. The page is served as before"
@@ -2496,38 +2511,21 @@ def pair_at(seq: int, at: float, **check: Any) -> StereoPair:
     )
 
 
-class Twins:
-    """The live view program of view/ and the viewer, side by side.
+class Timed:
+    """The viewer's live view on a clock that the test sets.
 
-    Both get the same ROBOT_STATEs and the same stereo pairs at the same times
-    of one clock that the test sets, and a page each that does the same. Each
-    sends its VIEW_STATUS on a Wire of its own, every 0.02 s.
+    Its live picture, its request handler and its link get the ROBOT_STATEs
+    and the stereo pairs a test hands them, at the times of that clock. The
+    link sends its VIEW_STATUS on a Wire every 0.02 s.
     """
 
     def __init__(self) -> None:
         self.clock = SetClock(1000.0)
-        settings = view_main.ViewSettings(http_port=0, period_s=0.02, fps=15.0)
-        # The live view program.
-        self.old_wire, self.old_pairs = Wire(), Pairs()
-        self.old_model = ViewModel(
-            ack_timeout_s=settings.ack_timeout_s,
-            state_max_age_s=settings.state_max_age_s,
-        )
-        self.old = view_main.ViewProgram(
-            settings,
-            self.old_wire,
-            self.old_model,
-            self.old_pairs,
-            False,
-            self.clock,
-            lambda line: None,
-        )
-        # The viewer: its live picture, its handler and its link.
-        self.new_wire, self.new_pairs = Wire(), Pairs()
-        self.live = LivePicture(lambda: self.new_pairs, fps=15.0, say=lambda line: None)
+        self.wire, self.pairs = Wire(), Pairs()
+        self.live = LivePicture(lambda: self.pairs, fps=15.0, say=lambda line: None)
         self.link = ViewLink(
             self.live.model,
-            attach=Attaching(self.new_wire),
+            attach=Attaching(self.wire),
             say=lambda line: None,
             period_s=0.02,
             monotonic=self.clock.monotonic,
@@ -2536,175 +2534,146 @@ class Twins:
             PlainViewer, None, self.live, bearer, self.link.state, self.clock.monotonic
         )
         self._serving = serving(handler)
-        self.old.start()
         self.live.start()
         self.port = self._serving.__enter__()
         self.link.start()
-        self.old_pages: list[Browser] = []
-        self.new_pages: list[tuple[Tab, http.client.HTTPConnection]] = []
-        self.compared: list[tuple[str, ViewStatus]] = []
+        self.pages: list[tuple[Tab, http.client.HTTPConnection]] = []
+        self.sent: list[tuple[str, ViewStatus]] = []
 
     def close(self) -> None:
-        for browser in self.old_pages:
-            browser.close()
-        for _, connection in self.new_pages:
+        for _, connection in self.pages:
             connection.close()
         self.link.close()
         self._serving.__exit__(None, None, None)
         self.live.close()
-        self.old.close()
-
-    # What happens to both
 
     def state(self, seq: int) -> None:
-        """A ROBOT_STATE of this moment arrives at both."""
+        """A ROBOT_STATE of this moment arrives."""
         message = thor_state(seq, self.clock.now)
-        for wire, model in (
-            (self.old_wire, self.old_model),
-            (self.new_wire, self.live.model),
-        ):
-            wire.give(message)
-            until(
-                lambda model=model: (
-                    model.thor_wall_now(self.clock.now) == message.clock_wall_s
-                ),
-                "the ROBOT_STATE",
-            )
+        model = self.live.model
+        self.wire.give(message)
+        until(
+            lambda: model.thor_wall_now(self.clock.now) == message.clock_wall_s,
+            "the ROBOT_STATE",
+        )
 
     def picture(self, seq: int, **check: Any) -> None:
-        """A stereo pair of this moment arrives at both; it is picture `seq`."""
-        for pairs, model in (
-            (self.old_pairs, self.old_model),
-            (self.new_pairs, self.live.model),
-        ):
-            pairs.put(pair_at(seq, self.clock.now, **check))
-            until(
-                lambda model=model: (model.picture() or (0,))[0] == seq,
-                f"picture {seq}",
-            )
-        assert self.old_model.picture() == self.live.model.picture()  # the same JPEG
+        """A stereo pair of this moment arrives; it is picture `seq`."""
+        pair = pair_at(seq, self.clock.now, **check)
+        self.pairs.put(pair)
+        model = self.live.model
+        until(lambda: (model.picture() or (0,))[0] == seq, f"picture {seq}")
+        # The picture is the left eye, packed with the viewer's width and quality.
+        assert model.picture()[1] == encode_picture(
+            pair.left, live_settings.DEFAULT_WIDTH_PX, live_settings.JPEG_QUALITY
+        )
 
     def load(self) -> int:
-        """A page is loaded on both; its index."""
-        browser = Browser(self.old.port)
-        browser.reload()
+        """A page is loaded; its index."""
         tab = Tab(self.port)
         tab.load()
-        self.old_pages.append(browser)
-        self.new_pages.append((tab, tab._http()))
-        return len(self.old_pages) - 1
+        self.pages.append((tab, tab._http()))
+        return len(self.pages) - 1
 
-    def fetch(self, page: int) -> tuple[int | None, int | None]:
-        """That page fetches the newest picture on both; the two numbers."""
-        tab, connection = self.new_pages[page]
-        old_seq, _ = self.old_pages[page].frame()
-        _, new_seq, _ = tab.fetch(connection, after=0)
-        return old_seq, new_seq
+    def fetch(self, page: int) -> int | None:
+        """That page fetches the newest picture; its number, None when refused."""
+        tab, connection = self.pages[page]
+        _, seq, _ = tab.fetch(connection, after=0)
+        return seq
 
-    def shown(self, page: int, seq: int, visible: bool = True) -> tuple[int, int]:
-        """That page acknowledges picture `seq` on both; the two status codes."""
-        tab, connection = self.new_pages[page]
-        word = {"seq": seq, "visible": visible, "token": self.old_pages[page].token}
-        return (
-            self.old_pages[page].shown_raw(word),
-            tab.shown(connection, seq, visible),
-        )
+    def shown(self, page: int, seq: int, visible: bool = True) -> int:
+        """That page acknowledges picture `seq`; the status code."""
+        tab, connection = self.pages[page]
+        return tab.shown(connection, seq, visible)
 
-    def same(self, situation: str) -> ViewStatus:
-        """Both send the same bytes in this situation; the VIEW_STATUS they are."""
-        counts = len(self.old_wire.sent), len(self.new_wire.sent)
+    def sends(self, situation: str) -> ViewStatus:
+        """The VIEW_STATUS the viewer sends in this situation."""
+        count = len(self.wire.sent)
         until(
-            lambda: (
-                len(self.old_wire.sent) >= counts[0] + 2
-                and len(self.new_wire.sent) >= counts[1] + 2
-            ),
-            f"VIEW_STATUS from both in: {situation}",
+            lambda: len(self.wire.sent) >= count + 2,
+            f"VIEW_STATUS in: {situation}",
         )
-        old, new = self.old_wire.sent[-1], self.new_wire.sent[-1]
-        assert old == new, (situation, decode(*old), decode(*new))
-        assert old[0] == ViewStatus.TYPE
-        status = decode(*old)
-        self.compared.append((situation, status))
+        kind, payload = self.wire.sent[-1]
+        assert kind == ViewStatus.TYPE
+        status = decode(kind, payload)
+        self.sent.append((situation, status))
         return status
 
 
-def test_the_viewer_sends_the_bytes_the_live_view_program_sends() -> None:
-    twins = Twins()
+def test_what_the_viewer_sends_situation_by_situation() -> None:
+    timed = Timed()
     try:
-        clock = twins.clock
-        assert twins.same("nothing has arrived") == NOT_LIVE
-        twins.state(1)
-        assert twins.same("a ROBOT_STATE, no picture") == NOT_LIVE
+        clock = timed.clock
+        assert timed.sends("nothing has arrived") == NOT_LIVE
+        timed.state(1)
+        assert timed.sends("a ROBOT_STATE, no picture") == NOT_LIVE
         # Past the quiet time after the first ROBOT_STATE.
         clock.now = 1004.0
-        twins.state(2)
-        twins.picture(1)
-        assert twins.same("a picture and no page") == NOT_LIVE
-        page = twins.load()
-        assert twins.same("a page that fetched nothing") == NOT_LIVE
-        assert twins.fetch(page) == (1, 1)
-        assert twins.same("a picture fetched and not acknowledged") == NOT_LIVE
-        assert twins.shown(page, 1) == (204, 204)
+        timed.state(2)
+        timed.picture(1)
+        assert timed.sends("a picture and no page") == NOT_LIVE
+        page = timed.load()
+        assert timed.sends("a page that fetched nothing") == NOT_LIVE
+        assert timed.fetch(page) == 1
+        assert timed.sends("a picture fetched and not acknowledged") == NOT_LIVE
+        assert timed.shown(page, 1) == 204
         # Live: the picture's 0.05 s since its exposure, sent at the Thor's
         # monotonic clock of this moment.
-        live = twins.same("a picture drawn in a visible tab")
+        live = timed.sends("a picture drawn in a visible tab")
         assert live == ViewStatus(live=True, age_s=live.age_s, sent_mono_s=504.0)
         assert live.age_s == pytest.approx(0.05, abs=1e-6)
         # The same picture a little later, with a ROBOT_STATE of that moment.
         clock.now = 1004.4
-        twins.state(3)
-        older = twins.same("the same picture 0.4 s later")
+        timed.state(3)
+        older = timed.sends("the same picture 0.4 s later")
         assert older.live and older.age_s == pytest.approx(0.45, abs=1e-6)
         assert older.sent_mono_s == pytest.approx(504.4)
         # The live picture leaves the screen, or the tab is hidden.
-        assert twins.shown(page, 1, visible=False) == (204, 204)
-        assert twins.same("the picture shows no longer") == NOT_LIVE
-        assert twins.shown(page, 1) == (403, 403)
-        assert twins.same("'it shows' for the picture from before") == NOT_LIVE
-        twins.picture(2)
-        assert twins.fetch(page) == (2, 2)
-        assert twins.shown(page, 2) == (204, 204)
-        assert twins.same("the next picture, drawn and acknowledged").live
+        assert timed.shown(page, 1, visible=False) == 204
+        assert timed.sends("the picture shows no longer") == NOT_LIVE
+        assert timed.shown(page, 1) == 403
+        assert timed.sends("'it shows' for the picture from before") == NOT_LIVE
+        timed.picture(2)
+        assert timed.fetch(page) == 2
+        assert timed.shown(page, 2) == 204
+        assert timed.sends("the next picture, drawn and acknowledged").live
         # The page is loaded again: the page before counts no longer.
-        other = twins.load()
-        assert twins.same("a newer load of the page") == NOT_LIVE
-        assert twins.shown(page, 2) == (403, 403)
-        assert twins.fetch(page) == (None, None)
-        assert twins.same("a word from the page that was not loaded last") == NOT_LIVE
-        assert twins.fetch(other) == (2, 2)
-        assert twins.shown(other, 2) == (204, 204)
-        assert twins.same("the page loaded last draws and acknowledges").live
+        other = timed.load()
+        assert timed.sends("a newer load of the page") == NOT_LIVE
+        assert timed.shown(page, 2) == 403
+        assert timed.fetch(page) is None
+        assert timed.sends("a word from the page that was not loaded last") == NOT_LIVE
+        assert timed.fetch(other) == 2
+        assert timed.shown(other, 2) == 204
+        assert timed.sends("the page loaded last draws and acknowledges").live
         # A picture whose times nobody measured is never live.
-        twins.picture(3, invented_times=True)
-        assert twins.fetch(other) == (3, 3)
-        assert twins.shown(other, 3) == (204, 204)
-        assert twins.same("a picture with invented times") == NOT_LIVE
-        twins.picture(4)
-        assert twins.fetch(other) == (4, 4)
-        assert twins.shown(other, 4) == (204, 204)
-        assert twins.same("a measured picture again").live
+        timed.picture(3, invented_times=True)
+        assert timed.fetch(other) == 3
+        assert timed.shown(other, 3) == 204
+        assert timed.sends("a picture with invented times") == NOT_LIVE
+        timed.picture(4)
+        assert timed.fetch(other) == 4
+        assert timed.shown(other, 4) == 204
+        assert timed.sends("a measured picture again").live
         # The camera gives nothing more and the page says nothing more: past
         # the acknowledgement's time limit the view is not live.
         clock.now = 1005.5
-        twins.state(4)
-        assert twins.same("no word for 1.1 s") == NOT_LIVE
+        timed.state(4)
+        assert timed.sends("no word for 1.1 s") == NOT_LIVE
         # No ROBOT_STATE for longer than its limit: the Thor's clock is unknown.
-        twins.picture(5)
-        assert twins.fetch(other) == (5, 5)
-        assert twins.shown(other, 5) == (204, 204)
-        assert twins.same("a picture acknowledged again").live
+        timed.picture(5)
+        assert timed.fetch(other) == 5
+        assert timed.shown(other, 5) == 204
+        assert timed.sends("a picture acknowledged again").live
         clock.now = 1006.6
-        assert twins.same("no ROBOT_STATE for 1.1 s") == NOT_LIVE
+        assert timed.sends("no ROBOT_STATE for 1.1 s") == NOT_LIVE
     finally:
-        twins.close()
-    # Both end with the word that the view is over.
-    assert twins.old_wire.sent[-1] == twins.new_wire.sent[-1]
-    assert decode(*twins.new_wire.sent[-1]) == NOT_LIVE
-    # Nothing but VIEW_STATUS went out on either side.
-    assert {kind for kind, _ in twins.old_wire.sent + twins.new_wire.sent} == {
-        ViewStatus.TYPE
-    }
-    assert sum(status.live for _, status in twins.compared) == 6
+        timed.close()
+    # The viewer ends with the word that the view is over.
+    assert decode(*timed.wire.sent[-1]) == NOT_LIVE
+    # Nothing but VIEW_STATUS went out.
+    assert {kind for kind, _ in timed.wire.sent} == {ViewStatus.TYPE}
+    assert sum(status.live for _, status in timed.sent) == 6
 
 
 # The whole path: the viewer's page, the robot link service, the robot app on
@@ -3295,27 +3264,90 @@ def test_in_a_real_browser_a_page_from_another_machine_watches_and_says_so(
 # The launcher's settings and its camera frame bridge
 
 
-def test_the_first_values_are_the_live_views_and_the_camera_receivers() -> None:
-    assert live_module.DEFAULT_FPS == 30.0 and live_module.FPS_RANGE == (1.0, 60.0)
-    assert live_module.DEFAULT_WIDTH_PX == 960 and live_module.JPEG_QUALITY == 80
-    assert live_module.WIDTH_RANGE_PX == (64, 4096)
+def test_the_first_values_are_the_viewers_and_the_camera_receivers() -> None:
+    assert live_settings.DEFAULT_FPS == 30.0
+    assert live_settings.FPS_RANGE == (1.0, 60.0)
+    assert (live_settings.DEFAULT_WIDTH_PX, live_settings.JPEG_QUALITY) == (960, 80)
+    assert live_settings.WIDTH_RANGE_PX == (64, 4096)
+    assert live_settings.RECEIVER_SOCKET == "/tmp/camera_receiver_avs1_cuda_ipc.sock"
+    assert live_settings.STREAMS == ("head.left", "head.right")
+    assert live_settings.MAX_SKEW_MS == 5.0
+    # The camera receiver's file names the same socket and the same two eyes.
     receiver = yaml.safe_load((CONFIGS / "camera_receiver_rebot.yaml").read_text())
-    view = yaml.safe_load((CONFIGS / "view.yaml").read_text())
-    assert live_module.RECEIVER_SOCKET == receiver["ipc"]["socket_path"]
-    assert live_module.RECEIVER_SOCKET == view["camera"]["receiver_socket"]
-    assert view["picture"]["jpeg_quality"] == live_module.JPEG_QUALITY
-    assert view["picture"]["width_px"] == live_module.DEFAULT_WIDTH_PX
+    assert live_settings.RECEIVER_SOCKET == receiver["ipc"]["socket_path"]
+    eyes = receiver["streams"][0]["ipc"]
+    assert live_settings.STREAMS == (eyes["left"], eyes["right"])
+    # The live picture's own values are the same ones.
+    picture = LivePicture(lambda: Camera())
+    assert (picture.fps, picture.width_px, picture._quality) == (30.0, 960, 80)
     parser = live_main._parser()
     args = parser.parse_args([])
     assert (args.live_fps, args.live_width) == (30.0, 960)
-    assert args.receiver_socket == live_module.RECEIVER_SOCKET
+    assert args.receiver_socket == live_settings.RECEIVER_SOCKET
 
 
-def test_the_launchers_bridge_is_the_live_views_on_gpu_0(
+def test_the_viewers_fixed_values_lie_inside_their_bounds() -> None:
+    values = live_settings
+    assert 1 <= values.JPEG_QUALITY <= 100
+    low, high = values.WIDTH_RANGE_PX
+    assert 64 <= low <= values.DEFAULT_WIDTH_PX <= high <= 4096
+    low, high = values.FPS_RANGE
+    assert 0.0 < low <= values.DEFAULT_FPS <= high
+    # One VIEW_STATUS a second at least; an acknowledgement and a ROBOT_STATE
+    # count for 10 s at most; the two eyes lie 50 ms apart at most.
+    assert 0.0 < values.STATUS_PERIOD_S <= 1.0
+    assert 0.0 < values.ACK_TIMEOUT_S <= 10.0
+    assert 0.0 < values.STATE_MAX_AGE_S <= 10.0
+    assert 0.0 <= values.MAX_SKEW_MS <= 50.0
+    left, right = values.STREAMS
+    assert left.strip() and right.strip() and left != right
+    # The status goes out several times within the time an acknowledgement
+    # counts for.
+    assert values.STATUS_PERIOD_S * 3 <= values.ACK_TIMEOUT_S
+
+
+def test_the_view_token_is_in_no_answer_about_the_live_view() -> None:
+    with arm_showing() as arm:
+        port = arm.port
+        arm.feed.start()
+        until(lambda: robot_json(port)["available"], "the live arm")
+        tab = Tab(port)
+        token = tab.load().encode()
+        connection = tab._http()
+        try:
+            _, seq, _ = tab.fetch(connection, after=0)
+            assert tab.shown(connection, seq) == 204
+        finally:
+            connection.close()
+        # Neither path needs the view token, and neither holds it.
+        for path in (STATE_PATH, ROBOT_PATH):
+            status, _, body = get(port, path)
+            assert status == 200 and token not in body and b"token" not in body, path
+
+
+def test_a_camera_frame_becomes_a_small_jpeg() -> None:
+    red, blue = (0, 0, 255), (255, 0, 0)  # as BGR
+    # A camera frame of two plain halves, 128 wide and 96 high.
+    bgr = np.zeros((96, 128, 3), np.uint8)
+    bgr[:, :64], bgr[:, 64:] = red, blue
+    nv12 = frame_source.bgr_to_nv12(bgr)
+    small = cv2.imdecode(np.frombuffer(encode_picture(nv12, 64, 90), np.uint8), 1)
+    assert small.shape == (48, 64, 3)
+    assert np.abs(small[24, 16].astype(int) - red).max() < 60
+    assert np.abs(small[24, 48].astype(int) - blue).max() < 60
+    # A camera frame narrower than width_px keeps its size.
+    same = cv2.imdecode(np.frombuffer(encode_picture(nv12, 960, 80), np.uint8), 1)
+    assert same.shape == (96, 128, 3)
+    with pytest.raises(ValueError, match="not an NV12 image"):
+        encode_picture(np.zeros((100, 128), np.uint8), 64, 80)
+
+
+def test_the_launchers_bridge_is_a_second_reader_of_the_camera_receiver_on_gpu_0(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/somewhere")
+    monkeypatch.setenv("PYTHONPATH", "/apai/src")
     camera_pr = tmp_path / "pr"
     python = camera_pr / "cuda_ipc_consumer" / ".venv" / "bin" / "python"
     environ = {CAMERA_PR_ENV: str(camera_pr)}
@@ -3330,24 +3362,28 @@ def test_the_launchers_bridge_is_the_live_views_on_gpu_0(
     python.write_text("")
     source = make()
     assert type(source) is BridgeSource
-    # What the live view starts for --source link, with the shipped view.yaml.
-    settings = view_main.ViewSettings(
-        bridge_python=str(python),
+    # The same bridge as the agent program's, as a second reader of the same
+    # camera receiver: the same environment, size, devices and rotation.
+    agents = BridgeSource(
+        python=str(python),
+        receiver_socket="r",
+        run_dir="d",
         camera_pr=str(camera_pr),
-        receiver_socket="/tmp/r.sock",
-        state_dir=tmp_path,
     )
-    views, _ = view_main.make_source(settings, "link", None, time)
-    for name in ("_command", "_receiver_socket", "_streams", "_max_skew_ms", "_size"):
-        assert getattr(source, name) == getattr(views, name), name
-    assert (source._devices, source._rotation) == (views._devices, views._rotation)
     assert source._command == [str(python), "-m", frame_source.BRIDGE_MODULE]
+    assert source._receiver_socket == "/tmp/r.sock"
+    assert source._streams == ("head.left", "head.right")
+    assert source._max_skew_ms == 5.0
+    assert (source._size, source._devices) == (agents._size, agents._devices)
+    assert source._rotation == agents._rotation
     env = source._environment()
-    assert env == views._environment()
+    assert env == agents._environment()
     assert (env["CUDA_DEVICE_ORDER"], env["CUDA_VISIBLE_DEVICES"]) == (
         "PCI_BUS_ID",
         "0",
     )
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert env["PYTHONPATH"] == str(frame_source.PACKAGE_ROOT)
     assert env[CAMERA_PR_ENV] == str(camera_pr) and "LD_LIBRARY_PATH" not in env
     assert source._run_dir == tmp_path / "run"
     assert source._process is None  # nothing was started
@@ -3629,15 +3665,15 @@ def test_the_start_script_starts_the_launcher_when_the_camera_streamer_is_named(
 
 def test_the_script_names_the_launchers_first_values() -> None:
     script = (EXAMPLE / "run_viewer.sh").read_text(encoding="utf-8")
-    low, high = live_module.FPS_RANGE
-    fps = f"{low:g} to {high:g}. Default: {live_module.DEFAULT_FPS:g}"
+    low, high = live_settings.FPS_RANGE
+    fps = f"{low:g} to {high:g}. Default: {live_settings.DEFAULT_FPS:g}"
     assert f"#   --live-fps N       the most live pictures a second, {fps}" in script
-    low, high = live_module.WIDTH_RANGE_PX
-    width = f"{low} to {high}. Default: {live_module.DEFAULT_WIDTH_PX}"
+    low, high = live_settings.WIDTH_RANGE_PX
+    width = f"{low} to {high}. Default: {live_settings.DEFAULT_WIDTH_PX}"
     assert f"the live picture's greatest width, {width}" in script
     assert f"-m {MODULE} \\\n" in script
     receiver = yaml.safe_load((CONFIGS / "camera_receiver_rebot.yaml").read_text())
-    assert receiver["ipc"]["socket_path"] == live_module.RECEIVER_SOCKET
+    assert receiver["ipc"]["socket_path"] == live_settings.RECEIVER_SOCKET
 
 
 # The launcher as a process, on a fake camera receiver
@@ -4104,3 +4140,2192 @@ def test_no_live_starts_the_experiments_viewer_as_before(
         line for line in program.text.splitlines() if line.startswith("viewer: ")
     ]
     assert bridges(camera_pr["child"]) == []
+
+
+# The live arm: each ROBOT_STATE as it arrives
+
+
+# ROBOT_STATEs a second, as the rig's robot app publishes them.
+ARM_HZ = 20.0
+# The first joint of the stand-in robot app's states starts here, far from
+# the recorded poses of these tests, and turns on with every state.
+ARM_FROM, ARM_STEP = 0.5, 0.002
+LIVE_SOURCE = "ROBOT_STATE as it arrives; shown, not stored"
+
+
+def arm_pose(k: int) -> list[float]:
+    """The joints ROBOT_STATE k measured, in rad."""
+    return [ARM_FROM + ARM_STEP * (k % 200), 0.1, 0.1, 0.0, 0.0, 0.0]
+
+
+def arm_state(k: int) -> Any:
+    """ROBOT_STATE k of a robot app whose agent moves the arm, read off now."""
+    now = time.monotonic()
+    # One joint is read every 4 ms: the six readings span 20 ms.
+    joints = [
+        JointSample(j, value, now - 0.004 * (6 - j), now - 0.004 * (5 - j), True)
+        for j, value in enumerate(arm_pose(k))
+    ]
+    return dataclasses.replace(
+        robot_state(k, owner="agent"),
+        clock_mono_s=now,
+        clock_wall_s=time.time(),
+        joints=joints,
+        target_q=arm_pose(k + 1),
+        gripper=GripperState(0.5, now, True, True, 0.6, False, "empty"),
+        motion="moving",
+        # As the robot app says it: the age of the oldest of the six readings.
+        health={"reading_age_s": 0.02, "motors": {"state": "holding"}},
+    )
+
+
+def frozen_state(k: int, read_at: float, why: str) -> Any:
+    """ROBOT_STATE k of a robot app that read its joints last at `read_at`.
+
+    Every joint's newest reading is carried on, valid, however old it is.
+    why "torque off": the motors are off at rest, and no joint is read. why
+    "feedback lost": the joint reads fail in a hold until the robot app faults.
+    """
+    now = time.monotonic()
+    joints = [
+        JointSample(
+            j, value, read_at - 0.004 * (6 - j), read_at - 0.004 * (5 - j), True
+        )
+        for j, value in enumerate(arm_pose(0))
+    ]
+    off = why == "torque off"
+    lost = "joint feedback lost for 0.36 s in hold"
+    return dataclasses.replace(
+        robot_state(k, owner="nobody"),
+        clock_mono_s=now,
+        clock_wall_s=time.time(),
+        joints=joints,
+        target_q=None if off else arm_pose(0),
+        # The jaws were read last when the joints were.
+        gripper=GripperState(0.5, read_at, True, True, 0.6, False, "empty"),
+        motion="rest_unpowered" if off else "hold",
+        torque_on=not off,
+        stop_level="none" if off else "fault",
+        fault_reason="" if off else lost,
+        health={
+            "reading_age_s": now - (read_at - 0.02),
+            "motors": {"state": "unknown" if off else "holding"},
+        },
+    )
+
+
+def stick(q: Any) -> dict[str, Any]:
+    """A stand-in for the experiment's geometry: a link that the joints place."""
+    q = [float(value) for value in q]
+    return {"joints": [[0.0, 0.0, 0.0], [0.3, q[0], 0.2]], "q": q, "boxes": []}
+
+
+class Feed:
+    """A stand-in robot app: ROBOT_STATE after ROBOT_STATE on a Wire, ARM_HZ a second.
+
+    .make(k) gives state k: a moving arm's, read off at that moment, until a
+    test sets another.
+    """
+
+    def __init__(self, wire: Wire, hz: float = ARM_HZ) -> None:
+        self.wire, self.hz = wire, hz
+        self.make: Callable[[int], Any] = arm_state
+        self.sent = 0  # the number of the newest state given
+        self._end = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        due = time.monotonic()
+        while not self._end.wait(max(0.0, due - time.monotonic())):
+            self.wire.give(self.make(self.sent + 1))
+            self.sent += 1
+            due += 1.0 / self.hz
+
+    def stop(self) -> None:
+        self._end.set()
+        if self._thread is not None:
+            self._thread.join(WAIT_S)
+
+
+@contextmanager
+def arm_showing(
+    *,
+    geometry: Any = stick,
+    robot: LiveRobot | None = None,
+    attach: Attaching | None = None,
+    retry_pauses_s: tuple[float, ...] = (0.05,),
+    **serving_with: Any,
+) -> Iterator[SimpleNamespace]:
+    """The viewer's live paths with a live arm, on a stand-in robot link service.
+
+    A LiveRobot gets the ROBOT_STATEs of a ViewLink that is attached to a Wire;
+    .feed gives that Wire the states of a stand-in robot app once it is started.
+    The rest is showing()'s.
+    """
+    wire = Wire()
+    robot = LiveRobot(geometry) if robot is None else robot
+    lines: list[str] = []
+    with showing(Camera(), robot=robot, **serving_with) as (live, port):
+        link = ViewLink(
+            live.model,
+            "/tmp/no-service-of-this-test.sock",
+            attach=Attaching(wire) if attach is None else attach,
+            say=lines.append,
+            retry_pauses_s=retry_pauses_s,
+            robot=robot,
+        )
+        feed = Feed(wire)
+        link.start()
+        try:
+            yield SimpleNamespace(
+                port=port, robot=robot, link=link, wire=wire, feed=feed, lines=lines
+            )
+        finally:
+            feed.stop()
+            link.close()
+            robot.close()
+
+
+def robot_json(
+    port: int,
+    after: int | None = None,
+    connection: HTTPConnection | None = None,
+    **headers: str,
+) -> dict[str, Any]:
+    """What /api/live/robot.json answers, once it is not number `after`."""
+    path = ROBOT_PATH if after is None else f"{ROBOT_PATH}?after={after}"
+    if connection is None:
+        status, kind, body = get(port, path, **headers)
+    else:
+        connection.request("GET", path, headers=headers)
+        reply = connection.getresponse()
+        status, kind, body = reply.status, reply.getheader("Content-Type"), reply.read()
+    assert (status, kind) == (200, "application/json"), (status, body[:300])
+    return json.loads(body)
+
+
+def test_a_page_that_asks_at_once_gets_every_robot_state_and_a_slow_one_the_newest() -> (
+    None
+):
+    with arm_showing() as arm:
+        feed, port = arm.feed, arm.port
+        feed.start()
+        until(lambda: robot_json(port)["per_second"] >= 19, "a second of states")
+        fast: list[tuple[float, dict[str, Any]]] = []
+        seconds = 2.4
+
+        def ask_at_once() -> None:
+            connection = HTTPConnection("127.0.0.1", port, timeout=WAIT_S)
+            try:
+                told = robot_json(port, connection=connection)
+                end = time.monotonic() + seconds
+                while time.monotonic() < end:
+                    told = robot_json(port, told["n"], connection)
+                    fast.append((time.monotonic(), told))
+                assert connection.sock is not None  # one connection for all
+            finally:
+                connection.close()
+
+        reader = threading.Thread(target=ask_at_once, daemon=True)
+        reader.start()
+        # Meanwhile a page that takes 0.3 s over each state.
+        slow, behind = [], []
+        connection = HTTPConnection("127.0.0.1", port, timeout=WAIT_S)
+        try:
+            told = robot_json(port, connection=connection)
+            for _ in range(7):
+                time.sleep(0.3)
+                began = time.monotonic()
+                told = robot_json(port, told["n"], connection)
+                assert time.monotonic() - began < 0.1  # it waited for none
+                behind.append(feed.sent - told["seq"])
+                slow.append(told["n"])
+        finally:
+            connection.close()
+        reader.join(WAIT_S)
+        assert not reader.is_alive()
+        newest = robot_json(port)
+        assert 0 <= feed.sent - newest["seq"] <= 1
+        sent_only = arm.wire.statuses()
+    # Every state reached the page that asked again at once, in its order:
+    # 18 a second and more of the stand-in robot app's 20.
+    numbers = [told["n"] for _, told in fast]
+    assert numbers == list(range(numbers[0], numbers[0] + len(numbers))), numbers
+    assert len(numbers) >= 18 * seconds - 1, numbers
+    assert [told["seq"] for _, told in fast] == numbers
+    for _, told in fast:
+        k = told["seq"]
+        assert told["available"] is True and told["why"] == ""
+        assert 0.0 <= told["age_s"] < 0.2 and 17 <= told["per_second"] <= 22, told
+        assert abs(told["wall_s"] - time.time()) < 60.0
+        # The measured joints, the last target, the jaws and who has the arm.
+        assert [one["joint"] for one in told["joints"]] == list(range(6))
+        assert [one["q"] for one in told["joints"]] == pytest.approx(arm_pose(k))
+        assert all(one["valid"] for one in told["joints"])
+        assert told["joints"][0]["deg"] == pytest.approx(np.degrees(arm_pose(k)[0]))
+        assert told["joints"][0]["target"] == pytest.approx(arm_pose(k + 1)[0])
+        assert told["target_q"] == pytest.approx(arm_pose(k + 1))
+        # The jaw reading is of the state's own moment: as old as the state.
+        jaw_age = told["gripper"].pop("age_s")
+        assert jaw_age == pytest.approx(told["age_s"], abs=0.002)
+        assert told["gripper"] == {
+            "valid": True,
+            "opening": 0.5,
+            "target": 0.6,
+            "load": "empty",
+            "fresh": True,
+        }
+        assert (told["owner"], told["stop_level"], told["motion"]) == (
+            "agent",
+            "none",
+            "moving",
+        )
+        assert (told["torque_on"], told["torque"]) == (True, "on (holding)")
+        assert told["reading_age_s"] == 0.02
+        # Live: the state's age and the age of its readings are within the limit.
+        assert told["stale_s"] == robot_module.STALE_S == 1.0
+        assert told["pose_age_s"] == pytest.approx(told["age_s"] + 0.02, abs=0.002)
+        assert told["last_read"] is None and told["model_run"] is None
+        # The arm as the page draws it: the geometry of those joints.
+        arm_drawn = told["robot"]
+        assert arm_drawn["q"] == pytest.approx(arm_pose(k))
+        assert arm_drawn["joints"] == stick(arm_pose(k))["joints"]
+        assert (arm_drawn["boxes"], arm_drawn["source"]) == ([], LIVE_SOURCE)
+        assert arm_drawn["sample_span_s"] == pytest.approx(0.02)
+        assert arm_drawn["age_s"] == pytest.approx(told["age_s"] + 0.02, abs=0.002)
+    # The slow page got the newest state each time, at most one behind the
+    # robot app's newest, and missed the ones between.
+    assert max(behind) <= 1 and min(behind) >= 0, behind
+    assert slow == sorted(set(slow)) and min(np.diff(slow)) >= 4, slow
+    # The viewer still sent the robot nothing but VIEW_STATUS, as without a page.
+    assert len(sent_only) >= 5 and set(sent_only) == {NOT_LIVE}
+    assert robot_module.LIVE_SOURCE == LIVE_SOURCE
+
+
+def test_a_state_is_with_the_page_a_few_milliseconds_after_the_viewer_has_it() -> None:
+    writes: list[int] = []
+
+    class Counted(PlainViewer):
+        """PlainViewer that notes the size of each write to its connection."""
+
+        def setup(self) -> None:
+            super().setup()
+            raw = self.wfile
+
+            class Noted:
+                def write(self, data: bytes) -> int:
+                    writes.append(len(data))
+                    return raw.write(data)
+
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(raw, name)
+
+            self.wfile = Noted()
+
+    with arm_showing(base=Counted) as arm:
+        port = arm.port
+        arm.feed.start()
+        until(lambda: robot_json(port)["per_second"] >= 19, "a second of states")
+        # One connection that stays open, as the page's: each answer follows
+        # the request for it at once.
+        connection = HTTPConnection("127.0.0.1", port, timeout=WAIT_S)
+        delays = []
+        try:
+            told = robot_json(port, connection=connection)
+            writes.clear()
+            for _ in range(60):
+                told = robot_json(port, told["n"], connection)
+                # From the viewer's answer, by its wall clock, to its receipt.
+                delays.append(time.time() - told["wall_s"])
+            assert connection.sock is not None
+            # Each answer went out in one write, headers and body together:
+            # the body of a second small write would wait about 40 ms for the
+            # browser's acknowledgement of the first.
+            assert len(writes) == 60 and min(writes) > 500, writes
+            # So do the live picture's answers on that connection.
+            writes.clear()
+            connection.request("GET", STATE_PATH)
+            reply = connection.getresponse()
+            assert reply.status == 200 and reply.read().startswith(b"{")
+            connection.request("GET", f"{PICTURE_PATH}?after=0&watch=1")
+            reply = connection.getresponse()
+            assert reply.status == 200 and len(reply.read()) > 100
+            assert len(writes) == 2, writes
+        finally:
+            connection.close()
+    delays = sorted(delays[5:])
+    median = delays[len(delays) // 2]
+    assert median < 0.010, delays
+    print(
+        "measured: from the viewer's answer to its receipt by a client that asks "
+        f"again at once, {delays[0] * 1e3:.1f} / {median * 1e3:.1f} / "
+        f"{delays[-1] * 1e3:.1f} ms (least, median, most) over {len(delays)} states"
+    )
+
+
+def test_the_robot_state_path_follows_the_viewers_access_rule_and_needs_no_view_token() -> (
+    None
+):
+    token = "t" * 43
+    auth = {"Authorization": f"Bearer {token}"}
+    with arm_showing(token=token, this_machine=only_127_0_0_1) as arm:
+        port = arm.port
+        arm.feed.start()
+        until(lambda: robot_json(port, **auth)["available"], "the live arm")
+        # Without the viewer's token: the answer of every other path of it.
+        refused = get(port, STATE_PATH)
+        assert refused[0] == 401 and b"private access link" in refused[2]
+        for path in (
+            ROBOT_PATH,
+            f"{ROBOT_PATH}?after=0",
+            f"{ROBOT_PATH}?token={token}",
+        ):
+            assert get(port, path) == refused, path
+            assert get(port, path, Authorization="Bearer wrong") == refused, path
+        # With it a page of another machine reads the states too: a page that
+        # only watches has no view token, and this path tells the robot nothing.
+        elsewhere = HTTPConnection(
+            "127.0.0.1", port, timeout=WAIT_S, source_address=(OTHER_MACHINE, 0)
+        )
+        try:
+            told = robot_json(port, connection=elsewhere, **auth)
+            newer = robot_json(port, told["n"], elsewhere, **auth)
+        finally:
+            elsewhere.close()
+        assert told["available"] and newer["n"] == told["n"] + 1
+        # The path takes no POST, as no path of the viewer alone does.
+        assert post(port, ROBOT_PATH, b"{}", **auth)[0] == 501
+        assert set(arm.wire.statuses()) == {NOT_LIVE}
+    # Without a token, as with --no-auth, it is open.
+    with arm_showing() as arm:
+        arm.feed.start()
+        until(lambda: robot_json(arm.port)["available"], "the live arm")
+
+
+def test_without_a_live_state_the_path_says_why() -> None:
+    attach = Attaching(problem=ConnectionRefusedError("nobody listens"))
+    with arm_showing(attach=attach) as arm:
+        port = arm.port
+
+        def says(why: str) -> dict[str, Any]:
+            return until(
+                lambda: (told := robot_json(port))["why"].startswith(why) and told, why
+            )
+
+        # No robot link service: no state, and why.
+        told = says("cannot attach to the robot link service: nobody listens")
+        assert abs(told.pop("wall_s") - time.time()) < 60.0
+        assert told == {
+            "n": 0,
+            "available": False,
+            "why": "cannot attach to the robot link service: nobody listens",
+            "age_s": None,
+            "per_second": 0,
+            "stale_s": 1.0,
+            "pose_age_s": None,
+            "last_read": None,
+            "model_run": None,
+            "robot": None,
+        }
+        # A page that has that answer waits for another one, a second at most.
+        began = time.monotonic()
+        assert robot_json(port, after=0)["n"] == 0
+        waited = time.monotonic() - began
+        assert robot_module.ROBOT_WAIT_S <= waited < robot_module.ROBOT_WAIT_S + 1
+        # Attached, and the service has no robot connection.
+        wire = Wire(roles={"viewer": 1})
+        wire.status.robot_connected = False
+        wire.status.close_reason = "the Thor closed the connection"
+        attach.wires, attach.problem = [wire], None
+        says(
+            "the robot is not connected to the robot link service (the Thor closed "
+            "the connection)"
+        )
+        wire.status.robot_connected, wire.status.close_reason = True, ""
+        assert says("no ROBOT_STATE has arrived")["n"] == 0
+        # A state without a valid reading of one joint: its readings, no arm.
+        state = arm_state(1)
+        bad = dataclasses.replace(state.joints[2], valid=False)
+        joints = [*state.joints[:2], bad, *state.joints[3:]]
+        wire.give(dataclasses.replace(state, joints=joints))
+        told = says("a joint has no valid reading")
+        assert (told["n"], told["available"], told["robot"]) == (1, False, None)
+        assert [one["valid"] for one in told["joints"]] == [1, 1, 0, 1, 1, 1]
+        assert told["joints"][2]["q"] is None and told["joints"][2]["deg"] is None
+        assert told["joints"][1]["q"] == pytest.approx(0.1) and told["owner"] == "agent"
+        # The next whole one is drawn; a waiting page gets it as it arrives.
+        asked: list[dict[str, Any]] = []
+        waiting = threading.Thread(
+            target=lambda: asked.append(robot_json(port, after=1)), daemon=True
+        )
+        waiting.start()
+        time.sleep(0.2)
+        assert asked == []
+        wire.give(arm_state(2))
+        waiting.join(WAIT_S)
+        assert asked[0]["n"] == 2 and asked[0]["available"] is True
+        assert asked[0]["robot"]["q"] == pytest.approx(arm_pose(2))
+        # No further state for more than a second: no live state, with the
+        # readings of the last one and its age.
+        time.sleep(robot_module.STALE_S + 0.2)
+        old = robot_json(port)
+        assert (old["n"], old["available"], old["robot"]) == (2, False, None)
+        assert old["why"].startswith("no ROBOT_STATE for 1.") and old["age_s"] > 1.0
+        assert old["joints"][0]["q"] == pytest.approx(arm_pose(2)[0])
+        # The service ends: that is why, then that it cannot be attached to.
+        attach.problem = FileNotFoundError("no socket")
+        wire.die("the service closed the connection")
+        gone = says("the robot link service is gone (the service closed the")
+        assert gone["n"] == 2 and gone["available"] is False
+        says("cannot attach to the robot link service: no socket")
+    # A viewer without a live arm says so on that path.
+    with showing(Camera()) as (_, port):
+        told = robot_json(port)
+        assert (told["n"], told["available"], told["robot"]) == (0, False, None)
+        assert told["why"] == "this viewer has no live robot state"
+
+
+def test_a_state_whose_arm_cannot_be_placed_keeps_its_readings_and_says_why() -> None:
+    def no_model(q: Any) -> dict[str, Any]:
+        raise ArmModelError("no run folder names the arm's model")
+
+    def broken(q: Any) -> dict[str, Any]:
+        raise ValueError("six joints expected")
+
+    def not_finite(q: Any) -> dict[str, Any]:
+        return {"joints": [[float("nan"), 0.0, 0.0]], "q": list(q), "boxes": []}
+
+    for geometry, why in (
+        (None, "this viewer draws no live arm"),
+        (no_model, "no run folder names the arm's model"),
+        (broken, "the arm cannot be placed: ValueError: six joints expected"),
+        (not_finite, "the arm cannot be placed: ValueError: Out of range float"),
+    ):
+        robot = LiveRobot(geometry)
+        robot.on_link("")
+        robot.on_state(arm_state(7), time.monotonic())
+        told = robot.answer()
+        assert (told["n"], told["available"], told["robot"]) == (1, False, None)
+        assert told["why"].startswith(why), told["why"]
+        assert [one["q"] for one in told["joints"]] == pytest.approx(arm_pose(7))
+        json.dumps(told, allow_nan=False)
+    # Each state is placed once, however many pages ask for it.
+    placed: list[list[float]] = []
+    robot = LiveRobot(lambda q: placed.append(list(q)) or stick(q))
+    robot.on_state(arm_state(1), time.monotonic())
+    assert [robot.answer()["robot"]["q"] for _ in range(5)] == [arm_pose(1)] * 5
+    robot.on_state(arm_state(2), time.monotonic())
+    assert robot.answer(after=1)["n"] == 2 and placed == [arm_pose(1), arm_pose(2)]
+    # close() ends the wait of an answer.
+    threading.Timer(0.2, robot.close).start()
+    began = time.monotonic()
+    assert robot.answer(after=2, timeout_s=WAIT_S)["n"] == 2
+    assert time.monotonic() - began < 5.0
+
+
+# Readings that are old: the arm is not live, however many states arrive
+
+LAST_READ_SOURCE = "ROBOT_STATE: the joints' last reading; shown, not stored"
+# Why the robot app reads no joint, as the viewer says it.
+NOT_READ = {
+    "torque off": "torque off: the joints are not read",
+    "feedback lost": "joint feedback lost",
+}
+LAST_READ_WHY = re.compile(r"the joints were last read (\d+\.\d) s ago \((.+)\)")
+
+
+def asked_at_once(port: int, seconds: float) -> list[tuple[float, dict[str, Any]]]:
+    """(when, the answer) of a page that asks again at once, for `seconds`."""
+    got = []
+    connection = HTTPConnection("127.0.0.1", port, timeout=WAIT_S)
+    try:
+        told = robot_json(port, connection=connection)
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            told = robot_json(port, told["n"], connection)
+            got.append((time.monotonic(), told))
+    finally:
+        connection.close()
+    return got
+
+
+@pytest.mark.parametrize("why", list(NOT_READ))
+def test_twenty_states_a_second_with_frozen_readings_are_never_called_live(
+    why: str,
+) -> None:
+    with arm_showing() as arm:
+        port, feed = arm.port, arm.feed
+        feed.start()
+        until(lambda: robot_json(port)["available"], "the live arm")
+        until(lambda: robot_json(port)["per_second"] >= 19, "a second of states")
+        # The robot app reads no joint any longer and goes on publishing, 20
+        # states a second: each carries the readings of 45 s ago, all valid.
+        read_at = time.monotonic() - 45.0
+        feed.make = lambda k: frozen_state(k, read_at, why)
+        until(lambda: robot_json(port)["last_read"], "a state with old readings")
+        got = asked_at_once(port, 2.0)
+        # The joints are read again: the arm is live again.
+        feed.make = arm_state
+        back = until(
+            lambda: (told := robot_json(port))["available"] and told, "fresh readings"
+        )
+        sent_only = arm.wire.statuses()
+    numbers = [told["n"] for _, told in got]
+    assert numbers == list(range(numbers[0], numbers[0] + len(numbers))), numbers
+    assert len(numbers) >= 34, numbers
+    for at, told in got:
+        # The states arrive, each fresh on this machine, and none is a live arm.
+        assert told["available"] is False, told
+        assert 0.0 <= told["age_s"] < 0.2 and 17 <= told["per_second"] <= 22, told
+        # How old the oldest reading is, and why the robot app has no newer one.
+        age = told["pose_age_s"]
+        assert age == pytest.approx(at - read_at + 0.02, abs=0.2) and age > 45.0
+        assert told["reading_age_s"] == pytest.approx(age - told["age_s"], abs=0.002)
+        assert told["last_read"] == {"age_s": age, "why": NOT_READ[why]}
+        said = LAST_READ_WHY.fullmatch(told["why"])
+        assert said is not None and said.group(2) == NOT_READ[why], told["why"]
+        assert float(said.group(1)) == pytest.approx(age, abs=0.06)
+        # The pose the joints were last read at, for the page to draw as that.
+        drawn = told["robot"]
+        assert drawn["q"] == pytest.approx(arm_pose(0))
+        assert drawn["joints"] == stick(arm_pose(0))["joints"]
+        assert drawn["source"] == LAST_READ_SOURCE
+        assert drawn["age_s"] == pytest.approx(age, abs=0.002)
+        # The jaws were read last when the joints were.
+        jaws = told["gripper"]
+        assert (jaws["valid"], jaws["opening"], jaws["fresh"]) == (True, 0.5, False)
+        assert jaws["age_s"] == pytest.approx(age - 0.02, abs=0.01)
+        assert told["torque_on"] is (why != "torque off")
+    assert back["last_read"] is None and back["robot"]["source"] == LIVE_SOURCE
+    assert back["gripper"]["fresh"] is True
+    assert set(sent_only) == {NOT_LIVE}
+    assert robot_module.LAST_READ_SOURCE == LAST_READ_SOURCE
+    assert robot_module.TORQUE_OFF_WHY == NOT_READ["torque off"]
+    assert robot_module.FEEDBACK_LOST == NOT_READ["feedback lost"]
+
+
+def test_the_arm_is_live_only_while_its_readings_are_within_the_limit() -> None:
+    with arm_showing() as arm:
+        port, feed = arm.port, arm.feed
+        # From its first state on this robot app reads no joint: the motors
+        # are off. The readings are fresh at first and grow older.
+        read_at = time.monotonic()
+        feed.make = lambda k: frozen_state(k, read_at, "torque off")
+        feed.start()
+        until(lambda: robot_json(port)["n"], "the first state")
+        got = [told for _, told in asked_at_once(port, 2.2)]
+    live = [told for told in got if told["available"]]
+    old = [told for told in got if not told["available"]]
+    assert len(live) >= 10 and len(old) >= 15, (len(live), len(old))
+    # Live up to the limit and not after it: the state's own age on this
+    # machine and the age of its readings together.
+    limit = robot_module.STALE_S
+    for told in live:
+        assert told["pose_age_s"] <= limit and told["last_read"] is None
+        assert told["robot"]["source"] == LIVE_SOURCE
+    for told in old:
+        assert told["pose_age_s"] > limit and told["age_s"] < 0.2
+        assert told["last_read"]["why"] == NOT_READ["torque off"], told
+        assert told["robot"]["source"] == LAST_READ_SOURCE
+    flags = [told["available"] for told in got]
+    assert flags == [True] * len(live) + [False] * len(old)
+
+
+def test_a_page_that_waits_on_a_live_state_is_told_when_it_is_live_no_longer() -> None:
+    robot = LiveRobot(stick)
+    robot.on_link("")
+    robot.on_state(arm_state(1), time.monotonic())
+    began = time.monotonic()
+    assert robot.answer()["available"] is True
+    # No other state arrives: the wait ends when the readings pass the limit,
+    # not a second later.
+    told = robot.answer(after=1, timeout_s=WAIT_S)
+    waited = time.monotonic() - began
+    assert 0.9 < waited < robot_module.STALE_S + 0.1, waited
+    assert (told["n"], told["available"]) == (1, False)
+    # The last pose, as that: the readings were fresh when the state came.
+    assert told["last_read"]["why"] == "no newer ROBOT_STATE for 1.0 s"
+    assert told["pose_age_s"] == pytest.approx(1.0, abs=0.05)
+    assert told["robot"]["source"] == LAST_READ_SOURCE
+    # A little later the state itself is too old to be drawn at all.
+    time.sleep(0.15)
+    gone = robot.answer()
+    assert (gone["available"], gone["last_read"], gone["robot"]) == (False, None, None)
+    assert gone["why"].startswith("no ROBOT_STATE for 1.")
+
+
+def test_a_state_that_does_not_say_how_old_its_readings_are_is_not_live() -> None:
+    whole = arm_state(1)
+    for health in ({}, {"reading_age_s": None}, {"reading_age_s": "0.01"}):
+        robot = LiveRobot(stick)
+        robot.on_state(dataclasses.replace(whole, health=health), time.monotonic())
+        told = robot.answer()
+        assert (told["available"], told["robot"], told["last_read"]) == (
+            False,
+            None,
+            None,
+        ), health
+        assert told["why"] == (
+            "the ROBOT_STATE does not say how old its joint readings are"
+        )
+        assert [one["q"] for one in told["joints"]] == pytest.approx(arm_pose(1))
+    # The readings' own times count as well: where they are older than the
+    # state says, the arm is as old as they are.
+    late = [
+        dataclasses.replace(read, t_start=read.t_start - 5.0, t_end=read.t_end - 5.0)
+        for read in whole.joints
+    ]
+    robot = LiveRobot(stick)
+    robot.on_state(dataclasses.replace(whole, joints=late), time.monotonic())
+    told = robot.answer()
+    assert told["available"] is False and told["pose_age_s"] == pytest.approx(
+        5.02, abs=0.05
+    )
+    assert told["last_read"]["why"] == (
+        "the robot app sends no newer reading; motion moving"
+    )
+
+
+def test_the_robot_apps_own_state_is_live_with_fresh_readings_and_not_with_old_ones() -> (
+    None
+):
+    from isaaccapture_examples.agentic_remote.robot_app.clock import FakeClock
+    from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
+    from test_state import World
+
+    def answered(state: Any) -> dict[str, Any]:
+        robot = LiveRobot(stick)
+        # As it arrives: through the link message's bytes.
+        robot.on_state(decode(state.TYPE, state.to_payload()), time.monotonic())
+        return robot.answer()
+
+    clock = FakeClock()
+    world = World(clock, RobotAppConfig.default())
+    world.read_every_joint()
+    fresh = world.build()
+    assert fresh.health["reading_age_s"] < 0.5
+    told = answered(fresh)
+    assert told["available"] is True and told["last_read"] is None
+    # 45 s on, with no joint read meanwhile: the robot app's state carries the
+    # same readings, each valid, and says how old they are.
+    clock.advance(45.0)
+    old = world.build()
+    assert all(read.valid for read in old.joints)
+    assert old.health["reading_age_s"] == pytest.approx(45.0, abs=0.5)
+    told = answered(old)
+    assert told["available"] is False
+    assert told["pose_age_s"] == pytest.approx(old.health["reading_age_s"], abs=0.1)
+    assert told["robot"]["source"] == LAST_READ_SOURCE
+    assert LAST_READ_WHY.fullmatch(told["why"]) is not None, told["why"]
+
+
+@apai
+@experiment
+def test_the_live_arm_is_the_experiments_own_geometry_of_the_newest_run_folder(
+    apai_scratch: Path, experiment_dir: Path, viewer: Any
+) -> None:
+    runs = apai_scratch / "runs"
+    runs.mkdir()
+    model = ArmModel(viewer, viewer.Viewer(runs), check_s=0.0)
+    with pytest.raises(ArmModelError, match=r"no run folder in .* holds resolved-"):
+        model.geometry(arm_pose(1))
+    assert robot_module.RESOLVED_CONFIG == agent_config.RESOLVED_CONFIG
+    # A run without --record-debug: APAI's configuration and no recording.
+    # The viewer lists no run; the arm is that run's all the same.
+    first = runs / "20261116T120000Z-1"
+    settings = agent_config.load_settings(settings_file(apai_scratch))
+    cfg = agent_config.build_apai_config(settings, first, camera="mock")
+    agent_config.write_resolved_config(first, cfg)
+    before = files(runs)
+    assert viewer.Viewer(runs).names() == []
+    drawn = model.geometry(arm_pose(3))
+    assert drawn == viewer.RunIndex(first).geometry(arm_pose(3))
+    assert len(drawn["joints"]) == 8 and drawn["q"] == arm_pose(3)
+    assert drawn["joints"] != model.geometry(arm_pose(4))["joints"]
+    assert files(runs) == before  # nothing was written into the run folder
+    # A newer run folder is the arm from then on: here the rig's, with the
+    # gripper's collision volumes.
+    rig = runs / "20261117T120000Z-2"
+    cfg = agent_config.build_apai_config(
+        agent_config.load_settings(SHIPPED), rig, camera="mock"
+    )
+    agent_config.write_resolved_config(rig, cfg)
+    drawn = model.geometry(arm_pose(3))
+    assert drawn == viewer.RunIndex(rig).geometry(arm_pose(3))
+    assert [box["name"] for box in drawn["boxes"]] == ["housing", "fingers", "jaws"]
+    # The model names the run it is of, and a LiveRobot hands that on.
+    assert model.run() == rig.name
+    robot = LiveRobot(model.geometry, model_run=model.run)
+    robot.on_state(arm_state(5), time.monotonic())
+    told = robot.answer()
+    assert told["available"] is True and told["model_run"] == rig.name
+    # A pose with another number of joints than the model's is not drawn.
+    five = f"the ROBOT_STATE has 5 joints and the arm model of run {rig.name} has 6"
+    with pytest.raises(ArmModelError, match=five):
+        model.geometry(arm_pose(3)[:5])
+    state = arm_state(6)
+    robot.on_state(
+        dataclasses.replace(state, joints=state.joints[:5]), time.monotonic()
+    )
+    told = robot.answer()
+    assert (told["available"], told["robot"], told["why"]) == (False, None, five)
+    assert told["model_run"] == rig.name and len(told["joints"]) == 5
+    # A run folder whose configuration the viewer cannot build an arm from.
+    broken = runs / "20261118T120000Z-3"
+    broken.mkdir()
+    (broken / robot_module.RESOLVED_CONFIG).write_text("arm: {}\n")
+    with pytest.raises(ArmModelError, match=f"cannot build the arm of {broken.name}"):
+        model.geometry(arm_pose(3))
+    # As a LiveRobot answers with it.
+    robot = LiveRobot(
+        ArmModel(viewer, viewer.Viewer(first.parent), check_s=0.0).geometry
+    )
+    robot.on_state(arm_state(5), time.monotonic())
+    told = robot.answer()
+    assert told["available"] is False and "cannot build the arm" in told["why"]
+
+
+@apai
+@experiment
+def test_with_the_live_arm_every_path_of_the_viewer_answers_as_the_viewer_alone_does(
+    stage: Any, viewer: Any
+) -> None:
+    runs = stage.folder / "runs"
+    run = runs / "20261116T120000Z-1"
+    assert record(stage, run, RECORDED, QUICK) == launcher.EXIT_OK, stage.lines
+    # An old recording: the viewer's "live" flag cannot change between two asks.
+    events = run / "debug" / "events.jsonl"
+    long_ago = time.time() - 3600
+    os.utime(events, (long_ago, long_ago))
+    name = run.name
+    paths = [
+        "/",
+        f"/?run={name}",
+        "/api/runs",
+        "/api/bookmarks",
+        "/api/state",
+        "/api/image",
+        f"/api/state?run={name}&at=0.5",
+        f"/api/timing?run={name}",
+        f"/timing?run={name}",
+        "/api/state?run=unknown",
+        "/api/nothing",
+    ]
+    before = files(runs), files(PACKAGE)
+    with test_viewer.served(viewer, runs) as page:
+        alone = answers(page.port, paths)
+    own_viewer = viewer.Viewer(runs)
+    own = viewer.handler(own_viewer, None)
+    # As the launcher builds it: the arm of the newest run folder.
+    robot = LiveRobot(ArmModel(viewer, own_viewer).geometry)
+    asking = threading.Event()
+    got: list[dict[str, Any]] = []
+    with arm_showing(base=own, authorized=viewer.authorized, robot=robot) as arm:
+        port = arm.port
+        arm.feed.start()
+        until(lambda: robot_json(port)["available"], "the live arm")
+
+        def ask() -> None:  # a page draws state after state all the while
+            told = robot_json(port)
+            while not asking.is_set():
+                told = robot_json(port, told["n"])
+                got.append(told)
+
+        reader = threading.Thread(target=ask, daemon=True)
+        reader.start()
+        try:
+            until(lambda: len(got) >= 10, "ten states")
+            with_live = answers(port, paths)
+        finally:
+            asking.set()
+            reader.join(WAIT_S)
+        sent_only = arm.wire.statuses()
+    # The arm of each state is the one the viewer itself draws of those joints.
+    index = viewer.RunIndex(run)
+    for told in got[:10]:
+        drawn = index.geometry(arm_pose(told["seq"]))
+        assert told["robot"]["joints"] == drawn["joints"], told["seq"]
+        assert told["robot"]["boxes"] == drawn["boxes"]
+        assert len(drawn["joints"]) == 8
+    # The viewer's own paths: the same bytes as the viewer alone gives.
+    for path in paths:
+        if urlsplit(path).path != "/":
+            assert with_live[path] == alone[path], path
+    for path in paths[:2]:
+        assert with_live[path][:2] == alone[path][:2] == (200, alone[path][1])
+        served_block(with_live[path][2], alone[path][2])
+    # Nothing was written, and nothing but VIEW_STATUS went to the robot.
+    assert (files(runs), files(PACKAGE)) == before
+    assert len(sent_only) >= 1 and set(sent_only) == {NOT_LIVE}
+
+
+@apai
+@experiment
+def test_the_viewers_own_token_rule_holds_for_the_robot_state_path(
+    viewer: Any, tmp_path: Path
+) -> None:
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    token = viewer.access_token(tmp_path / "private" / "viewer.token")
+    own = viewer.handler(viewer.Viewer(runs), token)
+    with arm_showing(base=own, token=token, authorized=viewer.authorized) as arm:
+        port = arm.port
+        arm.feed.start()
+        refused = get(port, "/api/runs")
+        assert refused[0] == 401
+        # The same answer as the viewer's own paths give without the token.
+        for path in (
+            ROBOT_PATH,
+            f"{ROBOT_PATH}?after=3",
+            f"{ROBOT_PATH}?token={token}",
+        ):
+            assert get(port, path) == refused, path
+            assert get(port, path, Cookie="thor_viewer_session=wrong") == refused
+        # With it, as the page's cookie or as a header: each state as it arrives.
+        cookie = {"Cookie": f"thor_viewer_session={token}"}
+        for headers in (cookie, {"Authorization": f"Bearer {token}"}):
+            told = until(
+                lambda headers=headers: (
+                    (told := robot_json(port, **headers))["available"] and told
+                ),
+                "the live arm",
+            )
+            assert robot_json(port, told["n"], **headers)["n"] == told["n"] + 1
+
+
+# The page's script with the live arm
+
+# The first joint of the recorded poses of the stand-in viewer below.
+RECORDED_Q0 = 9.0
+# Runs the experiment's own page script and then the block's, as a browser
+# does, on stand-ins for the page's elements, and tells what the page's own
+# draw() was given each time it drew: the first joint of the arm in the page's
+# state, null without an arm. The recorded state is the harness's: a finished
+# recording of 10 s whose arm stands at RECORDED_Q0. Arguments: the block, the
+# page, the scenario and, for real time, the viewer's address. Without one the
+# clock, the timers and the answers to the live arm's requests are the
+# harness's; with one those requests go to that viewer. Prints one JSON line.
+ARM_HARNESS = r"""
+const fs = require('fs'), vm = require('vm');
+const [blockFile, pageFile, scenario, base] = process.argv.slice(2);
+const inner = text => text.slice(text.lastIndexOf('<script>') + 8, text.lastIndexOf('</script>'));
+const block = inner(fs.readFileSync(blockFile, 'utf8'));
+// A page that lacks one of the names the live arm takes hold of.
+const BARE = 'let data = null, follow = true, playing = false; function draw() {}';
+const LACKING = {
+  'no draw': 'let data = null, follow = true, playing = false;',
+  'no state': 'let follow = true, playing = false; function draw() {}',
+  'no scene': BARE, 'no text': BARE, 'no observer': BARE,
+};
+const page = scenario in LACKING ? LACKING[scenario] : inner(fs.readFileSync(pageFile, 'utf8'));
+const gone = { 'no scene': 'scene', 'no text': 'status' }[scenario];
+const RUNS = scenario === 'no recording' ? [] : ['20261116T120000Z-2', '20261115T100000Z-1'];
+const START = '2026-11-17T10:00:00.000+00:00', LENGTH = 10;
+// The recording's last event, on the wall clock.
+const END = Date.parse(START) + 1000 * LENGTH;
+// The harness's clock, in ms: 0.3 s after the recording's last event.
+let clock = END + 300;
+const real = Boolean(base);
+const now = () => (real ? Date.now() : clock);
+const timers = [];
+const later = every => (work, ms) => { timers.push({ work, at: clock + (ms || 0), every: every ? ms : 0 }); };
+const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(done => setImmediate(done)); };
+
+const listeners = {}, windowListeners = {}, made = [], elements = new Map();
+const anything = new Proxy(function () {}, {
+  get: (target, key) => (key === Symbol.toPrimitive ? () => 0 : anything),
+  apply: () => anything,
+});
+const fire = kind => { for (const work of listeners[kind] || []) work(); };
+function element(id) {
+  let text = id === 'initial' ? 'null' : '';
+  const own = {
+    id, style: { display: '' }, value: '', src: '', checked: true, hidden: false,
+    heard: {}, classes: new Set(), children: [], watchers: [], parentNode: null, nextSibling: null,
+  };
+  // What a browser tells a MutationObserver of an element's new text.
+  Object.defineProperty(own, 'textContent', {
+    get: () => text,
+    set(value) { text = String(value); for (const watch of own.watchers) queueMicrotask(() => watch([])); },
+  });
+  own.classList = { toggle(name, on) { on ? own.classes.add(name) : own.classes.delete(name); } };
+  own.addEventListener = (kind, work) => { (own.heard[kind] ||= []).push(work); };
+  own.append = (...nodes) => { for (const node of nodes) { own.children.push(node); node.parentNode = own; } };
+  own.insertBefore = node => { own.children.push(node); node.parentNode = own; };
+  own.replaceChildren = (...nodes) => { own.children = nodes; };
+  own.click = () => {
+    if (own.onclick) own.onclick();
+    for (const work of own.heard.click || []) work();
+    fire('click');
+  };
+  return new Proxy(own, { get: (target, key) => (key in target ? target[key] : anything) });
+}
+const byId = id => elements.get(id) || elements.set(id, element(id)).get(id);
+byId('photo').parentNode = element('panel');
+byId('run').value = 'latest';
+// The page's 3D scene in its box, in the page's first panel.
+const scenePanel = element('scenePanel'), sceneBox = element('sceneBox');
+scenePanel.append(sceneBox);
+sceneBox.append(byId('scene'));
+// Every draw() of the page begins by clearing its canvas.
+const draws = [];
+let context = null;
+const ctx = new Proxy({}, {
+  get: (target, key) => (key !== 'clearRect' ? () => {} : () => {
+    const q = vm.runInContext('data && data.robot ? data.robot.q[0] : null', context);
+    draws.push([now(), q]);
+    if (SLOW && q !== null && q !== 9.0) clock += DRAW_MS;
+  }),
+  set: () => true,
+});
+byId('scene').getContext = () => ctx;
+
+// The viewer's recorded state: a new one for each request, as the page parses it.
+const recorded = (run, at) => ({
+  run, seconds: at ?? LENGTH, duration: LENGTH, events: 50, live: false,
+  map: { revision: 3, age_s: 0.2, voxel: 0.05, points: [[0.3, 0.1, 0.1]], frame_id: 7, query_present: true, utc: START },
+  robot: { joints: [[0, 0, 0], [0.3, 0.9, 0.2]], q: [9.0, 0, 0, 0, 0, 0], boxes: [], source: 'recorded', sample_span_s: 0.02, age_s: 0.3, utc: START },
+  failure: null, failures: [], recording: {}, recording_start_utc: START,
+});
+// The run whose arm model the viewer draws with: the newest run folder.
+const MODEL_RUN = '20261116T120000Z-2';
+// The viewer's answer with live state n: the first joint is n hundredths of a rad.
+const liveState = n => ({
+  n, available: true, why: '', age_s: 0.01, per_second: 20, wall_s: clock / 1000, seq: 1000 + n,
+  stale_s: 1, pose_age_s: 0.03, last_read: null, model_run: MODEL_RUN,
+  joints: [n / 100, 0.1, 0.1, 0, 0, 0].map((q, joint) => ({ joint, valid: true, q, deg: q * 180 / Math.PI, target: q })),
+  target_q: [n / 100, 0.1, 0.1, 0, 0, 0],
+  gripper: { valid: true, opening: 0.524, target: 0.6, load: 'empty', age_s: 0.01, fresh: true },
+  owner: 'agent', stop_level: 'none', motion: 'moving', torque_on: true, torque: 'on (holding)',
+  robot: { joints: [[0, 0, 0], [0.3, n / 100, 0.2]], q: [n / 100, 0.1, 0.1, 0, 0, 0], boxes: [], source: 'live', sample_span_s: 0.02, age_s: 0.02, utc: START },
+});
+// The viewer's answer with state n of a robot app that reads no joint any
+// longer: the readings of `age` seconds ago, the first joint at FROZEN rad.
+const FROZEN = 0.07;
+const oldState = (n, age, why) => ({
+  ...liveState(n), available: false, pose_age_s: age, last_read: { age_s: age, why },
+  why: `the joints were last read ${age.toFixed(1)} s ago (${why})`,
+  joints: [FROZEN, 0.1, 0.1, 0, 0, 0].map((q, joint) => ({ joint, valid: true, q, deg: q * 180 / Math.PI, target: null })),
+  target_q: null,
+  gripper: { valid: true, opening: 0.524, target: 0.6, load: 'empty', age_s: age, fresh: false },
+  owner: 'nobody', motion: 'rest_unpowered', torque_on: false, torque: 'off',
+  robot: { joints: [[0, 0, 0], [0.3, FROZEN, 0.2]], q: [FROZEN, 0.1, 0.1, 0, 0, 0], boxes: [], source: 'last reading', sample_span_s: 0.02, age_s: age, utc: START },
+});
+const noState = (n, why) => ({ n, available: false, why, age_s: 1.2, per_second: 0, wall_s: clock / 1000, robot: null });
+// The live arm's requests, and the ones that wait for the harness's answer.
+const asked = [], waiting = [];
+function give(told) {
+  for (const request of waiting.splice(0)) request.resolve({ ok: true, status: 200, json: async () => told });
+}
+function refuse() {
+  for (const request of waiting.splice(0)) request.reject(Error('refused'));
+}
+// 'slow draws': a draw of the live arm takes DRAW_MS of the harness's clock,
+// as on a large map, and the harness answers as the viewer does: with its
+// newest state, at once when that is not the one the page names.
+const SLOW = scenario === 'slow draws', DRAW_MS = 60;
+let newest = 0;
+function answer() {
+  for (const request of waiting.splice(0)) {
+    if (newest && request.after !== newest) request.resolve({ ok: true, status: 200, json: async () => liveState(newest) });
+    else waiting.push(request);
+  }
+}
+const globals = {
+  document: {
+    hidden: false,
+    getElementById: id => (id === gone ? null : byId(id)),
+    createElement() { const node = element(''); made.push(node); return node; },
+    addEventListener(kind, work) { (listeners[kind] ||= []).push(work); },
+  },
+  window: { addEventListener(kind, work) { (windowListeners[kind] ||= []).push(work); } },
+  location: { search: '', pathname: '/', origin: 'http://viewer' },
+  history: { replaceState() {} },
+  devicePixelRatio: 1,
+  URLSearchParams,
+  Option: function (text, value) { this.text = text; this.value = value; },
+  setInterval: real ? setInterval : later(true),
+  setTimeout: real ? setTimeout : later(false),
+  Date: real ? Date : { now: () => clock, parse: Date.parse },
+  MutationObserver: function (work) { this.observe = node => node.watchers.push(work); },
+  fetch(url, options) {
+    if (url.startsWith('/api/live/robot.json')) {
+      asked.push(url);
+      if (real) return fetch(base + url, options);
+      const after = url.includes('after=') ? Number(url.split('after=')[1]) : null;
+      const answered = new Promise((resolve, reject) => waiting.push({ resolve, reject, after }));
+      if (SLOW) answer();
+      return answered;
+    }
+    if (url.startsWith('/api/live.jpg')) return new Promise(() => {});
+    if (url.startsWith('/api/live.json')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ available: false, reason: 'no camera' }) });
+    }
+    let value = {};
+    if (url.startsWith('/api/runs')) value = RUNS;
+    if (url.startsWith('/api/state')) {
+      const query = new URLSearchParams(url.split('?')[1]);
+      const run = query.get('run') === 'latest' ? RUNS[0] : query.get('run');
+      if (!RUNS.includes(run)) {
+        return Promise.resolve({ ok: false, status: 400, text: async () => 'Unknown recorded run' });
+      }
+      value = recorded(run, query.has('at') ? Number(query.get('at')) : null);
+    }
+    return Promise.resolve({ ok: true, status: 200, json: async () => value, text: async () => '' });
+  },
+};
+if (scenario === 'no observer') delete globals.MutationObserver;
+context = vm.createContext(globals);
+vm.runInContext(page, context);
+const before = made.length;
+vm.runInContext(block, context);
+
+const mine = id => made.find(node => node.id === id) || null;
+const text = id => (mine(id) ? mine(id).textContent : null);
+// Let `ms` of the harness's clock pass, 10 ms at a time. After each: what
+// the page's canvas shows, the arm of the draw() that came last, and what the
+// line under the scene says.
+const shown = [], said = [];
+async function pass(ms) {
+  for (const end = clock + ms; clock < end;) {
+    clock += 10;
+    for (const timer of timers.slice()) {
+      if (timer.at > clock) continue;
+      if (timer.every) timer.at += timer.every;
+      else timers.splice(timers.indexOf(timer), 1);
+      timer.work();
+    }
+    await settle();
+    shown.push(draws.length ? draws[draws.length - 1][1] : null);
+    said.push(text('liveArmLine'));
+  }
+}
+const switches = () => vm.runInContext('[follow, playing, data === null]', context);
+const moved = () => { byId('timeline').value = '1.5'; byId('timeline').oninput(); fire('input'); };
+const older = () => { byId('run').value = RUNS[1]; byId('run').onchange(); fire('change'); };
+
+async function stepped() {
+  const out = [];
+  let n = 0;
+  // States at the rig's pace: one every 50 ms.
+  const states = async count => { for (let i = 0; i < count; i++) { give(liveState(++n)); await pass(50); } };
+  const step = async (name, work, ms) => {
+    // The first step holds what the two scripts did when they were loaded.
+    const from = out.length ? [draws.length, shown.length, asked.length, said.length] : [0, 0, 0, 0];
+    if (work) await work();
+    if (ms) await pass(ms);
+    const [follow, playing, none] = switches();
+    out.push([name, {
+      line: text('liveArmLine'), readings: text('liveArmReadings'), color: mine('liveArmLine').style.color || '',
+      drawn: draws.slice(from[0]).map(one => one[1]), shown: shown.slice(from[1]),
+      asked: asked.slice(from[2]), waiting: waiting.length, follow, playing, none,
+      mode: byId('mode').textContent, error: String(byId('error').textContent).slice(0, 60),
+      said: said.slice(from[3]),
+    }]);
+  };
+  await step('the page is loaded', null, 700);
+  if (SLOW) {
+    // The viewer has a new state every 50 ms; the page asks as it can.
+    timers.push({ work() { newest += 1; answer(); }, at: clock + 50, every: 50 });
+    await step('the first second', null, 1000);
+    await step('three seconds of live states', null, 3000);
+    return out;
+  }
+  await step('a second of live states', () => states(20));
+  if (scenario === 'no recording') {
+    await step('the page draws by itself', () => byId('top').click());
+    await step('the scene is dragged, zoomed and resized', () => {
+      const scene = byId('scene');
+      scene.onpointerdown({ clientX: 0, clientY: 0, pointerId: 1 });
+      for (const work of [scene.onpointermove, ...scene.heard.pointermove]) work({ clientX: 9, clientY: 5, buttons: 1 });
+      for (const work of [scene.onwheel, ...scene.heard.wheel]) work({ deltaY: 100, preventDefault() {} });
+      for (const work of [context.window.onresize, ...windowListeners.resize]) work();
+      // The pointer only passes over the scene: the page does not draw.
+      scene.onpointerup();
+      for (const work of [scene.onpointermove, ...scene.heard.pointermove]) work({ clientX: 9, clientY: 5, buttons: 0 });
+    });
+    await step('the service is gone', () => give(noState(n, 'cannot attach to the robot link service: gone')), 700);
+    await step('the page draws by itself again', () => byId('top').click());
+    return out;
+  }
+  // The stored recording does not go on: its map grows older.
+  await step('two more seconds', () => states(40));
+  await step('the timeline is moved', async () => { moved(); await pass(100); give(liveState(++n)); }, 1000);
+  await step('Follow live is pressed', async () => { byId('live').click(); await pass(50); await states(10); });
+  await step('a recording plays', async () => { byId('play').click(); await pass(100); give(liveState(++n)); }, 1000);
+  await step('Follow live again', async () => { byId('live').click(); await pass(50); await states(10); });
+  await step('an older run is picked', async () => { older(); await pass(100); give(liveState(++n)); }, 1000);
+  await step('the newest run again', async () => { byId('live').click(); await pass(50); await states(10); });
+  // The timing graph's page asks for a moment of the run: no event of the page's own.
+  await step('a moment of the timing graph is picked', async () => {
+    for (const work of windowListeners.message || []) {
+      work({ origin: 'http://viewer', source: byId('timing-frame').contentWindow,
+        data: { type: 'thor-timing-seek', run: RUNS[0], utc: '2026-11-17T10:00:02.000+00:00' } });
+    }
+    await pass(20);
+    give(liveState(++n));
+  }, 1000);
+  await step('Follow live a third time', async () => { byId('live').click(); await pass(50); await states(10); });
+  await step('the service is gone', () => give(noState(n, 'cannot attach to the robot link service: gone')), 1000);
+  await step('the viewer is gone', () => refuse(), 1500);
+  await step('the states are back', () => states(10));
+  await step('the tab is hidden', () => { context.document.hidden = true; fire('visibilitychange'); give(liveState(++n)); }, 500);
+  await step('the tab is shown', async () => { context.document.hidden = false; fire('visibilitychange'); await pass(50); await states(5); });
+  // The viewer draws with the arm model of another run than the one on the page.
+  await step('the arm model is of another run', async () => { give({ ...liveState(++n), model_run: '20261117T090000Z-9' }); await pass(50); });
+  // The robot app goes on publishing, 20 states a second, and reads no joint:
+  // each state carries the readings of 45 s ago and more.
+  const frozen = async why => { for (let i = 0; i < 20; i++) { give(oldState(++n, 45 + i * 0.05, why)); await pass(50); } };
+  await step('the motors are off', () => frozen('torque off: the joints are not read'));
+  await step('the joints are read again', () => states(5));
+  await step('the joint feedback is lost', () => frozen('joint feedback lost'));
+  // A state arrived and no other follows: the page counts its age on.
+  await step('fresh readings, then no answer', async () => { await states(3); await pass(1500); });
+  return out;
+}
+
+// In real time, on a viewer's own states: what was drawn in each stretch.
+function timed() {
+  const began = Date.now(), marks = [[0, 'following']], lines = [];
+  const at = (ms, name, work) => setTimeout(() => {
+    lines.push([marks[marks.length - 1][1], text('liveArmLine'), text('liveArmReadings')]);
+    if (work) work();
+    marks.push([Date.now() - began, name]);
+  }, ms);
+  at(2500, 'the timeline is moved', moved);
+  at(4000, 'following again', () => byId('live').click());
+  at(6500, 'a recording plays', () => byId('play').click());
+  at(8000, 'following a third time', () => byId('live').click());
+  at(10500, 'an older run', older);
+  at(12000, 'done', () => {
+    console.log(JSON.stringify({ marks, lines, draws: draws.map(([at, q]) => [at - began, q]), asked: asked.length }));
+    process.exit(0);
+  });
+}
+
+if (scenario in LACKING) {
+  settle().then(() => console.log(JSON.stringify({
+    made: made.length - before, ids: made.map(node => node.id).filter(Boolean), asked, timers: timers.length,
+  })));
+} else if (real) {
+  timed();
+} else {
+  stepped().then(out => console.log(JSON.stringify({ steps: out, ids: made.map(node => node.id).filter(Boolean) })));
+}
+"""
+
+
+def run_arm_page(
+    tmp_path: Path, experiment_dir: Path, scenario: str, base: str = ""
+) -> dict[str, Any]:
+    """What ARM_HARNESS tells of a scenario, on the experiment's own page script."""
+    harness = tmp_path / "arm_harness.js"
+    harness.write_text(ARM_HARNESS, encoding="utf-8")
+    page = experiment_dir / "thor_viewer.html"
+    command = [NODE, str(harness), str(live_module.PAGE_BLOCK_FILE), str(page)]
+    done = subprocess.run(
+        [*command, scenario, *([base] if base else [])],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def live_q0(n: int) -> float:
+    """The first joint of the harness's live state n."""
+    return n / 100
+
+
+def live_arms(drawn: list[Any]) -> list[float]:
+    """The live arms among what draw() was given, each once: a draw can repeat one."""
+    live = [q for q in drawn if q is not None and q != RECORDED_Q0]
+    return [q for at, q in enumerate(live) if at == 0 or q != live[at - 1]]
+
+
+@experiment
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_page_draws_each_live_state_with_its_own_draw_only_while_it_follows(
+    experiment_dir: Path, tmp_path: Path
+) -> None:
+    told = run_arm_page(tmp_path, experiment_dir, "run")
+    steps = dict(told["steps"])
+    assert [name for name, _ in told["steps"]] == list(steps)
+    # Under the 3D scene: the line and the readings, behind the live picture's.
+    assert told["ids"][-3:] == ["liveArm", "liveArmLine", "liveArmReadings"]
+    recorded = RECORDED_Q0
+
+    def live(first: int, last: int) -> list[float]:
+        return [live_q0(n) for n in range(first, last + 1)]
+
+    def only_recorded(step: str) -> dict[str, Any]:
+        """A step in which the page drew its recorded arm and no live one."""
+        seen = steps[step]
+        assert seen["drawn"] and set(seen["drawn"]) == {recorded}, step
+        assert set(seen["shown"]) == {recorded}, step
+        return seen
+
+    # Loaded: the page's own state, its recorded arm, and one request for the
+    # newest live state, which is under way.
+    loaded = steps["the page is loaded"]
+    assert set(loaded["drawn"]) == {recorded} and loaded["mode"].startswith("RECORDED")
+    assert (loaded["asked"], loaded["waiting"]) == ([ROBOT_PATH], 1)
+    assert loaded["line"] == "arm: no live state: asking the viewer"
+    assert (loaded["readings"], loaded["color"]) == ("", "#ffbd69")
+    # A second of states, 20 as on the rig: each one was handed to the page's
+    # own draw() as it came. The page's own tick drew its recorded arm twice in
+    # that second, and each time the live arm was drawn over it at once: at no
+    # moment did the canvas show the recorded arm.
+    second = steps["a second of live states"]
+    assert live_arms(second["drawn"]) == live(1, 20)
+    assert second["drawn"].count(recorded) == 2
+    assert set(second["shown"]) == set(live(1, 20))
+    # Each request named the state the page had: the viewer answers with another.
+    assert second["asked"] == [f"{ROBOT_PATH}?after={n}" for n in range(1, 21)]
+
+    def map_age(line: str, drawn: int) -> float:
+        """The map's age in the line of a live arm with `drawn` states a second."""
+        found = re.fullmatch(
+            rf"arm: live, {drawn} a second; map: (\d+\.\d) s old", line
+        )
+        assert found is not None, line
+        return float(found.group(1))
+
+    # The line under the scene: the arm is live, and the map beside it is the
+    # recording's last: 0.2 s old at the recording's last event, 2 s ago.
+    assert map_age(second["line"], 20) == pytest.approx(2.15, abs=0.06)
+    assert second["color"] == ""
+    assert second["readings"] == (
+        "joints 11.5 5.7 5.7 0.0 0.0 0.0 deg · jaws 52 % open · owner agent · "
+        "moving · torque on (holding)"
+    )
+    # Everything else is the page's own, from the recording.
+    assert second["mode"] == loaded["mode"] and (second["follow"], second["none"]) == (
+        True,
+        False,
+    )
+    # The recording stays as it is: two seconds on, its map is that much older.
+    later = steps["two more seconds"]
+    assert live_arms(later["drawn"]) == live(21, 60)
+    assert map_age(later["line"], 20) == pytest.approx(4.15, abs=0.06)
+
+    # The timeline is moved: the recorded arm at once, as the page alone draws
+    # it. The state that was under way is not drawn, and none is asked for.
+    moved = only_recorded("the timeline is moved")
+    assert (moved["line"], moved["readings"]) == ("arm: recorded", "")
+    assert (moved["asked"], moved["waiting"], moved["follow"]) == ([], 0, False)
+    assert moved["mode"].startswith("REPLAY")
+    # "Follow live": the newest state at once, then each one as it comes.
+    back = steps["Follow live is pressed"]
+    assert back["asked"][0] == ROBOT_PATH and back["follow"] is True
+    assert live_arms(back["drawn"]) == live(62, 71)
+    assert back["shown"][-1] == live_q0(71)
+    assert back["line"].startswith("arm: live, 10 a second; map: ")
+    # A recording that plays, an older run and a moment picked in the timing
+    # graph are the page's own as well.
+    played = only_recorded("a recording plays")
+    assert (played["line"], played["playing"], played["asked"]) == (
+        "arm: recorded",
+        True,
+        [],
+    )
+    assert steps["Follow live again"]["shown"][-1] == live_q0(82)
+    old = only_recorded("an older run is picked")
+    assert old["line"] == "arm: recorded" and old["follow"] is True
+    assert old["mode"].endswith("20261115T100000Z-1") and old["asked"] == []
+    assert steps["the newest run again"]["shown"][-1] == live_q0(93)
+    picked = only_recorded("a moment of the timing graph is picked")
+    assert (picked["line"], picked["follow"], picked["asked"]) == (
+        "arm: recorded",
+        False,
+        [],
+    )
+    assert steps["Follow live a third time"]["shown"][-1] == live_q0(104)
+
+    # No state arrives: the page says so, with the viewer's reason, and is the
+    # experiment's own: its recorded arm, at its own pace.
+    gone = only_recorded("the service is gone")
+    assert gone["line"] == (
+        "arm: no live state: cannot attach to the robot link service: gone"
+    )
+    assert (gone["readings"], gone["color"]) == ("", "#ffbd69")
+    assert gone["drawn"].count(recorded) >= 2 and gone["follow"] is True
+    # It goes on asking, by the number it has.
+    assert set(gone["asked"]) == {f"{ROBOT_PATH}?after=104"} and gone["waiting"] == 1
+    lost = only_recorded("the viewer is gone")
+    assert lost["line"] == "arm: no live state: no answer from the viewer: refused"
+    assert len(lost["asked"]) == 1  # again after a second
+    returned = steps["the states are back"]
+    assert live_arms(returned["drawn"]) == live(105, 114)
+    assert returned["line"].startswith("arm: live, 10 a second; map: ")
+    # A hidden tab asks for nothing and draws no live state.
+    hidden = steps["the tab is hidden"]
+    assert hidden["asked"] == [] and hidden["waiting"] == 0
+    assert set(hidden["drawn"]) <= {recorded} and hidden["line"] == "arm: recorded"
+    shown = steps["the tab is shown"]
+    assert shown["asked"][0] == ROBOT_PATH and shown["shown"][-1] == live_q0(120)
+    # The line names the run whose arm model draws the arm when that is not
+    # the run on the page. Up to here it was: nothing was named.
+    names = [name for name, _ in told["steps"]]
+    before = names[: names.index("the arm model is of another run")]
+    assert len(before) == 16
+    assert all(
+        "arm model" not in line for name in before for line in steps[name]["said"]
+    )
+    other = steps["the arm model is of another run"]
+    assert other["line"].startswith("arm: live, ")
+    assert other["line"].endswith(" s old; arm model of run 20261117T090000Z-9")
+
+
+# What the page shows when the joints' readings are old, per ARM_HARNESS's steps.
+FROZEN_Q0 = 0.07
+LAST_READ_LINE = (
+    r"arm: last read (\d+(?:\.\d)?) s ago \({why}\); map: \d+(?:\.\d)? s old"
+)
+
+
+@experiment
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_page_never_calls_an_arm_live_whose_readings_are_old(
+    experiment_dir: Path, tmp_path: Path
+) -> None:
+    steps = dict(run_arm_page(tmp_path, experiment_dir, "run")["steps"])
+    recorded = RECORDED_Q0
+    for step, why in (
+        ("the motors are off", "torque off: the joints are not read"),
+        ("the joint feedback is lost", "joint feedback lost"),
+    ):
+        old = steps[step]
+        # 20 states in that second, each with the readings of 45 s ago: at no
+        # moment did the line say "live". It says how old the readings are
+        # and why, in the warning colour.
+        assert len(old["asked"]) == 20, step
+        pattern = re.compile(LAST_READ_LINE.format(why=re.escape(why)))
+        ages = []
+        for line in old["said"]:
+            found = pattern.fullmatch(line)
+            assert found is not None, (step, line)
+            ages.append(float(found.group(1)))
+        assert len(ages) == 100 and ages == sorted(ages), step
+        assert 45.0 <= ages[0] <= 45.1 and ages[-1] == 46.0, (step, ages)
+        assert old["color"] == "#ffbd69"
+        # The pose the joints were last read at is on the canvas the whole
+        # time: drawn once, and again over each draw of the page's own.
+        assert set(old["shown"]) == {FROZEN_Q0}, step
+        assert old["drawn"].count(recorded) == 2, step
+        assert old["drawn"].count(FROZEN_Q0) == 3 and len(old["drawn"]) == 5, step
+        # The readings are the last ones, the jaw opening with its age.
+        assert old["readings"] == (
+            "joints 4.0 5.7 5.7 0.0 0.0 0.0 deg · jaws: last read 46 s ago (52 % open) "
+            "· owner nobody · rest_unpowered · torque off"
+        )
+    # Read again: live again, each state drawn.
+    again = steps["the joints are read again"]
+    assert live_arms(again["drawn"])[-5:] == [live_q0(n) for n in range(142, 147)]
+    assert again["line"].startswith("arm: live, 5 a second; map: ")
+    assert again["color"] == "" and "jaws 52 % open" in again["readings"]
+    # A live state that no other follows: the page counts its age on by
+    # itself and stops calling it live at the viewer's limit of 1 s.
+    silent = steps["fresh readings, then no answer"]
+    lines = silent["said"]
+    assert lines[14].startswith("arm: live, ") and lines[80].startswith("arm: live, ")
+    late = re.compile(
+        LAST_READ_LINE.format(why=re.escape("the viewer sends no newer state"))
+    )
+    assert all(late.fullmatch(line) for line in lines[135:]), lines[135:]
+    assert 1.2 <= float(late.fullmatch(silent["line"]).group(1)) <= 1.6
+    assert silent["color"] == "#ffbd69"
+    # The arm on the canvas is still that state's: the last pose there is.
+    assert silent["shown"][-1] == live_q0(169)
+
+
+@experiment
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_live_draws_take_at_most_about_half_of_the_pages_time(
+    experiment_dir: Path, tmp_path: Path
+) -> None:
+    # Each draw of the live arm takes 60 ms here, as on a large map, and the
+    # viewer has a new state every 50 ms.
+    steps = dict(run_arm_page(tmp_path, experiment_dir, "slow draws")["steps"])
+    long = steps["three seconds of live states"]
+    live = live_arms(long["drawn"])
+    # A draw, then as long again without one: about 7 states a second of the
+    # 20, beside the two draws a second over the page's own.
+    assert 18 <= len(live) <= 26, live
+    drawing_ms = 60 * len([q for q in long["drawn"] if q != RECORDED_Q0])
+    assert drawing_ms <= 0.6 * 3000, drawing_ms
+    # Each state drawn was the viewer's newest when it was asked for: the
+    # ones between were skipped, two of three.
+    numbers = [round(q * 100) for q in live]
+    gaps = np.diff(numbers)
+    assert all(gap >= 1 for gap in gaps) and 2.0 <= float(np.mean(gaps)) <= 3.5, numbers
+    # Each request named the state the page had.
+    assert all(re.fullmatch(rf"{ROBOT_PATH}\?after=\d+", url) for url in long["asked"])
+    # The line says so: how many of the arriving states are drawn, and why.
+    found = re.fullmatch(
+        r"arm: live, (\d+) of (\d+) a second \(a draw takes 60 ms\); map: .+",
+        long["line"],
+    )
+    assert found is not None, long["line"]
+    drawn, arriving = int(found.group(1)), int(found.group(2))
+    assert 6 <= drawn <= 9 and 17 <= arriving <= 23, long["line"]
+    # The recorded arm of the page's own tick was drawn over each time.
+    assert RECORDED_Q0 not in long["shown"]
+
+
+@experiment
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_without_a_recorded_run_the_page_still_draws_the_live_arm(
+    experiment_dir: Path, tmp_path: Path
+) -> None:
+    told = run_arm_page(tmp_path, experiment_dir, "no recording")
+    steps = dict(told["steps"])
+    # The page alone has nothing to show: no run, no state, and its own words
+    # for that.
+    loaded = steps["the page is loaded"]
+    assert set(loaded["drawn"]) <= {None} and loaded["none"] is True
+    assert "Unknown recorded run" in loaded["error"]
+    assert loaded["line"] == "arm: no live state: asking the viewer"
+    # Each live state is drawn by the page's own draw(), and the page's state
+    # is left as the page has it: none.
+    second = steps["a second of live states"]
+    assert second["drawn"] == [live_q0(n) for n in range(1, 21)]
+    assert second["none"] is True and second["follow"] is True
+    # No run is on the page: the line names the run whose arm model is used.
+    assert second["line"] == (
+        "arm: live, 20 a second; map: no recording; arm model of run 20261116T120000Z-2"
+    )
+    assert second["readings"].startswith("joints 11.5 5.7 5.7 0.0 0.0 0.0 deg · jaws")
+    assert "Unknown recorded run" in second["error"]  # the page's own words
+    # A draw of the page's own, as for "Top", has no arm: the live one is
+    # drawn again at once.
+    own = steps["the page draws by itself"]
+    assert own["drawn"] == [None, live_q0(20)] and own["none"] is True
+    # So it is while the scene is dragged, zoomed or resized.
+    moved = steps["the scene is dragged, zoomed and resized"]
+    assert moved["drawn"] == [None, live_q0(20)] * 3 and moved["none"] is True
+    # Without a live state the page is the experiment's own again: no arm.
+    gone = steps["the service is gone"]
+    assert gone["line"] == (
+        "arm: no live state: cannot attach to the robot link service: gone"
+    )
+    assert gone["drawn"] == [None] and gone["none"] is True
+    assert steps["the page draws by itself again"]["drawn"] == [None]
+
+
+@experiment
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    "lacking", ["no draw", "no state", "no scene", "no text", "no observer"]
+)
+def test_on_a_page_without_what_the_live_arm_needs_that_part_does_nothing(
+    experiment_dir: Path, tmp_path: Path, lacking: str
+) -> None:
+    told = run_arm_page(tmp_path, experiment_dir, lacking)
+    # The live picture's part made its own elements and its two timers; the
+    # live arm's part made nothing and asked for nothing.
+    assert told["made"] == 6 and "liveArm" not in told["ids"]
+    assert (told["asked"], told["timers"]) == ([], 2)
+
+
+@experiment
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_over_http_the_pages_script_draws_18_and_more_states_a_second_while_it_follows(
+    experiment_dir: Path, tmp_path: Path
+) -> None:
+    import resource
+
+    with arm_showing() as arm:
+        arm.feed.start()
+        until(lambda: robot_json(arm.port)["available"], "the live arm")
+        spent = time.process_time(), time.monotonic()
+        children = resource.getrusage(resource.RUSAGE_CHILDREN)
+        told = run_arm_page(
+            tmp_path, experiment_dir, "run", f"http://127.0.0.1:{arm.port}"
+        )
+        share = (time.process_time() - spent[0]) / (time.monotonic() - spent[1])
+        node = resource.getrusage(resource.RUSAGE_CHILDREN)
+        sent_only = arm.wire.statuses()
+    node_s = node.ru_utime + node.ru_stime - children.ru_utime - children.ru_stime
+    marks = [(at / 1000, name) for at, name in told["marks"]]
+    draws = [(at / 1000, q) for at, q in told["draws"]]
+    lines = {name: (line, readings) for name, line, readings in told["lines"]}
+    rates = []
+    for (since, name), (until_, _) in zip(marks, marks[1:], strict=False):
+        drawn = [q for at, q in draws if since <= at < until_]
+        live = [q for q in drawn if q is not None and q != RECORDED_Q0]
+        if not name.startswith("following"):
+            # A replay and an older run: the recorded arm, and no live state
+            # from the moment of the switch.
+            assert live == [] and drawn and set(drawn) == {RECORDED_Q0}, name
+            assert lines[name] == ("arm: recorded", ""), name
+            continue
+        # Following: in a whole second, 18 and more different states of the
+        # stand-in robot app's 20, each newer than the one before.
+        second = live_arms([q for at, q in draws if since + 0.4 <= at < since + 1.4])
+        assert second == sorted(set(second)) and len(second) >= 18, (name, second)
+        assert all(ARM_FROM <= q < ARM_FROM + 200 * ARM_STEP for q in second)
+        rates.append(len(second))
+        found = re.fullmatch(
+            r"arm: live, (\d+) a second; map: (\d+(?:\.\d)?) s old", lines[name][0]
+        )
+        assert found is not None and int(found.group(1)) >= 18, lines[name]
+        assert lines[name][1].endswith(
+            " deg · jaws 50 % open · owner agent · moving · torque on (holding)"
+        )
+    assert len(rates) == 3
+    assert set(sent_only) == {NOT_LIVE}
+    print(
+        f"measured: the page's own draw() was given {rates} different live states "
+        "in a whole second of each stretch of following, of 20 a second sent; "
+        f"the viewer's side took {share:.2f} of a processor core (this process: "
+        f"the live paths, the stand-in robot app and camera); node, with the "
+        f"page's script, took {node_s:.1f} s of processor time in 12 s"
+    )
+
+
+def test_the_blocks_second_part_names_what_it_takes_hold_of_and_only_reads() -> None:
+    text = BLOCK.decode()
+    arm = text[text.index("// The live arm.\n") :]
+    for piece in (
+        "getElementById('scene')",
+        "getElementById('status')",
+        "typeof draw === 'function' && typeof data === 'object'",
+        "typeof MutationObserver !== 'function'",
+        f"const ROBOT = '{ROBOT_PATH}';",
+        "`${ROBOT}?after=${after}`",
+        # The page's own drawing: its state's arm, and its draw().
+        "data.robot = arm.robot;",
+        "draw();",
+        # The four things the line under the scene says.
+        "'arm: recorded'",
+        "`arm: live, ${rate()}`",
+        "`arm: last read ${seconds(age)} ago (${old ? old.why : "
+        "'the viewer sends no newer state'})`",
+        "`arm: no live state: ${why}`",
+        "'no recording'",
+        "`; arm model of run ${run}`",
+        # Old jaw readings are shown as such.
+        "`jaws: last read ${seconds(jaws.age_s)} ago (${open})`",
+        # Each draw is timed, and as long must pass before the next state.
+        "setTimeout(done, cost);",
+        "await one;",
+    ):
+        assert piece in arm, piece
+    # "live" is said in one place only, behind the check of the readings' age.
+    assert arm.count("arm: live") == 1
+    assert "if (!old && !(age > limit)) {\n        text = `arm: live, " in arm
+    # It asks and never tells: no POST, no view token, and no geometry of its own.
+    for piece in ("POST", "TOKEN", "Math.cos", "Math.sin", "project(", "lineTo"):
+        assert piece not in arm, piece
+    assert arm.count("fetch(") == 1
+
+
+@experiment
+def test_the_experiments_page_has_what_the_live_arm_takes_hold_of(
+    experiment_dir: Path, viewer: Any
+) -> None:
+    page = (experiment_dir / "thor_viewer.html").read_text(encoding="utf-8")
+    for piece in (
+        '<div class="scene"><canvas id="scene"></canvas>',
+        '<div id="status"></div>',
+        "function draw(){",
+        "arm(data.robot,'#58d5f7');",
+        # render() writes its text, then draws: the block draws over it.
+        "$('status').textContent=`Map age at selected time: ",
+        "draw();}\nasync function tick(){",
+        "data.recording_start_utc",
+    ):
+        assert piece in page, piece
+    # The arm of a pose is computed by the viewer, in one routine.
+    source = Path(viewer.__file__).read_text(encoding="utf-8")
+    assert "    def geometry(self, q):" in source
+    assert '**self.geometry(state["q"]),' in source
+    assert '"age_s": stamp / 1e9 - commit["capture_t"],' in source
+
+
+# The live arm in a real browser
+
+# Goes behind the block in the pages of the live arm's browser tests. Each
+# draw() of the page begins by clearing its canvas: the first joint of the
+# arm in the page's state at that moment is kept. Five times a second, and
+# before each step, it tells the test's own path /measured what is on the
+# page and what was drawn since. The steps take the place of STEPS.
+ARM_MEASURE = rb"""
+<script>
+(function () {
+  const id = name => document.getElementById(name);
+  const text = name => (id(name) ? id(name).textContent : null);
+  const draws = [];
+  const clear = CanvasRenderingContext2D.prototype.clearRect;
+  CanvasRenderingContext2D.prototype.clearRect = function (...box) {
+    if (this.canvas === id('scene')) {
+      draws.push([Math.round(performance.now()), data && data.robot ? data.robot.q[0] : null]);
+    }
+    return clear.apply(this, box);
+  };
+  let phase = 'following';
+  function report() {
+    const told = {
+      phase, at: Math.round(performance.now()), line: text('liveArmLine'),
+      readings: text('liveArmReadings'), mode: text('mode'), none: data === null,
+      draws: draws.splice(0),
+    };
+    fetch('/measured?' + encodeURIComponent(JSON.stringify(told)), {cache: 'no-store'}).catch(() => {});
+  }
+  setInterval(report, 200);
+  for (const [after, name, work] of STEPS) {
+    setTimeout(() => { report(); phase = name; work(); }, after);
+  }
+})();
+</script>
+"""
+# The step during which the test ends the stand-in robot link service.
+SERVICE_GOES = "the service goes"
+# The steps during which the stand-in robot app goes on publishing and reads
+# no joint, its motors off, and after which it reads them again.
+MOTORS_OFF = "the motors are off"
+READ_AGAIN = "the joints are read again"
+# How old the joints' readings are when the motors go off in a browser test.
+READ_AGO_S = 45.0
+# (ms after the page's load, the name of what holds from then, what to do).
+ARM_STEPS = (
+    (
+        5000,
+        "the timeline is moved",
+        "() => { const slider = id('timeline'); slider.value = slider.max / 2; "
+        "slider.dispatchEvent(new Event('input', {bubbles: true})); }",
+    ),
+    (7000, "following again", "() => id('live').click()"),
+    (10000, "a recording plays", "() => id('play').click()"),
+    (12000, "following a third time", "() => id('live').click()"),
+    (
+        15000,
+        "an older run",
+        "() => { const runs = id('run'); runs.value = OLDER; "
+        "runs.dispatchEvent(new Event('change', {bubbles: true})); }",
+    ),
+    (17000, "the newest run again", "() => id('live').click()"),
+    (20000, MOTORS_OFF, "() => {}"),
+    (23000, READ_AGAIN, "() => {}"),
+    (26000, SERVICE_GOES, "() => {}"),
+    (30500, "done", "() => {}"),
+)
+NO_RECORDING_STEPS = (
+    (5000, "Top is pressed", "() => id('top').click()"),
+    (8000, SERVICE_GOES, "() => {}"),
+    (12500, "done", "() => {}"),
+)
+
+
+def cpu_seconds(root: int) -> dict[str, float]:
+    """The processor time so far of a browser's processes, by Chrome's kind of process."""
+    ticks = os.sysconf("SC_CLK_TCK")
+    parents: dict[int, int] = {}
+    spent: dict[int, float] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rpartition(")")[2].split()
+        except OSError:
+            continue
+        parents[int(entry.name)] = int(fields[1])
+        spent[int(entry.name)] = (int(fields[11]) + int(fields[12])) / ticks
+    total: dict[str, float] = {}
+    for pid, seconds in spent.items():
+        ancestor = pid
+        while ancestor not in (root, 0, 1) and ancestor in parents:
+            ancestor = parents[ancestor]
+        if ancestor != root:
+            continue
+        try:
+            command = (Path("/proc") / str(pid) / "cmdline").read_bytes()
+        except OSError:
+            continue
+        # Chrome writes a child's command line as one text.
+        found = re.search(rb"--type=([a-z-]+)", command)
+        kind = found.group(1).decode() if found else "browser"
+        total[kind] = total.get(kind, 0.0) + seconds
+    return total
+
+
+class ArmBrowsed:
+    """What a real browser drew of the arm on the viewer's page, step by step."""
+
+    def __init__(self, steps: tuple[tuple[int, str, str], ...]) -> None:
+        self.reports: list[tuple[float, dict[str, Any]]] = []  # of ARM_MEASURE
+        self.lines: list[str] = []  # the launcher's
+        self.cpu: dict[str, float] = {}  # shares of a processor core
+        self._began = {"following": 0.0, **{name: ms / 1000 for ms, name, _ in steps}}
+        self._ended = dict(
+            zip(self._began, [*list(self._began.values())[1:], 0.0], strict=True)
+        )
+
+    def began(self, step: str) -> float:
+        """When a step began, in seconds of the page's clock."""
+        return self._began[step]
+
+    def told(self, step: str, after_s: float = 0.0) -> list[dict[str, Any]]:
+        """The page's reports of a step, from after_s into it."""
+        since = self._began[step] + after_s
+        return [
+            told
+            for _, told in self.reports
+            if told["phase"] == step and told["at"] / 1000 >= since
+        ]
+
+    def draws(self, step: str, since_s: float, seconds: float) -> list[tuple[int, Any]]:
+        """(ms of the page's clock, what draw() was given) in a stretch of a step."""
+        since = self._began[step] + since_s
+        end = min(since + seconds, self._ended[step])
+        draws = [
+            (at, q)
+            for _, told in self.reports
+            if told["phase"] == step
+            for at, q in told["draws"]
+        ]
+        draws.sort(key=lambda draw: draw[0])
+        return [(at, q) for at, q in draws if since <= at / 1000 < end]
+
+    def drawn(self, step: str, since_s: float, seconds: float) -> list[Any]:
+        """What draw() was given in a stretch of a step, in its order."""
+        return [q for _, q in self.draws(step, since_s, seconds)]
+
+
+def browse_arm(
+    viewer: Any,
+    experiment_dir: Path,
+    runs: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    steps: tuple[tuple[int, str, str], ...],
+    older: str = "",
+) -> ArmBrowsed:
+    """Headless Chrome on the viewer's own page until its last step, "done".
+
+    The viewer is the launcher's, on a port the system picks, on the run
+    folders of `runs`, with a stand-in for the robot link service that hands
+    it a moving arm's ROBOT_STATE 20 times a second. That service ends when
+    the page says that the step SERVICE_GOES began. The browser's profile
+    lies under tmp_path.
+    """
+    browsed = ArmBrowsed(steps)
+    listed = ", ".join(
+        f"[{ms}, {json.dumps(name)}, {work}]" for ms, name, work in steps
+    )
+    listed = listed.replace("OLDER", json.dumps(older))
+    measure = ARM_MEASURE.replace(b"STEPS", f"[{listed}]".encode())
+    monkeypatch.setattr(live_module, "page_block", lambda: BLOCK + measure)
+    real_handler = live_main.live_handler
+
+    def measured(*args: Any, **kwargs: Any) -> type:
+        class Measured(real_handler(*args, **kwargs)):  # type: ignore[misc]
+            def do_GET(self) -> None:
+                url = urlsplit(self.path)
+                if url.path != "/measured":
+                    super().do_GET()
+                    return
+                told = json.loads(unquote(url.query))
+                browsed.reports.append((time.monotonic(), told))
+                self.send_response(204)
+                self.end_headers()
+
+        return Measured
+
+    monkeypatch.setattr(live_main, "live_handler", measured)
+    wire = Wire()
+    attach = Attaching(wire)
+    launched = Launched(
+        viewer,
+        experiment_dir,
+        runs,
+        str(tmp_path / "no-service.sock"),
+        Camera(hz=60.0),
+        monkeypatch,
+        attach=attach,
+    )
+    browsed.lines = launched.lines
+    feed = Feed(wire)
+    feed.start()
+    chrome = None
+    try:
+        until(lambda: robot_json(launched.port)["available"], "the live arm")
+        chrome = subprocess.Popen(
+            [
+                CHROME,
+                "--headless=new",
+                "--disable-gpu",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-background-networking",
+                "--disable-component-update",
+                "--disable-sync",
+                "--disable-extensions",
+                "--disable-default-apps",
+                "--password-store=basic",
+                "--remote-debugging-port=0",
+                f"--user-data-dir={tmp_path / 'chrome'}",
+                "--window-size=1920,1080",
+                f"http://127.0.0.1:{launched.port}/",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        end = time.monotonic() + 90.0
+        mark: tuple[float, float, dict[str, float]] | None = None
+        while True:
+            assert time.monotonic() < end, "the browser did not reach its last step"
+            assert chrome.poll() is None, "the browser ended"
+            seen = [told for _, told in list(browsed.reports)]
+            phases = {told["phase"] for told in seen}
+            if "done" in phases:
+                break
+            if SERVICE_GOES in phases and wire.alive:
+                attach.problem = ConnectionRefusedError("nobody listens")
+                wire.die("the service ended")
+            if READ_AGAIN in phases:
+                feed.make = arm_state
+            elif MOTORS_OFF in phases and feed.make is arm_state:
+                read_at = time.monotonic() - READ_AGO_S
+                feed.make = lambda k, at=read_at: frozen_state(k, at, "torque off")
+            # Two seconds of following, from 1.5 s after the page's load: the
+            # processor time of this process, with the viewer in it, and of
+            # the browser's.
+            newest = max((told["at"] for told in seen), default=0)
+            if mark is None and newest >= 1500:
+                mark = (time.monotonic(), time.process_time(), cpu_seconds(chrome.pid))
+            elif mark is not None and not browsed.cpu and newest >= 3500:
+                seconds = time.monotonic() - mark[0]
+                now = cpu_seconds(chrome.pid)
+                browsed.cpu = {
+                    kind: (now[kind] - mark[2].get(kind, 0.0)) / seconds for kind in now
+                }
+                browsed.cpu["viewer"] = (time.process_time() - mark[1]) / seconds
+            time.sleep(0.1)
+    finally:
+        if chrome is not None:
+            chrome.terminate()
+            try:
+                chrome.wait(15)
+            except subprocess.TimeoutExpired:
+                chrome.kill()
+                chrome.wait(15)
+        feed.stop()
+        launched.end()
+    return browsed
+
+
+ARM_LINE = re.compile(r"arm: live, (\d+) a second; map: (.+)")
+ARM_READINGS = re.compile(
+    r"joints (\d+\.\d) 5\.7 5\.7 0\.0 0\.0 0\.0 deg · jaws 50 % open · owner agent · "
+    r"moving · torque on \(holding\)"
+)
+SERVICE_GONE = "arm: no live state: the robot link service is gone (the service ended)"
+OLD_ARM_LINE = re.compile(
+    r"arm: last read (\d+) s ago \(torque off: the joints are not read\); map: .+"
+)
+OLD_ARM_READINGS = re.compile(
+    r"joints 28\.6 5\.7 5\.7 0\.0 0\.0 0\.0 deg · jaws: last read \d+ s ago "
+    r"\(50 % open\) · owner nobody · rest_unpowered · torque off"
+)
+
+
+def follows_live(browsed: ArmBrowsed, step: str) -> tuple[int, int, list[str]]:
+    """A step in which the page follows the newest run: the live arm is drawn.
+
+    Returns how many different live states the page's draw() was given in a
+    whole second, how often it drew in that second, and the map's ages its
+    line named.
+    """
+
+    def is_live(q: Any) -> bool:
+        return q is not None and q >= ARM_FROM - 1e-9
+
+    draws = browsed.draws(step, 1.5, 1.0)
+    drawn = [q for _, q in draws]
+    live = [q for q in drawn if is_live(q)]
+    states = [q for at, q in enumerate(live) if at == 0 or q != live[at - 1]]
+    # 18 and more of the 20 states a second, each newer than the one before.
+    assert len(states) >= 18, (step, states)
+    turned = np.diff(states)
+    assert all(step_ > 0 or step_ < -0.3 for step_ in turned), (step, states)
+    # A draw of the page's own, with its recorded arm or with none, is drawn
+    # over with the live arm in the same turn of the browser: before it paints.
+    for (at, q), (then, after) in zip(draws, draws[1:], strict=False):
+        assert is_live(q) or (is_live(after) and then - at <= 5), (step, draws)
+    ages = []
+    told = browsed.told(step, 1.5)
+    assert len(told) >= 2, step
+    for one in told:
+        found = ARM_LINE.fullmatch(one["line"])
+        assert found is not None and int(found.group(1)) >= 18, (step, one["line"])
+        ages.append(found.group(2))
+        found = ARM_READINGS.fullmatch(one["readings"])
+        assert found is not None, (step, one["readings"])
+        degrees = float(found.group(1))
+        assert np.degrees(ARM_FROM) - 0.1 <= degrees <= np.degrees(ARM_FROM + 0.4) + 0.1
+    return len(states), len(drawn), ages
+
+
+def no_live_arm(browsed: ArmBrowsed, step: str, after_s: float = 0.0) -> list[Any]:
+    """A step in which no live state is drawn; what draw() was given in it."""
+    drawn = browsed.drawn(step, after_s, 60.0)
+    assert not [q for q in drawn if q is not None and q > 0.25], (step, drawn)
+    return drawn
+
+
+@apai
+@experiment
+@pytest.mark.skipif(CHROME is None, reason="no Chrome is installed")
+def test_in_a_real_browser_the_arm_follows_each_live_state_only_while_the_page_follows(
+    stage: Any,
+    viewer: Any,
+    experiment_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runs = stage.folder / "runs"
+    run = runs / "20261116T120000Z-2"
+    assert record(stage, run, RECORDED, QUICK) == launcher.EXIT_OK, stage.lines
+    # An older run for the run selector: the same recording under an older name.
+    older = runs / "20261115T100000Z-1"
+    shutil.copytree(run, older)
+    ended_wall = (run / "debug" / "events.jsonl").stat().st_mtime
+    before = files(runs), files(PACKAGE)
+    opened_wall = time.time()
+    browsed = browse_arm(
+        viewer, experiment_dir, runs, tmp_path, monkeypatch, ARM_STEPS, older.name
+    )
+    assert (files(runs), files(PACKAGE)) == before  # nothing was written
+    assert (
+        f"viewer: live arm: on the page and at {ROBOT_PATH}: each ROBOT_STATE of "
+        "that robot link service as it arrives; shown, not stored"
+    ) in browsed.lines
+
+    # Following the newest run, whose recording has ended: the arm is the live
+    # one, redrawn with each state, and the line says how old the map is. That
+    # is the time since the recording ended, and it grows.
+    states, redraws, ages = follows_live(browsed, "following")
+    assert all(age.endswith(" s old") for age in ages), ages
+    seconds = [float(age.removesuffix(" s old")) for age in ages]
+    # At least the time since the recording's file was last written; the line
+    # names whole seconds from 10 s on.
+    assert seconds[0] >= opened_wall - ended_wall - 0.6, (seconds, ended_wall)
+    assert seconds[-1] <= time.time() - ended_wall + 60.0
+    assert 1.0 <= seconds[-1] - seconds[0] <= 5.0, seconds
+    for told in browsed.told("following", 1.5):
+        assert told["mode"].endswith(f" · {run.name}"), told
+    for step in ("the timeline is moved", "a recording plays", "an older run"):
+        # The page's own: its recorded arm, which stands at its start pose,
+        # at once and for the whole step.
+        drawn = no_live_arm(browsed, step)
+        stored = [q for q in drawn if q is not None]
+        assert drawn and all(abs(q) < 0.05 for q in stored), (step, drawn)
+        told = browsed.told(step)
+        assert len(told) >= 5, step
+        # A replay from its start has no arm before the first recorded pose.
+        said = {(one["line"], one["readings"]) for one in told}
+        assert said <= {("arm: recorded", ""), ("arm: none recorded", "")}, step
+        if step != "a recording plays":
+            assert stored and said == {("arm: recorded", "")}, step
+    assert all(
+        one["mode"].endswith(older.name) for one in browsed.told("an older run", 0.7)
+    )
+    for step in ("following again", "following a third time", "the newest run again"):
+        follows_live(browsed, step)
+    # The motors go off and the robot app goes on publishing, 20 states a
+    # second, without reading a joint: the arm is not called live. The page
+    # says how old the readings are and why, and draws the pose they give.
+    old = browsed.told(MOTORS_OFF, 1.0)
+    assert len(old) >= 6
+    read_ages = []
+    for one in old:
+        found = OLD_ARM_LINE.fullmatch(one["line"])
+        assert found is not None, one["line"]
+        read_ages.append(int(found.group(1)))
+        assert OLD_ARM_READINGS.fullmatch(one["readings"]) is not None, one["readings"]
+    assert read_ages == sorted(read_ages)
+    assert READ_AGO_S <= read_ages[0] <= read_ages[-1] <= READ_AGO_S + 4
+    frozen = browsed.draws(MOTORS_OFF, 1.0, 60.0)
+    assert len(frozen) >= 2
+
+    def last_read(q: Any) -> bool:
+        return q is not None and abs(q - ARM_FROM) < 1e-9
+
+    for (at, q), (then, after) in zip(frozen, frozen[1:], strict=False):
+        # The last read pose, or the page's own arm with that pose drawn over
+        # it in the same turn; no state of the moving arm.
+        assert last_read(q) or (last_read(after) and then - at <= 5), frozen
+    # Readings that stand still are one pose: it is not drawn 20 times a second.
+    assert len(frozen) <= 12, frozen
+    follows_live(browsed, READ_AGAIN)
+    # The service ends: the page says so and is the experiment's own, with its
+    # recorded arm at its own pace.
+    gone = browsed.told(SERVICE_GOES, 2.5)
+    assert len(gone) >= 5
+    assert {(one["line"], one["readings"]) for one in gone} == {(SERVICE_GONE, "")}
+    left = no_live_arm(browsed, SERVICE_GOES, 2.5)
+    assert len(left) >= 2 and None not in left
+    cpu = browsed.cpu
+    browser = sum(share for kind, share in cpu.items() if kind != "viewer")
+    print(
+        f"measured: of 20 ROBOT_STATEs a second the page's own draw() was given "
+        f"{states} different ones in a whole second and drew {redraws} times; "
+        f"the map was {ages[0]} to {ages[-1]}; processor cores: "
+        f"{cpu.get('viewer', 0):.2f} this process (the viewer with its stand-in "
+        f"camera and robot app), {cpu.get('renderer', 0):.2f} the browser's tab, "
+        f"{browser:.2f} the whole browser"
+    )
+
+
+@apai
+@experiment
+@pytest.mark.skipif(CHROME is None, reason="no Chrome is installed")
+def test_in_a_real_browser_the_arm_moves_without_any_recording(
+    apai_scratch: Path,
+    viewer: Any,
+    experiment_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A run without --record-debug: APAI's configuration and nothing else.
+    runs = apai_scratch / "runs"
+    run = runs / "20261116T120000Z-1"
+    settings = agent_config.load_settings(settings_file(apai_scratch))
+    cfg = agent_config.build_apai_config(settings, run, camera="mock")
+    agent_config.write_resolved_config(run, cfg)
+    assert viewer.Viewer(runs).names() == []
+    before = files(runs), files(PACKAGE)
+    browsed = browse_arm(
+        viewer, experiment_dir, runs, tmp_path, monkeypatch, NO_RECORDING_STEPS
+    )
+    assert (files(runs), files(PACKAGE)) == before
+    # The page has no run and no state of its own, and the arm moves: each
+    # live state is drawn, also after a draw of the page's own.
+    for step in ("following", "Top is pressed"):
+        states, redraws, ages = follows_live(browsed, step)
+        # No run is on the page: the line names the run of the arm's model.
+        assert set(ages) == {f"no recording; arm model of run {run.name}"}
+        told = browsed.told(step, 1.5)
+        assert all(one["none"] and one["mode"] == "Loading recording…" for one in told)
+    # Without the service the page says so and draws no arm, as it does alone.
+    gone = browsed.told(SERVICE_GOES, 2.5)
+    assert len(gone) >= 5
+    assert {(one["line"], one["readings"]) for one in gone} == {(SERVICE_GONE, "")}
+    assert set(no_live_arm(browsed, SERVICE_GOES, 2.5)) <= {None}
+    print(
+        f"measured, without a recording: the page's own draw() was given {states} "
+        f"different live states in a whole second and drew {redraws} times"
+    )
+
+
+# The live arm behind the real robot link service, and the start script
+
+
+@apai
+@experiment
+@link
+def test_on_the_rig_file_each_state_the_robot_app_publishes_reaches_the_viewers_path(
+    rig: Rig,
+) -> None:
+    port = rig.launched.port
+    # The rig's file publishes 20 ROBOT_STATEs a second.
+    assert load_config(CONFIGS / "robot_app_rebot.yaml").state.publish_period_s == 0.05
+    until(lambda: robot_json(port)["per_second"] >= 19, "a second of states")
+    connection = HTTPConnection("127.0.0.1", port, timeout=WAIT_S)
+    got = []
+    try:
+        told = robot_json(port, connection=connection)
+        end = time.monotonic() + 2.0
+        while time.monotonic() < end:
+            told = robot_json(port, told["n"], connection)
+            got.append(told)
+    finally:
+        connection.close()
+    # Through the robot connection, the service and the viewer's attachment:
+    # every state, in the robot app's order.
+    numbers = [told["n"] for told in got]
+    assert numbers == list(range(numbers[0], numbers[0] + len(numbers))), numbers
+    seqs = [told["seq"] for told in got]
+    assert seqs == list(range(seqs[0], seqs[0] + len(seqs))) and len(seqs) >= 36
+    state = rig.shows(lambda s: s.seq >= seqs[-1])
+    for told in got:
+        # The simulated arm rests, with the motors on, and nobody has it.
+        assert [one["joint"] for one in told["joints"]] == list(range(6))
+        assert all(one["valid"] for one in told["joints"])
+        measured = [read.value for read in state.joints]
+        assert [one["q"] for one in told["joints"]] == pytest.approx(measured, abs=1e-6)
+        assert (told["owner"], told["stop_level"]) == (state.owner, state.stop_level)
+        assert (told["motion"], told["torque_on"]) == (state.motion, True)
+        assert 0.0 <= told["age_s"] < 0.2
+        # This viewer's runs folder is empty: nothing names the arm's model,
+        # so the readings are there and no arm is drawn.
+        assert told["available"] is False and told["robot"] is None
+        assert told["why"].startswith("no run folder in ")
+        assert told["why"].endswith(
+            " holds resolved-config.yaml, which names the arm's model"
+        )
+
+
+def test_the_start_script_says_that_the_arm_is_live_and_what_turns_it_off(
+    stand_in: dict[str, Any], tmp_path: Path
+) -> None:
+    script = stand_in["script"]
+    env = {**stand_in["env"], CAMERA_PR_ENV: str(tmp_path)}
+    own = ["--no-auth", "--runs", str(tmp_path), "--port", "0"]
+    assert script_run(script, *own, **env).stdout.splitlines()[1] == (
+        "run_viewer.sh: live picture: on; the page shows the camera's pictures and "
+        "the arm of each ROBOT_STATE as they arrive, and stores neither (--no-live "
+        "turns it off, and the live arm with it)"
+    )
+    # Without the launcher the arm is the recorded one.
+    off = (
+        "); no live arm either: the page shows the stored pictures and the "
+        "recorded arm of the runs only, and the robot is told of no live view"
+    )
+    assert script_run(script, "--no-live", *own, **env).stdout.splitlines()[1] == (
+        f"run_viewer.sh: live picture: off (--no-live{off}"
+    )
+    assert script_run(script, *own, **stand_in["env"]).stdout.splitlines()[1] == (
+        f"run_viewer.sh: live picture: off ({CAMERA_PR_ENV} is not set{off}"
+    )
+    # The live arm takes no argument of its own.
+    told = script_run(script, "--help", **env).stdout
+    for piece in (
+        "The live arm is the arm\nof each ROBOT_STATE as it arrives, in the page's "
+        "3D view. Neither is stored.",
+        "--no-live          no live picture, no live arm and no live view",
+        "./run_viewer.sh --no-live          # the experiment's viewer alone: nothing live",
+    ):
+        assert piece in told, piece
+    assert "robot.json" not in told and "--live-arm" not in told
+
+
+@apai
+@experiment
+def test_no_live_starts_the_viewer_without_the_live_arm(
+    viewer: Any, experiment_dir: Path, camera_pr: dict[str, Any], tmp_path: Path
+) -> None:
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    env = launcher_env(experiment_dir, camera_pr["folder"], tmp_path)
+    program = ViewerProcess(
+        "--runs", str(runs), "--port", "0", "--no-auth", "--no-live", env=env
+    )
+    try:
+        port = port_of(program)
+        status, _, body = get(port, ROBOT_PATH)
+        assert status == 400 and b"Unknown endpoint" in body
+        assert b"liveArm" not in get(port, "/")[2]
+        assert program.end() == 0, program.text
+    finally:
+        program.close()
+    assert "live arm" not in program.text.replace("no live arm either", "")

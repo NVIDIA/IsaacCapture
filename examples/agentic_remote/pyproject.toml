@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# What the live view (the view subpackage) imports besides the above.
+# What the live view (the viewer_live subpackage) imports besides the above.
 view = ["opencv-python-headless"]
 
 # `only-include` + `sources`, not `packages`, and no __init__.py above

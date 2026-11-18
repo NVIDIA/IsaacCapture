@@ -741,15 +741,11 @@ def test_the_workstation_script_starts_five_panes_and_the_viewer_is_the_live_vie
 ) -> None:
     stand = tmux_stand
     told = started_behind_the_service(stand, ["console"])
-    # Five panes, one command each. The page of the live view program of
-    # before is started by none of them.
+    # Five panes, one command each.
     assert stand.panes() == FIVE_PANES
     commands = {pane: command for pane, command, _ in stand.keys()}
     assert sorted(commands) == sorted(FIVE_PANES) and len(stand.keys()) == 5
     assert commands["console"].endswith(" ./run_console.sh")
-    for pane, command in commands.items():
-        assert "run_view.sh" not in command and "view.yaml" not in command, pane
-        assert "AGENTIC_REMOTE_VIEW_PYTHON" not in command, pane
     # The viewer is started at once, not behind the service: it attaches to
     # the service by itself. It finds the service's socket as the console does.
     viewer, entered = stand.sent("viewer")
@@ -779,13 +775,7 @@ def test_the_workstation_script_has_no_live_view_option_and_names_no_other_page(
     )
     assert stand.keys() == []
     script = WORKSTATION_SCRIPT.read_text(encoding="utf-8")
-    for gone in (
-        "--live-view",
-        "run_view.sh",
-        "view.yaml",
-        "VIEW_PYTHON",
-        "live_view=",
-    ):
+    for gone in ("--live-view", "live_view="):
         assert gone not in script, gone
     assert "see the arm" not in script
     # The help says what the live view is and what needs it.
@@ -846,10 +836,8 @@ def test_the_workstation_script_waits_on_the_socket_the_service_makes(
         assert (process.returncode, errors) == (0, "")
         once = f"(once the service takes a connection on {local.default_socket_path()})"
         assert f"# console {once}\n" in output
-        # Five commands, and none of the page of before.
-        assert output.count("\n# ") == 5 and "view.yaml" not in output
-        assert "# view" not in output.replace("# viewer", "")
-        assert "run_view.sh" not in output and "VIEW_PYTHON" not in output
+        # Five commands.
+        assert output.count("\n# ") == 5
     assert stand.keys() == []  # --print starts nothing
 
 

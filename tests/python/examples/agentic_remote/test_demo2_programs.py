@@ -17,9 +17,9 @@ acknowledges the pictures it draws.
 The robot link service listens on 127.0.0.1 and a port the system picked, and
 the robot app dials it over a real link. Attached to the service: the human
 program's main() on a thread, the operator console (the Console class, its
-lines typed by the test), the live view's main() on a thread with an HTTP
-client that plays the browser tab, and, where a test needs it, the agent
-program in this process on APAI's mock scene. The robot app runs in real time,
+lines typed by the test), the viewer's live view (live_view_bench.py) on
+threads with an HTTP client that plays the browser tab, and, where a test
+needs it, the agent program in this process on APAI's mock scene. The robot app runs in real time,
 on the simulated arm or on APAI's mock arm.
 
 The last two tests start the programs as processes of their own and run the
@@ -119,10 +119,6 @@ from isaaccapture_examples.agentic_remote.robot_app.stop import (  # noqa: E402
 from isaaccapture_examples.agentic_remote.robot_app.waits import (  # noqa: E402
     EXPIRED,
 )
-from isaaccapture_examples.agentic_remote.view import (  # noqa: E402
-    __main__ as view_main,
-)
-from isaaccapture_examples.agentic_remote.view.model import NO_PICTURE  # noqa: E402
 from link_stack import (  # noqa: E402
     HOST,
     READY,
@@ -132,6 +128,7 @@ from link_stack import (  # noqa: E402
     StartScript,
     Station,
 )
+from live_view_bench import Browser, StandInSource  # noqa: E402
 from test_agent_end_to_end import (  # noqa: E402
     RUN_BUDGET_S,
     ObstacleGrid,
@@ -142,7 +139,6 @@ from test_console import ASK_REST, ASK_YES  # noqa: E402
 from test_demo1_programs import (  # noqa: E402
     PATH,
     REST,
-    VIEW_MODULE,
     ConsoleProcess,
     Desks,
     TimedDesk,
@@ -166,7 +162,6 @@ from test_human_program import write_config as write_human_config  # noqa: E402
 from test_launcher import PICK, QUICK, scene_robot_config  # noqa: E402
 from test_link_programs import ROBOT_MODULE  # noqa: E402
 from test_takeover import RIGHT_B, human_config  # noqa: E402
-from test_view_program import Browser, StandInSource  # noqa: E402
 
 from conftest import APAI_SRC_ENV, apai_runtime_env  # noqa: E402
 
@@ -185,11 +180,8 @@ ACK_S = 0.25
 # on the robot, sees is that of the acknowledged picture plus the time since
 # the VIEW_STATUS arrived: with the shipped 0.5 s it would swing past the limit.
 VIEW_AGE_LIMIT_S = 2.0
-# The view's settings here: 15 pictures and 10 VIEW_STATUS per second.
-VIEW_BLOCKS: dict[str, dict[str, Any]] = {
-    "picture": {"fps": 15.0},
-    "status": {"period_s": 0.1, "ack_timeout_s": 1.0, "state_max_age_s": 1.0},
-}
+# The view's rates here: 15 pictures and 10 VIEW_STATUS per second.
+VIEW_RATES: dict[str, float] = {"fps": 15.0, "period_s": 0.1}
 # The owners a ROBOT_STATE names.
 NOBODY, HUMAN, AGENT, RECOVERY = "nobody", "human", "agent", "recovery"
 # How the robot app's EVENT of a refused takeover begins; its reason follows.
@@ -466,8 +458,8 @@ class Stage(Desks):
 
     def live_view(self) -> Page:
         """The live view with pictures, and a tab that acknowledges them."""
-        view = self.view(source=StandInSource(), **VIEW_BLOCKS)
-        page = Page(view.program.port)
+        view = self.view(StandInSource(), **VIEW_RATES)
+        page = Page(view.port)
         self._pages.append(page)
         return page
 
@@ -609,7 +601,6 @@ def rest_from_the_console(desk: TimedDesk, count: int = 1) -> None:
 @pytest.fixture(autouse=True)
 def log_levels(monkeypatch: pytest.MonkeyPatch) -> None:
     """No main() of a program attaches a log handler in a test."""
-    monkeypatch.setattr(view_main, "set_console_level", lambda level: None)
     monkeypatch.setattr(console_log, "set_console_level", lambda level: None)
 
 
@@ -1206,7 +1197,7 @@ def test_a_takeover_without_a_live_view_is_refused(sim_stage: Stage) -> None:
     stage = sim_stage
     h = stage.h
     desk = stage.console()
-    stage.view("--source", "none")  # a view without pictures is never live
+    stage.view()  # a view without a camera has no picture and is never live
     script = Script(stage.cues).cue("go").then(0.3, b=True).cue("refused")
     script.then(0.2, b=False)
     person = stage.person(script)
@@ -1635,10 +1626,10 @@ def test_demo_2_the_agent_fails_a_person_takes_over_and_the_next_task_runs(
 
 @link
 @apai
-def test_a_fast_hand_is_clamped_and_the_drive_goes_on(
+def test_a_fast_hand_is_followed_at_the_joint_speed_and_the_drive_goes_on(
     make_mock_stage: Callable[..., Stage],
 ) -> None:
-    speed = 0.3  # the human joint speed limit here, rad/s
+    speed = 0.3  # the human joint speed limit here, rad/s; WELCOME names it
     stage = make_mock_stage(mock_config(human_speed=speed))
     h = stage.h
     stage.live_view()
@@ -1660,18 +1651,28 @@ def test_a_fast_hand_is_clamped_and_the_drive_goes_on(
     person.wait_said("human program: grip up")
     done = stage.shows(lambda s: not human(s)["driving"] and s.motion == "hold")
     stage.holds()
-    # The speed clamp cut steps of this drive, and no drive ended for it.
+    # No drive ended for the fast hand.
+    assert h.config.limits.human.max_joint_speed == speed
     clamped = done.health["clamped"] - before
-    assert clamped >= 1
     assert h.heard(app_module.EVENT_HUMAN) == []
     assert (done.owner, done.owner_number) == (HUMAN, owned.owner_number)
-    # Each joint target lies within the clamp of the one before it.
-    most = SPEED_MARGIN * speed * h.config.executor.period_s
+    # The human program moved its joint target at 0.9 of the robot app's speed
+    # clamp while the hand was ahead, and never faster.
+    clamp = SPEED_MARGIN * speed * h.config.executor.period_s
+    most = logic.JOINT_SPEED_SHARE * clamp
+    asked = np.array([m.q for m in person.tap.of(HumanSetpoint) if m.engaged])
+    asked_steps = np.abs(np.diff(asked, axis=0)).max(axis=1)
+    assert asked_steps.max() == pytest.approx(most, abs=1e-9)
+    at_the_limit = int((asked_steps >= most - 1e-9).sum())
+    # A pass that comes sooner than a period after the one before moves less.
+    assert at_the_limit >= 1 and int((asked_steps > 0.5 * most).sum()) >= 3
+    # Each joint target of the arm lies within the clamp of the one before
+    # it. The two loops are not in step: where two passes of the human
+    # program fell between two setpoints, the clamp cut the step.
     targets = np.array([start, *h.sent()[first:]])
     steps = np.abs(np.diff(targets, axis=0)).max(axis=1)
-    assert len(steps) > 100 and steps.max() <= most + 1e-9
-    at_the_clamp = int((steps >= most - 1e-9).sum())
-    assert at_the_clamp == clamped
+    assert len(steps) > 100 and steps.max() <= clamp + 1e-9
+    assert int((steps >= clamp - 1e-9).sum()) == clamped
     # APAI's human checker approved every one of them.
     approved = [row[1] for row in h.spy.approved[first:]]
     assert approved == list(range(approved[0], approved[0] + len(approved)))
@@ -1682,8 +1683,9 @@ def test_a_fast_hand_is_clamped_and_the_drive_goes_on(
         Stop(reason=logic.STOP_REASON, sender=logic.STOP_SENDER)
     ]
     print(
-        f"measured: {clamped} of {len(steps)} joint targets were cut by the clamp "
-        f"of {most:.5f} rad; the largest step was {steps.max():.5f} rad; the tip "
+        f"measured: {at_the_limit} of {len(asked_steps)} joint targets of the human "
+        f"program lay at its {most:.5f} rad; the clamp cut {clamped} of {len(steps)} "
+        f"steps; the largest step was {steps.max():.5f} rad; the tip "
         f"rose {rose[2] * 1000:.1f} mm; ended on the workstation: "
         f"{[line for line in person.said if 'ended:' in line][-1].split('ended: ')[1]}"
     )
@@ -1836,33 +1838,23 @@ STUCK = "stuck: I could not hold 'red object' after "
 STUCK_WAIT_S = 240.0
 
 
-def recipe_files(folder: Path) -> tuple[str, Path, Path, Path]:
+def recipe_files(folder: Path) -> tuple[str, Path, Path]:
     """The socket of a test and the shipped files that name it.
 
-    (socket path, the service's file, the view's, the human program's): each
-    the shipped file with the test's socket, the service's and the view's with
-    a port the system picks, the view's with a state folder of the test. The
-    human program's also names, as its Teleop Session Server, a port that this
-    process holds and never listens on: the script feed dials nothing, and
-    nothing else could reach the server's own port either.
+    (socket path, the service's file, the human program's): each the shipped
+    file with the test's socket, the service's with a port the system picks.
+    The human program's also names, as its Teleop Session Server, a port that
+    this process holds and never listens on: the script feed dials nothing,
+    and nothing else could reach the server's own port either.
     """
     path = str(folder / "s.sock")
     socket_line = {'\nsocket_path: ""': f"\nsocket_path: {path}"}
     service = fitted(
         CONFIGS / "link_service.yaml", folder, {"port: 47610": "port: 0", **socket_line}
     )
-    view = fitted(
-        CONFIGS / "view.yaml",
-        folder,
-        {
-            "port: 47620": "port: 0",
-            "\nstate_dir: ../.state\n": f"\nstate_dir: {folder}/state\n",
-            **socket_line,
-        },
-    )
     endpoint = {'endpoint: "127.0.0.1:47600"': f'endpoint: "{NO_SERVER}"'}
     human_file = fitted(CONFIGS / "human.yaml", folder, {**socket_line, **endpoint})
-    return path, service, view, human_file
+    return path, service, human_file
 
 
 def human_script(config: Path, *args: str) -> StartScript:
@@ -1900,16 +1892,15 @@ def transcript(name: str, lines: list[str]) -> None:
 def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    """Steps 1 to 8 of the recipe. What differs from the recipe by hand:
+    """Steps 1 to 7 of the recipe. What differs from the recipe by hand:
 
-    the service, the view and the human program run on copies of their files
-    that name a port the system picks, a socket and a state folder of the test
-    and a Teleop Session Server port nobody listens on; the console and the
-    view are started with python -m, not by their scripts; a local client in
-    the role "tool" reads ROBOT_STATE; the view's page is asked over HTTP.
+    the service and the human program run on copies of their files that name
+    a port the system picks, a socket of the test and a Teleop Session Server
+    port nobody listens on; the console is started with python -m, not by its
+    script; a local client in the role "tool" reads ROBOT_STATE.
     """
     folder = tmp_path_factory.mktemp("d2")  # a socket path holds 107 bytes
-    path, service_file, view_file, human_file = recipe_files(folder)
+    path, service_file, human_file = recipe_files(folder)
     solver = Solver.from_apai("mock")
     programs: list[Any] = []
     try:
@@ -1933,29 +1924,19 @@ def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
         console_shows(desk, " | live view not required | ", " | no human program | ")
         desk.type("state")
         desk.wait(f"takeover: not possible: {NO_HUMAN_PROGRAM}")
-        # 4. The live view, without a camera; this robot app does not need it.
-        view = Program(VIEW_MODULE, "--config", str(view_file), "--source", "none")
-        programs.append(view)
-        line = view.wait_line("live view: open http://127.0.0.1:")
-        browser = Browser(int(line.split("http://127.0.0.1:")[1].split("/")[0]))
-        try:
-            page = browser.status()
-        finally:
-            browser.close()
-        assert page["picture"]["overlay"] == NO_PICTURE
-        console_shows(desk, " 1 viewer | ", " | live view not required | ")
+        # No live view runs in this recipe; this robot app does not need one.
         watcher = Watcher(path)
         programs.append(watcher)
         rest = watcher.pose()
         assert rest == pytest.approx(REST, abs=1e-6)
         rest_tip = solver.fk(solver.inside(rest))[:3, 3]
 
-        # 5. The human program on the script "lift", started with its script.
+        # 4. The human program on the script "lift", started with its script.
         person = human_script(human_file, "--controller", "synthetic:lift")
         programs.append(person)
         started = person.wait_line('human program: synthetic controller "lift"')
         assert started == LIFT_START.format(driver="sim")
-        # 6. The script's right B, its hold, the squeeze, the lift, the release.
+        # 5. The script's right B, its hold, the squeeze, the lift, the release.
         stop = f"[stop] STOP from {logic.STOP_SENDER}: {logic.STOP_REASON}; "
         desk.wait(stop, 2 * WAIT_S)
         owned = watcher.ws.wait_state(lambda s: s.owner == HUMAN, WAIT_S)
@@ -1975,7 +1956,7 @@ def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
         rose = solver.fk(watcher.pose())[:3, 3] - rest_tip
         np.testing.assert_allclose(rose, [0.0, 0.0, 0.05], atol=3e-3)
 
-        # 7. rest and path is clear; then the script's right A gives the arm back.
+        # 6. rest and path is clear; then the script's right A gives the arm back.
         desk.type("rest")
         desk.answer(ASK_REST, PATH_IS_CLEAR)
         desk.wait("rest: RESULT completed", REST_WAIT_S)
@@ -1987,7 +1968,7 @@ def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
         nobody = f" | owner nobody #{ended.owner_number} | "
         console_shows(desk, nobody, " | rest_hold | ")
         assert watcher.pose() == pytest.approx(rest, abs=0.05)
-        # In the order of the recipe's steps 6 and 7.
+        # In the order of the recipe's steps 5 and 6.
         in_order(
             list(desk.said),
             (stop,),
@@ -1999,7 +1980,7 @@ def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
             (nobody,),
         )
 
-        # 8. The end of every program, each by its own way out, exit code 0.
+        # 7. The end of every program, each by its own way out, exit code 0.
         desk.type("shutdown")
         desk.answer(f"{ASK_YES}shut down", YES)
         assert app.wait_exit() == 0
@@ -2007,7 +1988,7 @@ def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
         desk.type("quit")
         assert desk.wait_exit() == 0
         watcher.close()
-        for program in (person, view, service):
+        for program in (person, service):
             program.signal(signal.SIGINT)  # Ctrl+C at its terminal
             assert program.wait_exit() == 0
         assert "Traceback" not in "\n".join(person.lines)
@@ -2015,8 +1996,7 @@ def test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files(
             ("1 service", service.lines),
             ("2 Thor terminal", app.lines),
             ("3 console", desk.said),
-            ("4 view", view.lines),
-            ("5 human program", person.lines),
+            ("4 human program", person.lines),
         ):
             transcript(name, lines)
     finally:
@@ -2038,7 +2018,7 @@ def test_demo_2_with_the_agent_failing_first_runs_as_processes(
     above, and the agent's file names the test's socket and state folder.
     """
     folder = recipe_folder
-    path, service_file, view_file, human_file = recipe_files(folder)
+    path, service_file, human_file = recipe_files(folder)
     state = f"state_dir: {folder}/state\n"
     agent_file = fitted(
         AGENT_MOCK, folder, {"\nlink:\n": f"\nlink:\n  socket_path: {path}\n"}, state
@@ -2046,7 +2026,7 @@ def test_demo_2_with_the_agent_failing_first_runs_as_processes(
     solver = Solver.from_apai("mock")
     programs: list[Any] = []
     try:
-        # Terminals 1 to 4, with the robot app on APAI's mock arm.
+        # Terminals 1 to 3, with the robot app on APAI's mock arm.
         service = Program(SERVICE_MODULE, "--config", str(service_file))
         programs.append(service)
         endpoint = service.wait_line(READY).removeprefix(READY).split()[0]
@@ -2060,14 +2040,11 @@ def test_demo_2_with_the_agent_failing_first_runs_as_processes(
         programs.append(desk)
         assert ", driver apai-mock, " in desk.wait("WELCOME: ")
         console_shows(desk, " | driver apai-mock | ", " | owner nobody #0 | ")
-        view = Program(VIEW_MODULE, "--config", str(view_file), "--source", "none")
-        programs.append(view)
-        view.wait_line("live view: open http://127.0.0.1:")
         watcher = Watcher(path)
         programs.append(watcher)
         rest = watcher.pose()
 
-        # The sixth terminal: the agent program. The mock arm of the robot app
+        # The fifth terminal: the agent program. The mock arm of the robot app
         # has nothing between its jaws, and the agent decides from the jaw
         # reading the robot app measures: every grasp closes on air. APAI
         # tries the grasp again, gives up as stuck, and the agent asks for help.
@@ -2167,7 +2144,7 @@ def test_demo_2_with_the_agent_failing_first_runs_as_processes(
         desk.type("quit")
         assert desk.wait_exit() == 0
         watcher.close()
-        for program in (person, view, service):
+        for program in (person, service):
             program.signal(signal.SIGINT)  # Ctrl+C at its terminal
             assert program.wait_exit() == 0
         for name, lines in (

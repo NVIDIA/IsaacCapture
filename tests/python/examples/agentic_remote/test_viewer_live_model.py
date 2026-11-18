@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""view/model.py: when the live view counts as live, and what the page is told.
+"""viewer_live/view_model.py: when the live view counts as live, and what it tells.
 
 Every time is a number the test picks: the model reads no clock. The view
 token is the secret a page gets when it is loaded; only the page loaded last
@@ -28,8 +28,8 @@ from isaaccapture_examples.agentic_remote.protocol.messages import (
     RobotState,
     ViewStatus,
 )
-from isaaccapture_examples.agentic_remote.view import model as view_model
-from isaaccapture_examples.agentic_remote.view.model import (
+from isaaccapture_examples.agentic_remote.viewer_live import view_model
+from isaaccapture_examples.agentic_remote.viewer_live.view_model import (
     AGE_WHEN_NOT_LIVE_S,
     EVENTS_KEPT,
     FUTURE_TOLERANCE_S,
@@ -508,7 +508,7 @@ def test_a_not_live_status_carries_the_fixed_age():
     assert model.view_status(T0, None) == ViewStatus(live=False, age_s=3600.0)
 
 
-# What the page is given
+# What status_json() gives
 
 
 def test_the_newest_picture_is_handed_out_with_its_number():
@@ -536,7 +536,7 @@ def test_the_overlay_says_no_picture_stale_or_recorded():
     assert overlay(T0 + 3.0) == f"{RECORDED}, {STALE}"
 
 
-def test_the_page_shows_human_driving():
+def test_the_status_says_human_driving():
     assert HUMAN_DRIVING == "HUMAN DRIVING"
     model = ViewModel()
 
@@ -579,7 +579,7 @@ def test_the_page_shows_human_driving():
     assert banner() == ""
 
 
-def test_the_status_holds_what_the_page_shows():
+def test_the_status_holds_the_robots_state_and_the_pictures():
     model = ViewModel()
     empty = model.status_json(T0, None)
     assert empty["state"] is None and empty["view_status"] is None
@@ -707,16 +707,16 @@ def test_the_status_holds_what_the_page_shows():
     ],
     ids=["holding", "not holding", "unknown", "garbled", "off", "failed", "failed2"],
 )
-def test_the_page_is_told_what_the_motors_do(fields, torque, bad) -> None:
+def test_the_status_says_what_the_motors_do(fields, torque, bad) -> None:
     model = ViewModel()
     model.on_message(state_at(WALL0, **fields), T0)
     state = model.status_json(T0, model.thor_wall_now(T0))["state"]
     assert (state["torque"], state["torque_bad"]) == (torque, bad)
-    # The page's Torque row writes that word, as a warning where it is one,
-    # and no longer its own reading of torque_on.
-    page = Path(view_model.__file__).with_name("page.html").read_text("utf-8")
-    assert 'row("Torque", state.torque, state.torque_bad);' in page
-    assert "state.torque_on" not in page
+    # The viewer's page writes the word it is told, and makes no reading of
+    # its own of torque_on.
+    block = Path(view_model.__file__).with_name("page_block.html").read_text("utf-8")
+    assert "torque ${told.torque}" in block
+    assert "torque_on" not in block
 
 
 # The measured joints, the last target sent and the setpoint stream's health.
@@ -724,7 +724,7 @@ def test_the_page_is_told_what_the_motors_do(fields, torque, bad) -> None:
 
 MEASURED = [0.5, -0.05, -0.048, 1.0, -1.5707963267948966, 0.0]
 TARGET = [0.52, -0.05, -0.05, 0.9, -1.5707963267948966, 0.25]
-# What the page is told of the jaws when nothing about them is a number.
+# What the status says of the jaws when nothing about them is a number.
 NO_JAW = {"valid": False, "opening": None, "target": None, "diff": None}
 
 
@@ -744,7 +744,7 @@ def with_joints(**fields: Any) -> RobotState:
 
 
 def state_told(state: RobotState) -> dict[str, Any]:
-    """What the page is told of that ROBOT_STATE; it must be strict JSON."""
+    """What the status says of that ROBOT_STATE; it must be strict JSON."""
     model = ViewModel()
     model.on_message(state, T0)
     told = model.status_json(T0 + 0.5, None)

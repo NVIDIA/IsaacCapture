@@ -4,13 +4,16 @@
 """The viewer's word to the robot: VIEW_STATUS, how fresh the live view is.
 
 The live view is the viewer's page with its live picture showing. ViewLink
-attaches to the robot link service's local socket in the role "viewer", as the
-live view program of view/ does, and sends what the ViewModel of view/model.py
-says: "live" with the age of the picture the page loaded last has drawn and
-acknowledged, else not live. VIEW_STATUS is the only link message it sends.
+attaches to the robot link service's local socket in the role "viewer" and
+sends what the ViewModel of view_model.py says: "live" with the age of the
+picture the page loaded last has drawn and acknowledged, else not live.
+VIEW_STATUS is the only link message it sends.
 
 Without a robot link service the viewer serves everything as before: the
 attach is tried again after a pause that grows as the camera's does.
+
+Each ROBOT_STATE the attachment receives also goes to the LiveRobot of
+robot.py, for the page's live arm, with the reason when none can arrive.
 """
 
 from __future__ import annotations
@@ -25,17 +28,18 @@ from typing import Any
 from ..link_service.local import LocalCarrier, connect_local, default_socket_path
 from ..protocol.carrier import receive_message, send
 from ..protocol.local_messages import ROLE_VIEWER
-from ..protocol.messages import ViewStatus
-from ..view.__main__ import ATTACH_TIMEOUT_S, SECOND_VIEW, ViewSettings
-from ..view.model import AGE_WHEN_NOT_LIVE_S, ViewModel
+from ..protocol.messages import RobotState, ViewStatus
+from .robot import LiveRobot
+from .settings import ATTACH_TIMEOUT_S, SECOND_VIEW, STATUS_PERIOD_S
+from .view_model import AGE_WHEN_NOT_LIVE_S, ViewModel
 
 _log = logging.getLogger("isaaccapture.examples.agentic_remote.viewer_live")
 
 PROGRAM = "viewer"
 # The name the viewer attaches under.
 NAME = "viewer"
-# One VIEW_STATUS this often, also while the view is not live: view.yaml's.
-PERIOD_S = ViewSettings().period_s
+# One VIEW_STATUS this often, also while the view is not live.
+PERIOD_S = STATUS_PERIOD_S
 # A failed attach is tried again after a pause: the first of these after the
 # viewer was attached, the next after each further failed try, then the last.
 RETRY_PAUSES_S = (5.0, 10.0, 20.0, 40.0, 60.0)
@@ -52,12 +56,23 @@ def _say(text: str) -> None:
     print(text, flush=True)
 
 
+def _no_robot(status: Any) -> str:
+    """Why an attachment gets no ROBOT_STATE, by its LOCAL_STATUS; "" when it can."""
+    if status is None or getattr(status, "robot_connected", True) is not False:
+        return ""
+    reason = getattr(status, "close_reason", "")
+    return "the robot is not connected to the robot link service" + (
+        f" ({reason})" if reason else ""
+    )
+
+
 class ViewLink:
     """Sends the robot VIEW_STATUS from a ViewModel while a service is there.
 
     attach(path, role, name, timeout_s) gives the carrier of the local API.
     Each change between attached and not gets one line from `say`; the tries
     of one stretch without a service get that one line, with the first reason.
+    `robot` gets every ROBOT_STATE as it arrives, and why none can.
     """
 
     def __init__(
@@ -70,8 +85,10 @@ class ViewLink:
         period_s: float = PERIOD_S,
         retry_pauses_s: Sequence[float] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        robot: LiveRobot | None = None,
     ) -> None:
         self._model = model
+        self._robot = robot
         self._socket_path = socket_path
         self._attach = attach
         self._say = say
@@ -141,6 +158,7 @@ class ViewLink:
             pause_s = pauses[min(failed, len(pauses) - 1)]
             failed += 1
             self._tell(False, why)
+            self._note(why)
             self._end.wait(pause_s)
 
     def _attach_once(self) -> tuple[LocalCarrier | None, str]:
@@ -169,6 +187,7 @@ class ViewLink:
         reader.daemon = True
         reader.start()  # it ends with the carrier, which the caller closes
         while carrier.alive:
+            self._note(_no_robot(carrier.status))
             try:
                 self._model.on_local(carrier.status, carrier.alive)
                 status = self._model.status_to_send(self._monotonic())
@@ -194,7 +213,15 @@ class ViewLink:
                 self._end.wait(_RECEIVE_S)
                 continue
             if message is not None:
-                self._model.on_message(message, self._monotonic())
+                now = self._monotonic()
+                self._model.on_message(message, now)
+                if self._robot is not None and isinstance(message, RobotState):
+                    self._robot.on_state(message, now)
+
+    def _note(self, why: str) -> None:
+        """Tell the live arm why no ROBOT_STATE can arrive; "" when one can."""
+        if self._robot is not None:
+            self._robot.on_link(why)
 
     def _tell(self, attached: bool, why: str) -> None:
         """Say a change between attached and not once; keep the newest reason."""

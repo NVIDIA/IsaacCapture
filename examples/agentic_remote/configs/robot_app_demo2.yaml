@@ -10,8 +10,7 @@
 #
 # This file differs from configs/robot_app.yaml in exactly these keys:
 # - human.enabled is true: a person may take the arm over and drive it.
-# - human.require_live_view is false: the recipe runs the live view without a
-#   camera, so no view is ever live.
+# - human.require_live_view is false: no live view runs in the recipe.
 # - limits.human.joint_min and limits.human.joint_max are -2.5 and 2.5 on every
 #   joint, not -3.0 and 3.0: with human.enabled the human joint box must lie inside
 #   rest.region_*.

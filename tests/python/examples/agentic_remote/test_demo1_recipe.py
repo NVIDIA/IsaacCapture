@@ -3,9 +3,9 @@
 
 """Demo 1 by hand on one machine with the mock agent: its two files and its recipe.
 
-The recipe starts five programs on one machine: the robot link service, the
-robot app on APAI's software arm (the mock arm), the operator console, the live
-view and the agent program on APAI's mock scene. The robot app runs on
+The recipe starts four programs on one machine: the robot link service, the
+robot app on APAI's software arm (the mock arm), the operator console and the
+agent program on APAI's mock scene. The robot app runs on
 configs/robot_app_mock.yaml and the agent program on configs/agent_mock.yaml,
 whose obstacle grid is the clear grid: a stand-in for the grid bridge (the
 program that keeps the obstacle grid) which reports nothing near.
@@ -49,14 +49,12 @@ from isaaccapture_examples.agentic_remote.protocol.confirm import (
 from isaaccapture_examples.agentic_remote.robot_app import config as robot_config
 from isaaccapture_examples.agentic_remote.robot_app.clock import SystemClock
 from isaaccapture_examples.agentic_remote.testing.client import WorkstationClient
-from isaaccapture_examples.agentic_remote.view.model import NO_PICTURE
 from link_stack import HOST, READY, SERVICE_MODULE, Program, program_env, until
 from test_agent_end_to_end import RUN_BUDGET_S, Trace
 from test_console import ASK_REST, ASK_YES
-from test_demo1_programs import VIEW_MODULE, ConsoleProcess
+from test_demo1_programs import ConsoleProcess
 from test_launcher import PICK, QUICK, Stage, scene_robot_config, settings_file
 from test_link_programs import ROBOT_MODULE
-from test_view_program import Browser
 
 from conftest import apai_runtime_env
 
@@ -533,12 +531,12 @@ def recipe_folder(
 def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
     recipe_folder: Path,
 ) -> None:
-    """Steps 1 to 9 of the recipe. What differs from the recipe by hand:
+    """Steps 1 to 8 of the recipe. What differs from the recipe by hand:
 
-    the service, the view and the agent program run on copies of their files
-    that name a port the system picks, a socket and a state folder of the test;
-    the console and the view are started with python -m, not by their scripts;
-    a local client in the role "tool" reads ROBOT_STATE; no browser is used.
+    the service and the agent program run on copies of their files that name
+    a port the system picks, a socket and a state folder of the test; the
+    console is started with python -m, not by its script; a local client in
+    the role "tool" reads ROBOT_STATE.
     """
     folder = recipe_folder
     path = str(folder / "s.sock")
@@ -549,15 +547,6 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         CONFIGS / "link_service.yaml",
         folder,
         {"port: 47610": "port: 0", '\nsocket_path: ""': f"\nsocket_path: {path}"},
-    )
-    view_file = fitted(
-        CONFIGS / "view.yaml",
-        folder,
-        {
-            "port: 47620": "port: 0",
-            '\nsocket_path: ""': f"\nsocket_path: {path}",
-            "\nstate_dir: ../.state\n": f"\n{state}",
-        },
     )
     agent_file = fitted(
         AGENT_MOCK, folder, {"\nlink:\n": f"\nlink:\n  socket_path: {path}\n"}, state
@@ -581,23 +570,14 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         programs.append(desk)
         assert ", driver apai-mock, " in desk.wait("WELCOME: ")
         shown(desk, " | driver apai-mock | ", " | owner nobody #0 | ")
-        # 4. The live view, without a camera.
-        view = Program(VIEW_MODULE, "--config", str(view_file), "--source", "none")
-        programs.append(view)
-        line = view.wait_line("live view: open http://127.0.0.1:")
-        view_port = int(line.split("http://127.0.0.1:")[1].split("/")[0])
-        browser = Browser(view_port)
-        try:
-            page = browser.status()
-        finally:
-            browser.close()
-        assert page["picture"]["overlay"] == NO_PICTURE
+        # No live view runs in this recipe, and the robot app's file asks for none.
+        shown(desk, " | live view not required | ")
         watcher = Watcher(path)
         programs.append(watcher)
         rest = watcher.pose()
         assert rest == pytest.approx([0.0] * 6, abs=0.05)
 
-        # 5. The agent program at its terminal.
+        # 4. The agent program at its terminal.
         agent = AgentTerminal(agent_file)
         programs.append(agent)
         agent.wait(INVENTED_WARNING, START_WAIT_S)
@@ -606,7 +586,7 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         agent.wait(" driver apai-mock, session ")
         agent.wait("obstacle grid: live", START_WAIT_S)
         agent.wait("ready. Ctrl+C at this terminal is STOP")
-        # 6. The first task: the jaws open and the task succeeds.
+        # 5. The first task: the jaws open and the task succeeds.
         agent.wait("task> ")
         agent.type(QUICK)
         agent.answer("Type yes to proceed", YES, START_WAIT_S)
@@ -615,7 +595,7 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         desk.wait("[owner] new task: the agent owns the arm, owner number 1")
         desk.wait("[owner] the agent gave the arm back: task completed")
         shown(desk, " | owner nobody #2 | ")
-        # 7. The second task moves the arm under permits. The mock arm of the
+        # 6. The second task moves the arm under permits. The mock arm of the
         # robot app has nothing between its jaws: each close ends on nothing,
         # APAI opens the jaws and tries again, and after its last try the
         # task is stuck: a help request.
@@ -648,7 +628,7 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         waiting = watcher.ws.wait_state(lambda s: s.assistance_wait_s is not None)
         assert (waiting.owner, waiting.torque_on) == ("nobody", True)
         shown(desk, " | owner nobody #4 | ", " | wait ")
-        # 8. A typed stop ends the wait; a typed rest returns the arm, and
+        # 7. A typed stop ends the wait; a typed rest returns the arm, and
         # there the jaws close and the motors go off.
         desk.type("stop")
         desk.wait("stop: taken.")
@@ -660,7 +640,7 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         assert rested.torque_on is False
         assert watcher.pose() == pytest.approx(rest, abs=0.05)
 
-        # 9. The end of every program, each by its own way out. The arm lies
+        # 8. The end of every program, each by its own way out. The arm lies
         # at rest with the motors off, so the agent program asks nothing.
         agent.end_input()
         assert agent.wait_exit() == launcher.EXIT_FAILED
@@ -682,9 +662,8 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
         # The closing line; what it says of the robot app is the console's own.
         assert desk.said[-1].startswith(CONSOLE_ENDS)
         watcher.close()
-        for program in (view, service):
-            program.signal(signal.SIGINT)  # Ctrl+C at its terminal
-            assert program.wait_exit() == 0
+        service.signal(signal.SIGINT)  # Ctrl+C at its terminal
+        assert service.wait_exit() == 0
         print(
             f"measured: pose after the second task {[round(q, 2) for q in raised]}; "
             f"{len(moving)} status lines of the console showed a move under a permit"
@@ -692,52 +671,3 @@ def test_the_recipe_of_demo_1_runs_as_processes_with_the_agent_at_a_terminal(
     finally:
         for program in programs:
             program.close()
-
-
-# What the live view prints when the robot link service ends before it.
-VIEW_ENDS_ALONE = (
-    "live view: the robot link service is gone; closing. The robot is not touched."
-)
-
-
-@link
-def test_the_view_ends_by_itself_when_the_service_is_ended_first(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
-    """Why step 9 of the recipe ends the view before the robot link service."""
-    folder = tmp_path_factory.mktemp("d1")  # a socket path holds 107 bytes
-    path = str(folder / "s.sock")
-    service_file = fitted(
-        CONFIGS / "link_service.yaml",
-        folder,
-        {"port: 47610": "port: 0", '\nsocket_path: ""': f"\nsocket_path: {path}"},
-    )
-    view_file = fitted(
-        CONFIGS / "view.yaml",
-        folder,
-        {
-            "port: 47620": "port: 0",
-            '\nsocket_path: ""': f"\nsocket_path: {path}",
-            "\nstate_dir: ../.state\n": f"\nstate_dir: {folder}/state\n",
-        },
-    )
-    programs: list[Program] = []
-    try:
-        service = Program(SERVICE_MODULE, "--config", str(service_file))
-        programs.append(service)
-        service.wait_line(READY)
-        view = Program(VIEW_MODULE, "--config", str(view_file), "--source", "none")
-        programs.append(view)
-        view.wait_line("live view: open http://127.0.0.1:")
-        service.signal(signal.SIGINT)  # Ctrl+C in terminal 1, before terminal 4
-        assert service.wait_exit() == 0
-        assert view.wait_exit() == 1
-        assert VIEW_ENDS_ALONE in view.lines
-    finally:
-        for program in programs:
-            program.close()
-    # The recipe's last step names that order, and what the other one gives.
-    readme = (EXAMPLE / "README.md").read_text(encoding="utf-8")
-    [last] = [line for line in readme.splitlines() if line.startswith("| 9 | all |")]
-    assert "Ctrl+C in terminals 4 and 1, in that order" in last
-    assert f"exit code 1 and `{VIEW_ENDS_ALONE}`" in last

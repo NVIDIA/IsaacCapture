@@ -16,9 +16,19 @@ a secret that goes out with every request for a picture and with every
 acknowledgement. Only the page loaded last has the valid one. A page opened
 from another machine gets no view token: it shows the pictures to watch and
 tells the viewer nothing.
+
+The live arm: while the page follows the newest run, the second part of the
+script asks the viewer for each ROBOT_STATE as it arrives and hands the arm of
+it to the page's own draw(), in the place of the recorded one. A line under
+the 3D scene says which arm is drawn and how old the obstacle map beside it is.
+The arm is called live only while the joints' readings are fresh; older ones
+are drawn as the pose the joints were last read at, with their age. Each draw
+is timed, and states are skipped so that drawing the arm takes at most about
+half of the page's time.
 -->
 <script>
 'use strict';
+// The live picture.
 (function () {
   // The page's own picture, its "Follow live" button and its two switches.
   // Without one of them this script does nothing.
@@ -248,5 +258,308 @@ tells the viewer nothing.
   setInterval(ask, 1000);
   sync();
   ask();
+})();
+
+// The live arm.
+(function () {
+  // The page's own 3D scene, its text under it, its state, its two switches
+  // and its draw(). Without one of them this part does nothing.
+  const scene = document.getElementById('scene');
+  const own = document.getElementById('status');
+  let known = false;
+  try {
+    known = typeof follow === 'boolean' && typeof playing === 'boolean'
+      && typeof draw === 'function' && typeof data === 'object';
+  } catch (error) { known = false; }
+  if (!known || !scene || !scene.parentNode || !own || typeof MutationObserver !== 'function') return;
+
+  const ROBOT = '/api/live/robot.json';
+  // A request that failed is made again after RETRY_MS; one that brought no
+  // other state, not sooner than SAME_MS after it was made.
+  const RETRY_MS = 1000, SAME_MS = 250;
+  // Without an answer for this long the live arm is drawn no longer.
+  const SILENT_MS = 3000;
+  // Without a frame of the browser for this long, a draw's time is its own only.
+  const FRAME_MS = 250;
+  // From this many states missed in a second on, the line names them.
+  const MISSED = 3;
+  const WARN = '#ffbd69';
+  const clockMs = typeof performance === 'object' && performance && typeof performance.now === 'function'
+    ? () => performance.now() : () => Date.now();
+  const seconds = age => `${age.toFixed(age < 10 ? 1 : 0)} s`;
+  const runs = document.getElementById('run');
+  const box = document.createElement('div');
+  const line = document.createElement('div');
+  const readings = document.createElement('div');
+  box.id = 'liveArm';
+  box.style.padding = '8px 14px 0';
+  box.style.fontSize = '13px';
+  box.style.fontVariantNumeric = 'tabular-nums';
+  line.id = 'liveArmLine';
+  readings.id = 'liveArmReadings';
+  readings.className = 'muted';
+  box.append(line, readings);
+  // Under the 3D scene.
+  const place = scene.parentNode;
+  if (place.parentNode) place.parentNode.insertBefore(box, place.nextSibling);
+  else place.append(box);
+
+  // wanted: the page follows the newest run, in a visible tab. arm: the
+  // viewer's newest answer while its arm is drawn: the live one, or the pose
+  // the joints were last read at. why: why none is drawn.
+  let wanted = false, turn = 0, arm = null, why = 'asking the viewer';
+  // kept: the recorded arm of the page's state that holds the viewer's one.
+  // clock: the viewer's wall clock at its newest answer. heardAt: when that came.
+  // drawnAt, missedAt: when the last second's live states were drawn or skipped.
+  let kept = null, clock = null, heardAt = 0, drawnAt = [], missedAt = [];
+  // cost: what the last draw of the arm took, in ms, with the browser's frame
+  // behind it. rest: ends once as long has passed again; null: nothing to wait for.
+  let cost = 0, rest = null;
+
+  // Draw the viewer's arm with the page's own draw(): in the page's state, or,
+  // without a recorded run, in a state that lasts for this one draw.
+  function put() {
+    if (data) {
+      if (!kept || kept.of !== data) kept = {of: data, robot: data.robot};
+      data.robot = arm.robot;
+      draw();
+    } else {
+      data = {map: null, failure: null, robot: arm.robot};
+      try { draw(); } finally { data = null; }
+    }
+  }
+
+  // Draw the arm and time it: the page's draw(), which draws every cell of
+  // the map, and the browser's frame after it. The next state is asked for
+  // only when as long has passed again: drawing the arm takes at most about
+  // half of the page's time, however large the map is, and the rest is the
+  // live picture's.
+  function paint() {
+    const began = clockMs();
+    put();
+    const took = clockMs() - began;
+    if (typeof requestAnimationFrame !== 'function') {
+      cost = took;
+      if (took > 0) rest = new Promise(done => setTimeout(done, took));
+      return;
+    }
+    rest = new Promise(done => {
+      let over = false;
+      const end = frame => {
+        if (over) return;
+        over = true;
+        cost = took + frame;
+        setTimeout(done, cost);
+      };
+      // A timer set in a frame's callback comes after that frame is painted.
+      requestAnimationFrame(() => {
+        const at = clockMs();
+        setTimeout(() => end(clockMs() - at), 0);
+      });
+      setTimeout(() => end(0), FRAME_MS);
+    });
+  }
+
+  // The page's own arm again, as its state had it.
+  function back() {
+    if (data && kept && kept.of === data) data.robot = kept.robot;
+    kept = null;
+    draw();
+  }
+
+  // How old the obstacle map on the page is now: its age in the page's state,
+  // which is as old as the recording's last event, and the time since that event.
+  function mapAge() {
+    if (!data) return 'no recording';
+    const map = data.map;
+    if (!map || typeof map.age_s !== 'number') return 'none recorded';
+    let age = map.age_s;
+    const end = Date.parse(data.recording_start_utc) / 1000 + data.duration;
+    if (clock && Number.isFinite(end)) age += Math.max(0, clock.wall + (Date.now() - clock.at) / 1000 - end);
+    return `${seconds(age)} old`;
+  }
+
+  // The jaw opening; with its age when the reading is old: none is taken
+  // during a move or with the motors off.
+  function jawsRead(jaws) {
+    if (!jaws.valid || typeof jaws.opening !== 'number') return 'jaws no reading';
+    const open = `${Math.round(jaws.opening * 100)} % open`;
+    if (jaws.fresh !== false) return `jaws ${open}`;
+    return typeof jaws.age_s === 'number' ? `jaws: last read ${seconds(jaws.age_s)} ago (${open})`
+      : `jaws: last read at an unknown time (${open})`;
+  }
+
+  function reads(told) {
+    const joints = (told.joints || []).map(one => (one.valid && typeof one.deg === 'number' ? one.deg.toFixed(1) : '?'));
+    const stop = told.stop_level && told.stop_level !== 'none' ? ` · STOP: ${told.stop_level}` : '';
+    return `joints ${joints.join(' ')} deg · ${jawsRead(told.gripper || {})} · owner ${told.owner} · ${told.motion} · torque ${told.torque}${stop}`;
+  }
+
+  // How many live states a second are drawn, and of how many when states are
+  // skipped for the time a draw takes.
+  function rate() {
+    const drawn = drawnAt.length, missed = missedAt.length;
+    if (missed < MISSED) return `${drawn} a second`;
+    return `${drawn} of ${drawn + missed} a second${cost >= 1 ? ` (a draw takes ${Math.round(cost)} ms)` : ''}`;
+  }
+
+  // The run whose arm model draws the arm, when it is not the run on the page.
+  function model() {
+    const run = arm.model_run;
+    return run && !(data && data.run === run) ? `; arm model of run ${run}` : '';
+  }
+
+  // The line under the scene. The arm is live while its joints' readings are
+  // within the viewer's limit, counted on from the viewer's newest answer.
+  function say() {
+    const now = Date.now();
+    drawnAt = drawnAt.filter(at => now - at < 1000);
+    missedAt = missedAt.filter(at => now - at < 1000);
+    let text, warn = true;
+    if (!wanted) {
+      text = data && data.robot ? 'arm: recorded' : 'arm: none recorded';
+      warn = false;
+    } else if (!arm) {
+      text = `arm: no live state: ${why}`;
+    } else {
+      const old = arm.last_read;
+      const limit = typeof arm.stale_s === 'number' ? arm.stale_s : 1;
+      const read = old ? old.age_s : typeof arm.pose_age_s === 'number' ? arm.pose_age_s : 0;
+      const age = read + (now - heardAt) / 1000;
+      if (!old && !(age > limit)) {
+        text = `arm: live, ${rate()}`;
+        warn = false;
+      } else {
+        text = `arm: last read ${seconds(age)} ago (${old ? old.why : 'the viewer sends no newer state'})`;
+      }
+      text += `; map: ${mapAge()}${model()}`;
+    }
+    line.textContent = text;
+    line.style.color = warn ? WARN : '';
+  }
+
+  // No state of the viewer's to draw: the page is its own again.
+  function lose(reason) {
+    why = reason;
+    readings.textContent = '';
+    if (arm) {
+      arm = null;
+      back();
+    }
+    say();
+  }
+
+  const samePose = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((q, at) => q === b[at]);
+
+  // The viewer's answer: a state with its arm is drawn when it is another
+  // one. The arm is the live one, or, when the joints' readings are old, the
+  // pose they were last read at.
+  function take(told) {
+    heardAt = Date.now();
+    if (typeof told.wall_s === 'number') clock = {wall: told.wall_s, at: heardAt};
+    const pose = told.available === true || told.last_read ? told.robot : null;
+    if (!pose || !Array.isArray(pose.joints) || !Array.isArray(pose.boxes)) {
+      lose(told.why || 'the viewer has no live state');
+      return;
+    }
+    const before = arm;
+    const another = !before || before.n !== told.n;
+    arm = told;
+    if (another && told.available === true) {
+      drawnAt.push(heardAt);
+      // The states between the one drawn before and this one were skipped.
+      const from = before && before.available === true ? Math.max(before.n + 1, told.n - 100) : told.n;
+      for (let n = from; n < told.n; n++) missedAt.push(heardAt);
+    }
+    // Readings that stand still are one pose: it is drawn once.
+    const still = before && !told.available && !before.available && samePose(before.robot.q, pose.q);
+    if (another && !still) paint();
+    readings.textContent = reads(told);
+    say();
+  }
+
+  // Ask for state after state while the page follows the newest run. The
+  // viewer answers once it has another state than the one named: a page that
+  // draws slowly gets the newest and misses the ones between.
+  async function states(mine) {
+    let after = null;
+    while (wanted && mine === turn) {
+      // Not before the last draw's time has passed once more.
+      while (rest) {
+        const one = rest;
+        await one;
+        if (rest === one) rest = null;
+      }
+      if (!wanted || mine !== turn) return;
+      let wait = 0;
+      const asked = Date.now();
+      try {
+        const answer = await fetch(after === null ? ROBOT : `${ROBOT}?after=${after}`, {cache: 'no-store'});
+        if (!answer.ok) throw Error(`the viewer answered ${answer.status}`);
+        const told = await answer.json();
+        if (!told || typeof told.n !== 'number') throw Error('it has no live arm');
+        look();
+        if (!wanted || mine !== turn) return;
+        // The same state again: the viewer waited for another one, or it says
+        // what has changed about this one. Asked again at once only if it waited.
+        if (told.n === after) wait = Math.max(0, SAME_MS - (Date.now() - asked));
+        after = told.n;
+        take(told);
+      } catch (error) {
+        if (!wanted || mine !== turn) return;
+        lose(`no answer from the viewer: ${error.message || error}`);
+        wait = RETRY_MS;
+      }
+      if (wait) await new Promise(done => setTimeout(done, wait));
+    }
+  }
+
+  // The page's switches: the live arm is drawn only while it follows the
+  // newest run. A replay and an older run are the page's own.
+  function look() {
+    const newest = !runs || runs.value === 'latest';
+    const want = follow && !playing && newest && !document.hidden;
+    if (want === wanted) return;
+    wanted = want;
+    turn += 1;
+    drawnAt = [];
+    missedAt = [];
+    readings.textContent = '';
+    if (want) {
+      why = 'asking the viewer';
+      states(turn);
+    } else if (arm) {
+      arm = null;
+      back();
+    }
+    say();
+  }
+
+  function sync() {
+    look();
+    if (arm && Date.now() - heardAt > SILENT_MS) lose('the viewer does not answer');
+    else say();
+  }
+
+  // The page's own render() wrote its text and drew its recorded arm: the
+  // viewer's one is drawn over it before the browser paints.
+  new MutationObserver(() => {
+    look();
+    if (arm) paint();
+  }).observe(own, {childList: true, characterData: true, subtree: true});
+  // Without a recorded run the page's own draw() has no arm: after each of
+  // the page's own draws the viewer's one is drawn again.
+  const again = () => { if (arm && !data) paint(); };
+  // The page's own handlers switch "follow" and "playing": look after each.
+  for (const kind of ['click', 'input', 'change']) {
+    document.addEventListener(kind, () => { sync(); again(); });
+  }
+  // The page draws while its scene is dragged, zoomed or resized.
+  scene.addEventListener('pointermove', event => { if (event.buttons) again(); });
+  scene.addEventListener('wheel', again);
+  window.addEventListener('resize', again);
+  document.addEventListener('visibilitychange', sync);
+  setInterval(sync, 250);
+  sync();
 })();
 </script>

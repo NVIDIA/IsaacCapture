@@ -13,6 +13,9 @@ The page with its live picture showing is the live view: the viewer attaches
 to the robot link service in the role "viewer" and tells the Thor, with
 VIEW_STATUS, how fresh the picture on that page is. Without a robot link
 service it serves everything and attaches once one runs.
+
+Through the same attachment the page's arm is live: each ROBOT_STATE the robot
+app publishes is drawn as it arrives, with the experiment's own geometry.
 """
 
 from __future__ import annotations
@@ -31,20 +34,24 @@ from types import ModuleType
 
 from ..link_service.local import connect_local
 from .live import (
-    DEFAULT_FPS,
-    DEFAULT_WIDTH_PX,
-    FPS_RANGE,
-    JPEG_QUALITY,
     PROGRAM,
-    RECEIVER_SOCKET,
+    ROBOT_PATH,
     STREAM_PATH,
-    WIDTH_RANGE_PX,
     LivePicture,
     Say,
     SourceFactory,
     bridge_source_factory,
     live_handler,
     use_one_encoder_thread,
+)
+from .robot import ArmModel, LiveRobot
+from .settings import (
+    DEFAULT_FPS,
+    DEFAULT_WIDTH_PX,
+    FPS_RANGE,
+    JPEG_QUALITY,
+    RECEIVER_SOCKET,
+    WIDTH_RANGE_PX,
 )
 from .view_link import Attach, ViewLink
 
@@ -69,7 +76,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m isaaccapture_examples.agentic_remote.viewer_live",
         description=(
-            "The experiment's viewer with the camera's live picture on its page. "
+            "The experiment's viewer with the camera's live picture and the "
+            "robot's live arm on its page. "
             "Every other argument goes to the viewer as it is."
         ),
         add_help=False,
@@ -176,6 +184,7 @@ def main(
     run_dir: list[str] = []  # the bridge's log and socket, once the viewer serves
     live: list[LivePicture] = []
     links: list[ViewLink] = []
+    robots: list[LiveRobot] = []
     own_handler = viewer.handler
 
     def handler(runs: object, token: str | None) -> type:
@@ -194,15 +203,27 @@ def main(
             f"{args.receiver_socket}"
         )
         picture.start()
-        link = ViewLink(picture.model, args.link_socket, attach=attach, say=say)
+        # The arm of each ROBOT_STATE, by the viewer's own geometry of a run.
+        arm = ArmModel(viewer, runs)
+        robot = LiveRobot(arm.geometry, model_run=arm.run)
+        robots.append(robot)
+        link = ViewLink(
+            picture.model, args.link_socket, attach=attach, say=say, robot=robot
+        )
         links.append(link)
         say(
             f"{PROGRAM}: live view: this page with its live picture showing, in a "
             "visible browser tab; the robot is told its age through the robot "
             f"link service at {link.socket_path}"
         )
+        say(
+            f"{PROGRAM}: live arm: on the page and at {ROBOT_PATH}: each "
+            "ROBOT_STATE of that robot link service as it arrives; shown, not stored"
+        )
         link.start()
-        return live_handler(base, token, picture, viewer.authorized, link.state)
+        return live_handler(
+            base, token, picture, viewer.authorized, link.state, robot=robot
+        )
 
     # Signal handlers can be set on the main thread only.
     signals = (
@@ -232,6 +253,8 @@ def main(
         sys.argv = argv_before
         for link in links:  # the robot is told that the view is over
             link.close()
+        for robot in robots:  # no request waits for a state any longer
+            robot.close()
         for picture in live:
             picture.close()
         for made in run_dir:

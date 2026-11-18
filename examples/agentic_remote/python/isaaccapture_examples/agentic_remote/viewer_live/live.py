@@ -18,21 +18,27 @@ GET /api/live.jpg     the newest picture once it is newer than ?after=N, for
                       &watch=1 it needs no view token and counts for nothing
 POST /api/live/shown  {"seq": N, "visible": true|false, "token": "..."}: the
                       page has drawn picture N (403 when it does not count)
+GET /api/live/robot.json
+                      the newest ROBOT_STATE of robot.py's LiveRobot, for the
+                      page's live arm; with ?after=N once it is not number N
+                      (the same one again after a second without another,
+                      or sooner when it is live no longer).
+                      It needs no view token: it tells the robot nothing
 GET /                 the viewer's own page with page_block.html before </body>
 
 The page with its live picture showing is the live view. The view token is the
 secret a page is served with: each GET / from this machine that gives the page
 makes a new one the only valid one, so only the page opened last on this
 machine counts. What that page drew and acknowledged goes into the ViewModel of
-view/model.py, from which view_link.py sends the robot VIEW_STATUS.
+view_model.py, from which view_link.py sends the robot VIEW_STATUS.
 
 A page opened from another machine is a watch-only page: it is served without
 a view token and fetches its pictures with &watch=1. It replaces no page, and a
 request from another machine for a counted picture or with an acknowledgement
 is refused, whatever token it names.
 
-Every live path follows the viewer's access rule. No picture is written to disk
-and none but the newest is kept.
+Every live path follows the viewer's access rule. No picture and no ROBOT_STATE
+is written to disk, and none but the newest is kept.
 """
 
 from __future__ import annotations
@@ -62,9 +68,18 @@ from ..agent.camera.frame_source import (
     PairSource,
     StereoPair,
 )
-from ..view.__main__ import ViewSettings, encode_picture
-from ..view.model import ViewModel
-from ..view.server import MAX_SHOWN_BYTES, TOKEN_HEADER, TOKEN_PLACE
+from .picture import encode_picture
+from .robot import LiveRobot, no_live_robot
+from .settings import (
+    ACK_TIMEOUT_S,
+    DEFAULT_FPS,
+    DEFAULT_WIDTH_PX,
+    JPEG_QUALITY,
+    MAX_SKEW_MS,
+    STATE_MAX_AGE_S,
+    STREAMS,
+)
+from .view_model import ViewModel
 
 _log = logging.getLogger("isaaccapture.examples.agentic_remote.viewer_live")
 
@@ -73,19 +88,17 @@ STREAM_PATH = "/api/live.mjpg"
 STATE_PATH = "/api/live.json"
 PICTURE_PATH = "/api/live.jpg"
 SHOWN_PATH = "/api/live/shown"
+ROBOT_PATH = "/api/live/robot.json"
 BOUNDARY = "livepicture"
 PAGE_BLOCK_FILE = Path(__file__).with_name("page_block.html")
 # The page's end, before which the block goes.
 PAGE_END = b"</body>"
-
-_VIEW = ViewSettings()
-DEFAULT_FPS = 30.0
-FPS_RANGE = (1.0, 60.0)
-DEFAULT_WIDTH_PX = _VIEW.width_px
-WIDTH_RANGE_PX = (64, 4096)
-JPEG_QUALITY = _VIEW.jpeg_quality
-# The camera receiver's socket, as view.yaml and camera_receiver_rebot.yaml name it.
-RECEIVER_SOCKET = _VIEW.receiver_socket
+# The text in page_block.html that each GET / replaces with that page's view token.
+TOKEN_PLACE = b"__VIEW_TOKEN__"
+# The request header in which the page sends its view token with GET /api/live.jpg.
+TOKEN_HEADER = "X-View-Token"
+# The longest body of POST /api/live/shown.
+MAX_SHOWN_BYTES = 4096
 # Pictures a second while no browser has the stream open or asks for pictures.
 IDLE_FPS = 1.0
 # How long GET /api/live.jpg waits for a newer picture.
@@ -147,7 +160,7 @@ def bridge_source_factory(
     run_dir: str | os.PathLike[str],
     environ: Mapping[str, str] | None = None,
 ) -> SourceFactory:
-    """Makes the camera frame bridge the live view starts for --source link.
+    """Makes the camera frame bridge the viewer starts for its live picture.
 
     The bridge runs under the camera consumer's Python, in the folder
     AGENTIC_REMOTE_CAMERA_PR names; its log and its socket go into run_dir.
@@ -166,8 +179,8 @@ def bridge_source_factory(
             receiver_socket=receiver_socket,
             run_dir=run_dir,
             camera_pr=camera_pr,
-            streams=_VIEW.streams,
-            max_skew_ms=_VIEW.max_skew_ms,
+            streams=STREAMS,
+            max_skew_ms=MAX_SKEW_MS,
         )
 
     return make
@@ -198,10 +211,7 @@ class LivePicture:
     ) -> None:
         self._make_source = make_source
         self.model = (
-            ViewModel(
-                ack_timeout_s=_VIEW.ack_timeout_s,
-                state_max_age_s=_VIEW.state_max_age_s,
-            )
+            ViewModel(ack_timeout_s=ACK_TIMEOUT_S, state_max_age_s=STATE_MAX_AGE_S)
             if model is None
             else model
         )
@@ -419,7 +429,7 @@ class LivePicture:
                 self._seq += 1
                 self._width = min(self.width_px, pair.left.shape[1])
                 self._arrived = arrived
-                # As the live view program of view/ hands its pictures over.
+                # The exposure of the earlier eye, and the pair's arrival.
                 self.model.put_picture(
                     self._seq,
                     jpeg,
@@ -511,6 +521,12 @@ def _after(query: str) -> int:
     return int(found.group(1)) if found else 0
 
 
+def _after_given(query: str) -> int | None:
+    """The after=N of a query, None without one: the state the page has."""
+    found = re.search(r"(?:^|&)after=([0-9]{1,18})(?:&|$)", query)
+    return int(found.group(1)) if found else None
+
+
 def _watch(query: str) -> bool:
     """Whether a query holds watch=1: a picture to watch, which counts for nothing."""
     return re.search(r"(?:^|&)watch=1(?:&|$)", query) is not None
@@ -547,6 +563,7 @@ def live_handler(
     view: Callable[[], dict[str, Any]] | None = None,
     monotonic: Callable[[], float] = time.monotonic,
     this_machine: ThisMachine | None = None,
+    robot: LiveRobot | None = None,
 ) -> type:
     """The viewer's request handler class `base` with the live picture added.
 
@@ -555,11 +572,12 @@ def live_handler(
     the robot is told of the live view, for /api/live.json; None: nothing is.
     monotonic() dates what a page loads, fetches and acknowledges.
     this_machine(connection) says whether a request comes from this machine;
-    None: on_this_machine().
+    None: on_this_machine(). robot holds the newest ROBOT_STATE, for
+    /api/live/robot.json; None: that path says that there is none.
     """
     block = page_block()
     model = live.model
-    own_paths = (STREAM_PATH, STATE_PATH, PICTURE_PATH)
+    own_paths = (STREAM_PATH, STATE_PATH, PICTURE_PATH, ROBOT_PATH)
     if this_machine is None:
         this_machine = on_this_machine
 
@@ -578,6 +596,8 @@ def live_handler(
                 self._state(_page_name(url.query))
             elif path == PICTURE_PATH:
                 self._picture(_after(url.query), _watch(url.query))
+            elif path == ROBOT_PATH:
+                self._robot(_after_given(url.query))
             else:
                 self._stream(_page_name(url.query))
 
@@ -657,10 +677,15 @@ def live_handler(
             """A live path's whole answer, on a connection that stays open.
 
             With `close` the connection ends: its request was not read whole.
+            Headers and body go out in one write: of two small writes on a
+            kept-open connection the second waits for the browser's delayed
+            acknowledgement of the first (Nagle's algorithm), about 40 ms.
             """
             self._keep()
             self.close_connection = self.close_connection or close
-            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            real, answer = self.wfile, io.BytesIO()
+            self.wfile = answer
+            try:
                 self.send_response(status)
                 if kind:
                     self.send_header("Content-Type", kind)
@@ -675,11 +700,21 @@ def live_handler(
                 if self.close_connection:
                     self.send_header("Connection", "close")
                 self.end_headers()
-                self.wfile.write(body)
+                answer.write(body)
+            finally:
+                self.wfile = real
+            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                real.write(answer.getvalue())
 
         def _state(self, page: str) -> None:
             told = live.state(page)
             told["view"] = dict(NOT_REPORTED) if view is None else view()
+            body = json.dumps(told, allow_nan=False).encode()
+            self._short(200, body, "application/json")
+
+        def _robot(self, after: int | None) -> None:
+            """The newest ROBOT_STATE, once it is not number `after`; for any page."""
+            told = no_live_robot() if robot is None else robot.answer(after)
             body = json.dumps(told, allow_nan=False).encode()
             self._short(200, body, "application/json")
 
@@ -707,7 +742,11 @@ def live_handler(
                 self._short(403)
 
         def _shown(self) -> None:
-            """The page's word that it has drawn a picture; as POST /shown of view/."""
+            """The page's word that it has drawn a picture.
+
+            Nothing here can reach the robot: it only tells the model what
+            the page drew.
+            """
             try:
                 length = int(self.headers.get("Content-Length", ""))
             except ValueError:

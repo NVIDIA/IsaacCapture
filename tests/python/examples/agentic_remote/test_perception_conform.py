@@ -753,19 +753,22 @@ def test_the_rig_agent_file_names_a_hand_eye_fit_the_functional_launcher_would_t
     assert camera["depth_backend"] == functional_profile["depth_backend"]
 
 
-def test_the_shipped_view_file_starts_on_the_bridge_interpreter_of_the_agent_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_the_viewers_bridge_starts_on_the_bridge_interpreter_of_the_agent_file(
+    tmp_path: Path,
 ) -> None:
     from isaaccapture_examples.agentic_remote.agent.camera.frame_source import (
         CAMERA_PR_ENV,
     )
-    from isaaccapture_examples.agentic_remote.view import __main__ as view_main
+    from isaaccapture_examples.agentic_remote.viewer_live import live
 
-    view = shipped("view.yaml")["camera"]["bridge_python"]
-    assert view and view == shipped("agent_rebot.yaml")["camera"]["bridge_python"]
+    agents = shipped("agent_rebot.yaml")["camera"]["bridge_python"]
     variable = "${" + CAMERA_PR_ENV + "}"
-    assert view.startswith(variable)
-    monkeypatch.setenv(CAMERA_PR_ENV, str(tmp_path))
-    settings = view_main.load_view_settings(CONFIGS / "view.yaml")
-    # What --source link starts the view's camera frame bridge under.
-    assert settings.bridge_python == view.replace(variable, str(tmp_path))
+    assert agents and agents.startswith(variable)
+    python = Path(agents.replace(variable, str(tmp_path)))
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+    make = live.bridge_source_factory(
+        "/tmp/r.sock", tmp_path / "run", {CAMERA_PR_ENV: str(tmp_path)}
+    )
+    # What the viewer starts the camera frame bridge of its live picture under.
+    assert make()._command[0] == str(python)

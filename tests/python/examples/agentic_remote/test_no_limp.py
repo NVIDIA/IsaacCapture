@@ -2251,7 +2251,7 @@ def test_the_human_drives_one_send_stands_inside_the_executors_claim():
         "robot_app/human.py",
         "robot_app/apai_backend.py",
     }
-    folders = ("human/", "agent/", "console/", "view/", "link_service/")
+    folders = ("human/", "agent/", "console/", "viewer_live/", "link_service/")
     assert not [file for file in callers if file.startswith(folders)]
     # A send beside the claim, or under another name, would be found.
     other = (
@@ -2365,7 +2365,7 @@ def test_only_the_console_command_asks_the_robot_app_for_a_release_or_a_shutdown
     assert not {Release.TYPE, Shutdown.TYPE} & ROLE_TABLE[ROLE_AGENT]
 
 
-# The operator console (console/) and the live view (view/): the same rule
+# The operator console (console/) and the live view (viewer_live/): the same rule
 
 
 # The files of the console and the view the scan must have read.
@@ -2375,10 +2375,14 @@ CONSOLE_AND_VIEW_FILES = (
     "console/__main__.py",
     "console/console.py",
     "console/status.py",
-    "view/__init__.py",
-    "view/__main__.py",
-    "view/model.py",
-    "view/server.py",
+    "viewer_live/__init__.py",
+    "viewer_live/__main__.py",
+    "viewer_live/live.py",
+    "viewer_live/picture.py",
+    "viewer_live/robot.py",
+    "viewer_live/settings.py",
+    "viewer_live/view_link.py",
+    "viewer_live/view_model.py",
 )
 
 
@@ -2386,9 +2390,8 @@ def test_the_scan_reads_every_file_of_the_console_and_the_view():
     scanned = {path.relative_to(PACKAGE).as_posix() for path in PACKAGE.rglob("*.py")}
     assert set(CONSOLE_AND_VIEW_FILES) <= scanned
     # No file of the two folders is missing from the list.
-    assert {file for file in scanned if file.startswith(("console/", "view/"))} <= set(
-        CONSOLE_AND_VIEW_FILES
-    )
+    theirs = {f for f in scanned if f.startswith(("console/", "viewer_live/"))}
+    assert theirs <= set(CONSOLE_AND_VIEW_FILES)
     under = [site for site in package_sites() if site.file in CONSOLE_AND_VIEW_FILES]
     assert under == []
     # A cut written into one of these files would be found.
@@ -2415,7 +2418,9 @@ def test_the_console_and_the_view_name_no_release_and_no_shutdown():
         from_a_client = bool(words(target) & {"client", "link", "ws", "made"})
         return name in ("release", "shutdown") and from_a_client
 
-    asked = [site for site in package_sites(asks) if site.file.startswith("view/")]
+    asked = [
+        site for site in package_sites(asks) if site.file.startswith("viewer_live/")
+    ]
     assert asked == []
     asked = [site for site in package_sites(asks) if site.file.startswith("console/")]
     assert asked == []

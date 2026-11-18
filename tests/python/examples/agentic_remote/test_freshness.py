@@ -7,7 +7,7 @@ A human target is a joint target from a person's hand, sent in a
 HUMAN_SETPOINT link message by the human program, the program that turns
 controller data into joint targets. Its sample age is how old the controller
 data behind it are. The live view is the operator's browser page with the
-camera picture; the view program reports its age in VIEW_STATUS link messages.
+camera picture; the viewer reports its age in VIEW_STATUS link messages.
 A takeover makes a person the control owner, the one who may move the arm; a
 human drive is one stretch of human motion.
 
@@ -44,7 +44,7 @@ from isaaccapture_examples.agentic_remote.robot_app.app import human_target
 from isaaccapture_examples.agentic_remote.robot_app.config import RobotAppConfig
 from isaaccapture_examples.agentic_remote.robot_app.human import HumanInput
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import Owner
-from isaaccapture_examples.agentic_remote.view.model import ViewModel
+from isaaccapture_examples.agentic_remote.viewer_live.view_model import ViewModel
 from link_bench import Bench, robot_state
 from link_stack import Station, until
 from test_human_on_thor import Thor, ask_at_socket, feed_at_socket, taken
@@ -64,9 +64,17 @@ from test_takeover import (
     state_now,
     take_over,
 )
-from test_view_model import JPEG, NOT_LIVE, T0, WALL0, Page, model_with_state, near
-from test_view_model import shown as picture_shown
-from test_view_model import state_at as view_state_at
+from test_viewer_live_model import (
+    JPEG,
+    NOT_LIVE,
+    T0,
+    WALL0,
+    Page,
+    model_with_state,
+    near,
+)
+from test_viewer_live_model import shown as picture_shown
+from test_viewer_live_model import state_at as view_state_at
 
 from conftest import AppHarness
 
@@ -681,7 +689,7 @@ def test_a_view_status_delayed_on_its_way_is_as_old_as_it_is(human_app):
 
 
 def test_a_view_status_that_does_not_say_when_it_was_sent_is_not_fresh(human_app):
-    """As a live view program of before the field sends it."""
+    """As a viewer of before the field sends it."""
     h = human_app
     h.client.send(ViewStatus(live=True, age_s=0.0))
     feed(h, view=False)
@@ -740,7 +748,7 @@ def test_the_view_age_at_the_thor_is_the_pictures_age_whatever_the_link_takes(
     assert Page(model).draw(1, T0 + 0.05)
     report = model.status_to_send(T0 + 0.05)
     assert report.live
-    # The view program cannot see down_s: it says 0.15 s and means the sum.
+    # The viewer cannot see down_s: it says 0.15 s and means the sum.
     assert report.age_s == near(0.15)
     h.clock.advance(down_s + 0.05 + up_s)
     h.client.send(report)

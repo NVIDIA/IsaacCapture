@@ -9,12 +9,13 @@ can type at the operator console. Here the robot link service listens on
 link. Attached to the service at once: the agent program (launcher.main, in
 this process, on APAI's mock camera), the operator console (the Console class
 the console program runs, its lines typed by the test) and the live view (the
-view program's main(), on a thread). The robot app runs on APAI's mock arm in
-real time, and on the simulated arm where no agent is needed.
+viewer's live picture, request handler and link of live_view_bench.py, on
+threads). The robot app runs on APAI's mock arm in real time, and on the
+simulated arm where no agent is needed.
 
-The last test starts the robot link service, the robot app, the live view, the
-operator console (on a pseudo-terminal) and the console command as processes of
-their own and ends each of them.
+The last test starts the robot link service, the robot app, the operator
+console (on a pseudo-terminal) and the console command as processes of their
+own and ends each of them.
 """
 
 from __future__ import annotations
@@ -38,15 +39,13 @@ from isaaccapture_examples.agentic_remote.agent import console_cmd, launcher, ta
 from isaaccapture_examples.agentic_remote.agent.link_client import AgentLink
 from isaaccapture_examples.agentic_remote.protocol.confirm import PATH_IS_CLEAR
 from isaaccapture_examples.agentic_remote.robot_app.interfaces import MotionState
-from isaaccapture_examples.agentic_remote.view import __main__ as view_main
-from isaaccapture_examples.agentic_remote.view.model import NO_PICTURE
 from link_stack import HOST, Program, ServiceProcess, Stack, program_env
+from live_view_bench import Browser, LiveView, StandInSource
 from test_agent_end_to_end import RUN_BUDGET_S, ObstacleGrid, Scene, raise_arm
 from test_console import ASK_REST, QUIT_NOTE_LOST, Desk
 from test_console_cmd import await_read
 from test_launcher import PICK, QUICK, scene_robot_config
 from test_link_programs import ROBOT_MODULE, ROBOT_YAML
-from test_view_program import Browser, Running, StandInSource, write_config
 
 from conftest import apai_runtime_env
 
@@ -60,7 +59,6 @@ REST_WAIT_S = 30.0
 # From rest on the simulated arm: 25 setpoints, 0.5 s.
 REST = [0.0] * 6
 PATH = [[0.004 * (index + 1)] * 6 for index in range(25)]
-VIEW_MODULE = "isaaccapture_examples.agentic_remote.view"
 CONSOLE_MODULE = "isaaccapture_examples.agentic_remote.console"
 CONSOLE_CMD_MODULE = "isaaccapture_examples.agentic_remote.agent.console_cmd"
 # A status line of the console that shows a view age.
@@ -196,13 +194,13 @@ class ConsoleProcess:
 class Tab:
     """What an open, visible browser tab does, a few times and with pauses.
 
-    Each turn it asks for the picture and acknowledges the one it got; every
-    third turn it reads the page's status. At most `turns` turns, pause_s
-    apart: under three requests per second.
+    Each turn it asks for a newer picture and acknowledges the one it got;
+    every third turn it reads the robot's state as the page does. At most
+    `turns` turns, pause_s apart: under three requests per second.
     """
 
     def __init__(self, port: int, turns: int = 16, pause_s: float = 1.5) -> None:
-        self.statuses: list[dict[str, Any]] = []
+        self.states: list[dict[str, Any]] = []
         self.acknowledged = 0
         self._browser = Browser(port)
         self._turns, self._pause_s = turns, pause_s
@@ -217,18 +215,18 @@ class Tab:
                 self._browser.shown(seq)
                 self.acknowledged += 1
             if turn % 3 == 2:
-                self.statuses.append(self._browser.status())
+                self.states.append(self._browser.robot())
             if self._done.wait(self._pause_s):
                 return
 
-    def close(self) -> dict[str, Any]:
-        """End the tab; the page's status at that moment."""
+    def close(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """End the tab; what the viewer says then of the robot and of the view."""
         self._done.set()
         self._thread.join(WAIT_S)
         assert not self._thread.is_alive(), "the tab did not end"
-        status = self._browser.status()
+        told = self._browser.robot(), self._browser.live()
         self._browser.close()
-        return status
+        return told
 
 
 class Desks:
@@ -237,7 +235,7 @@ class Desks:
     def __init__(self, path: str, folder: Path) -> None:
         self.path, self.folder = path, folder
         self._desks: list[TimedDesk] = []
-        self._views: list[Running] = []
+        self._views: list[LiveView] = []
         self._tabs: list[Tab] = []
 
     def console(self) -> TimedDesk:
@@ -249,16 +247,14 @@ class Desks:
         desk.sees(lambda state: True)
         return desk
 
-    def view(self, *args: str, source: Any = None, **blocks: dict[str, Any]) -> Running:
-        """The live view's main() on a thread, attached to the service."""
-        config = write_config(self.folder, self.path, **blocks)
-        view = Running(config, *args, source=source)
+    def view(self, source: Any = None, **options: Any) -> LiveView:
+        """The viewer's live view, attached to the service; None: no camera."""
+        view = LiveView(self.path, source, **options)
         self._views.append(view)
-        view.ready()
         return view
 
-    def tab(self, view: Running, **options: Any) -> Tab:
-        tab = Tab(view.program.port, **options)
+    def tab(self, view: LiveView, **options: Any) -> Tab:
+        tab = Tab(view.port, **options)
         self._tabs.append(tab)
         return tab
 
@@ -267,15 +263,9 @@ class Desks:
             tab._done.set()
             tab._thread.join(WAIT_S)
         for view in self._views:
-            view.end()
+            view.close()
         for desk in self._desks:
             desk.close()
-
-
-@pytest.fixture(autouse=True)
-def view_log_level(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The view's main() attaches no log handler in a test."""
-    monkeypatch.setattr(view_main, "set_console_level", lambda level: None)
 
 
 @pytest.fixture
@@ -351,8 +341,9 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
     scene, desks = demo
     trace, watcher = scene.trace, scene.stack.stations[0]
     desk = desks.console()
-    # A view with pictures, and a tab that acknowledges them.
-    view = desks.view(source=StandInSource(), status={"ack_timeout_s": 4.0})
+    # A view with pictures, and a tab that acknowledges them. This tab draws a
+    # picture every 1.5 s only: its acknowledgements count for 4 s here.
+    view = desks.view(StandInSource(), ack_timeout_s=4.0)
     assert watcher.ws.state.view_age_s is None
     # The tab acknowledges until the test ends it: RUN_BUDGET_S at most.
     tab = desks.tab(view, turns=40)
@@ -368,7 +359,7 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
     took = time.monotonic() - began
     assert took < RUN_BUDGET_S
     tab_ended = time.monotonic()
-    page = tab.close()
+    robot, live = tab.close()
 
     # The tasks: the first succeeded; the pick and place moved the arm and
     # ended without success (the mock scene cannot confirm the place). The
@@ -407,18 +398,16 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
     assert ages and all(0.0 <= age < 4.0 for age in ages)
     assert desk.count("ROBOT CONNECTION LOST") == 0
 
-    # The view's page showed the move while it ran, with the agent as owner.
-    shown = [status["state"] for status in tab.statuses if status["state"]]
-    during = [state for state in shown if state["move_id"]]
-    assert during and {state["move_id"] for state in during} <= set(trace.moves)
-    assert all(state["owner"] == "agent" for state in during)
-    assert all(state["permit"] is not None for state in during)
+    # The viewer had the robot's state while the moves ran: the page read the
+    # arm in motion, with the agent as owner and the motors on.
+    during = [told for told in tab.states if told.get("motion") == "moving"]
+    assert during and all(told["owner"] == "agent" for told in during)
+    assert all(told["torque_on"] and told["age_s"] < 1.0 for told in during)
     assert tab.acknowledged >= 10
-    assert page["robot"]["driver"] == "apai-mock" and page["robot"]["connected"]
-    # The agent program's own client may still be counted for a moment.
-    clients = {**page["robot"]["clients"], "agent": 0}
-    assert clients == {"agent": 0, "console": 1, "tool": 1, "viewer": 1}
-    assert page["state"]["owner"] == "nobody" and page["state"]["move_id"] == ""
+    # At the end nobody owns the arm, and the robot was told of a live view.
+    assert robot["owner"] == "nobody" and robot["stop_level"] == "none"
+    assert live["available"] is True and live["view"]["attached"] is True
+    assert live["view"]["live"] is True and 0.0 <= live["view"]["age_s"] < 4.0
 
     # The view only looked: no STOP, and the arm holds with its motors on.
     assert scene.h.app.snapshot().stop_number == 0 and scene.h.heard("stop") == []
@@ -428,7 +417,7 @@ def test_demo_1_on_the_mock_arm_with_console_and_view(
         f"{len(trace.moves)} moves, {len(trace.agent_permits)} PERMITs; console "
         f"{len(desk.said)} lines, view age on the console {min(ages):.1f} to "
         f"{max(ages):.1f} s; {tab.acknowledged} pictures acknowledged, "
-        f"{len(during)} of {len(tab.statuses)} page reads during a move"
+        f"{len(during)} of {len(tab.states)} page reads during a move"
     )
 
 
@@ -440,7 +429,7 @@ def test_a_console_stop_during_the_agents_move_ends_the_task_and_the_next_task_r
     scene, desks = demo
     trace = scene.trace
     desk = desks.console()
-    view = desks.view("--source", "none")
+    view = desks.view()  # no camera: no live picture
     typed_at: list[float] = []
 
     def press(number: int) -> None:
@@ -495,12 +484,13 @@ def test_a_console_stop_during_the_agents_move_ends_the_task_and_the_next_task_r
     scene.holds()
     # A view without pictures is never live: no view age anywhere.
     assert all(" | view none | " in line for line in desk.holding(" | owner "))
-    browser = Browser(view.program.port)
-    page = browser.status()
+    browser = Browser(view.port)
+    live, robot = browser.live(), browser.robot()
     browser.close()
-    assert page["picture"]["overlay"] == NO_PICTURE and page["view_status"]
-    assert page["view_status"]["live"] is False
-    assert page["state"]["stop_number"] == 1 and page["state"]["view_age_s"] is None
+    assert live["available"] is False and "this test has no camera" in live["reason"]
+    assert live["view"] == {"attached": True, "why": "", "live": False, "age_s": None}
+    assert robot["owner"] == "nobody" and robot["age_s"] < 1.0
+    assert scene.stack.stations[0].ws.state.view_age_s is None
     print(
         f"measured: stop typed at joint target 40, the move ended after {sent}; "
         f"typed to 'stop: taken' {(desk.when('stop: taken.') - typed_at[0]) * 1e3:.0f} ms"
@@ -682,7 +672,7 @@ def test_the_console_and_the_view_survive_a_restarted_robot_app(
     stack, desks = sim_demo
     first = stack.h
     desk = desks.console()
-    view = desks.view("--source", "none")
+    view = desks.view()
     other = stack.client("console")
     stack.connected(other)
     old = other.ws.state
@@ -695,6 +685,18 @@ def test_the_console_and_the_view_survive_a_restarted_robot_app(
     # The console announces a loss only after a tick of its own saw the
     # robot connection up.
     desk.wait("robot connection up | clients ")
+    # The viewer has the first robot app's states.
+    browser = Browser(view.port)
+    try:
+        before = browser.robot()
+        for _ in range(40):
+            if before["age_s"] is not None:
+                break
+            time.sleep(0.25)
+            before = browser.robot()
+    finally:
+        browser.close()
+    assert before["age_s"] < 1.0 and before["owner"] == "nobody", before
 
     stack.dialer.close()
     first.app.close()
@@ -709,19 +711,35 @@ def test_the_console_and_the_view_survive_a_restarted_robot_app(
     desk.wait(f"session {second.app.session_id}, driver sim")
     assert desk.count("WELCOME: ") == 2
     desk.sees(lambda state: state.session_id == second.app.session_id)
-    # The view shows the new session too.
-    browser = Browser(view.program.port)
+
+    # The viewer stays attached and has the new robot app's states: fresh
+    # ones, with that robot app's own numbers.
+    def session() -> str:
+        """The session the robot link service names to the viewer."""
+        return view.model.status_json(time.monotonic(), None)["robot"]["session_id"]
+
+    def newest_of_the_new_app(told: dict[str, Any]) -> bool:
+        newest = other.ws.state
+        return (
+            newest.session_id == second.app.session_id == session()
+            and told["age_s"] is not None
+            and told["age_s"] < 1.0
+            and abs(told["seq"] - newest.seq) <= 5
+        )
+
+    browser = Browser(view.port)
     try:
-        page = browser.status()
+        told, live = browser.robot(), browser.live()
         for _ in range(20):
-            if page["robot"]["session_id"] == second.app.session_id:
+            if newest_of_the_new_app(told):
                 break
             time.sleep(0.25)
-            page = browser.status()
+            told, live = browser.robot(), browser.live()
     finally:
         browser.close()
-    assert page["robot"]["session_id"] == second.app.session_id
-    assert page["robot"]["connected"] is True and page["robot"]["driver"] == "sim"
+    assert newest_of_the_new_app(told), (told, other.ws.state.seq)
+    assert told["n"] > before["n"] and told["owner"] == "nobody"
+    assert live["view"]["attached"] is True and live["view"]["live"] is False
     # A command with the numbers of the old session is refused.
     refused = other.ws.wait_result(other.ws.rest(**numbers), timeout_s=WAIT_S)
     assert refused.status == "refused" and refused.reason.startswith("session id ")
@@ -769,12 +787,6 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
         )  # fmt: skip
         programs.append(app)
         app.wait_line(f"dialing the robot link service at {HOST}:{port}")
-        view = Program(
-            VIEW_MODULE, "--config", str(write_config(folder, path)), "--source", "none"
-        )
-        programs.append(view)
-        line = view.wait_line("live view: open http://127.0.0.1:")
-        view_port = int(line.split("http://127.0.0.1:")[1].split("/")[0])
 
         # The console program, at a terminal, names the driver the robot app
         # declares.
@@ -782,7 +794,9 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
         programs.append(desk)
         desk.wait("attached to the robot link service: ")
         assert f", driver {driver}, " in desk.wait("WELCOME: ")
-        desk.wait(f" | clients 1 console, 1 viewer | driver {driver} | owner nobody #")
+        line = desk.wait(f" | clients 1 console | driver {driver} | owner nobody #")
+        # No viewer is attached: nothing reports a live view.
+        assert " | view none | " in line
 
         # The console command, twice: it reads the state, and its STOP is taken.
         state = Program(CONSOLE_CMD_MODULE, "--socket", path, "state")
@@ -802,30 +816,11 @@ def test_the_programs_of_demo_1_start_as_processes_and_end_cleanly(
         desk.answer(ASK_REST, PATH_IS_CLEAR)
         desk.wait("rest: RESULT completed", REST_WAIT_S)
 
-        # The page of the view process shows the same robot.
-        browser = Browser(view_port)
-        try:
-            page = browser.status()
-            for _ in range(20):
-                state = page["state"]
-                if state and state["stop_number"] == 1 and not state["torque_on"]:
-                    break
-                time.sleep(0.25)
-                page = browser.status()
-        finally:
-            browser.close()
-        # The typed rest ended with the motors off.
-        assert page["state"]["stop_number"] == 1 and not page["state"]["torque_on"]
-        assert page["robot"]["driver"] == driver and page["robot"]["connected"]
-        assert page["picture"]["overlay"] == NO_PICTURE
-
         # Each program ends by its own way out.
         app.type("quit")  # at rest: nothing is asked
         assert app.wait_exit() == 0
         assert "quit: completed; the robot app closes" in app.lines
         desk.wait("ROBOT CONNECTION LOST: ")
-        view.signal(signal.SIGTERM)
-        assert view.wait_exit() == 0
         desk.type("quit")
         assert desk.wait_exit() == 0
         assert desk.said[-1] == QUIT_NOTE_LOST
