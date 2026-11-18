@@ -92,15 +92,26 @@ steps for a session on the real arm are in [First run on the rig](#first-run-on-
 - **Jaws**: the gripper's two fingers. **Jaws proven empty**: the jaws were referenced (closed
   once to find their zero), their readings agree and lie at the last jaw target, that target is
   full open or the jaws are closed, and no close has ended short of its target since the jaws
-  were last measured full open.
-- **Operator console**, **live view**: two workstation programs. At the console the operator
-  reads the robot's state and types `stop`, `rest`, `release` and the other commands; the live
-  view shows the camera picture and the robot's status in a browser. **Console command**: a
-  third program that sends one of the console's commands and ends.
+  were last measured full open. Jaws that were told to close and read at or below the closed
+  line (`gripper.closed_frac`, 0.04 of the jaw travel on the rig) count as closed on nothing,
+  however far short of the closed stop the close ended. The cost: something thinner than
+  that line between the jaws counts as empty too.
+- **Operator console**: the workstation program at which the operator reads the robot's
+  state and types `stop`, `rest`, `release` and the other commands.
+  **Console command**: a
+  second program that sends one of the console's commands and ends.
+- **Live view**: the page of the experiment's viewer (`run_viewer.sh`) with its live
+  picture showing, in a visible browser tab. The viewer tells the robot app how old the
+  picture on that page is, and a person's takeover needs it on the rig. See
+  [The live view](#the-live-view).
+  **Live view program**: an earlier page of this example, with a camera picture and the
+  robot's status (`run_view.sh`, `view/`). It is no longer part of the rig's set-up; the
+  one-machine recipes and the tests still run it.
 - **Thor terminal**: the terminal on the Thor in which the robot app runs. The operator at the
   robot types there.
-- **Demo 1**: the agent completes a task on the arm while an operator watches the live view and
-  can stop the arm or send it to rest from the console.
+- **Demo 1**: the agent completes a task on the arm while an operator watches and
+  can stop the arm or send it to rest from the console. The operator watches the arm
+  itself or the viewer's live picture.
 - **Demo 2**: when the agent fails, a person takes the arm over with the right
   controller of a headset, moves it, ends at rest and gives the arm back, and the agent's
   next task runs. The person is prompted by a help request when the agent got stuck, was
@@ -160,8 +171,9 @@ steps for a session on the real arm are in [First run on the rig](#first-run-on-
 - **Run folder**: the folder one run of the agent program writes its files into.
 - **The experiment's viewer**: `thor_viewer.py` of the experiment folder, a web page for a
   browser on what a run recorded: the obstacle map, the measured joints, the poses APAI's
-  checker refused and the timing. `run_viewer.sh` starts it on the workstation. It is not
-  the live view.
+  checker refused and the timing. `run_viewer.sh` starts it on the workstation, with the
+  camera's **live picture** on the same page: the camera's picture as it arrives, shown and
+  not stored. With the live picture showing, that page is the live view.
 
 ## What this folder contains
 
@@ -192,8 +204,11 @@ inside it; [Layout](#layout) shows where.
 - The agent side (`agent/`): the agent program, its arm adapter, the check ahead, the camera
   input and the console command. See
   [The agent side on the workstation](#the-agent-side-on-the-workstation).
-- The operator console (`console/`) and the live view (`view/`). See
-  [The operator console](#the-operator-console) and [The live view](#the-live-view).
+- The operator console (`console/`). See [The operator console](#the-operator-console).
+- The live view: what `viewer_live/` adds to the experiment's viewer, which is its live
+  picture and its word to the robot app on how old that picture is on the page. The
+  live view program (`view/`) is no longer part of the rig's set-up. See
+  [The live view](#the-live-view).
 - The start of the experiment's viewer on the run folders of the agent program
   (`run_viewer.sh`); the viewer's code stays in the experiment folder. See
   [The experiment's viewer](#the-experiments-viewer).
@@ -221,8 +236,8 @@ inside it; [Layout](#layout) shows where.
 - APAI, the experiment folder and the camera streamer are not in this repository. The agent
   program imports the first two from where their environment variables point;
   `run_camera_receiver.sh` starts the third's receiver.
-- No camera frame from a Thor has reached the camera input or the live view. Both are tested
-  on recorded stereo pairs and on stereo pairs the tests make up.
+- No camera frame from a Thor has reached the camera input or the viewer's live picture
+  in a test. Both are tested on recorded stereo pairs and on stereo pairs the tests make up.
 - No headset was connected. Every takeover and every motion of a person in the tests comes
   from a synthetic controller or from link messages a test makes; see
   [What is not tested without a headset](#what-is-not-tested-without-a-headset). Human
@@ -311,7 +326,7 @@ the same link messages as on the robot connection. In Python `connect_local(path
 |---|---|---|---|
 | `agent` | The agent program's arm adapter | MOVE, GRIPPER, PERMIT, CHECKER_STATE, STOP, and OWNER_REQUEST "agent", "help_needed", "nobody", "motors_off", "motors_on", "park" | One |
 | `console` | The operator console | STOP, RESET, RELEASE, OPEN, SHUTDOWN, and OWNER_REQUEST "rest", "nobody", "motors_on"; with `operator.typed_takeover: true` in the service's file also OWNER_REQUEST "human", "handback" | Several |
-| `viewer` | The live view program | VIEW_STATUS, STOP | Several |
+| `viewer` | The experiment's viewer with its live picture (`run_viewer.sh`); the live view program | VIEW_STATUS, STOP | Several |
 | `tool` | Anything that only reads | STOP | Several |
 | `human` | The human program | HUMAN_SETPOINT, STOP, and OWNER_REQUEST "human", "handback" | One |
 
@@ -402,8 +417,10 @@ the same link messages as on the robot connection. In Python `connect_local(path
   has ended stays there until the next one; `expires_in_s` is negative once it has expired,
   and the console then adds `expired`. **`health.permit_refusal`** says why the running
   move's newest permit was refused, or is empty.
-- **VIEW_STATUS** is the one link message the live view sends: `live`, `age_s` and, while
-  the view is live, `sent_mono_s`. The robot app stores it and reports it back as
+- **VIEW_STATUS** is the one link message the experiment's viewer sends: `live`, `age_s`
+  and, while the view is live, `sent_mono_s`. It is live only while the viewer's page
+  shows its live picture in a visible browser tab (see [The live view](#the-live-view)).
+  The robot app stores it and reports it back as
   `view_age_s`. With `human.require_live_view` it also gates a person's motion: without
   a view age, or with one above `human.view_age_limit_s`, a takeover is refused and a
   human drive ends in a hold. The robot link service takes it only from the role
@@ -415,7 +432,8 @@ the same link messages as on the robot connection. In Python `connect_local(path
   was sent. The stage is empty once no HUMAN_SETPOINT has arrived for
   `human.stage_keep_s` (4 s).
 - **`health.human` in ROBOT_STATE** holds the robot app's facts about a person driving:
-  `enabled` (the setting `human.enabled`), `takeover_open`, `driving` (a human drive runs),
+  `enabled` (the setting `human.enabled`), `live_view_required` (the setting
+  `human.require_live_view`), `takeover_open`, `driving` (a human drive runs),
   `needs_release` (the grip has to be released before the next squeeze moves the arm),
   `takeover` (empty, or why a takeover would be refused now), `refusal` (why the newest
   engaged HUMAN_SETPOINT moves nothing), `ended` (why the last human drive ended), `note`
@@ -449,9 +467,11 @@ notices the same way.
 - **A human program at the robot app's own socket stays attached.** It still gets
   ROBOT_STATE, and its STOP is still taken: the person's stop button, right B of the
   headset's controller, needs no robot connection. A squeeze of the controller's grip
-  moves nothing then where the robot app's file requires the live view, because
-  VIEW_STATUS comes over the robot connection (`human drive ended: the live view is not
-  fresh (...)`); a takeover asked for meanwhile is refused for the same reason. The
+  moves nothing then where the robot app's file requires the live view, as the rig's
+  files do, because VIEW_STATUS comes over the robot connection (`human drive ended: the
+  live view is not fresh (...)`); a takeover asked for meanwhile is refused for the same
+  reason. Where the file requires no live view, a new squeeze moves the arm
+  again and a takeover is taken, without a robot connection. The
   buttons themselves reach the Thor over the human program's own connection to the
   workstation: where one cable carries both connections and is pulled, the human
   program reads no button, and the arm holds on the missing controller data.
@@ -585,7 +605,8 @@ the hold markers are read from APAI's default folder.
 
 The agent side is what runs beside the robot link service: APAI's agent, its camera input and
 its obstacle check. The operator's programs run beside it: the console, the console command
-and the live view. All of them reach the arm only through the local API. The human
+and the experiment's viewer, whose page is the live view. All of them reach the arm only
+through the local API. The human
 program, through which a person drives the arm in demo 2, runs on the Thor on the rig; in
 the one-machine recipes it runs beside them and reaches the arm the same way. Nothing under
 `agent/` imports Isaac Capture or a motor driver, and APAI is not edited: the agent program replaces names of APAI's modules while it runs and puts them back when it
@@ -601,19 +622,21 @@ ends, also when one of its start steps fails.
 | Camera receiver | Workstation | `./run_camera_receiver.sh --host THOR_ADDRESS`: the address is the Thor's, which the receiver dials, not the workstation's own |
 | Agent program | Workstation | `./run_agent.sh --config configs/agent.yaml --interactive` |
 | Operator console | Workstation | `./run_console.sh` |
-| Live view | Workstation | `./run_view.sh --config configs/view.yaml` |
-| The experiment's viewer | Workstation | `./run_viewer.sh` (see [The experiment's viewer](#the-experiments-viewer)) |
+| The experiment's viewer | Workstation | `./run_viewer.sh`; its page is the live view (see [The experiment's viewer](#the-experiments-viewer) and [The live view](#the-live-view)) |
+| Live view program | The one machine of the one-machine recipes | `./run_view.sh --config configs/view.yaml --source none`. Not part of the rig's set-up |
 | Human program | Thor on the rig; the one machine of the one-machine recipes | On the Thor `bash run_human.sh --config configs/human_rebot.yaml`, beside a robot app started with `--human-socket`; on one machine `bash run_human.sh --config configs/human.yaml` (see [The human program](#the-human-program)) |
 | Teleop Session Server, with the headset's streaming service | Workstation, on the rig only | Isaac Capture's own programs, for demo 2 (step F1 of [the checklist](#first-run-on-the-rig)) |
 | Console command | Workstation | `python -m isaaccapture_examples.agentic_remote.agent.console_cmd COMMAND` |
-| The console, the agent program, the robot link service, the live view, the camera receiver and the experiment's viewer of demo 1 on the rig, together | Workstation | `bash run_workstation.sh --env FILE --thor THOR_ADDRESS`: one window of tmux, a program that splits a terminal into panes, with a pane for each of the six (see [The start scripts](#the-start-scripts)) |
+| The console, the agent program, the robot link service, the camera receiver and the experiment's viewer of demo 1 on the rig, together | Workstation | `bash run_workstation.sh --env FILE --thor THOR_ADDRESS`: one window of tmux, a program that splits a terminal into panes, with a pane for each of the five (see [The start scripts](#the-start-scripts)) |
 
 With `--camera link` the agent program starts the camera frame bridge itself, under the
-interpreter `camera.bridge_python` names. The live view starts a second one for itself. The
+interpreter `camera.bridge_python` names. The experiment's viewer starts a second one for
+its live picture. The
 camera receiver, the bridges and the agent program use one GPU: index 0 in PCI bus order.
 `run_agent.sh`, `run_view.sh`, `run_human.sh`, `run_viewer.sh`, `run_camera_receiver.sh`
 and the agent program set `CUDA_DEVICE_ORDER=PCI_BUS_ID` and `CUDA_VISIBLE_DEVICES=0`
-themselves; the human program and the experiment's viewer need no GPU.
+themselves; the human program and the experiment's viewer need no GPU. The viewer's live
+picture has a camera frame bridge of its own, on the same GPU.
 
 ### The agent program
 
@@ -621,6 +644,7 @@ themselves; the human program and the experiment's viewer need no GPU.
 python -m isaaccapture_examples.agentic_remote.agent --config PATH
     [--task TEXT] [--interactive] [--max-steps N]
     [--camera link|mock|recorded:<dir>] [--check] [--run-dir PATH] [--log-level L]
+    [--debug-map-hz HZ] [--debug-at-limit drop-oldest|stop]
     [--batch-milestones] [--record-debug] [--debug-max-gib GIB] [--no-timing]
     [--motion-approval task] [--operate] [--depth-backend NAME]
     [--speed-profile conservative|reference] [--mounting PATH]
@@ -665,6 +689,20 @@ python -m isaaccapture_examples.agentic_remote.agent --config PATH
   below). `--check` prints no `WARNING` for it; the run does.
 - `--run-dir PATH` names this run's folder; `--log-level` is `debug`, `info`, `warning` or
   `error`.
+- `--debug-map-hz HZ` (default 2) is how many pictures of the obstacle map the debug
+  recording of `--record-debug` stores a second; `--debug-map-hz 0` stores every one. It
+  decides only what is written: the obstacle map, the checks and the arm are the same at
+  every rate. It is the agent program's own argument, for the full stack, and without
+  `--record-debug` it does nothing. What is stored at which rate, and how long the
+  recording then lasts, is in the bullet on the disk under
+  [The options of the experiment's launcher](#the-options-of-the-experiments-launcher).
+- `--debug-at-limit drop-oldest|stop` (default `drop-oldest`) is what the debug recording
+  does when it reaches `--debug-max-gib`. With `drop-oldest` its oldest map pictures are
+  dropped to make room, so the recording goes on with the newest stretch and the
+  experiment's viewer keeps following. With `stop` the recording ends there, as the
+  experiment's own does, and the viewer no longer updates. Like `--debug-map-hz` it is the
+  agent program's own argument, for the full stack; the same bullet on the disk tells what
+  is dropped and what never is.
 - The nine arguments of the last three lines are those of the experiment folder's own
   launcher; see
   [The options of the experiment's launcher](#the-options-of-the-experiments-launcher).
@@ -716,7 +754,7 @@ as it stands:
 |---|---|
 | `--batch-milestones` | The experiment's milestone batching: one model request for the **milestones** (the steps the agent splits a task into) that are checked on one camera frame |
 | `--record-debug` | The experiment's **debug recording** in `<run folder>/debug`: what went into the obstacle grid (camera frames, depth), masks, map revisions and the joint feedback the program read. [The experiment's viewer](#the-experiments-viewer) shows a run only with it. It needs the timing: with `--no-timing` or with `experiment.timing: false` the program ends with exit code 2 and `--record-debug needs the timing; ...` |
-| `--debug-max-gib GIB` | The size on disk at which the debug recording stops (16). It must be a finite number above 0. Without `--record-debug` it does nothing |
+| `--debug-max-gib GIB` | The most the debug recording takes on disk (16). When it gets there, the agent program drops its oldest map pictures and the recording goes on; with the agent program's `--debug-at-limit stop` it stops there, as in the launcher. It must be a finite number above 0. Without `--record-debug` it does nothing |
 | `--no-timing` | This run goes without the experiment's timing |
 | `--motion-approval task` | One typed `yes` before the first skill that moves in each task (the launcher calls such a skill a motion tool). The program does that with or without the argument. `--motion-approval tool`, a `yes` before every such skill, is not built: it ends the program with exit code 2 and `--motion-approval tool is not built: ...` |
 | `--operate` | Accepted: every run of the program may move the arm, after the typed `yes`, with or without it. As in the launcher it needs the operator's terminal: without one, or inside the environment of an AI agent, the program ends at its start with exit code 2 and `--operate requires the operator's interactive terminal, outside an agent environment` |
@@ -733,7 +771,8 @@ as it stands:
 - **With `experiment.stack: minimal` none of this runs**, and `--batch-milestones`,
   `--record-debug`, `--debug-max-gib` and `--no-timing` are refused (exit code 2, `...
   needs experiment.stack full (it is minimal): ...`): the minimal stack loads none of
-  the experiment's modules.
+  the experiment's modules. The program's own `--debug-map-hz` and `--debug-at-limit` are
+  refused the same way.
 - **What the workstation cannot record.** The motors are read and commanded by the robot
   app on the Thor, and the camera captures there. So the motor reads and sends and the
   camera's capture are not timed: a move is timed from its MOVE to its final RESULT, and
@@ -760,20 +799,116 @@ as it stands:
   connection: on Ctrl+C the STOP goes out and the local socket is closed before a
   recording writes its report. A recording that cannot end leaves the run's exit code
   as it was and says `a recording of this run did not end as it should: ...`.
-- **Disk: the debug recording stops when it reaches its size limit.** The limit is
-  `--debug-max-gib`, 16 GiB by default, and the experiment's recorder also stops by
-  itself with less than 2 GiB free. The run goes on without the recording. On the
-  workstation the limit was reached after about ten minutes of a session on the rig
-  (seen on 2026-11-16): from then on the experiment's viewer shows that run as it was
-  at that moment and no longer updates. To record longer, give the agent program a
-  larger limit, for example `--debug-max-gib 64`, on its command line; in the pane
-  `agent` of `run_workstation.sh` add it to the command before you press Enter. Each
-  such run takes up to its limit, about 17 GB with the default, in
-  `<state_dir>/runs/<run>/debug`. Nothing deletes old runs: delete the run folders you
-  no longer need by hand, while no agent program writes into them.
+- **Disk: at its size limit the debug recording drops its oldest map pictures and goes
+  on.** The limit is `--debug-max-gib`, 16 GiB by default. Alone, the experiment's
+  recorder stops for good when it gets there, and its viewer, which reads only the
+  recording, stands still. The agent program keeps the recording under the limit
+  instead (`--debug-at-limit drop-oldest`, the default): each time the next event would
+  not fit, the pictures of the oldest stored map picture are removed from
+  `<run folder>/debug/arrays`: the camera frame, the depth and the masks. So the
+  recording holds the newest stretch and the viewer's `Follow live` goes on for as long
+  as the session does. The agent program says it at its terminal when the limit is first
+  reached, and once more with the next task prompt: `debug recording reached
+  --debug-max-gib 16 after N min: from now on the oldest map pictures are dropped; the
+  viewer keeps following, and times before HH:MM:SS (S s on its time line) show no
+  picture. That time moves on with the run`. HH:MM:SS is this machine's clock time, and
+  S the same moment in seconds on the viewer's time line.
+  **Never dropped**: a row of `events.jsonl`, which is only appended to; an array from
+  outside the watcher, so the route segments, the refusals,
+  `verification.measurement`, the object masks a skill makes, `robot.feedback`,
+  `robot.state` and the session's start; a map refresh that a refusal or a route
+  segment names, or that was stored late for one or for a bridge call of its own; the
+  first map of the session; and the four newest map pictures.
+  **A dropped time in the viewer**, when the operator moves the time line back or
+  presses `Play recording`: the obstacle map with its points and the arm as they were,
+  and no camera picture. The viewer answers the request for that picture with `400`
+  and `No such file or directory`, for that request alone. A refusal still shows its
+  map and its picture. The map's points of a dropped picture stay until they take a
+  quarter of the limit, about four hours of them at 2 map pictures a second; then the
+  oldest go too. A time before that has no state: the page shows the error text of
+  that request under the refusals and stands at that time until the time line is moved
+  or `Follow live` is pressed. The stretch that has its pictures is about 30 min when
+  the limit is first reached and about 22 min after four hours, for the points and the
+  rows that stay; the rows take about 1 % of the default limit an hour.
+  **With `--debug-at-limit stop`** the recording ends at the limit, as the experiment's
+  does: from then on the viewer shows the run as it was at that moment, and the line
+  is `debug recording full after N min (--debug-max-gib 16): the viewer no longer
+  updates; the arm and the task are not affected. End the session and start the agent
+  again for a new recording, or raise --debug-max-gib`. The same line comes with
+  `drop-oldest` when nothing is left that may be dropped. Whatever the option, the
+  experiment's recorder stops by itself with less than 2 GiB free on the disk: that
+  line begins `debug recording stopped after N min` and names the reason.
+  For a longer stretch of pictures give the agent program a larger limit, for example
+  `--debug-max-gib 64` (about two hours), on its command line; in the pane `agent` of
+  `run_workstation.sh` add it to the command before you press Enter. Each run with
+  `--record-debug` takes up to its limit on disk, about 17 GB with the default, in
+  `<state_dir>/runs/<run>/debug`, and keeps it when the session has ended. Nothing
+  deletes old runs: delete the run folders you no longer need by hand, while no agent
+  program writes into them.
+- **What the debug recording stores of the obstacle map, and how much 16 GiB holds.** A
+  **map picture** is one camera frame of APAI's watcher (the thread that keeps the
+  obstacle map fresh): the map's refresh with that frame, `map.frame` to
+  `map.refresh_end` with the bridge's calls and the arm's mask, and the detector's
+  `object.mask` of the same frame. On the workstation the watcher takes about 7 a second
+  and one map picture takes about 4.7 MB on disk (the session of 2026-11-17, camera
+  1280 x 992: 17 GB in nine and a half minutes). The viewer's page asks for the state
+  every 500 ms, so it can show 2 a second. The recording stores `--debug-map-hz` map
+  pictures a second, 2 by default, each whole: 16 GiB then holds about 30 min, and
+  `--debug-max-gib 64` about two hours. `--debug-map-hz 0` stores every one, as the
+  experiment's launcher does: about 9 min. The 30 min and the two hours are computed,
+  not measured: of the events of that session's recording the rate of 2 would have
+  stored 5.3 GB of the 17 GB. No session on the rig has run with the rate yet. The
+  line `debug recording:` at the start names that time and what happens when the limit
+  is reached. The rate decides only
+  what is written: the map takes every camera frame at every rate. The map the viewer
+  shows is then up to about half a second older than the map the arm is checked
+  against. **Stored whatever the rate**: every event from outside the watcher, so
+  the route segments (`route.segment.begin`, `route.segment.end`), the
+  refusals (`safety.refusal`), `verification.measurement`, the object masks a skill
+  makes for a grasp, `robot.feedback`, `robot.state` and the session's start; and the
+  map refresh whose revision a refusal or a route segment names. When the rate had
+  left that refresh out, it is stored just before the event that names it: each of its
+  events then carries `recorded_late` with the time it happened (`event_mono_ns`), its
+  thread and the event it was stored for, and the row's own time is the time it was
+  stored. The three newest refreshes that were left out are held in memory for that.
+  A refresh in which the map asks the grid bridge for something it does not ask on
+  every refresh is stored the same way: `retire_target`, with which the experiment
+  takes a grasped object out of the map, is such a call.
+  **While the map stands still, and at the end.** When a pass of the watcher ends
+  without a new map revision (the camera gave no new frame, or the arm's pose for the
+  mask was not there) and no map was stored for a period of the rate, half a second by
+  default, the newest map the rate had left out is stored; so is the newest one when
+  the recording ends. `recorded_late` names `map.stall` or `map_rate.end` for them. So
+  the map in the viewer is not older than about a second while the map stands still,
+  and the last map of a session is in its recording.
+  **What the recording says of itself.** Two events `recording.map_rate`: the rate at
+  the start, and at the end how many map pictures came, were stored, were left out,
+  were stored after all, and were named but no longer held. `recording-status.json`
+  carries the same numbers as they stand, in a block `map_rate` (`map_hz`, `ticks`,
+  `stored`, `skipped`, `rescued`, `missing`), and what was dropped at the size limit in
+  a block `dropped_at_limit`: `refreshes` and `bytes`; `first_time_kept`, the seconds
+  on the viewer's time line from which every map has its picture; `points_dropped` and
+  `first_time_points_kept`, the same for the map's points; and `named_after_drop`, the
+  refusals and segments that named a map whose pictures were gone already. Both blocks
+  are also there when the session ended at the limit. A map picture that the rate
+  leaves out or the limit drops is not counted among the recorder's dropped events:
+  those stay the events the recorder lost.
+  **What `complete` means.** `complete` in that file is `false` as soon as one map
+  picture was left out by the rate or dropped at the limit. The experiment's replay
+  tools (`thor_replay_target_map.py`, `thor_replay_mask_margin.py`,
+  `thor_replay_target_footprint.py`, `thor_replay_pickup_success.py`) rebuild the map
+  from every recorded depth integration and start only on a recording that is
+  `complete`: they refuse such a run, as they refuse one that lost events. Record a
+  session that is meant for them with `--debug-map-hz 0 --debug-at-limit stop` and a
+  limit the session stays under: the recording is then the experiment's own and
+  `complete` means what it means there. The experiment's `thor_recording.py --point`
+  reads the bridge's answers, which stay, and then the camera frame of one refresh,
+  which may be gone. Every stored map revision holds the bridge's own answer, the map
+  as it was.
 - **`--check` with the same arguments** prints what a run would take under
   `run_options`. A run that takes any of it writes that into `run-options.json` in its
-  run folder.
+  run folder. With `--record-debug` both also name the map pictures a second and what
+  the recording does at its limit, as `debug_map_hz` and `debug_at_limit`.
 - **What differs from the launcher's `--motion-approval task`.** As in the launcher,
   the `yes` also covers a return to rest inside the task (APAI's `move_to_rest`
   skill). Here the `yes` is followed by the robot app's grant of the arm, and the
@@ -1104,11 +1239,15 @@ receiver.
 `run_viewer.sh` sets the environment and then runs the experiment's `thor_viewer.py` on
 the agent program's run folders; see [The experiment's viewer](#the-experiments-viewer).
 It needs `AGENTIC_REMOTE_AGENT_PYTHON`, `AGENTIC_REMOTE_EXPERIMENT_DIR` and
-`AGENTIC_REMOTE_APAI_SRC`, and exits with code 2 and one line without one of them.
+`AGENTIC_REMOTE_APAI_SRC`, and exits with code 2 and one line without one of them. With
+`AGENTIC_REMOTE_CAMERA_PR` set as well, and without `--no-live`, it runs the viewer through
+the example's launcher `viewer_live`, which adds the camera's live picture to the page
+and tells the robot app how old the picture on that page is: the page is then the live
+view (see [The live view](#the-live-view)).
 
 `run_workstation.sh` starts the workstation's programs of demo 1 on the rig together, in
 one tmux window. **tmux** is a program that splits one terminal into **panes**, each a
-terminal of its own. The window has six panes, all visible together, and each has its
+terminal of its own. The window has five panes, all visible together, and each has its
 name on its upper border:
 
 ```text
@@ -1121,27 +1260,35 @@ bash run_workstation.sh [--env FILE] [--thor ADDRESS] [--session NAME]
 | `console` | `./run_console.sh` |
 | `agent` | `./run_agent.sh --config configs/agent_rebot.yaml --operate --interactive --record-debug --depth-backend ffs --motion-approval task --batch-milestones` |
 | `service` | `python -m isaaccapture_examples.agentic_remote.link_service --config configs/link_service_rebot.yaml`, under the Python of `AGENTIC_REMOTE_AGENT_PYTHON` |
-| `view` | `./run_view.sh --config configs/view.yaml` |
 | `camera` | `./run_camera_receiver.sh --host ADDRESS` |
 | `viewer` | `./run_viewer.sh` |
 
 - **Which pane is which.** `console` is the operator console, where `stop`, `rest` and
   the other commands are typed. `agent` is the agent program, where tasks and their
-  `yes` are typed. `service` is the robot link service, `view` the live view's program
-  (its page is opened in a browser), `camera` the camera receiver and `viewer` the
-  experiment's viewer. The script arranges the six as tiles and leaves the pane
-  `console` selected.
-- **The service and the viewer start at once.** The camera receiver starts at once when
+  `yes` are typed. `service` is the robot link service, `camera` the camera receiver
+  and `viewer` the experiment's viewer. The script arranges the five as tiles in rows
+  of two: `console` and `agent` in the first row, `service` and `camera` in the second,
+  `viewer` alone in the third. It leaves the pane `console` selected.
+- **The pane `viewer` is the live view.** The experiment's viewer is the one web page of
+  the workstation. With its live picture showing in a visible browser tab, that page is
+  the live view, which a person's takeover needs on the rig
+  (`human.require_live_view: true` in the rig's robot app file; see
+  [The live view](#the-live-view)). The script says so in its last line: `live view:
+  the viewer's page with its live picture showing, in a visible browser tab; a person's
+  takeover needs it`. The live view program (`run_view.sh`) is started by nothing on
+  the rig, and the script has no option for it.
+- **The service and the viewer start at once.** The viewer attaches to the service by
+  itself, also when the service starts later or is started again. The camera receiver
+  starts at once when
   `--thor ADDRESS` gives the Thor's address; without it the command is typed into its
   pane with `THOR_ADDRESS` in the address's place and waits there.
-- **The console and the view start once the service listens.** Both attach once to the
-  service's local socket and end when nothing listens there, so the script sends their
-  commands only when the service takes a connection on that socket. It waits for that
+- **The console starts once the service listens.** The console attaches once to the
+  service's local socket and ends when nothing listens there, so the script sends its
+  command only when the service takes a connection on that socket. It waits for that
   at most 30 s; `--socket-wait SECONDS` names another wait, in whole seconds. When the
-  wait runs out, the two commands are typed into their panes and wait for Enter, and the
+  wait runs out, the command is typed into its pane and waits for Enter, and the
   script says `the robot link service took no connection on <socket> within 30 s: look
-  at the pane service`: press Enter in the panes `console` and `view` once the service
-  runs.
+  at the pane service`: press Enter in the pane `console` once the service runs.
 - **The agent's command is typed and not entered.** It stands in the pane `agent` and
   waits: click that pane and press Enter once the console shows the robot connection
   up. It carries the arguments the experiment's own launcher is started with on the rig
@@ -1152,8 +1299,8 @@ bash run_workstation.sh [--env FILE] [--thor ADDRESS] [--session NAME]
 - **A program that ended can be started again in its pane.** Each pane is a shell into
   which the script typed the command. When the program ends, the pane is back at the
   shell's prompt with its last lines still there: click the pane, press the Up key and
-  Enter. The live view needs that after every restart of the service: it ends by itself
-  when the service is gone.
+  Enter. The console needs that after every restart of the service: it ends by itself
+  when the service is gone. The viewer does not: it attaches again by itself.
 - **The mouse belongs to tmux.** The script switches tmux's mouse support on for its
   session. A click selects a pane, and what is typed goes to the selected pane. The
   wheel scrolls back through a pane's lines; `q` leaves that scrolling. A drag along a
@@ -1167,7 +1314,7 @@ bash run_workstation.sh [--env FILE] [--thor ADDRESS] [--session NAME]
      selects by itself, as it does without tmux, and its own copy key works
      (`Ctrl+Shift+C` in GNOME Terminal). The terminal program knows nothing of panes,
      so a selection of several lines runs across the panes beside it. Make the pane
-     fill the window first with `Ctrl+B`, then `z`; the same keys bring the six panes
+     fill the window first with `Ctrl+B`, then `z`; the same keys bring the other panes
      back.
 
   These are tmux's own defaults for a session with the mouse on. A tmux configuration
@@ -1177,8 +1324,8 @@ bash run_workstation.sh [--env FILE] [--thor ADDRESS] [--session NAME]
   1. `Ctrl+B`, then `d`, detaches: the window goes and every program runs on. `tmux
      attach -t agentic_remote` shows it again.
   2. To end the programs, end each in its pane first: Ctrl+D at the agent's `task> `,
-     `quit` at the console, Ctrl+C in the panes `view`, `camera` and `viewer`, and last
-     Ctrl+C in the pane `service`. Then `tmux kill-session -t agentic_remote` closes
+     `quit` at the console, Ctrl+C in the panes `camera` and `viewer`, and last Ctrl+C
+     in the pane `service`. Then `tmux kill-session -t agentic_remote` closes
      the window. None of this stops or moves the arm: the robot app on the Thor holds
      on its own. Do not close the window while the agent owns the arm: end the task
      first (Ctrl+C in the pane `agent` is a STOP).
@@ -1187,11 +1334,11 @@ bash run_workstation.sh [--env FILE] [--thor ADDRESS] [--session NAME]
 - **`--env FILE`** names a shell file of `KEY=value` lines that sets the six variables
   below. They may be set in the environment instead, and `--env` left out. **`--session
   NAME`** names the tmux session (`agentic_remote`). **`--socket-wait SECONDS`** is the
-  wait for the service's socket, above. **`--print`** prints the six commands and
-  starts nothing.
+  wait for the service's socket, above.
+  **`--print`** prints the five commands and starts nothing.
 - **The six variables**: `AGENTIC_REMOTE_AGENT_PYTHON` (the Python of the workstation
-  environment; the script also gives it to the console and the view as
-  `AGENTIC_REMOTE_CONSOLE_PYTHON` and `AGENTIC_REMOTE_VIEW_PYTHON`),
+  environment; the script also gives it to the console as
+  `AGENTIC_REMOTE_CONSOLE_PYTHON`),
   `AGENTIC_REMOTE_ENV_DIR`, `AGENTIC_REMOTE_ISAAC_CAPTURE_PY` (the folder of the
   Isaac Capture Python package built for that Python), `AGENTIC_REMOTE_APAI_SRC`,
   `AGENTIC_REMOTE_EXPERIMENT_DIR` and `AGENTIC_REMOTE_CAMERA_PR`. Each pane's command
@@ -1202,7 +1349,7 @@ bash run_workstation.sh [--env FILE] [--thor ADDRESS] [--session NAME]
   is `./run_viewer.sh --host <that address> --no-auth`. Anyone who can reach that
   address can then see the camera pictures, the maps and the timings of the runs,
   without a token. Without it the viewer listens on `127.0.0.1` and asks for its token.
-  The script's last line, `viewer: ...`, names the page's address in both cases. A
+  The script's line `viewer: ...` names the page's address in both cases. A
   value that is not an IPv4 address or a host name of letters, digits, dots and hyphens
   is refused with exit code 2 and one line.
 - **Exit code 2 and nothing started**: an unknown argument, a variable that is not set,
@@ -1382,7 +1529,8 @@ the split between the Thor and the workstation has been seen yet.
 ## The operator's programs
 
 The operator has three programs on the workstation: the operator console, the console
-command and the live view. Each is a local client of the robot link service. At the robot
+command and the experiment's viewer, whose page is the live view. Each is a local client
+of the robot link service. At the robot
 there is the Thor terminal.
 
 ### What the operator types to confirm
@@ -1455,6 +1603,14 @@ What it prints, one line each:
   person at the controller (below) and the age of the ROBOT_STATE it shows. An owner that
   lasts less than a second can be missing from the status lines; the EVENT lines name every
   change.
+- **The view age** in the status line is `view N s`, or `view none` without one. It comes
+  from the experiment's viewer: how old the live picture on its page is (see
+  [The live view](#the-live-view)). `view none` on the rig means that no takeover is
+  possible: the viewer's page does not show its live picture in a visible browser tab,
+  or the viewer does not run. Where
+  the robot app's file asks for no live view (`human.require_live_view: false`, as in
+  the one-machine recipes) and none reports, the line says `live view not required` in
+  its place. A missing live view is then no reason against a takeover.
 - **The motors' state** in the status line is one of six texts. `torque on` in
   ROBOT_STATE says only that the robot app switched the motors on and has not released
   them: the reBot motor bus has no read of a motor's enable state. What the joint
@@ -1469,8 +1625,8 @@ What it prints, one line each:
   | `torque off` | The robot app released the motors at measured rest; `on` switches them on again |
   | `torque unknown` | A torque release failed: the motors may be on or off |
 
-  The live view's page shows the same state in its row `Torque`, and the robot app's
-  line after the real driver's connect names it.
+  The live view program's page shows the same state in its row `Torque`, and the robot
+  app's line after the real driver's connect names it.
 - **`missed deadlines N`** in the status line, behind the permit, only while N is above
   zero. A **missed deadline** is a setpoint of a move that the robot app reaches, or has
   sent, more than `executor.small_delay_s` (0.005 s) late; a move that ends `late` counts
@@ -1610,7 +1766,7 @@ is printed when the robot app's reason in it changes. Its texts, the first that 
 | `takeover: not possible: no human program is attached: start run_human.sh` | The robot link service counts no client in the role `human`, and ROBOT_STATE reports none at the robot app's own socket |
 | `takeover: not possible: no ROBOT_STATE` | None has arrived |
 | `takeover: not possible: this robot app does not report it` | ROBOT_STATE has no `health.human.takeover` |
-| `takeover: not possible: <reason>` | The robot app's own word, `health.human.takeover`. The first of: a fault-stop is latched; the motors are off; `no fresh controller data: ...`; `a synthetic controller may drive only a simulated arm; ...`; `the live view is not fresh: ...` |
+| `takeover: not possible: <reason>` | The robot app's own word, `health.human.takeover`. The first of: a fault-stop is latched; the motors are off; `no fresh controller data: ...`; `a synthetic controller may drive only a simulated arm; ...`; `the live view is not fresh: ...; show the viewer's live picture in a visible browser tab` |
 | `takeover: possible now: hold right B for 1 s with the grip released` | None of the above |
 
 | While a takeover is open | When |
@@ -1663,12 +1819,105 @@ robot link service. 2: a command that does not exist.
 
 ### The live view
 
+The live view is the page of the experiment's viewer with its live picture showing, in a
+visible browser tab. `run_viewer.sh` starts the viewer, and `run_workstation.sh` starts
+it in its pane `viewer` (see [The experiment's viewer](#the-experiments-viewer)). The
+viewer attaches to the robot link service in the role `viewer` and tells the robot app,
+with a VIEW_STATUS every 0.2 s, how old the picture is that the page has on its screen.
+**It only looks**: VIEW_STATUS is the only link message it sends.
+
+- **What a takeover needs.** Where the robot app's file says
+  `human.require_live_view: true`, as the rig's files `configs/robot_app_rebot.yaml` and
+  `configs/robot_app_human_check.yaml` do, a person takes the arm over and drives it
+  only while the view is live and at most `human.view_age_limit_s` old (0.5 s). For
+  that, four things hold: the viewer runs and is attached to the robot link service; the
+  camera's pictures arrive; the viewer's page is open in a browser on the workstation,
+  in a tab that is visible; and the page shows the live picture, with at least three
+  quarters of it inside the browser window. The live picture is at the top of the
+  page's right column, under its button. The page then reads `Map picture` on that
+  button, nothing beside it, and the line under the button ends with `The robot is
+  told: live view, N s old.` The console's status line shows `view N s`.
+- **What takes the live view away.** `Map picture` was pressed. A recording plays, the
+  timeline was moved, a refusal or an older run was picked. The tab is hidden, or the
+  browser is closed or frozen. The page is scrolled, or the window made small, so that
+  less than three quarters of the live picture are inside the browser window. The page
+  was loaded again in another tab on the workstation. The camera gives no picture. The
+  viewer ended, or was started with `--no-live`. The robot link service or the robot
+  connection is down. Beside its button the page says why in a few words: `Map picture
+  showing`, `tab hidden`, `scroll the live picture into view`.
+- **Only a page opened on the workstation is the live view.** The viewer gives a view
+  token only to a page whose request comes from its own machine: the client's address
+  is a loopback address or the address the request arrived on, both read off the
+  connection and not off a header. A page opened from another machine is a watch-only
+  page. It shows the live picture (`GET /api/live.jpg?after=N&watch=1`, which counts
+  for nothing), with `watch only: see below` beside its button and `watch only: the
+  live view is the page opened on the workstation` under it. Its acknowledgements are
+  refused, and it never replaces the operator's page: watchers come and go while the
+  operator's page counts. A second page opened on the workstation still replaces the
+  first.
+- **What the operator sees when a takeover is refused.** The console rings three times
+  and prints `[refused] owner request 'human' refused: the live view is not fresh:
+  <why>; show the viewer's live picture in a visible browser tab`. Before anyone asks,
+  `state` at the console prints `takeover: not possible:` with the same words, and the
+  status line shows `view none`. The human program's note says `takeover refused: ...`.
+  `<why>` is one of three. `no VIEW_STATUS has arrived`: the viewer is not attached;
+  look at the pane `viewer`. `the view is not live`: the page does not show its live
+  picture in a visible tab, or the camera gives none. `N s old, the limit is 0.5 s`:
+  the picture on the page is old; the page stopped drawing, or the pictures arrive
+  late.
+- **What happens to a drive that runs.** It ends in a hold, with the motors on, and the
+  person keeps the arm: `human drive ended: the live view is not fresh (the viewer
+  reports no live picture)`, or `(N s old, the limit is 0.5 s)`. Once the live picture
+  shows again, the grip is released and squeezed again, and the arm follows.
+- **What to do.** Open the viewer's page and press `Live picture`, or `Follow live`.
+  Keep that tab in front. A page that says `This page was loaded again, here or in
+  another tab: reload it for the live picture.` is reloaded.
+- **How the page proves what it shows.** The page asks for each camera picture by its
+  number (`GET /api/live.jpg?after=N`, answered once a picture newer than number N is
+  there), draws it and then tells the viewer that it has: `POST /api/live/shown` with
+  `{"seq": N, "visible": true, "token": "..."}`. When the live picture leaves the
+  screen, the page says so at once with `"visible": false`. The view is live only on
+  such a word, under the rules of **The view is live** and **The view token** below.
+  They are the live view program's rules: the viewer uses that program's model
+  (`view/model.py`) and sends the same VIEW_STATUS. Only the page opened last on the
+  workstation counts. Both paths also follow the viewer's own access rule: its token, or none with
+  `--no-auth`. A `POST` that names another site as its origin is refused.
+- **The rate.** The page draws up to `--live-fps` pictures a second, 30 by default. A
+  stand-in for a browser tab that ran the page's own script drew and acknowledged 30 a
+  second, and the acknowledged picture was 0.05 to 0.12 s old. No browser was used.
+- **Without a robot link service** the viewer serves everything and says one line:
+  `viewer: live view: not reported to the robot: cannot attach to the robot link
+  service: ...; trying again every 5 to 60 s. The page is served as before`. It attaches
+  by itself once the service runs, and says `viewer: live view: attached to the robot
+  link service at <socket>; the robot is told how fresh the page's live picture is`.
+  Its tries are 5, 10, 20 and 40 s apart and then 60 s, as the camera's are: after a
+  service that was down for long, up to a minute passes before the view is live again.
+  It looks for the service where the console does; `--link-socket PATH` names another
+  socket.
+- **One program at a time reports.** While another viewer or the live view program is
+  attached to the service, a viewer that starts later does not report: `another live
+  view is attached`.
+- **What this does not prove.** A visible tab says that the tab is in front, not that a
+  person looks at it. A program of the same user can play the browser. And a browser on
+  another machine whose connection a program on the workstation passes on (an SSH port
+  forward, a proxy) counts as one on the workstation: its requests arrive from the
+  workstation's own address.
+- **The age limit is a first value.** The viewer sends a VIEW_STATUS every 0.2 s, so the
+  age the Thor sees swings by about 0.2 s before any camera delay. Step F0 of the
+  checklist chooses `human.view_age_limit_s` from measured ages.
+
+**The live view program** (`view/`, `run_view.sh`) is an earlier page of this example
+that tells the robot app the same thing about a page of its own. It is no longer part
+of the rig's set-up: nothing on the rig starts it. The one-machine recipes and the
+tests still run it. The rest of this section describes it.
+
 ```text
 ./run_view.sh --config configs/view.yaml [--source link|recorded:<dir>|none] [--port N]
     [--log-level L]
 ```
 
-The live view serves one page for a browser on the same machine: `http://127.0.0.1:47620/`
+The live view program serves one page for a browser on the same machine:
+`http://127.0.0.1:47620/`
 (`http.port` of its file; another address than 127.0.0.1 is refused). The page shows the
 camera picture, made small, and under it the robot connection, the driver, the control
 owner, the stop, the move, the held permit, the jaws, the measured joints beside the last
@@ -1759,9 +2008,8 @@ the tests ask the page's addresses over HTTP, so the page's script ran in no tes
   `human.require_live_view: true`: without a live view, or with a view age above
   `human.view_age_limit_s`, a takeover is refused and a human drive ends in a hold (see
   [Demo 2: a person takes over](#demo-2-a-person-takes-over)). Nothing else acts on it.
-  With the shipped rates (5 pictures per second, a VIEW_STATUS every 0.2 s) the age the
-  Thor sees swings by about 0.4 s before any camera delay, so the shipped limit of 0.5 s
-  is a first value: step F0 of the checklist chooses it from measured ages.
+  With this program's shipped rates (5 pictures per second, a VIEW_STATUS every 0.2 s)
+  the age the Thor sees swings by about 0.4 s before any camera delay.
 
 `run_view.sh` needs `AGENTIC_REMOTE_VIEW_PYTHON`, a Python with numpy, OpenCV and PyYAML
 (the `view` extra of this folder's `pyproject.toml`); without it
@@ -1786,19 +2034,27 @@ is not set`.
 | 1 | No robot link service, a second view, the port is taken, or the service ended |
 | 2 | The arguments or the file cannot be used |
 
-The live view shows this moment's camera picture and nothing of a run. What a run did,
-and why a move was refused, is shown by the experiment's viewer, a program of its own.
+The live view program shows this moment's camera picture and nothing of a run. What a run
+did, and why a move was refused, is shown by the experiment's viewer.
 
 ### The experiment's viewer
 
 ```text
 ./run_viewer.sh [--runs FOLDER] [--host ADDRESS] [--port NUMBER] [--token-file FILE]
-    [--no-auth]
+    [--no-auth] [--no-live] [--live-fps N] [--live-width PIXELS]
+    [--receiver-socket PATH] [--link-socket PATH]
 ```
 
 The **experiment's viewer** is `thor_viewer.py` of the experiment folder: a web page
-for a browser on what a run recorded. `run_viewer.sh` starts it as it is, on the run
-folders of the agent program; none of its code is copied or changed.
+for a browser on what a run recorded. `run_viewer.sh` starts it on the run folders of
+the agent program; none of its code is copied or changed. With the **live picture**
+the script starts it through a small launcher of this example (`viewer_live`), which
+runs the viewer as it is, in its own process, and adds the camera's picture as it
+arrives. The page with its live picture showing is the **live view**: the launcher
+tells the robot app how old the picture on the page is (see
+[The live view](#the-live-view)). With `--no-live`, or without
+`AGENTIC_REMOTE_CAMERA_PR`, the script starts `thor_viewer.py` itself, alone: there is
+then no live picture and no live view, and a takeover on the rig is refused.
 
 - **What the page shows**: the obstacle map as the occupied cells of the map revision
   at that moment, in three dimensions; the measured joints as a stick figure of the
@@ -1809,15 +2065,94 @@ folders of the agent program; none of its code is copied or changed.
   the newest run while it is being recorded. The slider and **Play recording** replay
   a run, and the run selector picks an older one. The experiment's `THOR_VIEWER.md`
   explains the page.
-- **It reads files only.** It attaches to no robot link service, no camera and no
-  motor, sends no link message and writes nothing into a run folder. It can be started
-  and ended at any time; Ctrl+C ends the viewer and nothing else. Nothing it does can
-  move or stop the arm.
+- **The live picture.** The page's own picture is the camera frame a refresh of the
+  obstacle map stored, and the page asks for it twice a second at most: it changes
+  when the map does. The live picture is the camera's picture as it arrives on the
+  workstation: the left picture of the stereo pair, as the camera receiver has it,
+  made at most 960 px wide and packed as JPEG (quality 80), up to 30 a second. It is
+  **shown and not stored**: the launcher keeps the newest picture in memory and
+  writes no file. What a run keeps of the camera is what `--record-debug` records, as
+  before. The live picture is the camera's picture as it is: not rectified, without
+  the green mask of the arm and without the markers of a refusal, so it does not lie
+  pixel for pixel on the stored one.
+- **The two buttons.** While **Follow live** is active on the newest run and there is
+  a live picture, the page shows it in the place of the stored picture. Moving the
+  slider, **Play recording**, picking a refusal or an older run show the stored
+  picture with its mask and its markers, exactly as the experiment's page does;
+  **Follow live** brings the live picture back. The button over the picture names
+  what a press gives: **Map picture** while the live picture shows (the stored
+  picture, while the page goes on following the run), **Live picture** while the
+  stored one shows (back to following live, with the live picture). The page is the
+  live view only while the live picture shows.
+- **`no live picture`** on that button means that the launcher has no camera picture
+  younger than 2 s: `AGENTIC_REMOTE_CAMERA_PR` names no camera consumer's Python, the
+  camera receiver is not running, no camera frames arrive, or the launcher's camera
+  frame bridge ended. The text under the button says which. The launcher prints the
+  same, as `viewer: no live picture: <why>`, with the pause before its next try
+  (`trying again in 5 s`), once for each reason and each pause. The pause grows with
+  every failed try: 5 s, then 10, 20 and 40 s, and 60 s from then on; once pictures
+  arrived it is 5 s again. The launcher prints
+  `viewer: live picture: the camera's pictures arrive` when they come. Until then the
+  page is the experiment's own, and the recorded runs are served as before.
+- **The live picture's arguments**: `--no-live` starts the viewer alone. `--live-fps N`
+  is the most pictures a second, 1 to 60, 30 by default. `--live-width PIXELS` is the
+  picture's greatest width, 64 to 4096, 960 by default; a narrower camera frame is
+  not made wider. `--receiver-socket PATH` is the camera receiver's socket, by
+  default `/tmp/camera_receiver_avs1_cuda_ipc.sock`, the `ipc.socket_path` of
+  `configs/camera_receiver_rebot.yaml`. `--link-socket PATH` is the robot link
+  service's local socket, for the live view; by default the one the console attaches
+  to. A number outside its range ends the launcher
+  with exit code 2 and one line. With the camera frame bridge as it is, at most every
+  second camera frame reaches the page, 30 a second of the camera's 60, whatever
+  `--live-fps` asks for: the bridge proves each copy by the camera frame after it.
+- **The live picture's addresses**: `http://127.0.0.1:8766/api/live.mjpg` is the
+  stream, one JPEG after the other in one answer (`multipart/x-mixed-replace`).
+  `/api/live.json` says whether there is a live picture and why not (`available`,
+  `reason`), how many pictures a second were asked for and made (`fps_asked`,
+  `fps_measured`), the picture's width (`width`) and the age of the newest one
+  (`age_s`), and in `view` what the robot app is told of the live view (`attached`,
+  `why`, `live`, `age_s`). The page itself does not use the stream: it asks for
+  `/api/live.jpg` and answers with `/api/live/shown`, as
+  [The live view](#the-live-view) tells. All four follow the viewer's own access rule:
+  with a token they need the token, as the page's cookie or as an
+  `Authorization: Bearer` header; with `--no-auth` they are open.
+- **What the live picture costs.** One picture of the rig's camera (2560 x 1984)
+  takes about 16 ms of one processor core to make 960 px wide. The page's pictures at
+  30 a second take about 0.6 of a core in the viewer and 0.15 in its bridge, measured
+  on 2026-11-17 on the workstation with a stand-in for the camera receiver. That is
+  spent only while a browser shows the live picture: with no page open, the tab
+  hidden, a replay or **Map picture**, the camera is asked for one picture a second.
+  Every browser gets the same pictures, each made once; one that reads slowly gets
+  the newest and misses the ones between.
+- **It only looks.** The viewer reads the files of the runs. For the live picture
+  the launcher reads the camera receiver as well, through a camera frame bridge of
+  its own: a further reader, as the agent program's bridge is one. For the live view
+  it attaches to the robot link service in the role `viewer`, where it reads
+  ROBOT_STATE for the Thor's clock and sends VIEW_STATUS: no command, and no other
+  link message. It attaches to no motor and writes nothing into a
+  run folder. The bridge's log and socket are in a folder of the launcher's own under
+  the temporary folder, removed at the end. It can be started and ended while the
+  agent runs. The camera receiver sends to its readers one after the other and waits
+  up to 2 s on one that does not read; the agent's bridge gets no camera picture
+  meanwhile. A camera frame bridge therefore loads CuPy and makes its CUDA context
+  before it subscribes to the camera receiver, and reads from then on. Between the
+  two it only opens the receiver's slots: 2 ms for the rig's 24 slots on the
+  workstation's GPU 0, measured on 2026-11-17 without the camera receiver. In
+  `test_frame_bridge.py`, on a stand-in for the camera receiver, a bridge kept its 20
+  pairs a second while a second one, whose CuPy takes 3 s to load, started beside it.
+  This is not yet tried beside the agent on the rig's camera receiver. A bridge that
+  cannot start is tried again after the growing pause above; `--no-live` starts none.
+  Ctrl+C ends the viewer, with its bridge, and nothing else; its last word to the
+  robot app is that the view is not live. Nothing it does can move the arm. Without
+  the live view a person's takeover is refused and a human drive ends in a hold.
 - **Start it** in this folder, with the three variables set: `./run_viewer.sh`. It
   needs `AGENTIC_REMOTE_AGENT_PYTHON` (a Python with APAI's packages, numpy, OpenCV
   and PyYAML), `AGENTIC_REMOTE_EXPERIMENT_DIR` and `AGENTIC_REMOTE_APAI_SRC`, as
-  `run_agent.sh` does. The viewer prints its address, `http://127.0.0.1:8766/`: this
-  machine only, on the viewer's own port. It needs no GPU.
+  `run_agent.sh` does; the live picture is on when `AGENTIC_REMOTE_CAMERA_PR` is set
+  as well, and the script's lines say whether it is. The viewer prints its address,
+  `http://127.0.0.1:8766/`: this machine only, on the viewer's own port. The viewer
+  needs no GPU; the live picture's bridge copies the camera frames off GPU 0, where
+  the camera receiver keeps them.
 - **The page opens with a token.** The viewer answers a browser only after it was
   opened once with its access token: `http://127.0.0.1:8766/?token=<token>`. The
   script's second line gives `?token=<token>` to put behind the address. At the very
@@ -1848,8 +2183,8 @@ folders of the agent program; none of its code is copied or changed.
 - **APAI's own window and its own server stay off.** The agent program starts APAI
   with `--no-view` and `--no-serve`; the page for a run is this viewer.
 - **Exit code 2 and one line, nothing started**: one of the three variables cannot be
-  used, the experiment folder holds no `thor_viewer.py`, `--runs` or `--token-file`
-  has no value, `--runs` names no folder, or the state folder cannot be made.
+  used, the experiment folder holds no `thor_viewer.py`, an argument that takes a
+  value has none, `--runs` names no folder, or the state folder cannot be made.
 
 **What differs from the viewer on the experiment's own recordings on the Thor**:
 
@@ -1877,9 +2212,38 @@ measured joints went where the arm went, a refusal of the check ahead showed wit
 pose and its point, and a run without `--record-debug` was left out. One test starts
 it with `run_viewer.sh` as a process and asks it with its token. With the full stack's
 configuration the viewer was only asked to build the arm and its collision volumes.
-Not run: the page in a browser, so the page's script ran nowhere; the viewer on a
-recording of the real full stack, with its GPU, its obstacle grid bridge and the
-stereo camera; port 8766; and the pane `viewer` of `run_workstation.sh`.
+The live picture was run by tests too (`test_viewer_live.py`). From a stand-in camera
+of 60 pictures a second the stream gave between 20 and 30 different pictures a
+second, each newer than the one before; a browser that read one picture in 0.3 s
+missed most and did not slow another; every path of the viewer answered under the
+launcher with the same bytes as the viewer alone, the page with the block before its
+`</body>` and nothing else; without the token the four live paths answered 401, as
+the viewer's own. The live view was run by those tests as well. A stand-in for a
+browser tab, and node with the block's own script over HTTP, fetched, drew and
+acknowledged the numbered pictures: 30 a second from node. On the rig's robot app file
+with human driving switched on in memory, behind a robot link service that ran as a
+process, a takeover was taken and a drive ran while the tab acknowledged, on the
+simulated arm. The takeover was refused and a running drive ended in a hold, with the
+motors on, after each of five things: the page said that the live picture shows no
+longer, the tab said nothing more, the camera stopped, the viewer ended, and the page
+was loaded again elsewhere. The viewer sent, byte for byte, the VIEW_STATUS the live
+view program sent in the same situations. A viewer started without a robot link
+service served everything and attached once one ran. The whole launcher was started with `run_viewer.sh` on a fake
+camera receiver, with the real camera frame bridge program on files in the place of
+the GPU's slots and camera frames of the rig's size: the pictures came 960 px wide,
+no file changed in the runs folder or beside the token, and after Ctrl+C, SIGTERM and
+SIGHUP the bridge's process was gone. The block's script was run by node, through each
+switch of the two buttons: on a stand-in for the page, and behind the page's own
+script on stand-ins for the page's elements, where the page's own handlers for the
+slider, **Play recording**, a refusal, the run selector and **Follow live** switched
+the picture.
+Not run: the page in a browser, so nothing was drawn by one and no browser's
+acknowledgement reached a robot app;
+the live picture on the real camera stream, with CuPy and the GPU;
+the live view on the rig's camera, robot connection and real arm;
+the viewer on a recording of the real full stack, with its GPU, its obstacle grid
+bridge and the stereo camera; port 8766; and the pane `viewer` of
+`run_workstation.sh`.
 
 ## Demo 2: a person takes over
 
@@ -2051,9 +2415,12 @@ step keeps its size.
 
 **No obstacle check for a person**, as the design says: the human program does not read the
 obstacle grid and sends no PERMIT. What stands in for a permit is a fresh engaged human
-target and a fresh live view, both checked by the Thor before every setpoint. The person's
-eyes on the arm and on the live view are the obstacle check, which is why the live view is
-required. What the human checker enforces without a camera: finite values, the human joint
+target, checked by the Thor before every setpoint, and the person's eyes on the arm. The
+person's eyes are the obstacle check. On the rig the file says
+`human.require_live_view: true`: the Thor then also checks a fresh live view before
+every setpoint, which is the viewer's page with its live picture showing (see
+[The live view](#the-live-view)). Where a file says `false`, no program checks what
+the person sees. What the human checker enforces without a camera: finite values, the human joint
 box and the speed limit of `limits.human`; with APAI's checker also the workspace box and
 the table of APAI's profile and its margin from the model's joint limits. The agent's
 last grasp region binds a person in one way only: inside it the gripper tip is not
@@ -2168,7 +2535,7 @@ Rules that hold through all steps:
   controller data (`no fresh controller data: ...`); the source of those data, which on a
   driver that is not simulated must be `teleop`, the headset (`a synthetic controller may
   drive only a simulated arm; ...`); a fresh live view where the file requires it (`the
-  live view is not fresh: ...; open the live view page in a visible browser tab`); a full
+  live view is not fresh: ...; show the viewer's live picture in a visible browser tab`); a full
   joint read; after it the controller data, their source and the live view once more,
   because both ages count when the person becomes the control owner (such a refusal ends
   `; the joint read took ... s`, as in `no fresh controller data: 0.268 s old, the limit
@@ -2423,7 +2790,7 @@ Every end is a hold with the motors on.
 | An engaged HUMAN_SETPOINT that the robot app refuses while a human drive waits for its start or runs, for example for old owner or stop numbers or for its source | The robot app, as the HUMAN_SETPOINT arrives | Hold | as it was | `human drive ended: an engaged human target was refused: <the refusal>` |
 | A HUMAN_SETPOINT that quotes other owner or stop numbers than the drive was admitted with; an engaged one is refused as in the row above | The Thor, before every setpoint | Hold | as it was | `human drive ended: the human target quotes owner number N and stop number M, the drive was admitted at ...` |
 | The headset's stream to the Teleop Session Server stalls while the server keeps its tick rate | Nobody at once: the tick age stays fresh. By Isaac Capture's notes the controller is reported not active about 1 s later; not run | The hand's target stands still, so the arm stops within the two ahead limits. A grip release and right B are not seen until the stream is back; right B that went down meanwhile is a STOP then | human | Status line `headset no_controller` after about 1 s. This is why the abort of part F of the checklist is the Thor terminal |
-| The live view is not live or too old | The Thor, before every setpoint | Hold | human | `human drive ended: the live view is not fresh (...)` |
+| The live view is not live or too old, where the file says `human.require_live_view: true`, as the rig's files do: the viewer's page does not show its live picture in a visible browser tab | The Thor, before every setpoint | Hold | human | `human drive ended: the live view is not fresh (the viewer reports no live picture)`, or `(N s old, the limit is 0.5 s)` |
 | The robot connection is lost | The robot app | Hold | human | Console: `ROBOT CONNECTION LOST`. Thor terminal: `[connection] robot connection lost: the arm holds; the person keeps the arm: squeeze again when the connection is back; rest can still be typed at the Thor terminal` |
 | A target more than `limits.human.max_step_rad` from the last setpoint sent | The Thor | Hold | human | `human drive ended: the target is X rad from the arm on joint index i, the limit is Y rad` |
 | While the measured gripper tip is low: a target, or the step toward it, that would put the tip more than 1 mm under the highest it was measured since the takeover or since it last was not low | The Thor, before the human checker | Hold; that step is not sent | human | `human drive ended: lift the gripper: ...` |
@@ -2477,15 +2844,17 @@ light hold.
 
 ### The settings that ship off
 
-Each of these settings ships in its safe position, with one exception: `human.trigger_jaws`
-ships on, and acts only where `human.enabled` is true. The table says what the shipped
+Each of these settings ships in its safe position, with two exceptions. `human.trigger_jaws`
+ships on, and acts only where `human.enabled` is true. `human.require_live_view` ships
+`false` in the rig's files, by the owner's decision, and also acts only where
+`human.enabled` is true. The table says what the shipped
 value means, where it is switched and what a change waits for.
 
 | Setting and shipped value | What the shipped value means | What it waits for |
 |---|---|---|
 | `human.enabled: false` in `configs/robot_app.yaml` and `configs/robot_app_rebot.yaml` | A takeover is refused and no human target moves the arm. `true` only in the files of the one-machine recipes and of part F-A (`robot_app_mock.yaml`, `robot_app_demo2.yaml`, `robot_app_human_check.yaml`) | It is switched on in the rig file in the session, before step 15, once part F-A of the checklist has passed. Code that never saw a headset is not reachable on the arm before that |
-| `human.require_live_view: true` | A takeover and a human drive need a fresh live view. `false` with `human.enabled: true` is taken only with a simulated driver: with another the robot app does not start, and `--driver real` says so before its three questions | Nothing: `false` is for demo 2 on one machine without a camera |
-| `human.view_age_limit_s: 0.5` | The oldest live view a person may drive on. A first value | Step F0: the highest measured view age plus 0.2 s, at most 1.0 s |
+| `human.require_live_view: true` in `configs/robot_app.yaml` and in the rig's files `configs/robot_app_rebot.yaml` and `configs/robot_app_human_check.yaml` | With `true` a takeover and a human drive need a fresh live view: the viewer's page with its live picture showing, in a visible browser tab (see [The live view](#the-live-view)). With `false` they need none, on any driver, the real one included. A robot app with `human.enabled: true` and `false` here says so at its start, at the Thor terminal and in its log: `robot app: human driving is not tied to a live view (human.require_live_view false)`. `false` only in the files of the one-machine recipes, `configs/robot_app_demo2.yaml` and `configs/robot_app_mock.yaml`, which run without a camera | Nothing: it stays `true` on the rig |
+| `human.view_age_limit_s: 0.5` | The oldest live view a person may drive on. A first value. Read only with `human.require_live_view: true` | Step F0: the highest measured view age plus 0.2 s, at most 1.0 s |
 | `human.trigger_jaws: true` and `human.jaw_match_tol: 0.05` in every robot app file | Under a person the trigger drives the jaws once the opening it asks for has come within `human.jaw_match_tol`, a share of the jaw travel between 0 and 1, of the grip level. With `human.trigger_jaws: false` the trigger does nothing and no jaw command is sent under a person. Neither acts where `human.enabled` is false | The person's trigger has not moved the real jaws. Before step 15 the owner decides whether the first headset session on the arm runs with it: `human.trigger_jaws: false` in `configs/robot_app_rebot.yaml` is the session without it |
 | `operator.typed_takeover: false` in both service files | `takeover` and `handback` typed at the console are refused by the robot link service | Step F6: if right A or right B does not arrive, or a controller that dies during a takeover. Switching it on needs a restart of the robot link service |
 | `retarget.max_linear_velocity: 0.01` m/s and `retarget.max_angular_velocity: 0.03` rad/s in `configs/human_rebot.yaml` | The gripper tip moves about 1 cm per second under a person: the human program limits the hand's target, whatever the Thor's joint speed cap. `limits.human.max_joint_speed` in the rig file, 0.8 rad/s by the rig owner's decision, is the cap the Thor clamps a person's joint motion at | A bench test on this arm that supports a higher hand speed |
@@ -2534,7 +2903,7 @@ Each of these is in the design or in the plan of this phase, and is not built.
 | The console printing the takeover's steps one at a time, and whether a return to rest would be accepted now | One takeover line, the human program's note in the status line, the bells |
 | A remedy table on the console for a refused `rest` | The refusal's own text; the four refusals are named under [A takeover that cannot be ended with right A](#a-takeover-that-cannot-be-ended-with-right-a) |
 | A script for the synthetic controller from a file | The built-in scripts `lift`, `grasp` and `idle`; tests hand rows to the constructor |
-| The takeover's facts on the live view page; buttons in the browser | `HUMAN DRIVING` over the picture; the console shows the rest |
+| The takeover's facts on the viewer's page; buttons in the browser | The console shows them. The live view program's page writes `HUMAN DRIVING` over its picture |
 | A limit on the round trip | It is shown as `health.human.round_trip_s`; a limit needs a bench value first. The sample age itself holds the HUMAN_SETPOINT's way to the robot app |
 | The teleop feed's attempt to reach the Teleop Session Server on a thread of its own | The attempt blocks the human program's loop for up to `teleop.connect_timeout_s` (3 s); nothing can be driven then anyway, and `human.stage_keep_s` (4 s) covers it |
 | A timed return to rest after lost headset data; tasks typed at the Thor terminal; a human-only mode; gloves; a camera picture in the headset; a priority path for a STOP on the link | Not built |
@@ -2680,8 +3049,9 @@ one machine with the synthetic controller (`test_human_on_thor.py`).
   connection lost`). A new squeeze moves nothing where the robot app's file requires
   the live view, because VIEW_STATUS comes over the robot connection, and a takeover is
   refused then with `the live view is not fresh: no VIEW_STATUS has arrived; ...`.
-  With `human.require_live_view: false`, which the robot app takes only with a
-  simulated driver, a person can take over and drive with the robot connection down.
+  The rig's files require the live view, so on the rig nobody takes over or drives
+  with the robot connection down. With `human.require_live_view: false` a person can.
+  The console then shows nothing of it: the stop is the Thor terminal's, and right B.
 - **The console** shows `human program at the robot app` in its status line. `clients`
   there lists only what is attached to the robot link service.
 - **Start the robot app first, then the human program.** When the robot app ends, its
@@ -2731,8 +3101,8 @@ AGENTIC_REMOTE_HUMAN_PYTHON="$AGENTIC_REMOTE_THOR_PYTHON" \
     bash run_human.sh --config configs/human_rebot.yaml
 ```
 
-The robot link service, the console, the live view and the agent program run on the
-workstation as for demo 1. The Thor terminal shows `robot app: the human program's
+The robot link service, the console, the experiment's viewer and the agent program run
+on the workstation as for demo 1. The Thor terminal shows `robot app: the human program's
 socket is PATH` after its session line, and right B's `[stop] STOP from controller:
 right B; the arm holds, stop number N` also while it shows `robot app: no robot
 connection: ...`.
@@ -3015,6 +3385,16 @@ measure.
   0.05`), as in every robot app file. It acts only once `human.enabled` is true. For a
   first headset session on the arm without the trigger, set `human.trigger_jaws: false`
   in `configs/robot_app_rebot.yaml` before step 15.
+- **The rig requires the live view** (`human.require_live_view: true` in
+  `configs/robot_app_rebot.yaml`, and in `configs/robot_app_human_check.yaml` of part
+  F-A). The live view is the viewer's page with its live picture showing, in a visible
+  browser tab; `run_workstation.sh` starts the viewer in its pane `viewer`. A takeover
+  and a human drive need a fresh VIEW_STATUS of that viewer, and every other check of a
+  takeover and of each human target stays. Without it the takeover is refused: `the
+  live view is not fresh: ...; show the viewer's live picture in a visible browser
+  tab` (see [The live view](#the-live-view)). A second person stays at the Thor
+  terminal's stop. The live view program (`run_view.sh`) is not part of the rig's
+  set-up.
 - **The human program's file is for the Thor.** `socket_path` of
   `configs/human_rebot.yaml` is `~/.agentic_remote/human.sock`, the path the robot app
   is given as `--human-socket`. `teleop.endpoint` is the placeholder `192.0.2.1:47600`:
@@ -3354,7 +3734,11 @@ reset, open, close, quit or help`. It prints every operator event of the robot a
   within the driver's reach (0.1 rad of the jaw travel), fully open within what the
   driver's guarded opening may end short (0.4 rad of the jaw travel; 0.065 of the rig's
   6.2 rad). `gripper.reach_tol` and `gripper.open_step` are read only for the jaws
-  under a person's trigger.
+  under a person's trigger. The driver's reach does not count for jaws that were told to
+  close and read at or below the closed line: the driver's close before a torque release
+  ends 0.12 rad short of the closed stop on the rig, and such jaws are closed on nothing.
+  Something thinner than the closed line (0.25 rad of the rig's travel) between the jaws
+  then counts as empty too.
 - **A rest, a release, a shutdown or a hand-back refused only because the jaws are not
   proven empty asks you**: look at the jaws and type `jaws are empty`; the command is
   asked again, and the robot app takes your word until the jaws are next sent a command
@@ -3547,10 +3931,11 @@ On the human path:
 - **A jaw opening that is no number from 0 to 1 stops the jaws only.** The joint target
   of that HUMAN_SETPOINT is judged by its own fields.
 - **With the robot connection down the robot app takes a takeover from its own
-  socket.** Where its file requires the live view, as on the real arm, that takeover
+  socket.** Where its file requires the live view, that takeover
   and every human drive are refused, because VIEW_STATUS comes over the robot
-  connection. With `human.require_live_view: false`, on a simulated driver, a person
-  can take over and drive with the robot connection down.
+  connection. That is so with the rig's files. With `human.require_live_view: false`
+  a person can take over and drive the real arm with the robot connection down. No
+  console sees it then. The stops that remain are the Thor terminal's `stop` and right B.
 - **The human program on the Thor does not outlive the robot app.** Its socket closes
   with the robot app; the program ends with exit code 1 and is started again after the
   robot app.
@@ -3667,7 +4052,15 @@ On the human path:
   teleoperation session of Isaac Capture on the same server cannot run.
 - **The bells of one console line are written together.** Whether one, two and three bells
   ring apart at a real terminal was not tried.
-- **The page's script ran in no test** (see [The live view](#the-live-view)).
+- **No browser ran the viewer's page in a test.** Its script ran under node, on
+  stand-ins for the page and over HTTP against the viewer; the live view program's
+  page script ran in no test (see [The live view](#the-live-view)).
+- **The live view says that a tab shows the picture, not that a person looks at it**,
+  and on a network address without a token any browser that loads the viewer's page
+  becomes the page that counts (see [The live view](#the-live-view)).
+- **After a robot link service that was down for long, the viewer attaches up to a
+  minute late.** Its tries are 5, 10, 20, 40 and then 60 s apart. A takeover is refused
+  meanwhile with `no VIEW_STATUS has arrived`.
 
 On the torque release, the agent's jaw commands and the agent program's options:
 
@@ -3758,7 +4151,7 @@ examples/agentic_remote/
   configs/robot_app.yaml      settings: limits per control owner, timing, rest pose, dialing
   configs/link_service.yaml   settings of the robot link service
   configs/agent.yaml          settings of the agent program
-  configs/view.yaml           settings of the live view
+  configs/view.yaml           settings of the live view program
   configs/human.yaml          settings of the human program
   configs/robot_app_rebot.yaml configs/agent_rebot.yaml configs/link_service_rebot.yaml
   configs/human_rebot.yaml    the same four programs on the rig
@@ -3770,9 +4163,12 @@ examples/agentic_remote/
                               the headset checks before power (part F-A of the checklist)
   configs/camera_sender_rebot.yaml configs/camera_receiver_rebot.yaml
                               the camera streamer's two programs on the reBot rig
-  run_agent.sh run_camera_receiver.sh run_console.sh run_view.sh
+  run_agent.sh run_camera_receiver.sh run_console.sh
                               start scripts for the workstation
-  run_viewer.sh               start script of the experiment's viewer, for the workstation
+  run_view.sh                 start script of the live view program; not part of the
+                              rig's set-up
+  run_viewer.sh               start script of the experiment's viewer, for the
+                              workstation: its page is the live view
   run_workstation.sh          the workstation's programs of demo 1 on the rig, together
                               in one tmux window
   run_human.sh                start script of the human program: for the Thor on the rig,
@@ -3809,6 +4205,7 @@ examples/agentic_remote/
       camera/stereo_camera.py            APAI's camera on stereo pairs
       config.py task_gate.py             agent.yaml and APAI's configuration; a task's start and end
       launcher.py __main__.py            the agent program; its command line
+      debug_recording.py                 what the debug recording stores of the obstacle map, and drops at its size
       clear_grid.py                      the clear grid of the one-machine recipe
       console_cmd.py                     the console command
     human/
@@ -3818,9 +4215,14 @@ examples/agentic_remote/
       feed.py __main__.py                the controller feeds; the human program
     console/
       console.py status.py __main__.py   the operator console; its lines; its command line
-    view/
+    view/                                the live view program; the viewer uses its model
       model.py server.py                 what the page shows and the view age; the HTTP server
       page.html __main__.py              the page; the view program and its command line
+    viewer_live/
+      live.py page_block.html            the live picture of the experiment's viewer: the
+                                         pictures; the block that goes into the viewer's page
+      view_link.py                       the live view: VIEW_STATUS from the viewer
+      __main__.py                        the launcher that runs the experiment's viewer with it
     console_log.py            the console log level of the programs
     testing/client.py         a workstation-side client for the tests and the self-tests
 tests/python/examples/agentic_remote/    the tests
@@ -3872,7 +4274,9 @@ confirmation of the real driver that failed.
 This runs the programs of demo 1 on one machine, with the simulated arm: no robot, no
 camera, no GPU and no APAI. It needs a Python 3.11 to 3.13 environment with the example
 installed (`uv pip install -e ./examples/agentic_remote`), an Isaac Capture build on the
-Python path for the first two programs, and OpenCV for the live view (the `view` extra).
+Python path for the first two programs, and OpenCV for the live view program (the `view`
+extra). This recipe runs the live view program, the earlier page; the rig runs the
+experiment's viewer in its place.
 The other way installs nothing: the two variables `PY` and `PYTHONPATH` of
 [the next recipe](#run-demo-1-by-hand-with-the-mock-agent) name a Python that has the
 packages and put the example's `python` folder and the Isaac Capture build on its path;
@@ -3913,7 +4317,7 @@ and the Thor terminal shows `[stop] STOP from console: ...`. Type `rest`, then
 `[jaws]` and `[release]` lines, and the status line shows `rest_unpowered` and `torque
 off`. Type `on`, then `yes`: the motors are on again (`rest_hold`, `torque on`).
 
-**4. The live view**, without a camera.
+**4. The live view program**, without a camera.
 
 ```bash
 AGENTIC_REMOTE_CAMERA_PR="$PWD" AGENTIC_REMOTE_VIEW_PYTHON="$(command -v python)" \
@@ -3994,8 +4398,8 @@ imports. `BUILD` is the Isaac Capture build for that Python. Five terminals:
 | # | Terminal | Command | Must show |
 |---|---|---|---|
 | 1 | service | `"$PY" -m isaaccapture_examples.agentic_remote.link_service --config configs/link_service.yaml` | `robot link service: waits for the robot app on 127.0.0.1:47610 (taken from 127.0.0.1); local API at <socket path>` |
-| 2 | Thor terminal | `"$PY" -m isaaccapture_examples.agentic_remote.robot_app --config configs/robot_app_mock.yaml --arm apai --driver mock --connect 127.0.0.1:47610` | `robot app: session <id>; dialing the robot link service at 127.0.0.1:47610`, then `[connection] robot connection made: the arm holds as it was; a new connection starts no motion` |
-| 3 | console | `AGENTIC_REMOTE_CONSOLE_PYTHON="$PY" ./run_console.sh` | `WELCOME: robot apai-mock-arm, profile apai-rs-model, session <id>, driver apai-mock, camera calibration apai-mock-calibration`; a status line with `driver apai-mock`, `owner nobody #0`, `rest_hold`, `jaws empty`, `torque on, hold unknown` (no joint target was sent yet; later `torque on (holding)`), `view none` and `no human program` |
+| 2 | Thor terminal | `"$PY" -m isaaccapture_examples.agentic_remote.robot_app --config configs/robot_app_mock.yaml --arm apai --driver mock --connect 127.0.0.1:47610` | `robot app: human driving is not tied to a live view (human.require_live_view false)`, then `robot app: session <id>; dialing the robot link service at 127.0.0.1:47610`, then `[connection] robot connection made: the arm holds as it was; a new connection starts no motion` |
+| 3 | console | `AGENTIC_REMOTE_CONSOLE_PYTHON="$PY" ./run_console.sh` | `WELCOME: robot apai-mock-arm, profile apai-rs-model, session <id>, driver apai-mock, camera calibration apai-mock-calibration`; a status line with `driver apai-mock`, `owner nobody #0`, `rest_hold`, `jaws empty`, `torque on, hold unknown` (no joint target was sent yet; later `torque on (holding)`), `live view not required` and `no human program` |
 | 4 | view | `AGENTIC_REMOTE_CAMERA_PR="$PWD" AGENTIC_REMOTE_VIEW_PYTHON="$PY" ./run_view.sh --config configs/view.yaml --source none`; open `http://127.0.0.1:47620/` | `live view: open http://127.0.0.1:47620/ in a browser on this machine; camera pictures: none; the page shows the status only`. The page shows `NO PICTURE` |
 | 5 | agent | `AGENTIC_REMOTE_AGENT_PYTHON="$PY" ./run_agent.sh --config configs/agent_mock.yaml --camera mock --interactive` | `[agent] run folder ...`; two `[agent] WARNING:` lines, first that of the invented exposure times (`the camera frames of --camera mock carry invented capture times ...`), then `experiment.grid is clear: ...`; `[agent] robot connection up: robot apai-mock-arm, profile apai-rs-model, driver apai-mock, ...`; `[agent] obstacle grid: live (... s old); refreshes 1`; `[agent] ready. Ctrl+C at this terminal is STOP: the arm holds with the motors on. When the program ends you are asked whether the arm returns to rest; there the robot app switches the motors off`; the prompt `task> ` |
 | 6 | agent | Type `open the gripper`. The question ends in `Type yes to proceed:`; type `yes` | Agent: `[agent] the agent owns the arm (owner number 1)`, `[agent] task completed: the arm holds where it is and nobody owns it; ...` and a task report with `success: True`. Console: `[owner] new task: the agent owns the arm, owner number 1`, `[owner] the agent gave the arm back: task completed; the arm holds and nobody owns it` and a status line with `owner nobody #2` |
@@ -4054,9 +4458,9 @@ simulated driver. The human program runs on `configs/human.yaml`.
 | # | Terminal | Command | Must show |
 |---|---|---|---|
 | 1 | service | `"$PY" -m isaaccapture_examples.agentic_remote.link_service --config configs/link_service.yaml` | `robot link service: waits for the robot app on 127.0.0.1:47610 (taken from 127.0.0.1); local API at <socket path>` |
-| 2 | Thor terminal | `"$PY" -m isaaccapture_examples.agentic_remote.robot_app --config configs/robot_app_demo2.yaml --arm sim --connect 127.0.0.1:47610` | `robot app: session <id>; dialing the robot link service at 127.0.0.1:47610`, then `[connection] robot connection made: the arm holds as it was; a new connection starts no motion` |
-| 3 | console | `AGENTIC_REMOTE_CONSOLE_PYTHON="$PY" ./run_console.sh`; type `state` | `WELCOME: robot sim-arm, profile sim-6dof, session <id>, driver sim, camera calibration none`; a status line with `driver sim`, `owner nobody #0`, `stop none #0`, `rest_hold`, `jaws empty`, `torque on`, `view none` and `no human program`. `state` prints the service's status, `ROBOT_STATE: control owner nobody (owner number 0), stop number 0, stop level none, motion rest_hold, jaws empty, torque on, assistance wait none`, a status line and, last, `takeover: not possible: no human program is attached: start run_human.sh` |
-| 4 | view | `AGENTIC_REMOTE_CAMERA_PR="$PWD" AGENTIC_REMOTE_VIEW_PYTHON="$PY" ./run_view.sh --config configs/view.yaml --source none`; open `http://127.0.0.1:47620/` | `live view: open http://127.0.0.1:47620/ in a browser on this machine; camera pictures: none; the page shows the status only`. The page shows `NO PICTURE`; the console's status line counts `1 viewer` and shows `view none`. This robot app does not require the view |
+| 2 | Thor terminal | `"$PY" -m isaaccapture_examples.agentic_remote.robot_app --config configs/robot_app_demo2.yaml --arm sim --connect 127.0.0.1:47610` | `robot app: human driving is not tied to a live view (human.require_live_view false)`, then `robot app: session <id>; dialing the robot link service at 127.0.0.1:47610`, then `[connection] robot connection made: the arm holds as it was; a new connection starts no motion` |
+| 3 | console | `AGENTIC_REMOTE_CONSOLE_PYTHON="$PY" ./run_console.sh`; type `state` | `WELCOME: robot sim-arm, profile sim-6dof, session <id>, driver sim, camera calibration none`; a status line with `driver sim`, `owner nobody #0`, `stop none #0`, `rest_hold`, `jaws empty`, `torque on`, `live view not required` and `no human program`. `state` prints the service's status, `ROBOT_STATE: control owner nobody (owner number 0), stop number 0, stop level none, motion rest_hold, jaws empty, torque on, assistance wait none`, a status line and, last, `takeover: not possible: no human program is attached: start run_human.sh` |
+| 4 | view | `AGENTIC_REMOTE_CAMERA_PR="$PWD" AGENTIC_REMOTE_VIEW_PYTHON="$PY" ./run_view.sh --config configs/view.yaml --source none`; open `http://127.0.0.1:47620/` | `live view: open http://127.0.0.1:47620/ in a browser on this machine; camera pictures: none; the page shows the status only`. The page shows `NO PICTURE`; the console's status line counts `1 viewer` and shows `live view not required`: this robot app does not require the view |
 | 5 | human program | `AGENTIC_REMOTE_HUMAN_PYTHON="$PY" bash run_human.sh --config configs/human.yaml --controller synthetic:lift` | `human program: synthetic controller "lift"; driver sim; arm model mock, 6 joints`, then `human program: right controller seen` and a report line each second that begins `human program: stage ready` and holds `owner nobody; engaged no; hand x 0.000 y 1.200 z -0.300 m`. Console: a status line that counts `1 human` and shows `headset ready`, `controller 0.03 s` (the age differs from line to line) and `note: hold right B for 1 s with the grip released to take over` |
 | 6 | console, watch | - | Human program: `human program: B down`, then `B up`, `grip down` and `grip up`. Console: `[stop] STOP from controller: right B; the arm holds, stop number 1` and a status line with `owner nobody #1` and `stop stop #1`; two bells and `[owner] TAKEOVER: a person owns the arm, owner number 2; release the grip, then squeeze it to move`; a status line with `owner human #2`, `stop none #1`, `takeover open` and `needs release`; one with `note: squeeze the grip to move`; one with `moving N/0`, `human driving` and `takeover open` (N is the number of setpoints the drive had sent when the line was printed; 0 in the test's run); then one with `hold`, `takeover open` and `note: squeeze the grip to move`. The gripper tip is 5 cm above where it is at rest |
 | 7 | console | `rest`, then `path is clear` | `rest: RESULT accepted`; `[rest] return to rest: the arm moves for 5.0 s (largest joint travel 0.24 rad)`; a status line with `owner recovery #3`, `takeover open`, the return's progress, as in `moving 24/249 sending`, and `note: the arm returns to rest; right B is a STOP`; `[rest] return to rest: the arm is at rest, motors on`; `[rest] return to rest: a takeover is open: the motors stay on at rest for the hand-back`; `rest: RESULT completed {"motors": "on", "outcome": "at_rest"}`; a status line with `owner human #4`, `rest_hold` and `note: at rest: hold right A for 1 s to give the arm back`. Then, by the script's right A (`human program: A down`, then `A up`): two bells and `[owner] takeover ended: the arm is given back; nobody owns it`, and a status line with `owner nobody #5` and `rest_hold` |
@@ -4255,6 +4659,26 @@ APAI's mock scene, asked over HTTP on a port the system picks, and `run_viewer.s
 tests of the viewer are marked `apai` and `experiment`; those of the script's arguments
 and refusals need neither. The file takes about 30 s with everything present.
 
+`test_debug_recording.py` holds what the debug recording stores of the obstacle map
+(`--debug-map-hz`), what it does at its size limit (`--debug-at-limit`) and the lines the
+agent program says of it. Its tests of the rate and of the limit are marked `apai` and
+`experiment`: they run APAI's own watcher and obstacle map on a stand-in camera and a
+stand-in grid bridge, with the experiment's recorder, viewer and report and limits of a
+few megabytes, and three of them run the agent program on APAI's mock scene. The file
+takes about 90 s with everything present and writes about 400 MB into the temporary
+folder, which it leaves to pytest.
+
+`test_viewer_live.py` holds the live picture of the experiment's viewer and the live
+view: the stream's rate and what a slow browser gets, on a stand-in camera; the numbered
+pictures and their acknowledgements; the block for the page, whose script node runs on
+a stand-in for the page and over HTTP against the viewer, where node is installed; the
+VIEW_STATUS the viewer sends, against the live view program's; the viewer's
+answers under the launcher against those of the viewer alone; the whole launcher,
+started by `run_viewer.sh` on a fake camera receiver; and a person's takeover on the
+rig's robot app file, behind a robot link service that runs as a process. Its tests on
+the experiment's viewer are marked `apai` and `experiment`, those behind a service
+`link`; the others need OpenCV. The file takes about 150 s with everything present.
+
 The executor's rules for a MOVE's expiry at its first setpoint and for the read a
 `completed` move ends on are tested in `test_executor.py`.
 
@@ -4310,7 +4734,7 @@ experiment folder. `-rP` prints the numbers the two long tests measured.
 robot link service listens on 127.0.0.1 and a port the system picks, and the robot app dials
 it over a real link. Attached at once are the agent program (in the test process, on APAI's
 mock scene), the operator console (the class the console program runs, its lines typed by
-the test) and the live view (the view program's `main()` on a thread, with stand-in camera
+the test) and the live view program (its `main()` on a thread, with stand-in camera
 pictures or with `--source none`). Its tests:
 
 | Test | Shows |
@@ -4430,7 +4854,8 @@ The operator's programs cannot cut torque either. RELEASE and SHUTDOWN are sent 
 function, `send_command()` of the console command, which the operator console calls too,
 after the typed confirmation; the robot app still applies its own checks to them. The scan
 reads every file under `console/` and `view/`: none cuts torque and none names RELEASE or
-SHUTDOWN. The live view sends VIEW_STATUS only.
+SHUTDOWN. The live view program sends VIEW_STATUS only, and so does the experiment's
+viewer (`test_viewer_live.py`).
 
 The human path cannot cut torque either. The human program sends HUMAN_SETPOINT, STOP and
 its two OWNER_REQUESTs, and neither the robot link service nor the robot app's own socket
@@ -4494,7 +4919,7 @@ know. So a mix shows only as wrong behaviour:
 
 - A robot app older than the workstation's programs ignores the expiry of a GRIPPER, and
   counts a sample age and a view age without the way to the Thor.
-- A robot app newer than the live view refuses every takeover (`the live view is not
+- A robot app newer than the viewer's launcher refuses every takeover (`the live view is not
   fresh: the VIEW_STATUS does not say when it was sent; ...`).
 
 The Thor has no access to the repository's server, so the code is carried as a
@@ -4665,7 +5090,7 @@ program started here.
 | Machine | File | Key | What to write |
 |---|---|---|---|
 | Workstation | `configs/link_service_rebot.yaml` | `allowed_peers` | `[<Thor address>]`: the address the robot app dials from. The shipped list is empty, and the robot link service refuses an empty list: exit code 2 and `robot link service: the configuration cannot be used: allowed_peers must be a non-empty list, ...`. The file listens on every address of the workstation (`listen.address: 0.0.0.0`), so this list is all that decides who may be the robot |
-| Workstation | `configs/view.yaml` | `camera.bridge_python` | Nothing, with the camera streamer's own layout: the shipped value names the interpreter of the camera consumer, a program of the camera streamer, as `${AGENTIC_REMOTE_CAMERA_PR}/cuda_ipc_consumer/.venv/bin/python`; the live view's camera frame bridge runs under it. Change the value only where the camera streamer's folder is laid out differently. `AGENTIC_REMOTE_CAMERA_PR` must be set for the view |
+| Workstation | `configs/view.yaml` | `camera.bridge_python` | Nothing, with the camera streamer's own layout: the shipped value names the interpreter of the camera consumer, a program of the camera streamer, as `${AGENTIC_REMOTE_CAMERA_PR}/cuda_ipc_consumer/.venv/bin/python`; the live view program's camera frame bridge runs under it. Change the value only where the camera streamer's folder is laid out differently. `AGENTIC_REMOTE_CAMERA_PR` must be set for the view. The rig does not start this program: the viewer finds that interpreter by itself |
 | Workstation | `configs/agent_rebot.yaml` | `camera.hand_eye_json` | Only after a new calibration of the camera's mounting: step 6 |
 | Thor | `configs/robot_app_rebot.yaml` | `camera_calibration_id` | Only after a new calibration: step 6 |
 | Thor | `configs/human_rebot.yaml` | `teleop.endpoint` | For demo 2 only: `<workstation address>:47600` in place of the placeholder (see [The human program on the Thor](#the-human-program-on-the-thor)) |
@@ -4733,11 +5158,17 @@ to its socket.
   quit work`. It tries again every 2 s, 30 times. After that minute it prints `no further
   attempt by itself; type attach to try again` and stays not attached until `attach` is
   typed.
-- **The live view and the agent program** started before the service end with exit code 1
-  and `cannot attach to the robot link service ...`. Start them again.
+- **The agent program** started before the service ends with exit code 1
+  and `cannot attach to the robot link service ...`. Start it again.
+- **The experiment's viewer** started before the service serves its page all the same,
+  says `viewer: live view: not reported to the robot: cannot attach to the robot link
+  service: ...` once, and attaches by itself once the service runs.
 
-`bash run_workstation.sh --env FILE --thor <Thor address>` starts the six programs of
-the workstation in one tmux window, the service first;
+`bash run_workstation.sh --env FILE --thor <Thor address>` starts the five programs of
+the table below in one tmux window, the service first. The viewer's page is the live
+view, which a person's takeover needs: open it in a browser and keep its tab visible,
+with the live picture showing. The live view program (`run_view.sh`) is not part of
+the rig's set-up.
 [The start scripts](#the-start-scripts) says which pane is which, how to copy text out
 of a pane and how to leave. Started by hand, one terminal each, the order is:
 
@@ -4746,12 +5177,11 @@ of a pane and how to leave. Started by hand, one terminal each, the order is:
 | 1 | Robot link service | `PYTHONPATH=python:$AGENTIC_REMOTE_ISAAC_CAPTURE_PY "$AGENTIC_REMOTE_AGENT_PYTHON" -m isaaccapture_examples.agentic_remote.link_service --config configs/link_service_rebot.yaml` | `robot link service: waits for the robot app on 0.0.0.0:47610 (taken from <Thor address>); local API at <socket path>` |
 | 2 | Operator console | `./run_console.sh` | `attached to the robot link service: ...`, then a status line with `robot connection lost (not connected)` until the robot app of step 9 has dialed |
 | 3 | Camera receiver | `./run_camera_receiver.sh --host <Thor address>` | See step 8 |
-| 4 | Live view | `./run_view.sh --config configs/view.yaml` | `live view: open http://127.0.0.1:47620/ in a browser on this machine; ...`. Open that page and keep its tab visible |
-| 5 | The experiment's viewer | `./run_viewer.sh` | Its address and how to open the page with its token (see [The experiment's viewer](#the-experiments-viewer)) |
-| 6 | Agent program | `./run_agent.sh --config configs/agent_rebot.yaml --interactive` | Only once the console shows the robot connection up: `[agent] robot connection up: ... driver real ...`, `[agent] obstacle grid: live ...` and the prompt `task> ` |
+| 4 | The experiment's viewer, whose page is the live view | `./run_viewer.sh` | Its address and how to open the page with its token (see [The experiment's viewer](#the-experiments-viewer)); `viewer: live view: attached to the robot link service at <socket>; ...`. Open the page and keep its tab visible, with the live picture showing: a person's takeover needs it |
+| 5 | Agent program | `./run_agent.sh --config configs/agent_rebot.yaml --interactive` | Only once the console shows the robot connection up: `[agent] robot connection up: ... driver real ...`, `[agent] obstacle grid: live ...` and the prompt `task> ` |
 
-**The address of the viewer's page** is in the last line `run_workstation.sh` prints,
-`viewer: ...`. Without `AGENTIC_REMOTE_VIEWER_HOST` in the workstation's file, open
+**The address of the viewer's page** is in the line `viewer: ...` that
+`run_workstation.sh` prints. Without `AGENTIC_REMOTE_VIEWER_HOST` in the workstation's file, open
 `http://127.0.0.1:8766/?token=<the token>` in a browser on the workstation, with the
 text of `.state/viewer.token` as the token. With the variable, open
 `http://<that address>:8766/` in a browser on any machine that can reach that address:
@@ -4800,8 +5230,9 @@ What each side prints when it works, as the camera streamer's code has it:
 | Sender, on the Thor | `Listening for TCP receiver on 0.0.0.0:5000`, then `Receiver connected from <workstation address>:<port>` |
 | Receiver, on the workstation | `camera_receiver running: sender=<Thor address>:5000, socket=/tmp/camera_receiver_avs1_cuda_ipc.sock`, then `connected to AVS1 sender <Thor address>:5000`, then one line of statistics every 10 s |
 
-Then the live view's page shows the camera picture, and the agent program prints
-`[agent] obstacle grid: live ...`.
+Then the agent program prints `[agent] obstacle grid: live ...`. The viewer's page
+shows the camera's live picture, and the viewer prints `viewer: live picture: the
+camera's pictures arrive`.
 
 ### 9. Start the robot app on the Thor
 
@@ -4874,17 +5305,50 @@ in the example's folder with the shipped files.
   `run_workstation.sh` starts the viewer on that address and without a token: the page
   is `http://<that address>:8766/`, in a browser on any machine that can reach it. With
   `0.0.0.0`, use the workstation's address.
-- **The debug recording stops at 16 GiB, after about ten minutes of a session.** The
-  pane `agent` of `run_workstation.sh` starts the agent program with `--record-debug`.
-  That recording stops when its folder reaches `--debug-max-gib`, 16 GiB by default.
-  In the session of 2026-11-16 that was after about ten minutes: the run went on, and
-  the viewer's page no longer updated. For a longer session add a larger limit to the
-  agent's command before you press Enter in its pane, for example `--debug-max-gib 64`,
-  and see that the disk has the room: the recorder also stops with less than 2 GiB free.
+- **The page's picture is live.** While **Follow live** is active the picture on the
+  page is the camera's picture as it arrives, up to 30 a second; it is shown and not
+  stored. The button over it switches: **Map picture** shows the stored picture of the
+  obstacle map, with the arm's mask and the markers of a refusal, and **Live picture**
+  goes back. A replay always shows the stored picture. `no live picture` on the button
+  means that the viewer gets no camera pictures: the camera receiver does not run or
+  no camera frames arrive; the text under it and the pane `viewer` say why.
+  `./run_viewer.sh --no-live` starts the viewer without the live picture. See
+  [The experiment's viewer](#the-experiments-viewer). The page is the live view only
+  while the live picture shows: after a look at a replay or at the map picture, press
+  **Live picture** again before a person takes the arm over (see
+  [The live view](#the-live-view)).
+- **The debug recording stops at 16 GiB only with `--debug-at-limit stop`.** The pane
+  `agent` of `run_workstation.sh` starts the agent program with `--record-debug`. The
+  recording's folder is kept under `--debug-max-gib`, 16 GiB by default. It stores 2
+  pictures of the obstacle map a second, which is what the viewer's page can show, and
+  everything the arm did or was refused; with that the limit is reached after about
+  30 min, and the agent's line `debug recording:` says so at the start. From then on
+  the oldest map pictures are dropped to make room, so the viewer's page keeps
+  following for as long as the session lasts. The agent terminal says it, once at that
+  moment and once more with the next task prompt, in a line that begins `debug
+  recording reached --debug-max-gib 16 after N min: from now on the oldest map
+  pictures are dropped; the viewer keeps following`. The line also names the time
+  before which the page shows no camera picture; that time is about 30 min back and
+  moves on with the run. Moved back before it, the page shows the obstacle map and the
+  arm without the camera picture. What the arm did or was refused is never dropped,
+  and neither is the map that a refusal or a route segment names.
+  In the sessions of 2026-11-16 and 2026-11-17 the recording stored every map picture,
+  about 7 a second, stopped at its limit after about ten minutes, and the page stood
+  still from then on. `--debug-at-limit stop` on the agent's command asks for that
+  stop; the line is then `debug recording full after N min (--debug-max-gib 16): the
+  viewer no longer updates; the arm and the task are not affected`, and a new
+  recording needs the session ended (Ctrl+D at the task prompt) and the agent started
+  again. For a longer stretch of pictures add a larger limit to the agent's command
+  before you press Enter in its pane, for example `--debug-max-gib 64` (about two
+  hours), and see that the disk has the room: whatever the option, the recorder stops
+  with less than 2 GiB free. `--debug-map-hz HZ` sets the map pictures a second;
+  `--debug-map-hz 0` stores every one, and 16 GiB then holds about 9 min. What is
+  stored whatever the rate, and what is never dropped, is told under
+  [The options of the experiment's launcher](#the-options-of-the-experiments-launcher).
 - **Old runs are deleted by hand.** Each run with `--record-debug` takes up to its
-  limit, about 17 GB with the default, in `.state/runs/<run>/debug`. No program removes
-  a run folder. Delete the ones you no longer need, while no agent program and no
-  viewer reads them.
+  limit, about 17 GB with the default, in `.state/runs/<run>/debug`; a session of half
+  an hour or more takes all of it, and keeps it. No program removes a run folder.
+  Delete the ones you no longer need, while no agent program and no viewer reads them.
 
 ### Troubleshooting: what a program printed, and what to do
 
@@ -4902,7 +5366,9 @@ mistake that session made, or is one of the lines the programs print since the c
 | Service: `refused a robot connection from <address>: not an allowed address`. Thor: `robot app: no robot connection: ...; dialing again every 1 s` | The robot app dials from an address that is not in `allowed_peers` | Write the address the service names into the list and start the service again. The robot app goes on dialing by itself |
 | Thor: `robot app: no robot connection: ...; dialing again every 1 s`, and the service prints nothing | Nothing answers at that address and port: the service does not run, `--connect` names another address, or the workstation's firewall keeps the Thor from port 47610 | Start the service (step 7), compare the address, open the port. The robot app goes on dialing by itself |
 | Console: `cannot attach to the robot link service: ...`, later `no further attempt by itself; type attach to try again` | The console was started before the robot link service and has given up after a minute | Start the service, then type `attach` at the console (step 7) |
-| Live view: `live view: the settings cannot be used: camera.bridge_python ...` | `AGENTIC_REMOTE_CAMERA_PR` is not set for the view, or the view's file does not name the camera consumer's interpreter | Set the variable (step 3); follow the comment above `camera.bridge_python` in `configs/view.yaml` (step 5) |
+| Console: `[refused] owner request 'human' refused: the live view is not fresh: ...; show the viewer's live picture in a visible browser tab`, or `view none` in the status line | The viewer's page does not show its live picture in a visible browser tab; or the viewer is not attached to the robot link service (`no VIEW_STATUS has arrived`) | Open the viewer's page, press `Live picture`, keep the tab in front; reload a page that says it was loaded again elsewhere. See [The live view](#the-live-view) |
+| Viewer: `viewer: live view: not reported to the robot: cannot attach to the robot link service: ...` | The robot link service does not run, or runs on another socket | Start the service; the viewer attaches by itself within a minute and says `viewer: live view: attached ...`. `--link-socket PATH` names another socket |
+| Viewer: `viewer: no live picture: ...` | `AGENTIC_REMOTE_CAMERA_PR` is not set or names no camera consumer's Python, the camera receiver does not run, or no camera frames arrive | Set the variable (step 3); start the receiver (step 8). The viewer tries again by itself |
 | Camera sender: `No camera devices are available` | The cameras are not set up since the last boot, or another camera service holds them | Run the bring-up script, stop `sensing-camera-argus.service`, start the sender again (step 8) |
 | Camera receiver: `waiting for AVS1 sender 127.0.0.1:5000 (...)` | The receiver dials the workstation itself | Start it with `--host <Thor address>` (step 8) |
 | Camera receiver: `waiting for AVS1 sender <Thor address>:5000 (...)` | The sender does not run, or does not listen yet | Start the sender on the Thor (step 8) |
@@ -4911,7 +5377,10 @@ mistake that session made, or is one of the lines the programs print since the c
 | Agent program: `the robot app's camera calibration is '...', this program's '...'` | The two machines name different calibrations | Step 6 |
 | Thor: `--calibration names '...' but camera_calibration_id of the file is '...'; ...` | The name on the command line is not the one in the robot app's file | Step 6 |
 | The experiment's viewer lists no run | The run was started without `--record-debug`, or by a checkout that does not write `resolved-config.yaml` | Add `--record-debug` to the agent's command; run both machines on this commit (step 10) |
-| The experiment's viewer shows a run and stops updating after about ten minutes | The debug recording reached its size limit, 16 GiB by default, and stopped; the run goes on | Start the next run with a larger `--debug-max-gib`, and delete old run folders by hand (step 10) |
+| The agent terminal said `debug recording reached --debug-max-gib 16 after N min: from now on the oldest map pictures are dropped; ...` | The debug recording reached its size limit, 16 GiB by default, after about 30 min with the default 2 map pictures a second. Nothing stopped: its oldest map pictures are dropped and the viewer keeps following | Nothing. For more than the last half hour of camera pictures in the viewer, start the next run with a larger `--debug-max-gib`; delete old run folders by hand (step 10) |
+| The experiment's viewer shows no camera picture at an earlier time of a run, or the text `No such file or directory` under the refusals | That time lies before the stretch the debug recording still holds the pictures of, or the map's points; `dropped_at_limit` in the run's `debug/recording-status.json` names where each begins, in seconds on the page's time line | Move the time line forward, or press `Follow live` |
+| The experiment's viewer shows a run and stops updating; the agent terminal said `debug recording full after N min (--debug-max-gib 16): the viewer no longer updates; ...` | The run was started with `--debug-at-limit stop` and the debug recording stopped at its size limit, or nothing was left in it that may be dropped; the run goes on | End the session and start the agent again for a new recording, without `--debug-at-limit stop` or with a larger `--debug-max-gib`; delete old run folders by hand (step 10) |
+| The agent terminal said `debug recording stopped after N min (...)` | The experiment's recorder stopped for the reason in the brackets: with `less than 2 GiB free` the disk is full; the run goes on | Delete old run folders by hand (step 10), then end the session and start the agent again |
 | Console or agent program: `the motors are off; switch them on again: type on at the Thor terminal or run the console command on` | A `rest` or a `release` switched the motors off at rest | `on`, then `yes`, at the Thor terminal or the console |
 | `... was refused because the jaws are not proven empty. Look at the jaws. ...` | A `rest`, a `release`, a shutdown or a hand-back was refused only for the jaws | Look at the jaws. Empty: type `jaws are empty`, then answer the command's own question. Holding something: `stop`, `open`, `yes` |
 | Thor, at the start: `limits.agent.max_joint_speed ... rad/s is above the APAI profile's speed cap of ... rad/s (safety.max_joint_vel)` | The Thor's copy of the experiment's `configs/rebot_workstation.yaml` holds a lower joint speed than the robot app's file | Bring the two together, and `thor.agent_max_joint_speed` on the workstation with them (step 9) |
@@ -4947,14 +5416,23 @@ both machines, before step 15.
     finger on Enter during every squeeze; types `rest` and `path is clear` there; says
     aloud each line that matters to the wearer ("yours", "refused: why", "drive ended:
     why", "at rest").
-  - **Workstation person**: watches the live view page and the console, types at the agent
-    terminal and does the workstation's actions. The stop person may do this only if both
-    keyboards are within one arm's length.
+  - **Workstation person**: watches the viewer's page with its live picture and the
+    console, keeps that page's tab in front, types at the agent terminal and does the
+    workstation's actions. The stop person may do this only if both keyboards are
+    within one arm's length.
   - **Supporter**: stands at the 48 V switch and supports the arm from the side, outside
     the path of the gripper, in every step of F-B until steps 21 to 26 and F16 have passed.
 
   F-B needs the wearer and the stop person at the least, and the supporter whenever steps
   21 to 26 did not pass before it (the variant F-B0). With fewer people F-B is not run.
+- **A person's takeover needs the live view.** The rig's robot files
+  (`robot_app_rebot.yaml` and `robot_app_human_check.yaml`) ship with
+  `human.require_live_view: true`. The live view is the viewer's page with its live
+  picture showing, in a visible browser tab (see [The live view](#the-live-view)). The
+  viewer runs in the pane `viewer` of `run_workstation.sh`; the page is opened in step
+  12 and stays open, in front, for the whole session. Without it the robot app refuses
+  the takeover and ends a human drive in a hold. The live view program (`run_view.sh`)
+  is not part of the rig's set-up.
 - **No step cuts torque away from measured rest.** Torque is cut by the connect of the real
   driver (step 15, and step 18's `on`), by a `release` (step 17), at the end of every typed
   `rest` (steps 16 and 28, and the `rest` of any other step outside an open takeover) and
@@ -5016,10 +5494,10 @@ stop.
   `run_workstation.sh`, on the Thor those of `run_robot_app.sh`.
 - The edits each machine needs are made, in the checkout the programs are started from
   ([step 5](#5-the-edits-each-machine-needs-which-are-not-committed)): the Thor's address
-  in `allowed_peers` of `EX/configs/link_service_rebot.yaml`. `camera.bridge_python` of
-  `EX/configs/view.yaml` names the camera consumer's interpreter under
-  `AGENTIC_REMOTE_CAMERA_PR`: without that variable, or with another layout of the
-  camera streamer's folder, the live view of step 12 ends with exit code 2.
+  in `allowed_peers` of `EX/configs/link_service_rebot.yaml`. The viewer finds the
+  camera consumer's interpreter under `AGENTIC_REMOTE_CAMERA_PR`: without that
+  variable, or with another layout of the camera streamer's folder, the viewer's page
+  of step 12 has no live picture, and no takeover is taken.
 - The model client for the workstation's processor is installed and named in
   `experiment.codex_bin` ([step 4](#4-the-model-client-on-the-workstation)); step 20
   needs it.
@@ -5040,7 +5518,9 @@ For part F, demo 2, in addition:
   person says each of them aloud.
 - The owner has decided the settings of
   [The settings that ship off](#the-settings-that-ship-off): `human.enabled`,
-  `operator.typed_takeover`, the human speeds and `human.view_age_limit_s`.
+  `operator.typed_takeover`, the human speeds and `human.view_age_limit_s`. The rig
+  files hold `human.require_live_view: true`: the live view is the viewer's page with
+  its live picture.
 - `SRVPY` is a Python that can run CloudXR's service and the Teleop Session Server: the
   environment of the owner's tested headset recipe, with the Isaac Capture build in front
   on `PYTHONPATH`. The workstation environment and the test folder's `.venv` cannot: they
@@ -5071,11 +5551,14 @@ the Thor terminal, in which the robot app runs, and a second one for the human p
 The commands of part F for the Thor follow the programs as they are built; none of them
 was run on hardware.
 
-Steps 7, 8, 11, 12 and 20 start the workstation's programs one by one, the robot link
+Steps 7, 8, 11 and 20 start the workstation's programs one by one, the robot link
 service of step 7 first: every other program of the workstation attaches to it. `bash
-EX/run_workstation.sh --env FILE --thor THOR` starts the same five and the experiment's
+EX/run_workstation.sh --env FILE --thor THOR` starts the same four and the experiment's
 viewer together, each in a pane of one tmux window, with the agent's command of step 20
 typed into its pane and waiting for Enter (see [The start scripts](#the-start-scripts)).
+Step 12 opens the viewer's page, which is the live view; started by hand, the viewer is
+`EX/run_viewer.sh`. Steps 12 and 13 read the view age, which a person's takeover in
+part F needs.
 
 ### A. Before power: no arm motion
 
@@ -5092,8 +5575,8 @@ typed into its pane and waiting for Enter (see [The start scripts](#the-start-sc
 | 9 | Thor | Describe only: `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --apai-profile PROFILE` | `robot app with --arm apai would run:`, the driver `built, not connected`, exit code 2 | The profile's speed cap, the two rest tolerances, the jaw tolerance | A refusal (speed cap, rest pose, joint count) |
 | 10 | Thor, then console | The link without the arm: `EX/run_robot_app.sh --config EX/configs/robot_app.yaml --arm sim --connect WS:47610`. Type `stop` at the console. Leave this robot app running until step 14 | The console's `WELCOME` line says `driver sim`; `stop: taken` | The time from Enter to `taken`, five times | No connection. This is the first run of port 47610 between two machines. This robot app proves the link only: the agent program on `agent_rebot.yaml` takes no task against it and ends with `the robot app's profile is 'sim-6dof', expected 'rebot-b601-rs-thor'` |
 | 11 | Thor, workstation | On the Thor, as in [step 8](#8-the-camera-from-the-thor-to-the-workstation) of "Set up and start the rig": the rig's camera bring-up script with sudo, then stop `sensing-camera-argus.service`, then the camera sender with `EX/configs/camera_sender_rebot.yaml`. On the workstation `EX/run_camera_receiver.sh --host THOR`, with the Thor's address | The sender prints `Receiver connected from ...`; the receiver prints `connected to AVS1 sender ...` and reports about 60 camera frames per second | The rate; the refused camera frames | The sender ends with `No camera devices are available`: the bring-up was not run since the boot, or `sensing-camera-argus.service` still runs. The receiver prints `waiting for AVS1 sender 127.0.0.1:5000`: `--host` is missing or names the workstation. The sender refuses the sensor mode |
-| 12 | Workstation | `EX/run_view.sh --config EX/configs/view.yaml`; open `http://127.0.0.1:47620/` | The arm at rest in the picture; no `STALE`; the console's status line shows `view` under 1 s | The view age over one minute: lowest, middle, highest; the GPU memory with receiver and view | No picture. Exit code 2 with `camera.bridge_python ...`: the key in `view.yaml` does not name the camera consumer's interpreter (see the comment above it in the file) |
-| 13 | View | Read the view age | Between 0 and 1 s, steady | - | Negative, above 1 s or drifting: no task today. Find the cause on the Thor (the sender's clock, a clock step); there is no correction setting. For demo 2 go on with F-A before step 14 |
+| 12 | Workstation | The live view. The viewer runs in the pane `viewer` (by hand: `EX/run_viewer.sh`). Open its page in a browser on the workstation, at the address the pane names, and keep its tab in front and the live picture inside the window. The page follows live: its button reads `Map picture` | The arm at rest in the live picture. Nothing stands beside the button, and the line under it ends with `The robot is told: live view, N s old.` The pane `viewer` has printed `viewer: live picture: the camera's pictures arrive` and `viewer: live view: attached to the robot link service at ...`. The console's status line shows `view` under 1 s | The view age over one minute: lowest, middle, highest; the pictures a second the page names; the GPU memory with the receiver and the viewer | `no live picture` on the button: the text under it says why (the camera receiver, `AGENTIC_REMOTE_CAMERA_PR`). `scroll the live picture into view` beside the button: less than three quarters of the picture are inside the window. `watch only: see below`: the page was opened from another machine; open it on the workstation. `The robot is not told of this live view: ...`: the robot link service does not run, or another viewer is attached. The console shows `view none` while the page shows the live picture |
+| 13 | Viewer's page, console | Read the view age | Between 0 and 1 s, steady | - | Negative, above 1 s or drifting: no task today. Find the cause on the Thor (the sender's clock, a clock step); there is no correction setting. For demo 2 go on with F-A before step 14 |
 | 14 | Thor, workstation | `quit` at the Thor terminal (the simulated arm is at rest: it ends); after F-A no robot app runs and there is nothing to quit. Then `EX/run_agent.sh --config EX/configs/agent_rebot.yaml --check` | Exit code 0; the calibration id it prints (`"calibration_id"` in its JSON) equals `camera_calibration_id` of `robot_app_rebot.yaml` on the Thor. It is the name step 15 gives as `--calibration` | The id | Another id: find out which calibration the rig is in. After a new calibration on the Thor the workstation's copy of the hand-eye file and the two names have to follow ([step 6](#6-the-camera-calibration-and-its-name) of "Set up and start the rig") |
 
 ### F-A. Before power: headset and human path on the simulated arm
@@ -5104,19 +5587,23 @@ motion. F-B, on the powered arm, follows step 27. In both the human program runs
 Thor, attached at the robot app's own socket, and reaches the Teleop Session Server on
 the workstation over the wired link.
 
+F-A runs with the live view, as F-B does: `robot_app_human_check.yaml` ships with
+`human.require_live_view: true`. The viewer's page of step 12 stays open, in front, with
+its live picture showing; F8 takes it away on purpose.
+
 | # | Where | Do | Must show | Write down | Abort if |
 |---|---|---|---|---|---|
-| F0 | Workstation, Thor | Switch the screen lock and blanking off for the session; keep the live view's window un-minimised with its tab in front. From step 12's numbers choose `human.view_age_limit_s`: the highest age plus 0.2 s, at most 1.0 s. With 5 pictures per second and a VIEW_STATUS every 0.2 s the age swings by about 0.4 s before any camera delay, so expect to raise the shipped 0.5. If the highest age is above 0.3 s, first set `picture.fps: 10` and `status.period_s: 0.1` in `view.yaml`, restart the view and read the age again. Write the limit into `robot_app_human_check.yaml` and `robot_app_rebot.yaml` on the Thor. Then `quit` step 10's robot app (it is at rest) and start it again with its socket for the human program: `EX/run_robot_app.sh --config EX/configs/robot_app_human_check.yaml --arm sim --connect WS:47610 --human-socket ~/.agentic_remote/human.sock` | The Thor terminal prints `robot app: the human program's socket is ...` after its session line. The console's `WELCOME` says `driver sim`; `view` stays under the chosen limit | The ages; the limit chosen | The highest age is above 0.8 s or drifts: no human motion today |
+| F0 | Workstation, Thor | Switch the screen lock and blanking off for the session; keep the viewer's window un-minimised with its tab in front and the live picture showing. From step 12's numbers choose `human.view_age_limit_s`: the highest age plus 0.2 s, at most 1.0 s. With a VIEW_STATUS every 0.2 s the age swings by about 0.2 s before any camera delay. Write the limit into `robot_app_human_check.yaml` and `robot_app_rebot.yaml` on the Thor. Then `quit` step 10's robot app (it is at rest) and start it again with its socket for the human program: `EX/run_robot_app.sh --config EX/configs/robot_app_human_check.yaml --arm sim --connect WS:47610 --human-socket ~/.agentic_remote/human.sock` | The Thor terminal prints `robot app: the human program's socket is ...` after its session line, and no line that begins `robot app: human driving is not tied to a live view`. The console's `WELCOME` says `driver sim`; `view` stays under the chosen limit | The ages; the limit chosen | The Thor terminal prints `robot app: human driving is not tied to a live view (human.require_live_view false)`: the file on the Thor does not require the live view; put `human.require_live_view: true` back. The highest age is above 0.8 s or drifts: no human motion today |
 | F1 | Workstation | Terminal T1: `TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS=0 PYTHONPATH=BUILD/python_package/Release SRVPY -m isaaccapture.cloudxr.service run --accept-eula --setup-oob --usb-local`. Without that variable the web client on the headset drops the stream after about 30 s. Then terminal T2, on the address the Thor reaches: `PYTHONPATH=BUILD/python_package/Release SRVPY -m isaaccapture.teleop_session_server --listen tcp://WS:47600` | T2 prints `Teleop Session Server listening on ...`, then logs `No headset is connected to CloudXR; waiting for one` | Both start lines | Exit code 1: CloudXR is not available |
 | F2 | Thor, second terminal | Start the human program before the headset is connected, with the variables of `run_robot_app.sh` set: `AGENTIC_REMOTE_HUMAN_PYTHON="$AGENTIC_REMOTE_THOR_PYTHON" bash EX/run_human.sh --config EX/configs/human_rebot.yaml` | `human program: teleop; driver sim; arm model rebot_rs, 6 joints`; then `human program: Teleop Session Server connecting_openxr: ...` or `waiting_for_headset: ...`. Console: `human program at the robot app`, `headset <that stage>` and `takeover: not possible: no fresh controller data: stage ...` | The lines | The human program ends. `cannot attach to the robot link service or the robot app: ...`: the robot app of F0 was started without `--human-socket`, or with another path than `socket_path` of `human_rebot.yaml`. `no_server` while T2 runs: `teleop.endpoint` still holds its placeholder, T2 does not listen on `WS`, or the workstation's firewall keeps the Thor from port 47600 |
 | F3 | Headset | Headset on the USB cable. In the web client's panel switch Headless on, then press Connect | T2 logs `Opened the OpenXR session`; its line `Serving robot app 'agentic_remote_human' ...` names the human program. Without a restart of the human program: `human program: Teleop Session Server ready`, `human program: right controller seen`; console `headset ready` | The time from Connect to `ready` | No `ready` within 2 minutes. `NotSupportedError` in a loop on the headset: switch Headless on, press Connect by hand, restart T2 |
 | F4 | Thor, second terminal | Read the human program's report line for one minute | `stage ready`; tick age, state age and round trip steady | Each of the three: lowest, middle, highest. The tick age is that of SAMPLES that crossed the wired link. The round trip is the way through the robot app's own socket both ways plus one pass of the human program. Also `controller X s` of the console's status line: the sample age with the way to the robot app in it | The tick age comes near `teleop.max_tick_age_s` (0.15 s), or the round trip is above 0.1 s or drifts: find out why before any human motion |
-| F5 | Headset, by eye | The seeing check. Three settings. (1) Headless on: the web client draws nothing; can the wearer see the arm, and the live view, below the visor? (2) Headless off: does the room show, and do controller data keep arriving (the report line)? (3) The headset off the face with its proximity sensor overridden (`adb shell am broadcast -a com.oculus.vrpowermanager.prox_close`), resting on the forehead or on a stand that sees the right hand: the wearer watches the arm directly | - | The three answers, in words | The wearer must see the arm itself in one of the three settings. The live view rule is met by the Thor's check plus the workstation person watching the page. No setting works: no human motion on the arm today |
+| F5 | Headset, by eye | The seeing check. Three settings. (1) Headless on: the web client draws nothing; can the wearer see the arm, and the viewer's live picture, below the visor? (2) Headless off: does the room show, and do controller data keep arriving (the report line)? (3) The headset off the face with its proximity sensor overridden (`adb shell am broadcast -a com.oculus.vrpowermanager.prox_close`), resting on the forehead or on a stand that sees the right hand: the wearer watches the arm directly | - | The three answers, in words | The wearer must see the arm itself in one of the three settings. The live view rule is met by the Thor's check plus the workstation person watching the viewer's page. No setting works: no human motion on the arm today |
 | F6 | Controller, Thor, console | Press right A, right B, the grip and the trigger, each alone. Tap B ten times as briefly as possible. Then hold the controller out of the headset's view, behind the back, and press right B | The human program prints each edge in the Thor's second terminal (`human program: B down`, `human program: B up`). Each B press is a `[stop] STOP from controller: right B; ...` at the Thor terminal and on the console | Which of the four arrive. How many of the ten taps became a STOP. Whether the STOP arrives with the controller out of view | B or the grip never arrives: no demo 2 with buttons. If only A or B is missing, the owner may switch the typed fallback on: `operator.typed_takeover: true` in `link_service_rebot.yaml`, then restart the robot link service. B does not arrive out of view: the wearer keeps the controller in view, and the abort stays the Thor terminal |
 | F7 | Wearer, workstation | The direction check, on the simulated arm. Stand behind the arm, recentre. Hold B 1 s. Release the grip, then squeeze. Move the hand **up** about 10 cm at about 1 cm per second, then forward, then left. Then turn the hand about its forward axis by about 30 degrees and back | Console: `[owner] TAKEOVER: a person owns the arm, ...`, two bells that are heard apart. The report line's tip target: z rises for up, x for forward, y for left; roll changes with the hand | The three directions as seen. The `ended:` counts in two minutes of motion. The IK time | `no IK solution` while the tip is still at the rest height is expected: from rest, lift the gripper first. A wrong heading: set `retarget.stage_yaw_deg` in `human_rebot.yaml` and repeat; a positive value turns the hand's motion counter-clockwise seen from above. A swapped or mirrored axis: correct `retarget.controller_to_base`. Many jumps or failures once the arm is raised: no human motion on the arm today. A lift that ends with `IK jump` about 39 cm above rest is the end of the arm's reach on the model |
-| F8 | View | While squeezing on the simulated arm, each once: hide the browser tab; freeze the browser (stop its process, then let it go on); close it; stop the camera sender. After each: bring the view back and wait until the console's `view` is under the limit; if it stays `none` for more than a minute, restart the receiver and the view (steps 11 and 12) and reload the page. After a restart of the view, and after any step of the Thor's clock, the view is not live for 3 s | `[human] human drive ended: the live view is not fresh (...)`, one bell; the simulated arm's motion is `hold` each time | The time from the action to the EVENT | The drive goes on |
+| F8 | Viewer's page | While squeezing on the simulated arm, each once: press `Map picture` on the viewer's page; hide the browser tab; freeze the browser (stop its process, then let it go on); close it; load the page in a second tab; stop the camera sender; end the viewer with Ctrl+C in its pane. After each: bring the live view back (press `Live picture`, bring the tab to the front, reload the page, start the sender, start the viewer again and reload the page) and wait until the console's `view` is under the limit; if it stays `none` for more than a minute, restart the receiver and the viewer (steps 11 and 12) and reload the page. After a start of the viewer, and after any step of the Thor's clock, the view is not live for 3 s | `[human] human drive ended: the live view is not fresh (...)`, one bell; the simulated arm's motion is `hold` each time. Right B held then is refused, with three bells: `[refused] owner request 'human' refused: the live view is not fresh: ...; show the viewer's live picture in a visible browser tab` | The time from the action to the EVENT | The drive goes on, or a takeover is taken while the live picture does not show |
 | F9 | Headset | While squeezing, each once: switch the right controller off; take the headset off and put the controller down; switch the headset's Wi-Fi off; stop the Teleop Session Server (then start it again, switch Headless on again, wait for `ready`); pull the network cable between the two machines, which carries the teleop connection and the robot connection (then put it back and wait for `headset ready` and for `view` under the limit) | `[human] human drive ended: ...`; `hold` each time. For the cable the Thor terminal shows `[connection] robot connection lost: the arm holds; ...`, and right B is not read while the cable is out: the buttons come over it | The time from the action to the hold. For the Wi-Fi: how far the simulated arm went and the time to `no_controller`. For the cable: the time until the human program says `ready` again | The drive goes on |
-| F10 | Console, controller, Thor | The STOP under load. While squeezing on the simulated arm (50 HUMAN_SETPOINTs per second at the robot app's own socket): type `stop` at the console, five times; press right B, five times; take over again between them. Then right B without the robot connection: end the robot link service with Ctrl+C, press right B, start the service again. The live view ended with the service (exit code 1): start it again (step 12), reload its page, type `attach` at the console if it no longer tries by itself, and wait until the console's `view` is under the limit before F11 | `stop: taken`; `[stop] STOP from controller: right B; ...`. With the service ended the Thor terminal shows `robot app: no robot connection: ...` and, at the press, `[stop] STOP from controller: right B; the arm holds, stop number N` | Each time from Enter or press to the higher stop number; compare with step 10's five values | Any above 0.25 s: set `rates.loop_hz: 25` in `human_rebot.yaml` and repeat (that halves the hand speed limits); still above: no human motion on the arm today. No STOP at the Thor terminal for right B with the service ended: no human motion on the arm today |
+| F10 | Console, controller, Thor | The STOP under load. While squeezing on the simulated arm (50 HUMAN_SETPOINTs per second at the robot app's own socket): type `stop` at the console, five times; press right B, five times; take over again between them. Then right B without the robot connection: end the robot link service with Ctrl+C, press right B, start the service again. Type `attach` at the console if it no longer tries by itself. The viewer goes on and attaches to the new service by itself, within a minute (`viewer: live view: attached to the robot link service at ...` in its pane): wait until the console's `view` is under the limit before F11 | `stop: taken`; `[stop] STOP from controller: right B; ...`. With the service ended the Thor terminal shows `robot app: no robot connection: ...` and, at the press, `[stop] STOP from controller: right B; the arm holds, stop number N` | Each time from Enter or press to the higher stop number; compare with step 10's five values | Any above 0.25 s: set `rates.loop_hz: 25` in `human_rebot.yaml` and repeat (that halves the hand speed limits); still above: no human motion on the arm today. No STOP at the Thor terminal for right B with the service ended: no human motion on the arm today |
 | F11 | Controller | The recentre. While squeezing on the simulated arm: recentre the headset view | `human drive ended` or a note of the human program; the report line's tip target does not jump; the simulated arm's target moves by no more than `limits.human.max_step_rad` | What ended it | The simulated arm jumps: no human motion on the arm today |
 | F12 | All | The time from a spoken "go", with the headset asleep on the table, to `TAKEOVER: a person owns the arm` on the simulated arm. A right B that is already down as the headset wakes up is a STOP and takes nothing over: the note then reads `release right B, then hold it for 1 s with the grip released to take over` | - | The time. Compare with `waits.assistance_s` (120 s) | - |
 | F12b | Controller, console, Thor | The trigger, on the simulated arm, while the person owns it and its jaws are open and empty. With the grip released: pull the trigger slowly all the way, hold it, release it slowly all the way | The console's jaws line reads `jaws: follow the trigger`. The human program's report line shows `jaws follow the trigger yes, grip level 1.00`, and its `trigger asks` goes from 1.00 to 0.00 and back | What `trigger asks` reads with the trigger at rest and with it fully pulled | At rest it stays below 1.00, or fully pulled above 0.00: the dead zones of the trigger, 0.05 at each end, do not cover this controller, and a trigger at rest could leave the jaws short of fully open, where the hand-back is refused. Set `human.trigger_jaws: false` in `robot_app_rebot.yaml` for this session |
@@ -5140,8 +5627,9 @@ the rig's human joint box either: `robot_app_human_check.yaml` has a box of -2.5
 rig file's box, 0.02 rad inside `rest.region_*`, is first met on the arm in F-B.
 
 Before step 15 the owner decides whether `human.enabled` in `robot_app_rebot.yaml` is set
-to `true` for this session, confirms `human.view_age_limit_s` there, and decides whether
-`human.trigger_jaws` stays `true`. If F5, F6, F7 or F10 failed, `human.enabled` stays
+to `true` for this session, confirms `human.view_age_limit_s` there, the limit of F0, and
+decides whether `human.trigger_jaws` stays `true`. `human.require_live_view` stays
+`true`. If F5, F6, F7 or F10 failed, `human.enabled` stays
 `false` and part F-B is not run. For F-B the robot app of step 15 is started with
 `--human-socket ~/.agentic_remote/human.sock`: without that socket the human program
 has nothing to attach to, and adding it later needs `rest`, a shutdown and steps 15 and
@@ -5151,7 +5639,7 @@ has nothing to attach to, and adding it later needs `rest`, a shutdown and steps
 
 | # | Where | Do | Must show | Write down | Abort if |
 |---|---|---|---|---|---|
-| 15 | Thor | 48 V on. The arm still lies at rest; the second person has a hand on it. `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --driver real --apai-profile PROFILE --calibration ID --connect WS:47610`, for demo 2 with `--human-socket ~/.agentic_remote/human.sock` added; answer the three questions with `yes` | `robot app: the real driver is connected at measured rest: torque on, hold unknown, motion hold` (or `rest_hold`)`, jaws referenced`; then `robot app: session ...`; the console's `WELCOME` says `driver real`; in the robot app's log `one joint read takes ... ms on the motor bus ...` | The joint reads of the connect, from `~/.apai/logs/rest_readings.jsonl`; the jaw reading; the time one joint read takes | A line that begins `robot app: the robot app did not start: `, then a line that begins `robot app: APAI's driver refused the connect before anything that cuts torque`: the motors were never switched on and the arm lies on its stops as in step 4. Read the reason, correct the pose by hand, start again. A line that begins `robot app: the robot app did not start: `, then a line that begins `robot app: the start failed after the connect began: the motors may be enabled and holding`: the program has ended without releasing them. The arm lies at rest: with the second person's hand on it, switch the 48 V off, read the reason, start again |
+| 15 | Thor | 48 V on. The arm still lies at rest; the second person has a hand on it. `EX/run_robot_app.sh --config EX/configs/robot_app_rebot.yaml --arm apai --driver real --apai-profile PROFILE --calibration ID --connect WS:47610`, for demo 2 with `--human-socket ~/.agentic_remote/human.sock` added; answer the three questions with `yes` | `robot app: the real driver is connected at measured rest: torque on, hold unknown, motion hold` (or `rest_hold`)`, jaws referenced`; then `robot app: session ...`, with no line `robot app: human driving is not tied to a live view ...` between those two: the rig's file requires the live view; the console's `WELCOME` says `driver real`; in the robot app's log `one joint read takes ... ms on the motor bus ...` | The joint reads of the connect, from `~/.apai/logs/rest_readings.jsonl`; the jaw reading; the time one joint read takes | A line that begins `robot app: the robot app did not start: `, then a line that begins `robot app: APAI's driver refused the connect before anything that cuts torque`: the motors were never switched on and the arm lies on its stops as in step 4. Read the reason, correct the pose by hand, start again. A line that begins `robot app: the robot app did not start: `, then a line that begins `robot app: the start failed after the connect began: the motors may be enabled and holding`: the program has ended without releasing them. The arm lies at rest: with the second person's hand on it, switch the 48 V off, read the reason, start again |
 | 16 | Thor | If the motion is `hold`: type `rest`, then `path is clear`. The arm moves a few hundredths of a rad, the jaws close and the motors go off there: a `rest` now ends as step 17's release does | The `[rest]` lines of the fold, `[jaws] at rest: the jaws are closed`, `[release] torque release sent at rest: the driver does not confirm that the motors are off`, `rest: completed`; motion `rest_unpowered` | The planned and the real time; whether the motors are off, by hand feel | The arm moves away from rest: `stop`. `rest: failed: at rest with the motors on; release refused: ...`: the arm holds at rest; read why |
 | 17 | Console, Thor | The release at rest, if step 16 was not needed: `release`, then `yes` | `[jaws] at rest: the jaws are closed`; `torque release sent at rest: the driver does not confirm that the motors are off`; the motors are off | Whether the motors are off, by hand feel | `refused`: the motors stay on; read why. `failed` with `fault: torque release failed, the motors may be on or off: ...` and `torque unknown` on the console: keep a hand on the arm and treat it as powered. With the arm's real driver no second release is possible and `quit` fails too: end the robot app with SIGTERM from a second terminal on the Thor (Ctrl+C is a STOP) and start it again with the arm at rest (see [the torque rule](#the-rule-torque-is-never-cut-away-from-rest)) |
 | 18 | Thor | The motors on again, without a new start of the robot app: `on`, then `yes`, with the second person's hand on the arm. The driver connects as in step 15, which cuts torque for a moment at rest | `[rest] the motors are on again at rest: motion rest_hold` (or `motion hold`, when the arm lies more than 0.05 rad from the rest pose: a task is taken from there too) and `on: completed`; the session id is the same | Whether the arm stayed on its stops | `[refused] the motors were not switched on again: ...`: the motors are off and the arm lies at rest; read why. If `on` cannot be made to work: `quit`, then steps 15 and 16 again |
@@ -5194,15 +5682,19 @@ F-B is run only when F-A passed and `human.enabled` is `true` in `robot_app_rebo
 after step 27. Without it steps 20 to 27 are not run, and F-B runs after step 19 in the
 variant F-B0 below.
 
+F-B runs with the live view: the viewer's page stays open, in front, with its live
+picture showing, and the workstation person watches it. The stop person stays at the
+Thor terminal for all of F-B, with `stop` typed and a finger on Enter.
+
 | # | Where | Do | Must show | Write down | Abort if |
 |---|---|---|---|---|---|
-| F13 | Thor, view, console | Start the human program in the Thor's second terminal as in F2: the one of F-A ended with its robot app. Check the view age again with the arm powered | `human program: teleop; driver real; arm model rebot_rs, 6 joints`. The console shows `human program at the robot app` and `headset ready`, and its `view` stays under the chosen limit for one minute | The age: lowest, middle, highest | It does not: no human motion today. Changing the limit now needs `rest`, a shutdown and steps 15 and 16 again |
+| F13 | Thor, viewer's page, console | Start the human program in the Thor's second terminal as in F2: the one of F-A ended with its robot app. The wearer takes the place and the headset setting of F5. The stop person sits at the Thor terminal with `stop` typed. The viewer's page is open, in front, with its live picture showing. Check the view age again with the arm powered | `human program: teleop; driver real; arm model rebot_rs, 6 joints`. The console shows `human program at the robot app` and `headset ready`, and its `view` stays under the chosen limit for one minute | The age: lowest, middle, highest | It does not: no human motion today. Changing the limit now needs `rest`, a shutdown and steps 15 and 16 again |
 | F14 | Agent terminal, by hand | A task that lifts the gripper; a foam block into the path (step 24), well above the table | The arm holds before the block; `HELP NEEDED`; the wait counts and says `ARM WILL KEEP HOLDING`; the console says `takeover: possible now ...` | The time to the help block | `takeover: not possible`: read why. An arm that the agent left with a low gripper tip, below the table clearance or inside its last grasp region, takes the takeover of F15, whose line then ends `; the gripper tip is low: only a lift is taken until it is clear`, and no `rest` before the wearer has lifted it clear: straight up, as in F16, because a sinking hand and, below the table clearance, any step that does not rise end the drive. An arm that the agent left with a joint in the outer 0.02 rad of its working box, outside the human joint box, takes no takeover either, and the takeover line does not say so: it reads `takeover: possible now ...`, and the hold of F15 is refused with `the arm is outside the human limits: ...; type rest` and three bells. There the stop person types `rest`, then `path is clear` (see [Known gaps](#known-gaps)) |
 | F15 | Controller | Hold right B 1 s with the grip released. Then take the foam block and everything else out of the arm's reach | `[stop] STOP from controller: right B; ...`; the wait is cancelled; `[owner] TAKEOVER: a person owns the arm, ...`, two bells. The arm does not move. The jaws do not move: a takeover sends no jaw command, and the wearer keeps the trigger released | The time from the press to the STOP's higher stop number | The arm or the jaws move |
 | F16 | Controller | The first human motion. Release the grip, then squeeze; move the hand 3 cm straight up over at least 5 s; release. The stop person presses Enter at the first motion that is not upward. The hand's target moves at 1 cm per second; a hand more than 5 cm ahead ends the engagement: move at most 3 cm at a time and wait for the arm. Keep the hand's orientation as it was at the squeeze: a turned hand turns the tool at up to `retarget.max_angular_velocity` (0.03 rad/s) until the tool has caught up or the grip is released, and the hand-ahead limit compares positions only, so it does not end that. Then squeeze and release three times with the hand held still | The arm follows upward and holds on the release. With the still hand the arm does not move | The lag by eye; any `human drive ended`, and for one that names a contact its text, with the tracking error it gives (APAI's contact monitor trips only beyond its lag band, about 0.03 rad at 0.1 rad/s); whether the arm sinks from one squeeze to the next (a drive starts from the measured pose, so an arm that sags under load can creep down by the sag per squeeze) | Any motion that is not upward; no hold on the release; a creep that does not stop |
 | F17 | Controller, agent terminal | Squeeze and move; press right B during the motion. Then try a task at the agent terminal | The arm holds; nobody owns it; `takeover open`. The task is refused with `takeover not finished: give the arm back with right A at rest` | The time from the press to the hold; how far the arm went | More than 0.25 s |
 | F18 | Controller, console | Hold B 1 s again. Then the trigger, with nothing between the jaws and the stop person's `stop` typed: pull it slowly all the way, hold it, release it slowly all the way | A takeover again. With `human.trigger_jaws: true`: the console's jaws line reads `jaws: follow the trigger`; the jaws close with the trigger and open again fully, in steps. With `false`: the jaws do not move | Any refusal of the takeover, with its text. With `true`: what the console's jaws line and the report line's `trigger asks` read at rest and fully pulled; the time the jaws take to open | With `true`: the jaws move while the console's jaws line does not read `jaws: follow the trigger`, or go on after the stop person's `stop`. With `false`: the jaws move. A takeover refused with `[refused] owner request 'human' refused: the arm is outside the human limits: ...; type rest` and three bells is no abort: the STOP of F17 came with a joint at the edge of the human joint box, where it reads just outside the box. The stop person types `rest`, then `path is clear`: the box lies 0.02 rad inside `rest.region_*`, so the pose is one the return starts from. Take over again from rest |
-| F19 | Workstation, Thor | While squeezing, each once: hide the browser tab; stop the Teleop Session Server (then start it again, switch Headless on again in the headset, wait for `ready`); end the human program on the Thor with a kill signal (then start it again there) | The arm holds each time; the person stays the control owner; after a release and a new squeeze the arm follows again | The delays | The arm goes on, or its motors switch off |
+| F19 | Workstation, Thor | While squeezing, each once: hide the browser tab of the viewer's page (then bring it back to the front); stop the Teleop Session Server (then start it again, switch Headless on again in the headset, wait for `ready`); end the human program on the Thor with a kill signal (then start it again there) | The arm holds each time; the person stays the control owner; after a release and a new squeeze the arm follows again | The delays | The arm goes on, or its motors switch off |
 | F20 | Cable | While squeezing: pull the network cable at the workstation's end; nobody reaches toward the Thor. The cable carries the robot connection and the teleop connection: while it is out right B is not read, and the stop is the Thor terminal's. Put it back and wait until the console shows `headset ready` and its `view` is under the limit | The arm holds; `ROBOT CONNECTION LOST` on the console; after the cable is back nothing moves; a release and a new squeeze work | The delays, among them the time until the human program says `ready` again | The arm moves by itself |
 | F21 | Console, controller | Release the grip. `rest`, then `path is clear`. Then hold right A 1 s | The arm returns to rest with its motors on; `[owner] takeover ended: the arm is given back; nobody owns it`, two bells; `owner nobody` | The return's time | `rest` refused with `the path to rest was refused: ...`: the wearer squeezes, moves the arm back the way it came and releases; then `rest` again. `owner request 'handback' refused`: read why; the arm stays at rest with its motors on. Refused for jaws that are not proven empty: release the trigger all the way and wait until the jaws are fully open, then right A again |
 | F22 | Agent terminal, all | Demo 2, three times: a task; the block; the takeover; the block is taken away; the person moves the arm; `rest`; right A; the next task | Three full cycles with no program restarted | Each cycle's times: help request to takeover, takeover to hand-back | Two failed cycles in a row |
@@ -5221,7 +5713,7 @@ takeover (F14) and the refused task (F17) are then shown on one machine only.
 | # | Where | Do | Must show | Write down | Abort if |
 |---|---|---|---|---|---|
 | 28 | Console or Thor | `rest`, then `path is clear`. Then `shutdown` at the console (at rest it asks for `yes`) or `quit` at the Thor terminal | The `rest` measures rest, closes the jaws and releases torque there; the robot app then ends with exit code 0 | - | `refused`: the arm holds with its motors on; read why. Refused only for jaws that are not proven empty: look at them, then type `jaws are empty` when asked, or `stop`, `open`, `yes` if they hold something |
-| 29 | All | 48 V off, with the arm at rest. Stop the camera sender, the receiver, the view, the console, the human program, the Teleop Session Server, CloudXR's service and the robot link service | - | What was left open | - |
+| 29 | All | 48 V off, with the arm at rest. Stop the camera sender, the receiver, the viewer, the console, the human program, the Teleop Session Server, CloudXR's service and the robot link service | - | What was left open | - |
 
 Not in this session: reading the motors' CAN timeout parameter; ending the robot app during
 a raised hold; the jaw rule with different objects; the timed return; the typed `reference`;
@@ -5290,13 +5782,13 @@ workstation, 2026-11-15, in the same environment:
 | The operator console at a terminal | By tests, in a child process on a pseudo-terminal, without a service | Ctrl+C was a STOP and did not end it; `quit` ended it with exit code 0; inside an agent's environment it asked nothing |
 | The operator console against the robot app | By tests, in the test process: the console's class with its lines typed by the test | The confirmations of the wording table; `stop` taken while a `rest` ran; the help block; `ROBOT CONNECTION LOST` |
 | `view --help`; `run_view.sh` without its Python; the view without a robot link service | As processes | Exit code 0; exit code 2 and one line; exit code 1 and `cannot attach to the robot link service` |
-| The live view with stand-in camera pictures, with a recorded pair, with `--source none` | By tests: the program's `main()` on a thread and as a process; the page asked over HTTP | VIEW_STATUS reached the robot app and `view_age_s` showed in ROBOT_STATE; a recorded source was never live; exit code 0 on SIGTERM and SIGINT. No browser, no camera receiver, no camera frame bridge on a GPU |
+| The live view program with stand-in camera pictures, with a recorded pair, with `--source none` | By tests: the program's `main()` on a thread and as a process; the page asked over HTTP | VIEW_STATUS reached the robot app and `view_age_s` showed in ROBOT_STATE; a recorded source was never live; exit code 0 on SIGTERM and SIGINT. No browser, no camera receiver, no camera frame bridge on a GPU |
 | `run_robot_app.sh` without `AGENTIC_REMOTE_THOR_PYTHON` | As a process | Exit code 2 and one line |
 | `link_service --config configs/link_service_rebot.yaml` | As written | Exit code 2: `allowed_peers must be a non-empty list` |
 | `robot_app --config configs/robot_app.yaml --arm apai` | As written, with `AGENTIC_REMOTE_APAI_SRC` set | Exit code 2: the human limit set's 1.5 rad/s is above the mock profile's speed cap of 1.2 rad/s |
 | `robot_app --arm apai --apai-profile rebot_rs` without `--connect` | By a test, in the test process, with the shipped file's human limit set at 0.8 rad/s (`test_main.py`) | Exit code 2; `the profile's speed cap: 0.8 rad/s` is printed; nothing was connected. With `configs/robot_app_rebot.yaml` and the rig's own profile this was not run: a test only loads that file and fits it to APAI's `rebot_rs` profile |
-| The service, the robot app (`--arm sim`, and `--arm apai --driver mock`), the live view with `--source none`, the operator console on a pseudo-terminal and the console command as processes | By a test, on a port the system picked | The console named the driver; `console_cmd state` and `stop` ended with exit code 0; `rest` with `path is clear`, typed at the console, completed; `quit` ended the robot app and the console with exit code 0, SIGTERM the view and the service |
-| Demo 1: the agent program with two tasks, a console and a live view attached at once | By a test, in the test process, behind the service on 127.0.0.1, on APAI's software arm, with stand-in camera pictures for the view | 905 joint targets in 8 moves, each under a permit; the console printed both grants and the help request; the view age on the console was 0.1 to 1.6 s while a tab acknowledged a picture every 1.5 s (two runs); the page showed the move. 22.4 to 22.7 s per run |
+| The service, the robot app (`--arm sim`, and `--arm apai --driver mock`), the live view program with `--source none`, the operator console on a pseudo-terminal and the console command as processes | By a test, on a port the system picked | The console named the driver; `console_cmd state` and `stop` ended with exit code 0; `rest` with `path is clear`, typed at the console, completed; `quit` ended the robot app and the console with exit code 0, SIGTERM the view and the service |
+| Demo 1: the agent program with two tasks, a console and a live view program attached at once | By a test, in the test process, behind the service on 127.0.0.1, on APAI's software arm, with stand-in camera pictures for the view | 905 joint targets in 8 moves, each under a permit; the console printed both grants and the help request; the view age on the console was 0.1 to 1.6 s while a tab acknowledged a picture every 1.5 s (two runs); the page showed the move. 22.4 to 22.7 s per run |
 | `stop` typed at the console during the agent's move, then a second task | By a test, the same way, the view with `--source none` | The move ended `cancelled` at the setpoint it was typed at (40 of 95); `stop: taken` came 5 to 11 ms after the line was typed, on one machine; the second task ran without a restart |
 | `rest` typed at the console after a task | By a test, the same way | `yes` sent nothing; `path is clear` returned the arm to rest in 2.6 s (105 joint targets); motors on |
 | An obstacle during the first task, then a second task | By a test, the same way | The first move was refused after 33 to 35 setpoints; the console showed the help request and then the next grant, no STOP; the second task moved the arm; one run of the program, 24.0 s |
@@ -5332,21 +5824,27 @@ headset, no Teleop Session Server and no arm:
 | The recipe of demo 1 with the mock agent | By a test, as processes (`test_demo1_recipe.py`): the robot app on the shipped `configs/robot_app_mock.yaml`; the agent program started with `bash run_agent.sh` at a pseudo-terminal that is its controlling terminal, the task lines and each `yes` typed there; the console on a pseudo-terminal. What differs from the recipe: the service, the view and the agent program ran on copies of their files that name a port the system picks, a socket and a state folder in a temporary folder; the console and the view were started with `python -m`, not through their start scripts; a fourth local client in the role `tool` read ROBOT_STATE; APAI's stores lay in the temporary folder and `APAI_GRASPGENX_PORT` named a port nobody listens on; the page was read with the tests' HTTP client | Every "must show" of the recipe. `open the gripper` succeeded; the pick and place ran 8 moves under permits and ended with the help request, the arm holding at about [0, 1.2, 1.2, 0, 0, 0] rad with its motors on; `stop`, `rest` with `path is clear` and `shutdown` with `yes` worked; exit code 1 for the agent program, 0 for the others. The process test takes 53 s |
 | The recipe of demo 2 on one machine | By a test, as processes (`test_the_recipe_of_demo_2_runs_as_processes_with_the_shipped_files` in `test_demo2_programs.py`): the robot app on the shipped `configs/robot_app_demo2.yaml` with `--arm sim`; the human program started with `bash run_human.sh --controller synthetic:lift`; the console on a pseudo-terminal. What differs from the recipe: the service, the view and the human program ran on copies of their files that name a port the system picked, a socket and a state folder in a temporary folder and, as the Teleop Session Server's, a port nobody listens on; the console and the view were started with `python -m`, not through their start scripts; a fourth local client in the role `tool` read ROBOT_STATE; the page was read with the tests' HTTP client | Every "must show" of steps 1 to 8, those of steps 6 and 7 in the recipe's order. The script's right B was a STOP and took the arm over; the gripper tip rose 5 cm off rest, within 3 mm; the typed `rest` returned the arm in 5.0 s and the script's right A gave it back; the owner numbers ran from 0 to 5 up to the hand-back; `shutdown` with `yes` released torque at rest; exit code 0 for all five programs and no traceback from the human program. The test takes 23 s |
 | The recipe's variant with the agent failing first | By a test, as processes (`test_demo_2_with_the_agent_failing_first_runs_as_processes`): the robot app on the shipped `configs/robot_app_mock.yaml` with `--arm apai --driver mock`; the agent program started with `bash run_agent.sh` at a pseudo-terminal that is its controlling terminal, on a copy of `configs/agent_mock.yaml`; the human program started once the agent had asked for help. The other differences are those of the row above | The pick and place ended in the help request; the help block ended with `takeover: not possible: no human program is attached: start run_human.sh`; the script's right B cancelled the assistance wait and took the arm over with owner number 4; the gripper tip rose 5 cm from where the agent had left it; the typed `rest` returned the arm in 30.9 s (largest joint travel 1.48 rad); after the hand-back `open the gripper` succeeded under owner number 8; the console printed one `WELCOME`; no `open` was typed; exit code 1 for the agent program, 0 for the others. The test takes 72 s |
-| A person driving, with every program of demo 2 attached, on the simulated arm | By tests, ten of `test_demo2_programs.py`, in the test process and on the machine's clock: the robot app behind the robot link service on 127.0.0.1; the human program's `main()` on a thread with script rows the test gives; the console's class with its lines typed by the test; the live view's `main()` on a thread with stand-in camera pictures (15 per second, a VIEW_STATUS every 0.1 s) and an HTTP client that fetches a picture and acknowledges it with the page's token every 0.25 s; `human.view_age_limit_s: 2.0` in the robot app | `stop` typed at the console during a squeeze held the arm within one setpoint period, with nobody as control owner and the takeover open; the hand, still squeezed and rising, moved nothing more; an agent client's task was refused with `takeover not finished: give the arm back with right A at rest` and was taken after `rest` and right A. Right B pressed during a squeeze and held for 2.2 s was one STOP and asked for nothing. A controller that was absent for 1.5 s and a browser tab that stopped acknowledging each ended the drive in a hold with the person still the control owner; with the cause gone and the grip still squeezed nothing moved, and after a release and a new squeeze the arm followed again under the same takeover. With the human program's socket closed the last joint target went out within `human.sample_age_limit_s` plus one period of the last human target, the program ended with exit code 1 and the console showed `no human program` beside `owner human` and `takeover open`. With the agent client's socket closed during a squeeze the drive went on: no help request and no assistance wait. With the robot connection cut during a squeeze the arm held and the person kept it; `rest` typed at the Thor terminal returned it meanwhile; after the reconnect the squeezed grip moved nothing until it was released and squeezed again. With the tab away a second time, right B was a STOP and its hold was refused with `the live view is not fresh: ...; open the live view page in a visible browser tab` and three bells; so was a takeover with `--source none`, where nothing moved and no takeover was open. Right B during the assistance wait cancelled it: no return to rest started, with `rest.auto_return` true. With `operator.typed_takeover` on and no button pressed, `stop`, `takeover`, `yes`, a squeeze and a lift of 2 cm, `rest`, `path is clear`, `handback`, `yes` ended with `takeover ended` and `owner nobody`; with the setting off the same words printed the service's refusal and changed nothing |
+| A person driving, with every program of demo 2 attached, on the simulated arm | By tests, ten of `test_demo2_programs.py`, in the test process and on the machine's clock: the robot app behind the robot link service on 127.0.0.1; the human program's `main()` on a thread with script rows the test gives; the console's class with its lines typed by the test; the live view's `main()` on a thread with stand-in camera pictures (15 per second, a VIEW_STATUS every 0.1 s) and an HTTP client that fetches a picture and acknowledges it with the page's token every 0.25 s; `human.view_age_limit_s: 2.0` in the robot app | `stop` typed at the console during a squeeze held the arm within one setpoint period, with nobody as control owner and the takeover open; the hand, still squeezed and rising, moved nothing more; an agent client's task was refused with `takeover not finished: give the arm back with right A at rest` and was taken after `rest` and right A. Right B pressed during a squeeze and held for 2.2 s was one STOP and asked for nothing. A controller that was absent for 1.5 s and a browser tab that stopped acknowledging each ended the drive in a hold with the person still the control owner; with the cause gone and the grip still squeezed nothing moved, and after a release and a new squeeze the arm followed again under the same takeover. With the human program's socket closed the last joint target went out within `human.sample_age_limit_s` plus one period of the last human target, the program ended with exit code 1 and the console showed `no human program` beside `owner human` and `takeover open`. With the agent client's socket closed during a squeeze the drive went on: no help request and no assistance wait. With the robot connection cut during a squeeze the arm held and the person kept it; `rest` typed at the Thor terminal returned it meanwhile; after the reconnect the squeezed grip moved nothing until it was released and squeezed again. With the tab away a second time, right B was a STOP and its hold was refused with `the live view is not fresh: ...; show the viewer's live picture in a visible browser tab` and three bells; so was a takeover with `--source none`, where nothing moved and no takeover was open. Right B during the assistance wait cancelled it: no return to rest started, with `rest.auto_return` true. With `operator.typed_takeover` on and no button pressed, `stop`, `takeover`, `yes`, a squeeze and a lift of 2 cm, `rest`, `path is clear`, `handback`, `yes` ended with `takeover ended` and `owner nobody`; with the setting off the same words printed the service's refusal and changed nothing |
 | Demo 2 with the agent program, and a fast hand, on APAI's software arm | By tests, two of `test_demo2_programs.py`, the same way, the arm raised off its joint stops: one with the agent program in the test process on APAI's mock scene and an obstacle put into the obstacle grid during its first move; one with a hand that is 1 cm higher on the next pass and a human speed limit of 0.3 rad/s | The first task ended in a help request; the help block showed `jaws: empty` and ended `takeover: possible now: hold right B for 1 s with the grip released`; right B's STOP cancelled the wait and its hold took the arm over with two bells; the arm followed a lift of 3 cm, each joint target within 0.98 of the human speed limit times the period of the one before; `rest` with `path is clear`, then right A, gave the arm back; the second task, `open the gripper`, succeeded. The control owners in order: nobody, agent, nobody, human, recovery, human, nobody, agent, nobody. One run of every program on one session of the robot app, the motors on throughout, no jaw command from the takeover to the hand-back, every joint target of the agent under a permit. For the fast hand `health.clamped` rose by the number of joint targets that lay at the clamp (7 of 176 in one run), no drive ended, APAI's human checker approved every target and the gripper tip ended 1 cm higher |
-| The two robot app files of demo 2 | By a test of `test_demo2_programs.py` that needs no APAI | `configs/robot_app_demo2.yaml` and `configs/robot_app_human_check.yaml` differ from `configs/robot_app.yaml` in exactly the keys their first comment lists; both load; each is refused with a human joint box wider than `rest.region_*`; the first is taken without a live view only with a simulated driver. Two more tests of the file check its own waits and its reading of the help block. The file has 18 tests and takes about 4 min with everything present |
-| The human program at the robot app's own socket, as on the Thor | By tests (`test_human_on_thor.py`), on one machine. In the test process, on the simulated arm and a fake clock: a robot app with its socket in a temporary folder and a local client of the test in the role `human`; once the robot app's program on a thread with a dialer of the test. Two tests as processes: the robot link service, the robot app with `--arm sim`, `configs/robot_app_demo2.yaml` and `--human-socket`, the console on a pseudo-terminal and `bash run_human.sh --controller synthetic:lift` on a copy of `configs/human.yaml` that names the socket; and the robot app on `configs/robot_app_human_check.yaml` with a robot connection that nothing answers | The client got WELCOME, ROBOT_STATE and the RESULTs of its own requests, and `health.human.local_program` said whether it was attached; a takeover and a hand-back asked for at the socket were answered as on the robot connection; a second human program and every other role were refused; a client that did not read was cut off, and no send of the robot app took a quarter of a second meanwhile; of two human programs one was followed, and a second one that kept sending was told of once; a STOP at the socket was served ahead of requests that had arrived before it; a STOP behind a refused LOCAL_HELLO (the console's raw STOP, a second human program's) reached the robot app; a STOP sent while the arm was being connected held no HUMAN_SETPOINT back afterwards; a `~` in `--human-socket` named the path of `configs/human_rebot.yaml`; the socket's file had mode 0600 and went with the robot app. With the robot connection lost during a squeeze the drive ended in a hold and the person kept the arm; a new squeeze moved nothing, for want of a live view; right B's STOP was taken. As processes: right B, the takeover, a lift of 5 cm, the typed `rest` and right A ran with the console showing `human program at the robot app`; with no robot connection at all right B's STOP reached the robot app, and the takeover it asked for was refused with `the live view is not fresh: no VIEW_STATUS has arrived`. The two process tests take about 30 s |
+| The two robot app files of demo 2 | By a test of `test_demo2_programs.py` that needs no APAI | `configs/robot_app_demo2.yaml` and `configs/robot_app_human_check.yaml` differ from `configs/robot_app.yaml` in exactly the keys their first comment lists; both load; each is refused with a human joint box wider than `rest.region_*`; the recipe's file asks for no live view, and the robot app's line about that is due for it; the file of the headset checks requires the live view, as the rig's file does. Two more tests of the file check its own waits and its reading of the help block. The file has 18 tests and takes about 4 min with everything present |
+| The human program at the robot app's own socket, as on the Thor | By tests (`test_human_on_thor.py`), on one machine. In the test process, on the simulated arm and a fake clock: a robot app with its socket in a temporary folder and a local client of the test in the role `human`; once the robot app's program on a thread with a dialer of the test. Three tests as processes: the robot link service, the robot app with `--arm sim`, `configs/robot_app_demo2.yaml` and `--human-socket`, the console on a pseudo-terminal and `bash run_human.sh --controller synthetic:lift` on a copy of `configs/human.yaml` that names the socket; and twice the robot app with a robot connection that nothing answers, on `configs/robot_app_human_check.yaml` as shipped and on a copy that requires no live view | The client got WELCOME, ROBOT_STATE and the RESULTs of its own requests, and `health.human.local_program` said whether it was attached; a takeover and a hand-back asked for at the socket were answered as on the robot connection; a second human program and every other role were refused; a client that did not read was cut off, and no send of the robot app took a quarter of a second meanwhile; of two human programs one was followed, and a second one that kept sending was told of once; a STOP at the socket was served ahead of requests that had arrived before it; a STOP behind a refused LOCAL_HELLO (the console's raw STOP, a second human program's) reached the robot app; a STOP sent while the arm was being connected held no HUMAN_SETPOINT back afterwards; a `~` in `--human-socket` named the path of `configs/human_rebot.yaml`; the socket's file had mode 0600 and went with the robot app. With the robot connection lost during a squeeze the drive ended in a hold and the person kept the arm; a new squeeze moved nothing, for want of a live view, in a robot app whose file requires it; right B's STOP was taken. As processes: right B, the takeover, a lift of 5 cm, the typed `rest` and right A ran with the console showing `human program at the robot app`; with no robot connection at all right B's STOP reached the robot app. On `configs/robot_app_human_check.yaml` as shipped, which requires the live view, the takeover it asked for was refused with `the live view is not fresh: no VIEW_STATUS has arrived; show the viewer's live picture in a visible browser tab`. On a copy of that file with `human.require_live_view: false` the takeover was taken, the squeeze lifted the arm, and a `rest` typed at the Thor terminal and right A ended the takeover. The three process tests take about 50 s |
 | The jaws under a person's trigger | By tests (`test_human_jaws.py`), in the test process, on the simulated arm and a fake clock, with the human targets the tests make; one of them on APAI's software arm | A held object stayed held through a takeover with the trigger released; a trigger short of the grip level moved nothing; once it had reached the grip level, or crossed it, the jaws followed it, the grip squeezed or not; nothing closed beyond the grip level before a measured full open; after one, a close on an object ended in the light hold; a STOP, stale controller data, a lost robot connection and a drive that the grip did not end each ended the jaw motion in a light hold; without a fresh live view the jaws opened and did not close; with `human.trigger_jaws: false` the trigger did nothing; a jaw opening outside 0 to 1, or no number, was refused; without a known grip level the trigger moved nothing; the hand-back was refused until the trigger had opened the jaws fully |
-| The trigger in the human program and on the console, and a person opening the jaws an agent left closed | By tests: the logic on stand-ins (`test_human_logic.py`); the script `grasp` on the real retargeting graph, pass by pass against a stand-in for the Thor (`test_human_feed.py`, `test_human_program.py`); the console's jaws line (`test_console.py`); and one test of `test_demo2_programs.py`, in the test process and on the machine's clock, on APAI's software arm with the robot link service, the console, the live view and the human program attached | The jaw opening was 1.0 minus the trigger's value, the grip squeezed or not, fully open at or below 0.05 and closed at or above 0.95; no jaw opening went out on a pass without a usable trigger, or while ROBOT_STATE did not show the person as the control owner; the trigger changed nothing else of a HUMAN_SETPOINT; the note said which way the trigger goes while the arm followed the hand, behind every note about the arm; `grasp` asked for closed and then for open jaws and moved no joint; the console printed the jaws line below its status line. With the programs together: an agent client closed the jaws on an object half the jaw travel wide and asked for help; through the takeover and a lift of 1 cm with the trigger released the jaws got no command, and the note read `pull the trigger to the grip level to move the jaws`; the trigger, pulled all the way, reached the grip level 0.00 and moved nothing; released, it opened the jaws in ten steps of 0.05 until they were measured fully open and empty; after the typed `rest` right A gave the arm back. The test takes about 14 s |
+| The trigger in the human program and on the console, and a person opening the jaws an agent left closed | By tests: the logic on stand-ins (`test_human_logic.py`); the script `grasp` on the real retargeting graph, pass by pass against a stand-in for the Thor (`test_human_feed.py`, `test_human_program.py`); the console's jaws line (`test_console.py`); and one test of `test_demo2_programs.py`, in the test process and on the machine's clock, on APAI's software arm with the robot link service, the console, the live view program and the human program attached | The jaw opening was 1.0 minus the trigger's value, the grip squeezed or not, fully open at or below 0.05 and closed at or above 0.95; no jaw opening went out on a pass without a usable trigger, or while ROBOT_STATE did not show the person as the control owner; the trigger changed nothing else of a HUMAN_SETPOINT; the note said which way the trigger goes while the arm followed the hand, behind every note about the arm; `grasp` asked for closed and then for open jaws and moved no joint; the console printed the jaws line below its status line. With the programs together: an agent client closed the jaws on an object half the jaw travel wide and asked for help; through the takeover and a lift of 1 cm with the trigger released the jaws got no command, and the note read `pull the trigger to the grip level to move the jaws`; the trigger, pulled all the way, reached the grip level 0.00 and moved nothing; released, it opened the jaws in ten steps of 0.05 until they were measured fully open and empty; after the typed `rest` right A gave the arm back. The test takes about 14 s |
 | A takeover with a low gripper tip, and the lift | By tests (`test_lift_out.py`), in the test process, on a fake clock, on APAI's checkers and its software arm with APAI's `mock` profile | A takeover was granted with the gripper tip under the table clearance, after a grasp and with no grasp region, and its line ended `; the gripper tip is low: only a lift is taken until it is clear`; with another complaint of the human checker (beside the workspace, under the table plane, outside the joint box) it was refused; the typed `rest` stayed refused there; a person's lift, step by step, brought the tip clear, and `rest` was then taken; a target and a step that would have lowered the tip were refused with `lift the gripper: ...` and the arm held; the tip was held against where it was measured, not where the drive began; a slide under the table clearance was refused by APAI's human checker, and one above it left the region; the simulated arm's checkers knew no table; a link at the table with a low tip was refused (the exception holds the gripper tip only), and a takeover inside the last grasp region above the clearance ended its line with the low-tip text; a hand that went down 0.7 mm or 0.2 mm per target was followed for less than 1 mm in all and then refused, inside the region and between the two table clearances; four squeezes that each lowered the target did not bring the tip more than 1 mm down; on an arm made to settle 8 mrad under every target, four squeezes of one target each left the tip where the first had left it (10.8, 8.2, 8.2, 8.2, 8.2 mm) with no drive refused, and a lift from there was followed once its target was back at the highest measured height |
 | Every stretch of time in a sample age and in a view age | By tests (`test_freshness.py`), in the test process, on the simulated arm and a fake clock, with the test's client in the role `human` once on the robot connection and once at the robot app's own socket; one test runs the human program's `main()` | Controller data that were 0.14 s old when sent and 0.12 s on the way started no drive: no joint target went out, the person kept the arm, and `health.human.refusal` read `no fresh controller data: 0.26... s old, the limit is 0.25 s`. A takeover was refused just outside the limit and taken just inside it, wherever the time lay: at the human program, on the way, or counted from the ROBOT_STATE for a sender without `sent_mono_s`. The wait at the robot app counted too. A drive ended in a hold when its targets, or the view's reports, took too long on the way. A HUMAN_SETPOINT that names no time had no known age; a time from the future was not trusted. A VIEW_STATUS delayed on its way was as old as it was, and one that does not say when it was sent was not fresh; the view age at the Thor was the picture's age whatever the link took. The human program stamped each HUMAN_SETPOINT with the age and the time of the moment it sent it; a takeover whose joint read let the controller data or the live view run out was refused with `...; the joint read took ... s`; the time of the controller feed's own step, for the script feed and for the teleop feed on a stand-in session, was in the sample age the human program sent |
 | A torque release whose driver call fails | By tests (`test_release_failed.py`), in the test process, on a fake clock, on the simulated arm and on APAI's mock driver | The RESULT was `failed` with `fault: torque release failed, the motors may be on or off: ...`; the motion was `release_failed`, `torque_on` true, and a fault-stop latched; no line said that the motors are off. After `reset` a task, `open` and `rest` were refused with `a torque release failed and the motors may be on or off; ...` and nothing was sent to the arm or the jaws. A shutdown started no return to rest, tried the release again and left the robot app running while it failed; once the release worked, the same shutdown closed the app. A second release at measured rest ended `rest_unpowered`. An arm port that knew its motors were off was shown as `rest_unpowered`. With APAI a release that failed after the driver had disconnected was not shown as off, and the arm port counted a release only once the driver's call had returned |
 | A jaw command the agent gave up on, and a GRIPPER's expiry | By tests (`test_gripper_timeout.py`): the real robot app on the simulated arm with the agent's arm adapter, its wait shortened to 0.3 s, on a robot connection that keeps link messages back; the arm adapter against a scripted robot side; the robot app on a fake clock with the test's client | A GRIPPER that arrived after the adapter had given up was `refused` and the jaws got nothing; a close that ran when the adapter gave up was cancelled and left in the light hold, never opened; the adapter sent one STOP from `agent`, also inside a skill, and its next jaw command sent nothing; a jaw command answered in time sent no STOP and the agent kept the arm. A GRIPPER past its expiry was refused at once with `the jaw command expired ... s ago`; one that expired while it waited never started, and the commands before and after it ran; one inside its expiry ran as one without; a GRIPPER without the field never expired; the agent program's GRIPPER carried the end of its own wait |
 | A MOVE's expiry at its first setpoint, and the read a move completes on | By tests (`test_executor.py`), on a fake clock with joint reads the tests script | A MOVE that expired during the check of its first setpoint was refused with `the move expired 0.030 s ago` and sent nothing, with and without a permit held; one whose check also made the setpoint late was refused as expired, not ended `late`; a STOP during that check won; a slow check that ended before the expiry started the move, and an expiry that passed in a later check did not end a move under way. A joint that read near and read not valid later did not count; a full read with a joint not valid, a failed one and one with a joint 0.05 rad off did not complete the move, which completed on the next full read; full reads that stayed bad ended it `not_settled`, the arm holding at the last setpoint with its motors on; a move that completed made one full read after its last setpoint and took as long as before |
 | The arguments of the experiment's launcher in the agent program | By tests (`test_agent_options.py`), in the test process; one of them with the experiment's own timing, model transcript, debug recording and milestone batching on APAI's mock scene, with no GPU, no model request and no camera | The full stack timed and transcribed by default, and the minimal stack did neither; the launcher's command line with `--operate` and `--depth-backend ffs` gave the run that the line without them gives; each argument a run cannot take ended the program with exit code 2 and one line, `--motion-approval tool` on both stacks among them; without an option nothing of the experiment was loaded and no file was left; each option installed its hook once, in the launcher's order; a STOP and the close of the link came before any recording ended; a recording that could not begin ended the program before it attached, and one that could not end left the run's exit code as it was. On the mock scene every timing hook of the experiment installed. A run wrote `resolved-config.yaml` before it attached, and one that could not write it ran on with a warning; with the debug recording each pose the program read from ROBOT_STATE was recorded as `robot.feedback` |
-| `bash run_workstation.sh --print`, and the script with an unknown argument, without a variable and with a Python that cannot be run | By a test, as processes (`test_link_programs.py`) | Exit code 0 and the six commands of the six panes, nothing started; exit code 2 and one line each |
+| `bash run_workstation.sh --print`, and the script with an unknown argument, without a variable and with a Python that cannot be run | By a test, as processes (`test_link_programs.py`) | Exit code 0 and the five commands of the five panes, nothing started; exit code 2 and one line each |
+| `bash run_workstation.sh` with a stand-in for tmux | By tests, as processes (`test_launcher.py`); no tmux ran | Five panes and no command of the live view program. The viewer's command was sent at once; the console's only once a service listened on the local socket. `--live-view` was refused as an unknown argument |
+| A person on the real driver, and the live view | By tests. The program with `--driver real` on APAI's driver class over a stand-in for the motor library, on a copy of the rig file with `human.enabled: true`, in real time (`test_real_driver.py`). The same driver class on a fake clock (`test_rig_configs.py`). The simulated arm with the driver declared `real` (`test_takeover.py`). The viewer's launcher on a stand-in camera, with the robot app on the simulated arm (`test_viewer_live.py`) | On the rig file as shipped, without a VIEW_STATUS, the takeover was refused with `the live view is not fresh: no VIEW_STATUS has arrived; show the viewer's live picture in a visible browser tab`. With a live VIEW_STATUS that a test sent, a takeover was taken and a lift ran on the driver class. With the viewer's own VIEW_STATUS, from a stand-in for a browser tab that drew and acknowledged its live pictures, a takeover was taken and a squeeze moved the simulated arm; the drive ended in a hold when the live picture left the page. On a copy with `human.require_live_view: false` the program printed `robot app: human driving is not tied to a live view (human.require_live_view false)` and logged it, a takeover was taken and a squeeze moved the stand-in motors, the released grip ended the drive in a hold, and right B was a STOP. Stale controller data, a synthetic controller, a grip that was not released first and a target beyond the step limit were refused either way. Never run on the arm |
 | The experiment's viewer on runs the agent program recorded | By tests (`test_viewer.py`), on 2026-11-16: the viewer's own HTTP server in the test process, on 127.0.0.1 and a port the system picked, on runs recorded on APAI's mock scene with the experiment's own timing, model transcript and debug recording and a stand-in for the obstacle grid bridge; once as a process, started with `bash run_viewer.sh --runs FOLDER --port 0 --token-file FILE` under the tests' Python | The run was listed before its first task; while the program waited for task lines the events, the length and the map revisions grew, and the measured joints went from the start pose to where the pick and place left the arm; the timing gave the first task's spans while the program still ran; after its end the recording was closed and an earlier moment showed again. A refusal of the check ahead showed with the refused pose, its point at the gripper tip and the map revision it was checked against. The page, the camera frame as a JPEG, the timing page and its data answered with code 200. A run without `--record-debug` and a run folder without `resolved-config.yaml` were not listed, and asking for them by name gave code 400. As a process: code 401 without the token, the run's data with it, exit code 0 on Ctrl+C. The full stack's `resolved-config.yaml` gave the viewer the arm and the volumes `housing`, `fingers` and `jaws` |
 | `run_viewer.sh` with stand-ins for the Python and the experiment folder | By tests (`test_viewer.py`), as processes, on a copy of the script in a temporary folder | The viewer got `--host 127.0.0.1`, `--runs` and `--token-file` in the copy's own `.state` and the caller's arguments behind them; the state folder was made with its `.gitignore`; eleven things that cannot be used each gave exit code 2 and one line, with nothing started |
+| The debug recording's map pictures a second and the line of a full recording | By tests (`test_debug_recording.py`), on 2026-11-17, in the test process: APAI's own watcher and obstacle map on a stand-in camera of 64 x 48 pictures, 20 a second, and a stand-in grid bridge, with the experiment's own recorder; the experiment's viewer over HTTP on a port the system picked, and its report; two runs of the agent program on APAI's mock scene. Not run on the rig: the 4.7 MB and the 7 a second are read from the rig's recording of 2026-11-17, and the 30 min are computed from them | Of 20 refreshes a second about 2 were stored, each with its frame, its input, its bridge calls, its commit and its end, while the map took every one; the viewer's state went on while the run recorded, and the viewer and the report read the result. With `--debug-map-hz 0 --debug-at-limit stop` the recording had the events of the experiment's recorder alone, with the same ids. A refusal and a route segment were stored with the map refresh they named, also when another thread named it while its tick still ran; a refresh with a `retire_target` call was stored. After half a second without a new map revision the newest map that had been left out was stored, and so was the last one when the recording ended. The line `debug recording full after ...` was said once when the recorder stopped and once more at the next task prompt, and both tasks behind it ran |
+| The debug recording at its size limit | By tests (`test_debug_recording.py`), on 2026-11-17, in the test process, with limits of 2 to 16 MB: the same watcher, map, recorder and viewer on a stand-in camera of 320 x 240 pictures that do not compress; the experiment's recorder alone on made-up events; two runs of the agent program on APAI's mock scene. Not run on the rig, and with no limit of gigabytes: the 30 min, the four hours of map points and the 1 % an hour of rows are computed from the rig's recording of 2026-11-17 | With 74 MB of map pictures into a limit of 12 MB the recorder never stopped and its folder stayed under the limit; `events.jsonl` was only appended to; the viewer showed the newest map, its points and its picture at every look, also over HTTP while 20 map pictures a second were recorded. The pictures of the first map, of the maps two refusals and two route segments named, of a refresh with a `retire_target` call, a grasp's mask and a measurement were all there at the end; a time in the dropped stretch gave the map and its points with code 400 for the picture, and the live state after it. A burst of 300 map pictures did not stop the recorder. A full disk (`No space left on device`) stopped it and was said; pictures that could not be removed let it stop at its size as it does alone. `recording-status.json` carried both blocks and `complete: false`, and the checks of the four replay tools refused the run; two of the tools were run themselves, the other two need `msgpack`, which the test interpreter lacks. With `--debug-at-limit stop` the recorder stopped at its size as before. The agent program sent the arm the same 905 setpoints, jaw commands and moves while its oldest map pictures were dropped as with the experiment's recorder alone |
+| The live picture of the experiment's viewer | By tests (`test_viewer_live.py`), on 2026-11-17: the launcher's request handler in the test process, on a stand-in camera of 60 pictures a second; the whole launcher as a process, started with `bash run_viewer.sh`, on a fake camera receiver with the real camera frame bridge program on files in the place of the GPU's slots and camera frames of 2560 x 1984; the page's block by node, on a stand-in for the page, behind the page's own script and over HTTP against the viewer | At `--live-fps 30` the stream gave 20 to 30 different pictures a second, each newer than the one before, and 4 to 6 at 5; with no browser on the stream or asking for pictures the camera was asked once a second. A browser that read one picture in 0.3 s missed most and slowed no other. Every path of the viewer answered with the same bytes as the viewer alone, the page with the block before its `</body>` and nothing else; the four live paths answered 401 without the token. As a process: pictures 960 px wide, no file changed in the runs folder or beside the token, exit code 0 and no bridge process left after Ctrl+C, SIGTERM and SIGHUP; without a camera one line `viewer: no live picture: ...` and the runs served; with `--no-live` the experiment's own page and code 400 on the live paths |
+| The live view: the viewer's page with its live picture, and the viewer's VIEW_STATUS | By tests (`test_viewer_live.py`), on 2026-11-17. The page's script under node, over HTTP against the viewer's request handler on a stand-in camera. The viewer's link beside the live view program, both on stand-ins for the local API and one clock that the test set. The viewer's launcher on a thread, on a stand-in camera, attached to a robot link service that ran as a process, with the robot app in the test process on the simulated arm and on the rig's robot app file with `human.enabled` switched on in memory; a stand-in for the human program sent 50 HUMAN_SETPOINTs a second, and a stand-in for a browser tab fetched and acknowledged the pictures. The launcher as a process, started with `bash run_viewer.sh`, without a robot link service and then with one | The script drew and acknowledged 30 pictures a second, and the acknowledged picture was 0.05 to 0.12 s old; after `Map picture` the view was not live at once. The viewer sent the bytes the live view program sent in 18 situations, among them a page that only fetched, a hidden picture, a newer load of the page, a picture with invented times, and no word for 1.1 s. On the rig file the takeover was refused without a page that showed the live picture, taken with one at a view age of about 0.12 s, and a squeeze moved the arm; the drive ended in a hold and a new takeover was refused after each of: the page's word that the live picture shows no longer, a tab that said nothing more, a stopped camera, the viewer's end, and a load of the page elsewhere. Torque stayed on throughout. Without a service the launcher served everything and said one line; it attached by itself once the service ran. No browser, no camera and no arm were used |
 
 Measured once in that environment, apart from the tests: one pass of the retargeting graph
 took 0.21 ms, an IK solve that converged 0.11 ms and one that failed after 50 iterations
@@ -5369,9 +5867,9 @@ Never run:
   pseudo-terminal and types the task and the `yes`; the other tests script them. No task was
   run by hand on one machine.
 - The operator console and the live view by a person: no line was typed at a real terminal
-  and no page was opened in a browser. So the page's script, which carries the view token
-  and writes `HUMAN DRIVING` and `THIS PAGE WAS REPLACED: reload it`, ran nowhere, and no
-  bell was heard.
+  and no page was opened in a browser. So the script of the viewer's page, which carries
+  the view token, ran under node only, the live view program's page script ran nowhere,
+  and no bell was heard.
 - The recipe of demo 1 with the mock agent by hand: with the ports 47610 and 47620, the
   default socket path, `run_console.sh`, `run_view.sh` and a browser.
 - The recipe of demo 2 on one machine and its variant with the agent failing first by
@@ -5393,7 +5891,7 @@ Never run:
   model. `test_gpu_stack.py` starts the full stack on recorded stereo pairs with
   stand-ins for both model clients and runs no task; the other tests cover only the merge
   of its configuration files.
-- `--camera link` through the agent program, `--source link` of the live view, and the
+- `--camera link` through the agent program, `--source link` of the live view program, and the
   camera receiver's start script with a receiver. The camera frame bridge is tested against
   a stand-in for the receiver.
 - `depth_backend: ffs` on stereo pairs from the camera receiver: it ran on a recorded stereo
@@ -5403,10 +5901,19 @@ Never run:
 - The agent program's options of the experiment's launcher on the real full stack: the
   timing, the model transcript, the debug recording and the milestone batching with a
   GPU, the obstacle grid bridge and a model client.
-- `run_workstation.sh` with tmux: a test runs it with `--print` only.
+- `run_workstation.sh` with tmux: a test runs it with `--print` only, and others with a
+  stand-in for tmux. The window of five panes was looked at in no tmux.
+- The live view in a browser: no browser drew the viewer's live picture, and no
+  browser's acknowledgement reached a robot app. A person's takeover with the live view
+  on the rig's camera, robot connection and arm.
 - The experiment's viewer in a browser, on port 8766, on a recording of the real full
   stack, and in the pane `viewer`: the tests ask it over HTTP on a port the system
-  picks, on recordings of APAI's mock scene. Its page's script ran nowhere.
+  picks, on recordings of APAI's mock scene. Its page's script ran in no browser.
+- The viewer's live picture on the real camera stream and in a browser: the tests give
+  it a stand-in camera, or a fake camera receiver with files in the place of the GPU's
+  slots, and read the stream over HTTP. The page's script and the block's ran in node on
+  stand-ins for the page's elements, never in a browser. How many pictures a second the
+  real camera frame bridge gives, and what it costs on the GPU, was not measured.
 - A torque release that fails, a jaw command without its RESULT and a MOVE that expires
   on the real arm: the tests make each on the simulated arm, on APAI's mock driver or
   on scripted joint reads.
