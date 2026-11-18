@@ -223,9 +223,10 @@ API on a socket that only programs of the same user on the workstation can open:
 the joint readings of the last half second), results and events, and sends commands and operator requests. The agent
 program's arm adapter, the operator console, the console command and the viewer are clients of that API. A
 client names its role when it attaches, and the service forwards from each role only what that role may send: from the
-agent's role MOVE, GRIPPER, PERMIT, CHECKER_STATE and the OWNER_REQUESTs for a new task, for help and for giving the arm
-back; from the console's role RESET, RELEASE, OPEN, SHUTDOWN and the OWNER_REQUESTs for a typed `rest` and for control
-owner nobody; from the viewer's role VIEW_STATUS; from every role STOP. Anything else is refused by the
+agent's role MOVE, GRIPPER, PERMIT, CHECKER_STATE and the OWNER_REQUESTs for a new task, for help, for giving the arm
+back, for the motors off and on and for the return to rest when the agent program ends (section 6); from the
+console's role RESET, RELEASE, OPEN, SHUTDOWN and the OWNER_REQUESTs for a typed `rest`, for control owner nobody
+and for the motors on; from the viewer's role VIEW_STATUS; from every role STOP. Anything else is refused by the
 service and does not reach the Thor. One agent client is attached at a time. WELCOME, ROBOT_STATE and EVENT go to every
 client; a RESULT goes to the client that sent the command and to every console. STOP, reset and the takeover prompts
 therefore keep working when the agent program has crashed. When the agent's API client closes while the agent is
@@ -288,8 +289,8 @@ never newer ones, so that nothing of an ownership that has ended is accepted. Th
 | PERMIT | Agent to Thor | Newest wins | Move id, the session id, owner number and stop number of the agent's grant, the last setpoint it covers, the Thor wall-clock time of the camera frame behind the grid it was checked against, and an expiry on the Thor's monotonic clock |
 | CHECKER_STATE | Agent to Thor | Reliable | Tells the agent checker to forget its contact spots, or to end the grasp region of a grasp that was finished or given up, when APAI's skills do so on the workstation |
 | STOP | Any client to Thor | Reliable | Reason and sender |
-| OWNER_REQUEST | Agent, console or robot link service to Thor | Reliable | Requested control owner (agent for a new confirmed task, recovery for a typed `rest`, nobody) or "help needed" with the reason. For "agent" it also says whether the timed return to rest (the one at the end of the assistance wait, section 10) applies to this task (the link message's default is yes; the agent program's shipped files send no, section 11). For a typed `rest` it says whether the operator typed the confirmation that the path is clear (section 11); without it the request is refused. A takeover is not requested here; it comes from right B on the teleop connection (section 12). Two requests are about the motors (section 11): "motors_off", which the agent program sends where APAI's rest tool ends, and "motors_on", which the operator console, the console command and the agent program send once the operator has typed the confirmation |
-| RESET, RELEASE, OPEN, SHUTDOWN | Console to Thor | Reliable | OPEN and SHUTDOWN say whether the operator typed the confirmation they need (the jaw opening, section 13; a clear path, section 11). RESET and RELEASE carry nothing more |
+| OWNER_REQUEST | Agent, console or robot link service to Thor | Reliable | Requested control owner (agent for a new confirmed task, recovery for a typed `rest`, nobody) or "help needed" with the reason. For "agent" it also says whether the timed return to rest (the one at the end of the assistance wait, section 10) applies to this task (the link message's default is yes; the agent program's shipped files send no, section 11). For a typed `rest` it says whether the operator typed the confirmation that the path is clear (section 11); without it the request is refused. For a typed `rest` and a typed hand-back it also says whether the operator typed that the jaws are empty (section 11). The robot link service forwards from the agent's role the requests for the agent, for nobody and for help, from the console's role those for a typed `rest` and for nobody, and sends "help needed" itself only with the reason "agent program gone" (section 5). A takeover is not requested here; it comes from right B on the teleop connection (section 12). The build has two requests for it, "human" for a takeover and "handback" for its end at rest: the service forwards them from the human program's role, and from the console's role only where its setting `operator.typed_takeover` is on (section 21). Three more requests come from the agent's role (section 11). "motors_off" is sent where APAI's rest tool ends, and the robot app switches the motors off only with the arm measured at rest. "motors_on" is sent once the operator has typed the confirmation, also by the operator console and the console command, and the robot app switches the motors on again as a typed `on` does. "park" is sent when the agent program ends, once its operator has typed `path is clear` there; the robot app runs it as a typed `rest` with that confirmation, which ends with the jaws closed and the motors off. The agent program asks for it only when a task of its run owned the arm, the motors are on, nobody owns the arm, no takeover is open and no fault-stop is latched |
+| RESET, RELEASE, OPEN, SHUTDOWN | Console to Thor | Reliable | OPEN and SHUTDOWN say whether the operator typed the confirmation they need (the jaw opening, section 13; a clear path, section 11). RELEASE and SHUTDOWN say whether the operator typed that the jaws are empty (section 11). RESET carries nothing more |
 | VIEW_STATUS | Viewer to Thor | Newest wins | Whether the view is live, which is whether a browser on the workstation is showing the live view (section 13 says when that holds); the age of the live picture shown; and when the link message was sent, on the Thor's monotonic clock as the viewer reads it off its newest ROBOT_STATE |
 | RESULT | Thor to workstation | Reliable | For each command id: accepted or refused with the reason, then completed, cancelled or failed with the reason and the measured end pose. Every command gets one final RESULT; one that cannot be decoded is refused under its command id |
 | EVENT | Thor to workstation | Reliable | Text for the operator: help needed, countdowns, refusals with reasons, the start and the end of a takeover, the end of a human motion that a released grip did not cause |
@@ -396,7 +397,16 @@ from camera frames. After the split the grid is on the workstation, so the check
   are not copied from a camera or connection timeout. The shipped files hold first values, none measured: a permit
   reaches 25 setpoints (0.5 s of motion) beyond the last setpoint the Thor reported as sent, lasts 1.0 s on the Thor
   and is renewed every 0.05 s (workstation settings `permits.reach_setpoints`, `permits.life_s`, `permits.renew_s`).
-  The first session with the operator measures them (section 19). The files for the rig hold 0.2 rad/s for the agent
+  A session with the operator measures them (section 19). No such measurement is recorded: the rig's agent file
+  holds the same three values, and the example's README names no measurement of the arm's stopping distance and
+  calls the pace of the Thor's loop on the arm's CAN bus not known. What the README does report from the rig is
+  that the run folder of the second session of 2026-11-17 holds the files of measurements that the agent program
+  writes in every run, for that run's 14 moves and 4 jaw commands. For a move such a file holds, among other
+  numbers, the fewest setpoints the held permit still covered beyond those sent, the age of the camera frame
+  behind the held permit and how many setpoints the Thor sent late. The README quotes none of these three from
+  that run; among the numbers it does quote from it is the spread of a standing arm's joint readings, 0.00065 rad
+  in 346 s at rest with the motors on. The robot app writes to its log how long one joint read takes on that bus,
+  and the README quotes no value from the rig. The files for the rig hold 0.2 rad/s for the agent
   and for the return to rest and 0.8 rad/s for a person (section 8 names the keys). Measuring before any motion is the
   alternative; it costs one more session before the first move.
   Acceptance test: an obstacle placed in the path during a move stops the arm as it does today.
@@ -406,9 +416,9 @@ from camera frames. After the split the grid is on the workstation, so the check
   large-delay limit moves the remaining deadlines back with it; a delay above the small-delay limit is also counted as
   a missed deadline in ROBOT_STATE. No setpoint is sent once its permit has expired. A delay above the large-delay
   limit ends the move in a hold. The first values are 5 ms and 100 ms (`executor.small_delay_s`,
-  `executor.large_delay_s`); neither is measured, and both are chosen from measurements on the Thor in the first
-  session with the operator. A move that ended early is never resumed; the agent may send a new MOVE, checked from the
-  measured pose like any other.
+  `executor.large_delay_s`); neither is measured. Both are to be chosen from measurements on the Thor in a session
+  with the operator; no such measurement is recorded, and the rig's file holds the same two values. A move that
+  ended early is never resumed; the agent may send a new MOVE, checked from the measured pose like any other.
 - After the last setpoint the Thor reads the joints until each is within 0.03 rad of that setpoint
   (`executor.settle_tol_rad`). A move whose joints are not there after 2.0 s (`executor.settle_timeout_s`) ends as
   failed, in a hold. A contact while the arm settles ends the move like a contact during it.
@@ -488,8 +498,8 @@ A contact is not a fault-stop: the motion stops and the arm holds the freshly me
 pressing. The hold is sent only if one fresh read of every joint agrees with the newest readings of the move; if it
 does not, or cannot be read, nothing is sent, the last setpoint stands and the RESULT, or under a person the EVENT, says
 so. A hold that fails in any other way, for example on an error the driver raises when the hold is sent, is a fault-stop
-under every control owner. Under the agent the step fails and counts toward the retry limit; under a person a fresh
-grip squeeze resumes; during a return to rest the move ends and is not retried.
+under every control owner. Under the agent the step fails, and no count of failed steps ends the task (section 10);
+under a person a fresh grip squeeze resumes; during a return to rest the move ends and is not retried.
 
 The jaw rule of a STOP also applies whenever the agent's ownership ends without a STOP: on a help request, when the
 agent gives the arm back, and when the robot connection is lost.
@@ -523,11 +533,21 @@ out, the robot app makes one attempt at a return to rest (the timed return), if 
 robot app counts the wait on its monotonic clock and shows it as a countdown on the operator console and the Thor
 terminal.
 
-- "The agent has failed" means: a step returned "stuck" or "blocked", a model error could not be recovered, a set number
-  of steps failed in a row (first value 3), the step budget ran out, or the agent program crashed (reported as in
-  section 5). A task that ends without success while the agent owns the arm, for example because the planner gives up,
-  counts as well. One failed step is retried inside the task, with one exception in the first build: a refusal by the
-  workstation's check ahead during a move ends the task with a help request (a skill stop, section 13). The
+- "The agent has failed" means that a help request reached the Thor while the agent owned the arm. The agent program
+  sends OWNER_REQUEST "help needed" at the end of a task that APAI gave up as stuck, whose last tool result was a
+  blocked motion, whose step budget ran out, that an error in the agent program ended, or that ended with no task
+  report from APAI. The step budget is the most steps APAI's planner may take for one task (the agent program's
+  option `--max-steps`, 30 by default). The robot link service sends the help request when the agent's client
+  closes while the agent is the control owner (section 5): after a crash, and after an end of the agent program
+  whose request at the task's end got no answer. It sends it as well when a ROBOT_STATE shows the agent as
+  control owner after the agent's client has left, once for each owner number.
+  Three ends of a task send no help request and start no wait. A task that the model itself ends without
+  success gives the arm back as one that succeeds does (section 13). A task cancelled with Ctrl+C at the agent
+  program's terminal sends a STOP (section 9). After a STOP from the operator console the task's help request is
+  refused, because it quotes the stop number from before that STOP. No count of failed steps ends a task: APAI ends
+  it when the step budget runs out. One failed step is retried inside the task, with one exception in the first
+  build: a refusal by the workstation's check ahead during a move ends the task with a help request (a skill stop,
+  section 13). The
   alternative, a retry of that move inside the task as after any other failed step, is not built; the exception costs
   the operator a new task and its typed `yes` after each obstacle. Model thinking and waiting for consent never start
   the wait.
@@ -598,8 +618,11 @@ A typed `rest`, the rest that ends a takeover and the return after the assistanc
    region, which is the agent's 120-degree envelope, takes about 44 s at 0.1 rad/s and about 22 s at 0.2 rad/s,
    and one across a region that reaches a joint limit of 3.14 rad about 65 s and about 33 s. These
    durations hold for a return of one straight leg. On a route they hold for the leg up to the ready pose, by that
-   leg's own largest joint travel, and the legs of the fold add their times to it. The one recorded return at
-   0.1 rad/s took about 37 s. The Thor plans no route around an obstacle: it has no obstacle grid (section 8), and
+   leg's own largest joint travel, and the legs of the fold add their times to it. No return to rest on the rig
+   is recorded: the example's README names none among what ran on the real arm. Of a test that runs the programs
+   as processes on APAI's mock arm, the README reports that a typed `rest` at 0.1 rad/s returned the arm in
+   30.9 s, with a largest joint travel of 1.48 rad; the test itself checks neither number. The Thor plans no
+   route around an obstacle: it has no obstacle grid (section 8), and
    the leg up to the ready pose is a straight joint-space move. For a typed `rest` it runs on the operator's `path
    is clear`.
 
@@ -637,9 +660,15 @@ is still valid; the "may be holding" flag is clear; no jaw command runs or waits
 valid and agree within 2 % of jaw travel; the reading is within 0.1 rad of the last jaw target the Thor sent, or within
 3 % of jaw travel where that is less; and that target is full open, or the reading is within 4 % of travel of closed.
 The gripper is referenced at the start only when the arm is measured at rest. The flag is set when any close ends short
-of its target or a jaw read fails during a close, and is cleared only by a measured full open. Anything else counts as
+of its target or a jaw read fails during a close, and is cleared by a measured full open. Anything else counts as
 loaded or unknown, and the arm holds. The jaws are never moved to decide; the typed `reference` of section 21, which
-is switched off, would be the one exception. Known limit: an object thinner than about 4 % of jaw travel reads as
+is switched off, would be the one exception. The build lets the operator's word stand in for the proof. When a
+`rest`, a `release`, a shutdown or a typed hand-back (`handback` at the operator console, section 13) is refused
+only because the jaws are not proven empty, the operator looks at the jaws and types `jaws are empty`. The robot
+app then counts the jaws as empty, whatever they read and also where they are not referenced or cannot be read,
+and clears the "may be holding" flag, which is the one way beside a measured full open that the flag is cleared.
+The word ends with the next jaw command that the robot app does not refuse, with the next task granted to the
+agent and with the next takeover. Known limit: an object thinner than about 4 % of jaw travel reads as
 empty; that is about 3.6 mm if the configured 90 mm travel is right, which the arm profile itself questions. Not
 measured.
 
@@ -758,9 +787,14 @@ a pressed right B stops nothing.
    (`rest` at the operator console). The console then asks "completed or abandoned?" and stores the answer in the task
    record (not in the first build, section 20). Until then the person stays the control owner; releasing the grip only
    holds.
-7. At rest, holding right A for 1 s with the grip released gives the arm back, also with torque released. It is
+7. At rest, holding right A for 1 s with the grip released gives the arm back. It is
    accepted while a takeover is open, from control owner human or, after a STOP, nobody. It needs measured rest,
-   stillness, jaws proven empty, no fault-stop and no motion or jaw command running. A refusal says what to do: `type
+   stillness, jaws proven empty, no fault-stop and no motion or jaw command running. With torque released the build
+   refuses a takeover and a person's motion (`the motors are off; ...`, section 11) and has no refusal of its own
+   for the hand-back: a `release` typed at the Thor terminal at rest while a takeover is open switches the motors
+   off and leaves the takeover open, and the hand-back then asks for the same reads of the joints and the jaws as
+   with the motors on. No test and no run that the example's README names gives a hand-back with the motors off,
+   so whether it is accepted there is not recorded. A refusal says what to do: `type
    rest first`, or, when the jaws are not proven empty, `type stop, then open, then yes, then hold right A again`. The
    robot app closes the interrupted task for good as "completed by human" or "abandoned" (not in the first build,
    section 20) and sets the control owner to nobody. Nothing moves; the agent waits for a new task. A takeover also
@@ -797,7 +831,7 @@ same time as the robot app, and it does not meet the never-go-limp rule today.
 
 | Terminal | What the operator types there | What it shows |
 |---|---|---|
-| Agent program (workstation) | Tasks, typed one after another at its prompt or given as one start argument; the typed `yes` at a task's first skill that moves the arm; Ctrl+C, which is a STOP | Task progress; the robot's state before the question; each refusal with what to do about it |
+| Agent program (workstation) | Tasks, typed one after another at its prompt or given as one start argument; the typed `yes` at a task's first skill that moves the arm; a second typed `yes` there when the motors are off, before they are switched on again (section 11); the typed `path is clear` when the program ends and asks whether the arm returns to rest (section 6); Ctrl+C, which is a STOP | Task progress; the robot's state before the question; each refusal with what to do about it |
 | Operator console (workstation) | `stop`, `reset`, `rest`, `release`, `on`, `open`, `close`, `shutdown`; `state`, `attach` and `help`, which send nothing; `quit`, which leaves the console and sends nothing; Ctrl+C, which is a STOP; `takeover` and `handback`, which the shipped files switch off (section 21) | A status line (robot connection, control owner, stop level, motion, jaws, torque, assistance wait, permit, view age), printed when it changes and at least every 10 s; every EVENT; a block of lines for each help request; a takeover line; refusals with reasons, also those another client got; the loss of the robot connection, with the terminal bell |
 | Thor terminal | `stop` and Ctrl+C, each a STOP that needs no network; `rest`; `release`; `on`, which switches the motors on again after they were switched off at rest (section 11); `reset`; `open` and `close`, which move the jaws while nobody owns the arm; `quit`, which is the shutdown; `help`; `reference`, which the shipped files switch off (section 21). The power, calibration and hold confirmations at each start of the robot app on the real arm | Every EVENT of the robot app as a line: owner changes, STOPs, the countdown with the terminal bell, refusals with reasons. It prints no status line |
 
@@ -805,9 +839,12 @@ same time as the robot app, and it does not meet the never-go-limp rule today.
   tasks, so it is asked there. It is asked once per task, at the task's first skill that moves the arm; skills that
   only look or think take no arm and ask nothing. Before the question the agent program prints the robot's state from
   ROBOT_STATE and refuses the skill, without a question, when a person owns the arm or a takeover is open, when the
-  control owner is not nobody, when a fault-stop is latched or when the motors are off. The question names the task,
+  control owner is not nobody or when a fault-stop is latched. The question names the task,
   the first motion skill and the joint speed limit; one typed `yes` covers the later motion skills and retries of the
-  same task. The agent program then sends OWNER_REQUEST "agent", which quotes the session id, owner number and stop
+  same task. Motors that are off at rest refuse no task: after that `yes` the agent program asks a question of its
+  own about the motors and, on a second typed `yes`, sends OWNER_REQUEST "motors_on" (section 11); any other
+  answer leaves the motors off and refuses the skill.
+  The agent program then sends OWNER_REQUEST "agent", which quotes the session id, owner number and stop
   number of the ROBOT_STATE shown before the question, so a `yes` typed for one state of the arm takes nothing in
   another. The prompt follows today's launcher and runs in the agent program. Whether an earlier run left the arm
   holding is read in two places, neither of them a file the agent program opens: the agent program reads ROBOT_STATE,
@@ -821,7 +858,10 @@ same time as the robot app, and it does not meet the never-go-limp rule today.
   that calls it: the agent program sends that tool's moves as moves of the agent and then asks the robot app for the
   motors off, which the robot app switches off only with the arm measured at rest (section 11). A task that is
   cancelled with Ctrl+C at the agent program's terminal sends neither: its STOP ends the agent's ownership (section
-  9). A task that ends any other way while the agent owns the arm sends "help needed" (section 10).
+  9). A task that the model itself ends without success gives the arm back as well, with the control owner nobody
+  and no help request: the agent program prints the model's report and asks for the next task. A task that got
+  stuck, was blocked, ran out of steps, was ended by an error or ended with no report while the agent owned the arm
+  sends "help needed" (section 10).
 - A skill stop ends the task with a help request and latches the checker in the agent program. The next task's
   question names the skill stop, and that task's typed `yes` clears the latch once the Thor has granted the arm and a
   ROBOT_STATE shows the agent as control owner with stop level none. Nothing on the Thor is cleared by it. The
@@ -829,11 +869,19 @@ same time as the robot app, and it does not meet the never-go-limp rule today.
   because the same typed `yes` starts the next task after the restart. The setting `task.clear_skill_stop` (first value
   true) selects between the two.
 - What the operator types to confirm. A return to rest is confirmed with the typed phrase `path is clear`: after `rest`
-  at either terminal, and after the shutdown when the arm has to move. `yes` confirms everything else that asks: `open`,
+  at either terminal, after the shutdown when the arm has to move, and at the agent program's terminal when that
+  program ends and asks whether the arm returns to rest (the request "park", section 6). Apart from one more
+  phrase, `yes` confirms everything else that asks: `open`,
   `release` and a shutdown with the arm at rest at the operator console, `on` at either terminal, and a task's first
-  motion at the agent program's terminal. One command is the exception: the typed `reference` of section 21, which
-  is switched off, asks for `jaws are empty`. At the Thor terminal `release`, and `quit` with the arm at rest, ask
-  nothing. Case and spacing do not count; any other answer confirms nothing and nothing is sent. `stop` typed where a
+  motion and the motors on again at the agent program's terminal. That phrase is `jaws are empty`, which is
+  asked in two places. The first is after a `rest`, a
+  `release`, a shutdown or a typed hand-back that the robot app refused only because the jaws are not proven empty:
+  the Thor terminal (after `rest`, `release` and `quit`), the operator console and the console command (after
+  `rest`, `release`, `shutdown` and `handback`) then tell the operator to look at the jaws. `jaws are empty`, typed
+  as the next line, has the command asked again with its own question and sent with the operator's word, which the
+  robot app takes in place of its measurement (section 11). The second is the typed `reference` of section 21,
+  which is switched off. At the Thor terminal `release`, and `quit` with the arm at rest, ask nothing. Case and
+  spacing do not count; any other answer confirms nothing and nothing is sent. `stop` typed where a
   question waits is a STOP and confirms nothing. Whatever is typed before a question is written is dropped. A
   confirmation is typed by a person at a terminal: the operator console, the agent program and the robot app on the
   real arm ask nothing from a pipe or inside the environment of an AI coding agent. The alternative for a return to
@@ -1466,7 +1514,7 @@ repeated here.
 | 19 | No obstacle check for a person (section 8, kept) | No setting | The person's eyes are the only obstacle check | A warning on the console when the hand's target is inside the obstacle grid: the human program would need the grid, which lives in the agent program |
 | 20 | The permit check has a switch (section 7) | `permits.required_for_agent` is on in every shipped file. The robot app accepts it off on any arm, the real arm included | Only the value in the rig's file keeps the permit check on for the rig | Accept it off only on a test arm: not built |
 | 21 | The timed return to rest (sections 10 and 11) | Built, tested on the simulated arm and on APAI's mock arm, and switched off for the rig: `rest.auto_return` is off in the rig's file, and `task.timed_return` is off in the agent program's shipped files. The owner's decision to implement the automatic return (section 3) is met in code | With the shipped files the arm keeps holding when the assistance wait runs out | Switch both on for the rig: the arm then moves by itself before the bench tests of section 19 have been run on it |
-| 22 | The typed `reference` at the Thor terminal | APAI's driver drops the jaw reference after three failed jaw reads in a row. Without the reference the jaws cannot be proven empty, so neither a return to rest nor a release is accepted. With the Thor setting `jaws.allow_reference` on, a person at the Thor terminal types `reference` and then `jaws are empty`, and the jaws close slowly to their stop to find the reference again; the command is accepted only with control owner nobody, no fault-stop, the motors on and nothing else running, and a STOP ends it. The setting is off in every shipped file, because the command moves the jaws on a person's word, which section 11 excludes | Such a read fault with the arm raised ends at the 48 V switch with the arm held by hand | Switch it on: a jaw rule that this design does not have |
+| 22 | The typed `reference` at the Thor terminal | APAI's driver drops the jaw reference after three failed jaw reads in a row. Without the reference the jaws cannot be proven empty by measurement, so a return to rest and a release are refused until the operator types `jaws are empty` after the refusal (section 11). With the Thor setting `jaws.allow_reference` on, a person at the Thor terminal types `reference` and then `jaws are empty`, and the jaws close slowly to their stop to find the reference again; the command is accepted only with control owner nobody, no fault-stop, the motors on and nothing else running, and a STOP ends it. The setting is off in every shipped file, because the command moves the jaws on a person's word, which section 11 excludes | After such a read fault with the arm raised, only the operator's typed `jaws are empty` meets the jaw condition of a return to rest; without that word it ends at the 48 V switch with the arm held by hand | Switch it on: a jaw rule that this design does not have |
 | 23 | The model client on the workstation | The full stack reaches its cloud language model through a command-line program, the model client, and that program needs a login. The script that builds the workstation's Python environment (`setup_workstation_env.sh`) installs it only with its option `--with-model-client`, and no script of the example reads or writes the login. The agent program's setting `experiment.codex_bin` names the program; the rig's agent file (`configs/agent_rebot.yaml`) names the one that option installs. Installing it and using a login wait for the owner | Without the model client no task runs on the full stack: demo 1 on the rig needs it, the runs on one machine use the minimal stack, and demo 2 on the rig then runs without the agent failing first. The example's README names one run on the rig with the full stack, of 2026-11-17 (the status paragraph at the top of this file) | Install it and use the login that is on the workstation: the model calls then run on that login |
 | 24 | The obstacle grid stand-in for one machine | The agent program's setting `experiment.grid` is `bridge` (the obstacle grid that the experiment's code builds from camera frames) in its two main files and `clear` only in its file for APAI's mock arm. With `clear` the obstacle grid is a stand-in with nothing near: every setpoint still goes out under a permit, and no move is checked against obstacles. The agent program accepts it only with the minimal stack and against a robot app whose declared driver is a test arm | The demo by hand on one machine checks nothing against obstacles, and says so in a warning | No such setting: no pick and place by hand on one machine without a GPU |
 | 25 | The order of the bench tests (section 19) | The checklist of the first session moves the arm, slowly and supported, before five tests that section 19 puts before any motion | First moves on motors whose behaviour after a program death is not measured, on first values that nobody has measured | Section 19's order: one more session before any motion |
