@@ -111,6 +111,16 @@ std::vector<uint8_t> build_payload(Write write)
     return out;
 }
 
+//! Runs `read` over `payload` and rejects trailing bytes; the payload-side mirror of build_payload.
+template <typename Read>
+auto parse_payload(const std::vector<uint8_t>& payload, const char* what, Read read)
+{
+    Reader reader(payload, what);
+    auto value = read(reader);
+    reader.finish();
+    return value;
+}
+
 } // namespace
 
 std::vector<uint8_t> encode_hand_sample_frame(uint16_t channel_id,
@@ -238,119 +248,139 @@ void set_pong_sent_time(std::vector<uint8_t>& pong_frame, int64_t pong_sent_ns)
 
 Hello decode_hello(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "HELLO");
-    Hello value;
-    if (const uint16_t version = reader.u16(); version != kHelloVersion)
-    {
-        throw DecodeError("protocol: unsupported HELLO version " + std::to_string(version));
-    }
-    value.app_name = reader.str();
-    value.requirements.schema_push = reader.boolean();
-    value.requirements.hand_tracking_push = reader.boolean();
-    if (reader.boolean())
-    {
-        value.requirements.wrist_tracking_pull = read_wrist_config(reader);
-    }
-    reader.finish();
-    return value;
+    return parse_payload(payload, "HELLO",
+                         [](Reader& reader)
+                         {
+                             Hello value;
+                             if (const uint16_t version = reader.u16(); version != kHelloVersion)
+                             {
+                                 throw DecodeError("protocol: unsupported HELLO version " + std::to_string(version));
+                             }
+                             value.app_name = reader.str();
+                             value.requirements.schema_push = reader.boolean();
+                             value.requirements.hand_tracking_push = reader.boolean();
+                             if (reader.boolean())
+                             {
+                                 value.requirements.wrist_tracking_pull = read_wrist_config(reader);
+                             }
+                             return value;
+                         });
 }
 
 HelloAck decode_hello_ack(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "HELLO_ACK");
-    HelloAck value;
-    value.accepted = reader.boolean();
-    value.reason = reader.str();
-    reader.finish();
-    return value;
+    return parse_payload(payload, "HELLO_ACK",
+                         [](Reader& reader)
+                         {
+                             HelloAck value;
+                             value.accepted = reader.boolean();
+                             value.reason = reader.str();
+                             return value;
+                         });
 }
 
 XrHandEXT decode_open_hand(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "OPEN_HAND");
-    const XrHandEXT hand = from_wire_hand(reader.u8());
-    reader.finish();
-    return hand;
+    return parse_payload(payload, "OPEN_HAND",
+                         [](Reader& reader)
+                         {
+                             const XrHandEXT hand = from_wire_hand(reader.u8());
+                             return hand;
+                         });
 }
 
 core::SchemaPusherConfig decode_open_schema(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "OPEN_SCHEMA");
-    core::SchemaPusherConfig value;
-    value.collection_id = reader.str();
-    value.max_flatbuffer_size = static_cast<size_t>(reader.u64());
-    value.tensor_identifier = reader.str();
-    value.localized_name = reader.str();
-    value.app_name = reader.str();
-    reader.finish();
-    return value;
+    return parse_payload(payload, "OPEN_SCHEMA",
+                         [](Reader& reader)
+                         {
+                             core::SchemaPusherConfig value;
+                             value.collection_id = reader.str();
+                             value.max_flatbuffer_size = static_cast<size_t>(reader.u64());
+                             value.tensor_identifier = reader.str();
+                             value.localized_name = reader.str();
+                             value.app_name = reader.str();
+                             return value;
+                         });
 }
 
 HandSample decode_hand_sample(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "HAND_SAMPLE");
-    HandSample value;
-    value.sample_time_ns = reader.i64();
-    for (XrHandJointLocationEXT& joint : value.joints)
-    {
-        joint.locationFlags = reader.u64();
-        joint.pose = reader.pose();
-        joint.radius = reader.f32();
-    }
-    reader.finish();
-    return value;
+    return parse_payload(payload, "HAND_SAMPLE",
+                         [](Reader& reader)
+                         {
+                             HandSample value;
+                             value.sample_time_ns = reader.i64();
+                             for (XrHandJointLocationEXT& joint : value.joints)
+                             {
+                                 joint.locationFlags = reader.u64();
+                                 joint.pose = reader.pose();
+                                 joint.radius = reader.f32();
+                             }
+                             return value;
+                         });
 }
 
 SchemaSample decode_schema_sample(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "SCHEMA_SAMPLE");
-    SchemaSample value;
-    value.sample_time_local_common_clock_ns = reader.i64();
-    value.sample_time_raw_device_clock_ns = reader.i64();
-    const uint32_t size = reader.u32();
-    value.bytes = reader.bytes(size);
-    reader.finish();
-    return value;
+    return parse_payload(payload, "SCHEMA_SAMPLE",
+                         [](Reader& reader)
+                         {
+                             SchemaSample value;
+                             value.sample_time_local_common_clock_ns = reader.i64();
+                             value.sample_time_raw_device_clock_ns = reader.i64();
+                             const uint32_t size = reader.u32();
+                             value.bytes = reader.bytes(size);
+                             return value;
+                         });
 }
 
 WristSample decode_wrist_sample(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "WRIST_SAMPLE");
-    WristSample value;
-    value.sample_time_ns = reader.i64();
-    value.hand = reader.boolean() ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
-    value.sample.valid = reader.boolean();
-    value.sample.tracked = reader.boolean();
-    value.sample.pose = reader.pose();
-    reader.finish();
-    return value;
+    return parse_payload(payload, "WRIST_SAMPLE",
+                         [](Reader& reader)
+                         {
+                             WristSample value;
+                             value.sample_time_ns = reader.i64();
+                             value.hand = reader.boolean() ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
+                             value.sample.valid = reader.boolean();
+                             value.sample.tracked = reader.boolean();
+                             value.sample.pose = reader.pose();
+                             return value;
+                         });
 }
 
 std::string decode_error(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "ERROR");
-    std::string message = reader.str();
-    reader.finish();
-    return message;
+    return parse_payload(payload, "ERROR",
+                         [](Reader& reader)
+                         {
+                             std::string message = reader.str();
+                             return message;
+                         });
 }
 
 int64_t decode_ping(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "PING");
-    const int64_t t1_ns = reader.i64();
-    reader.finish();
-    return t1_ns;
+    return parse_payload(payload, "PING",
+                         [](Reader& reader)
+                         {
+                             const int64_t t1_ns = reader.i64();
+                             return t1_ns;
+                         });
 }
 
 Pong decode_pong(const std::vector<uint8_t>& payload)
 {
-    Reader reader(payload, "PONG");
-    Pong value;
-    value.ping_sent_ns = reader.i64();
-    value.ping_received_ns = reader.i64();
-    value.pong_sent_ns = reader.i64();
-    reader.finish();
-    return value;
+    return parse_payload(payload, "PONG",
+                         [](Reader& reader)
+                         {
+                             Pong value;
+                             value.ping_sent_ns = reader.i64();
+                             value.ping_received_ns = reader.i64();
+                             value.pong_sent_ns = reader.i64();
+                             return value;
+                         });
 }
 
 } // namespace remote_plugin_protocol
