@@ -721,6 +721,9 @@ class BasicChecker:
     def tip_state(self, q: Sequence[float], region: GraspRegion | None) -> None:
         return None  # no kinematics: where the tip is, is not known
 
+    def tip_box(self) -> None:
+        return None  # no kinematics: the tip is held to no box
+
     def contact_watch(
         self, arm: ArmPort, q_start: Sequence[float], history: JointHistory | None
     ) -> BasicContactWatch:

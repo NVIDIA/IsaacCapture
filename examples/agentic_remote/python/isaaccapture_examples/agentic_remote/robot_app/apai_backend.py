@@ -972,6 +972,14 @@ class ApaiChecker:
         clearance = max(self._table_clearance_m, float(limits.table_clearance))
         return TipState(float(tip[2]), _low_tip(tip, clearance, limits, region))
 
+    def tip_box(self) -> tuple[list[float], list[float]]:
+        # The harness compares the arm model's FK with these two corners as
+        # they stand: its base_pose changes a refusal's text, not the box.
+        limits = self._harness.limits
+        low = [float(value) for value in limits.workspace_min]
+        high = [float(value) for value in limits.workspace_max]
+        return low, high
+
     def contact_watch(
         self, arm: ArmPort, q_start: Sequence[float], history: JointHistory | None
     ) -> ApaiContactWatch:

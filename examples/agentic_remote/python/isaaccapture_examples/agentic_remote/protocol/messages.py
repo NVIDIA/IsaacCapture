@@ -178,6 +178,11 @@ class Welcome(Message):
     # The joint speed limit of the human limit set, rad/s: the robot app follows
     # a person's joint target at SPEED_MARGIN of it. None: not declared.
     human_max_joint_speed: float | None = None
+    # The box the robot app's human checker holds a person's gripper tip in:
+    # its lowest and its highest corner, [x, y, z] each, m, in the arm's base
+    # frame. A tip outside it may only come back. None: not declared, or the
+    # checker has no such box.
+    human_tip_box: list[list[float]] | None = None
 
 
 @dataclass(frozen=True)

@@ -158,6 +158,11 @@ def test_start_connects_the_arm_and_sends_welcome_and_state(robot_app):
     # The agent program plans no faster than this.
     assert welcome.agent_max_joint_speed == config.limits.agent.max_joint_speed
     assert welcome.agent_max_joint_speed != config.limits.recovery.max_joint_speed
+    # The human program moves its joint target at a share of this limit, and
+    # keeps the gripper tip inside the box the human checker holds it in. The
+    # simulated arm's checkers know no kinematics and have no such box.
+    assert welcome.human_max_joint_speed == config.limits.human.max_joint_speed
+    assert h.checkers.human.tip_box() is None and welcome.human_tip_box is None
     state = h.client.state
     assert state.session_id == welcome.session_id
     assert (state.owner, state.owner_number) == ("nobody", 0)

@@ -435,6 +435,9 @@ def test_a_human_program_at_the_socket_gets_welcome_state_and_its_results(on_tho
     assert named.human_max_joint_speed != limits.agent.max_joint_speed
     assert named.agent_max_joint_speed == limits.agent.max_joint_speed
     assert named.setpoint_period_s == period
+    # And the box its human checker holds the gripper tip in: none on the
+    # simulated arm, whose checkers know no kinematics.
+    assert named.human_tip_box is None and h.checkers.human.tip_box() is None
     assert station.end.status.roles == {"human": 1}
     # Both ends of the robot app get the ROBOT_STATE that says who is attached.
     h.advance(0.1, 0.05)
@@ -1300,6 +1303,9 @@ def test_the_human_program_on_the_thor_runs_as_processes(
         )
 
         # The end: Ctrl+C at the human program, then the console's shutdown.
+        # The signal waits for the program's own report line of the hand-back:
+        # until a ROBOT_STATE shows it nobody as the owner, its end is a STOP.
+        person.wait_line("; owner nobody; ")
         person.signal(signal.SIGINT)
         assert person.wait_exit() == 0
         demo2.console_shows(

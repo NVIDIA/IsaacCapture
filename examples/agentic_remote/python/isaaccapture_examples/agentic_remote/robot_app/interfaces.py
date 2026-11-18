@@ -344,6 +344,13 @@ class Checker(Protocol):
         checker that knows no table. Raises Refusal when q is no pose.
         """
 
+    def tip_box(self) -> tuple[list[float], list[float]] | None:
+        """The box this checker holds the gripper tip in; None: it has none.
+
+        Its lowest and its highest corner, [x, y, z] each, m, in the arm's
+        base frame: the frame of the arm model's forward kinematics.
+        """
+
     def contact_watch(
         self, arm: ArmPort, q_start: Sequence[float], history: JointHistory
     ) -> ContactWatch:

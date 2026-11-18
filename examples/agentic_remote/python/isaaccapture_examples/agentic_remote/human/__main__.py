@@ -53,7 +53,9 @@ from ..protocol.messages import (
 )
 from .types import (
     AHEAD_NOTE_CM,
+    NOTE_AT_LIMIT,
     NOTE_CATCHING_UP,
+    NOTE_THOR_BEHIND,
     ControllerFeed,
     FeedStep,
     GraphStep,
@@ -508,6 +510,8 @@ def report_line(
     ik_times_s: Sequence[float],
     counts: Mapping[str, int],
     ahead_m: float | None = None,
+    walls: Sequence[str] = (),
+    behind: bool = False,
 ) -> str:
     """The report line: the last pass, and the ages and times since the last line.
 
@@ -518,7 +522,9 @@ def report_line(
     base axes. round trip is the Thor's measure of the way of a ROBOT_STATE to
     this program and of the HUMAN_SETPOINT back. ahead_m is how far the hand
     is ahead of the tip of the last joint target while the arm follows it;
-    from AHEAD_NOTE_CM on the line says so.
+    from AHEAD_NOTE_CM on the line says so. walls are the walls of the robot
+    app's box for the gripper tip that the tip stands at with the hand beyond
+    them; behind says that the joint target is held back for a slow robot app.
     """
     human = _human_facts(state)
     tip = None if last is None else last.ee_target
@@ -542,6 +548,10 @@ def report_line(
         f"hand ahead {counts.get('hand_ahead', 0)}, "
         f"limiter {counts.get('limiter', 0)}"
     )
+    if walls:
+        line += "; " + NOTE_AT_LIMIT.format(walls=", ".join(walls))
+    if behind:
+        line += "; " + NOTE_THOR_BEHIND
     if ahead_m is not None and math.isfinite(ahead_m):
         cm = round(100.0 * ahead_m)
         if cm >= AHEAD_NOTE_CM:
@@ -705,6 +715,7 @@ class _Loop:
             f"{_plain(self._settings.ik.apai_arm)}, {self._solver.n_joints} joints"
         )
         self._say(self._speed_line(welcome))
+        self._say(self._box_line(welcome))
         self._feed.open()
         try:
             return self._passes()
@@ -724,6 +735,24 @@ class _Loop:
             f"{_fixed(self._logic.joint_speed(welcome), 2)} rad/s a joint "
             f"({limit}), its tip at up to {retarget.max_linear_velocity:g} m/s "
             f"and {retarget.max_angular_velocity:g} rad/s"
+        )
+
+    def _box_line(self, welcome: Welcome) -> str:
+        """Where the gripper tip is held under a WELCOME: one line."""
+        box = self._logic.tip_box(welcome)
+        if box is None:
+            return (
+                f"{PROGRAM}: the robot app names no workspace box for the gripper "
+                "tip: a target outside its limits ends the drive"
+            )
+        low, high = box
+        sides = ", ".join(
+            f"{axis} {_fixed(low[index], 2)} to {_fixed(high[index], 2)}"
+            for index, axis in enumerate("xyz")
+        )
+        return (
+            f"{PROGRAM}: the gripper tip stops at the robot app's workspace "
+            f"limits: {sides} m from the arm's base"
         )
 
     def _problem(self, welcome: Welcome) -> str | None:
@@ -830,6 +859,7 @@ class _Loop:
         if new_session:
             _log.info(_NEW_SESSION, _plain(welcome.session_id))
             self._say(self._speed_line(welcome))  # its limit may be another
+            self._say(self._box_line(welcome))
         logic.log_pass()
         self._edges.note(feed_step, logic.last)
         self._stage = feed_step.stage
@@ -885,6 +915,8 @@ class _Loop:
                 self._solver.times_s,
                 self._logic.counts(),
                 self._logic.ahead_m,
+                self._logic.walls,
+                self._logic.behind,
             )
         )
         for samples in (self._tick_ages, self._state_ages, self._solver.times_s):

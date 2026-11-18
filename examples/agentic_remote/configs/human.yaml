@@ -46,8 +46,10 @@ retarget:
   controller_pose: grip  # the controller pose that is followed: grip or aim
   position_scale: 1.0  # the target's motion per motion of the hand
   squeeze_threshold: 0.5  # the grip counts as squeezed above this; below 1
-  # The rate limiter's bounds on the target's speed. A pass that asks for more is
-  # clamped; raising them needs ik.max_jump_rad raised too.
+  # The rate limiter's bounds on the speed of the gripper tip's target; the arm
+  # goes after a hand that is faster. How fast a joint follows is set by the
+  # robot app: the joint target moves at 0.9 of the speed clamp it names in
+  # WELCOME.
   max_linear_velocity: 0.10  # m/s
   max_angular_velocity: 0.4  # rad/s
   # A hand faster than this is not followed at all, and the arm holds until the
@@ -74,14 +76,21 @@ ik:
   apai_arm: mock
   max_iter: 50  # iterations of one solve; a whole number
   tol: 0.0001  # a solve has converged below this error
-  # A solution further than this, on any joint, from the one before it is a jump
-  # and ends the engagement, the stretch in which the arm follows the hand.
+  # A solution further than this, on any joint, from the joint target before it
+  # is a jump. The step of the tip is then halved, up to three times; a jump
+  # that stays ends the engagement, the stretch in which the arm follows the
+  # hand.
   max_jump_rad: 0.05
-  # The farthest, on any joint, a solution may run ahead of the Thor's last joint
-  # target before the engagement ends.
+  # The farthest, on any joint, the joint target may lie from where the arm, or
+  # the Thor's own joint target, can be: beyond it the arm does not follow and
+  # the engagement ends. At a squeeze it is measured from the arm; once the Thor
+  # drives, from its last joint target moved on by what its speed clamp allows
+  # since.
   max_ahead_rad: 0.08
-  # The farthest the hand's target may run ahead of the rate-limited target.
-  max_ahead_m: 0.05
+  # The farthest the hand may be ahead of the arm's gripper tip. Up to it the
+  # arm catches up with the hand and stops where the hand stopped; a hand
+  # further ahead is not believed, and the engagement ends.
+  max_ahead_m: 0.5
   max_failures: 5  # failed solves in a row that end the engagement; a whole number
 
 buttons:

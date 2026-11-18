@@ -15,9 +15,9 @@
 # none was measured on the arm or with a headset. Times are in s, lengths in m,
 # angles in rad unless a key says deg.
 #
-# It differs from configs/human.yaml in eight keys: socket_path, teleop.endpoint,
+# It differs from configs/human.yaml in seven keys: socket_path, teleop.endpoint,
 # teleop.attempts, retarget.max_linear_velocity, retarget.max_angular_velocity,
-# ik.apai_arm, ik.max_ahead_rad and ik.max_ahead_m.
+# ik.apai_arm and ik.max_ahead_rad.
 #
 # The program refuses a key it does not know and a number outside the bound its
 # comment names; a number without a named bound must be above 0.
@@ -68,8 +68,10 @@ retarget:
   # and names that limit in WELCOME. This program moves the joint target it
   # sends at 0.9 of the Thor's speed clamp, 0.71 rad/s on the fastest joint: 40
   # degrees a second. Computed on the arm model, not measured on the arm: the
-  # gripper tip then moves at 7 to 19 cm a second with the arm raised, by its
-  # direction, and slower where the arm is stretched out or folded.
+  # gripper tip then moves at 7 to 19 cm a second from the raised pose, by its
+  # direction, and up to the 25 cm a second of the bound below where the arm
+  # is stretched out and the tip moves sideways; it is slower along the reach
+  # of a stretched arm and where the arm is folded.
   # The fastest the gripper tip's target moves, toward the hand and with the arm
   # behind it: it binds only where the joints could move the tip faster.
   max_linear_velocity: 0.25  # m/s
@@ -114,7 +116,12 @@ ik:
   max_ahead_rad: 0.045
   # The farthest the hand may be ahead of the arm's gripper tip. Up to it the
   # arm catches up with the hand and stops where the hand stopped; a hand
-  # further ahead is not believed, and the engagement ends.
+  # further ahead is not believed, and the engagement ends. The Thor names in
+  # WELCOME the box its checker holds the gripper tip in; the tip stops 1 cm
+  # inside a wall of it and slides along the wall while the hand goes on.
+  # There the distance is measured in two parts, each held to this bound: from
+  # the tip to the nearest point of the box to the hand, and from that point
+  # on to the hand, beyond the wall.
   max_ahead_m: 0.5
   max_failures: 5  # failed solves in a row that end the engagement; a whole number
 

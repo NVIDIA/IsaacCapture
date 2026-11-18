@@ -56,9 +56,11 @@ limits:
     # refused. Type rest there.
     joint_min: [-2.0744, -0.05, -0.05, -1.67, -1.55, -2.0744]
     joint_max: [2.0744, 2.0744, 2.0744, 1.77, 1.55, 2.0744]
-    # A person's motion is clamped at 0.98 of it. The hand speed limits of
-    # configs/human_rebot.yaml (retarget.max_*_velocity) decide how fast the
-    # joint targets of a person's hand ask the joints to move.
+    # This limit sets how fast the arm follows a person. The robot app clamps
+    # a person's motion at 0.98 of it and names it in WELCOME; the human
+    # program moves its joint target at 0.9 of that clamp, 0.71 rad/s a joint.
+    # The hand speed limits of configs/human_rebot.yaml
+    # (retarget.max_*_velocity) only bound the gripper tip, at 25 cm/s.
     max_joint_speed: 0.8  # the owner's value of 2026-11-16
     # A human target is a joint target that follows a person's hand. This is
     # the farthest, on any joint, one may lie from the arm at a squeeze and

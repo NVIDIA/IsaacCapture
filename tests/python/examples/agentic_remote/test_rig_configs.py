@@ -1430,6 +1430,292 @@ def test_a_joint_that_is_blocked_ends_the_drive_as_a_contact_within_a_fifth_of_a
     print(f"\nblocked: {after} setpoints to the hold; target {ahead:.3f} rad ahead")
 
 
+# The tip box. APAI's human checker holds a person's gripper tip in the
+# workspace box of the rebot_rs profile, in the arm's base frame: 10 to 50 cm
+# in front of the base, 30 cm to each side, from 1 cm under the table plane to
+# 55 cm above it. The robot app names that box in WELCOME; the human program
+# keeps the tip of the pose it solves for 1 cm inside its walls, so the tip
+# stops at a wall and slides along it, where the checker's refusal used to
+# end the drive.
+
+RIG_TIP_BOX = ([0.1, -0.3, -0.01], [0.5, 0.3, 0.55])
+TIP_MARGIN_M = 0.01  # human/logic.py, TIP_BOX_MARGIN_M
+# Hand moves in the stage space that push the gripper tip through each wall,
+# with the base axis the tip moves along and the side of the box it meets.
+WALLS = {
+    "front": ((0.0, 0.0, -1.0), 0, 1),
+    "back": (HAND_BACK, 0, 0),
+    "left": (HAND_LEFT, 1, 1),
+    "right": ((1.0, 0.0, 0.0), 1, 0),
+    "top": (HAND_UP, 2, 1),
+    "bottom": ((0.0, -1.0, 0.0), 2, 0),
+}
+# A third pose: the arm turned to the right, half raised.
+TURNED = [0.5, 1.3, 1.0, 0.0, 0.2, 0.0]
+WALL_POSES = {"ready": READY, "stretched": STRETCHED, "turned": TURNED}
+# What a hand pushed 30 cm toward each wall from each pose meets first, at 20
+# and at 50 cm a second alike. "wall": the tip stops at the wall. "": the
+# hand's 30 cm end before the wall. The others end the drive as they did:
+# "reach" is the human program's own end at the end of the arm's reach,
+# "joint" and "table" are refusals of the human checker that are not the
+# tip box, for the human joint box and for APAI's table clearance.
+MET = {
+    "ready": {"front": "wall", "left": "wall", "right": "wall", "top": "wall"},
+    "stretched": {
+        "front": "wall",
+        "left": "wall",
+        "back": "reach",
+        "right": "joint",
+        "bottom": "table",
+    },
+    "turned": {
+        "front": "wall",
+        "right": "wall",
+        "back": "reach",
+        "top": "joint",
+        "bottom": "joint",
+    },
+}
+OTHER_ENDS = {
+    "reach": ("disengaged", r"release the grip and squeeze again: no IK solution "),
+    "joint": ("refused", r"joint \d target \d\.\d+ rad is outside the human joint "),
+    "table": ("refused", r"TCP z=0\.019 below table clearance 0\.020 "),
+}
+
+
+@apai
+def test_the_solvers_gripper_tip_is_the_tcp_of_the_rig_checker(
+    robot_rig, clock, tmp_path
+):
+    # The point the human program's IK calls the gripper tip against the TCP
+    # the rig's human checker holds to its box, over the human joint box.
+    profile = rig_profile(tmp_path)
+    config = rs.apai_backend.config_for_profile(robot_rig, profile)
+    human = rs.apai_backend.build_apai_checkers(config, profile, clock).human
+    harness = human.harness
+    settings = yaml.safe_load((CONFIGS / "human_rebot.yaml").read_text())
+    solver = Solver.from_apai(settings["ik"]["apai_arm"])
+    low, high = np.array(HUMAN_LOW), np.array(HUMAN_HIGH)
+    poses = np.random.default_rng(7).uniform(low, high, size=(5000, len(low)))
+    apart = max(
+        float(np.linalg.norm(solver.fk(q)[:3, 3] - harness.kin.fk(q)[:3, 3]))
+        for q in [*poses, low, high, READY, STRETCHED, list(robot_rig.rest.rest_q)]
+    )
+    # The same point, to the last bit: both are the FK of APAI's rebot_rs
+    # model. The margin of 1 cm therefore only has to cover what a solve
+    # leaves of its pose (ik.tol, 0.1 mm) and how far a setpoint of the Thor
+    # lies off the way between two joint targets.
+    assert apart == 0.0
+    assert human_logic.TIP_BOX_MARGIN_M == TIP_MARGIN_M
+    assert settings["ik"]["tol"] <= TIP_MARGIN_M / 50
+    # The rig sets no base_pose, and the box is the profile's workspace.
+    assert harness.base_pose is None
+    assert human.tip_box() == RIG_TIP_BOX
+    print(f"\nthe solver's tip and the checker's TCP: at most {apart:g} m apart")
+
+
+def test_the_rig_robot_app_names_the_tip_box_of_its_human_checker(person_rig):
+    h = person_rig.h
+    named = h.client.welcome.human_tip_box
+    box = h.checkers.human.tip_box()
+    if box is None:
+        # The simulated arm's checkers know no kinematics: no box.
+        assert named is None
+    else:
+        assert named == [list(RIG_TIP_BOX[0]), list(RIG_TIP_BOX[1])]
+        assert named == [list(box[0]), list(box[1])]
+    assert h.client.welcome.human_max_joint_speed == HUMAN_SPEED
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+@pytest.mark.parametrize("speed", [0.2, 0.5])
+@pytest.mark.parametrize("wall", list(WALLS))
+@pytest.mark.parametrize("pose", list(WALL_POSES))
+def test_a_hand_pushed_through_a_wall_of_the_tip_box_ends_no_drive_for_the_workspace(
+    person_rig, pose, wall, speed
+):
+    h, _, sent = person_rig
+    start = WALL_POSES[pose]
+    way, axis, side = WALLS[wall]
+    person_rig.place(start)
+    take_over(h)
+    ended = drives(h)
+    # 30 cm toward the wall, then the hand stays there for 3 s.
+    hand = ProgramHand(h, hand_rows(way, 0.30, speed, hold_s=3.0))
+    hand.run()
+    targets = np.array(sent())
+    solver = hand.solver
+    tips = np.array([solver.fk(q)[:3, 3] for q in targets])
+    low, high = (np.array(corner) for corner in RIG_TIP_BOX)
+    # No setpoint's tip left the box, and no drive ended for the workspace.
+    assert np.all(tips >= low) and np.all(tips <= high)
+    assert len(ended) == 1 and "outside workspace" not in ended[0].reason
+    assert not any("outside workspace" in event[1] for event in h.heard("human"))
+    met = MET[pose].get(wall, "")
+    first = solver.fk(solver.inside(start))[:3, 3]
+    bound = RIG_TIP_BOX[side][axis] + (TIP_MARGIN_M if side == 0 else -TIP_MARGIN_M)
+    notes = {made.note for made in hand.sent}
+    at_wall = f"at the workspace limit: {wall}"
+    if met in ("wall", ""):
+        # The drive went on until the grip was released.
+        assert [(end.status, end.sent) for end in ended] == [("released", len(targets))]
+        assert hand.ended() == {} and h.heard("human") == []
+        moved = tips[-1] - first
+        off_axis = np.delete(moved, axis)
+        assert np.abs(off_axis).max() < 1e-3  # straight toward the wall
+    if met == "wall":
+        # The tip stands 1 cm inside the wall, within what a solve leaves.
+        assert tips[-1][axis] == pytest.approx(bound, abs=2e-4)
+        assert abs(tips[:, axis] - RIG_TIP_BOX[side][axis]).min() > TIP_MARGIN_M - 2e-4
+        # The note names the wall once the hand is a centimetre beyond it. From
+        # READY the side walls are 29 cm away: the hand ends just there.
+        beyond = 0.30 - abs(bound - first[axis])
+        if abs(beyond - human_logic.WALL_NOTE_M) > 1e-3:
+            named = any(at_wall in note for note in notes)
+            assert named == (beyond > human_logic.WALL_NOTE_M)
+    elif met == "":
+        assert abs(moved[axis]) == pytest.approx(0.30, abs=0.011)
+        assert not any("workspace" in note for note in notes)
+    else:
+        status, reason = OTHER_ENDS[met]
+        assert ended[0].status == status and re.match(reason, ended[0].reason)
+        assert not any("workspace" in note for note in notes)
+    assert h.arm.torque_on() and h.app.snapshot().owner is Owner.HUMAN
+    print(f"\n{pose}, {wall}, {speed} m/s: {met or 'the hand stopped first'}")
+
+
+def test_what_else_a_person_meets_at_the_walls_of_the_tip_box_is_counted():
+    # Of the 36 pushes above, 3 poses by 6 walls by 2 speeds: 16 stop at a
+    # wall, 8 end before one, and 12 end the drive for something that is not
+    # the tip box: the end of the reach 4 times, the human joint box 6 times
+    # and APAI's table clearance twice. None ends for the workspace.
+    met = [MET[pose].get(wall, "") for pose in WALL_POSES for wall in WALLS]
+    counts = {kind: 2 * met.count(kind) for kind in ("wall", "", *OTHER_ENDS)}
+    assert counts == {"wall": 16, "": 8, "reach": 4, "joint": 6, "table": 2}
+    # The bottom wall is never met: APAI's table clearance, 2 cm above the
+    # table plane, ends a drive 3 cm above it.
+    assert RIG_TIP_BOX[0][2] < 0.02 and not any(
+        MET[pose].get("bottom") == "wall" for pose in WALL_POSES
+    )
+
+
+@pytest.mark.parametrize(
+    "person_rig", [pytest.param("apai", marks=apai)], indirect=True
+)
+def test_the_tip_slides_along_a_wall_of_the_tip_box_while_the_hand_goes_on(person_rig):
+    h, _, sent = person_rig
+    person_rig.place(READY)
+    take_over(h)
+    ended = drives(h)
+    # 20 cm forward and 20 cm to the left at once, in a second: the front
+    # wall is 4 cm away.
+    goal = [HAND_AT[0] - 0.20, HAND_AT[1], HAND_AT[2] - 0.20]
+    rows = [
+        {"t": 0.0, "pos": list(HAND_AT), "quat": [0, 0, 0, 1]},
+        {"t": 0.04, "squeeze": 1.0},
+        {"t": 1.04, "pos": goal},
+        {"t": 4.0, "squeeze": 0.0},
+    ]
+    hand = ProgramHand(h, rows)
+    hand.run()
+    targets = np.array(sent())
+    assert [(end.status, end.sent) for end in ended] == [("released", len(targets))]
+    assert hand.ended() == {} and h.heard("human") == []
+    solver = hand.solver
+    tips = np.array([solver.fk(q)[:3, 3] for q in targets])
+    front = RIG_TIP_BOX[1][0] - TIP_MARGIN_M
+    moved = tips[-1] - solver.fk(solver.inside(READY))[:3, 3]
+    # It went forward to the wall and all of the hand's way to the left, less
+    # the 4 mm the hand had gone when the squeeze was read.
+    assert tips[-1][0] == pytest.approx(front, abs=2e-4)
+    assert moved[1] == pytest.approx(0.196, abs=1e-3) and abs(moved[2]) < 1e-3
+    assert tips[:, 0].max() <= front + 2e-4
+    # Most of the way to the left was made at the wall.
+    at_wall = tips[np.abs(tips[:, 0] - front) < 1e-3]
+    assert at_wall[-1][1] - at_wall[0][1] > 0.12
+    notes = [made.note for made in hand.sent if made.engaged]
+    assert "at the workspace limit: front" in notes
+    assert notes[-1] == "at the workspace limit: front"
+    # The arm kept the hand's pace to the left: no note of a hand ahead. Until
+    # the wall the note was the one about the jaws under the trigger.
+    assert set(notes) == {
+        "at the workspace limit: front",
+        human_logic.NOTE_TRIGGER_PULL,
+    }
+
+
+OUTSIDE = {
+    # A pose of the human joint box with the tip outside the tip box, the
+    # wall it is beyond, and the hand's way further out.
+    "top": ([0.0, 1.0, 1.5, 0.0, 0.0, 0.0], HAND_UP),
+    "front": ([0.0, 1.7, 1.2, 0.0, -0.3, 0.0], (0.0, 0.0, -1.0)),
+    "right": ([1.0, 1.4, 1.1, 0.0, 0.2, 0.0], (1.0, 0.0, 0.0)),
+}
+
+
+@apai
+@pytest.mark.parametrize("wall", list(OUTSIDE))
+def test_a_tip_outside_the_tip_box_at_a_squeeze_only_comes_toward_it(
+    robot_rig, clock, tmp_path, wall
+):
+    # The checker's own rule, read in APAI's harness: a TCP that is outside
+    # the workspace box already may move toward it, and no further out. The
+    # human program keeps it on each axis by itself, which the checker's
+    # distance to the box never grows under. A takeover is refused at such a
+    # pose, so this runs on the stand-in Thor; APAI's human checker of the
+    # rig file then vets every step of the joint target.
+    hp = pytest.importorskip("test_human_program")
+    pose, out = OUTSIDE[wall]
+    _, axis, side = WALLS[wall]
+    profile = rig_profile(tmp_path)
+    config = rs.apai_backend.config_for_profile(robot_rig, profile)
+    human = rs.apai_backend.build_apai_checkers(config, profile, clock).human
+    low, high = (np.array(corner) for corner in human.tip_box())
+    refused = rs.refusal_of(lambda: human.check_pose(pose), "outside workspace")
+    assert refused.reason.startswith("TCP ")
+    # The hand goes 10 cm further out, then 30 cm back in, then out again.
+    at = np.array(hp.HAND)
+    further, back = at + 0.10 * np.array(out), at - 0.20 * np.array(out)
+    rows = [
+        hp.BASE,
+        {"t": 0.2, "squeeze": 1.0},
+        {"t": 0.6},
+        {"t": 0.8, "pos": list(further)},
+        {"t": 1.6},
+        {"t": 3.1, "pos": list(back)},
+        {"t": 5.0},
+        {"t": 6.0, "pos": list(further)},
+    ]
+    thor = hp.RigThor(pose, owner="human", start_passes=hp.START_READ)
+    thor.box = [list(low), list(high)]
+    rig = hp.Rig(rows, thor, hp.rig_settings())
+    made = [m for m in rig.run(8.0) if isinstance(m, HumanSetpoint)]
+    targets = [m.q for m in made if m.engaged]
+    assert not any(rig.ended().values()) and thor.refused == []
+    # APAI's human checker takes every step of the joint target.
+    last = list(pose)
+    for q in targets:
+        human.check_path(last, [q], hp.PASS_S)
+        last = q
+    tips = np.array([rig.tip(q) for q in targets])
+    outside = np.maximum(np.maximum(low - tips, 0.0), tips - high)
+    # How far the tip is outside never grew, on any axis.
+    assert np.diff(outside, axis=0).max() <= 1e-4
+    assert outside[0].max() > 0.03 and outside[-1].max() == 0.0
+    # While the hand went out the tip stood and the note named the wall;
+    # then it came into the box with the hand, and stopped 1 cm inside the
+    # wall when the hand went out again.
+    notes = [m.note for m in made if m.engaged]
+    assert f"at the workspace limit: {wall}" in notes
+    held = [index for index, note in enumerate(notes) if wall in note]
+    assert np.abs(tips[held[0]] - tips[0]).max() < 1e-3
+    bound = (high if side else low)[axis] + (-TIP_MARGIN_M if side else TIP_MARGIN_M)
+    assert tips[-1][axis] == pytest.approx(bound, abs=2e-4)
+    assert notes[-1] == f"at the workspace limit: {wall}"
+
+
 @apai
 def test_the_largest_jump_at_a_squeeze_moves_the_gripper_tip_by_centimetres(
     robot_rig,

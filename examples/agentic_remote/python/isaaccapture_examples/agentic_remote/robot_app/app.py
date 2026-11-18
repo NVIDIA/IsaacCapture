@@ -3149,6 +3149,8 @@ class RobotApp:
     def _welcome(self) -> Welcome:
         config = self._config
         limits = config.limits
+        # Announced only: the human checker holds every setpoint to it.
+        box = self._checkers.human.tip_box()
         return Welcome(
             session_id=self._authority.session_id,
             robot_id=config.robot_id,
@@ -3168,6 +3170,7 @@ class RobotApp:
             driver=self._driver,
             agent_max_joint_speed=limits.agent.max_joint_speed,
             human_max_joint_speed=limits.human.max_joint_speed,
+            human_tip_box=None if box is None else [list(box[0]), list(box[1])],
         )
 
     # The motion worker

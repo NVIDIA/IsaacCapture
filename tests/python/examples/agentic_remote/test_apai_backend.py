@@ -759,6 +759,56 @@ def test_pose_outside_the_limits_is_refused(checkers: CheckerSet) -> None:
     refusal_of(lambda: checkers.recovery.check_pose(HOME[:3]), r"needs 6 values")
 
 
+def tip_at(profile: apai_backend.ApaiProfile, axis: int, value: float) -> list[float]:
+    """Joint values near HOME whose gripper tip has this coordinate on axis, m."""
+    pose = np.array(profile.kinematics.fk(np.array(HOME)), dtype=float)
+    pose[axis, 3] = value
+    solved = profile.kinematics.ik(pose, q_init=np.array(HOME), retries=0)
+    assert solved.success
+    return [float(q) for q in solved.q]
+
+
+@pytest.mark.parametrize("mounted", [False, True], ids=["no base_pose", "base_pose"])
+def test_the_tip_box_is_the_box_the_harness_holds_a_persons_tip_in(
+    config: RobotAppConfig,
+    profile: apai_backend.ApaiProfile,
+    clock: FakeClock,
+    mounted: bool,
+) -> None:
+    # What WELCOME announces as human_tip_box: read off the checker that
+    # enforces it. With a base_pose, an arm bolted away from the table's
+    # origin, the harness still compares the arm model's FK with the same two
+    # corners: the box stays in the arm's base frame, the frame the human
+    # program's IK works in.
+    arm_cfg = profile.arm_cfg.as_dict()
+    if mounted:
+        arm_cfg["base_pose"] = [0.2, -0.1, 0.0, 0.0, 0.0, 0.0]
+    stood = dataclasses.replace(profile, arm_cfg=arm_cfg)
+    human = apai_backend.build_apai_checkers(config, stood, clock).human
+    assert (human.harness.base_pose is not None) == mounted
+    limits = human.harness.limits
+    low, high = human.tip_box()
+    assert low == [float(value) for value in limits.workspace_min]
+    assert high == [float(value) for value in limits.workspace_max]
+    assert all(type(value) is float for value in (*low, *high))
+    assert all(a < b for a, b in zip(low, high))
+    # A step whose tip ends a millimetre inside the front wall is taken, and
+    # one a millimetre outside it is refused for the workspace, whatever the
+    # base_pose: the announced wall is the enforced one.
+    front = high[0]
+    at, inside = tip_at(profile, 0, front - 0.02), tip_at(profile, 0, front - 0.001)
+    outside = tip_at(profile, 0, front + 0.001)
+    human.check_path(at, [inside], 10.0)
+    refused = refusal_of(
+        lambda: human.check_path(at, [outside], 10.0), r"outside workspace"
+    )
+    assert refused.reason.startswith("setpoint 0: TCP ")
+    # A tip outside may only come back toward the box.
+    further = tip_at(profile, 0, front + 0.004)
+    human.check_path(further, [outside], 10.0)
+    refusal_of(lambda: human.check_path(outside, [further], 10.0), r"outside workspace")
+
+
 def test_recovery_path_reaches_the_rest_pose_on_the_joint_stops(
     checkers: CheckerSet,
 ) -> None:

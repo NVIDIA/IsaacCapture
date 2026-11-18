@@ -27,6 +27,14 @@ LIMITER_PASS_S = 0.02
 # hand that is AHEAD_NOTE_CM or more ahead of the tip of the last joint target.
 NOTE_CATCHING_UP = "hand {cm} cm ahead: the arm is catching up"
 AHEAD_NOTE_CM = 5
+# What they say while the gripper tip stands at a wall of the robot app's box
+# for it with the hand beyond that wall; walls names each such wall.
+NOTE_AT_LIMIT = "at the workspace limit: {walls}"
+# The walls by the robot's base axes, x forward, y left, z up: (low, high).
+WALL_NAMES = (("back", "front"), ("right", "left"), ("bottom", "top"))
+# What they say while the joint target is held back for a robot app whose own
+# joint target comes on slower than its speed clamp allows.
+NOTE_THOR_BEHIND = "the robot app is behind: the arm follows slower"
 
 
 @dataclass(frozen=True)
@@ -60,7 +68,7 @@ class IkSettings:
     tol: float = 1e-4
     max_jump_rad: float = 0.05
     max_ahead_rad: float = 0.08
-    max_ahead_m: float = 0.05
+    max_ahead_m: float = 0.5
     max_failures: int = 5
 
 

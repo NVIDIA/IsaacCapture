@@ -397,6 +397,7 @@ MESSAGE_FIELDS = {
         "driver": "",
         "agent_max_joint_speed": None,
         "human_max_joint_speed": None,
+        "human_tip_box": None,
     },
     Move: {
         "command_id": ...,
@@ -741,6 +742,30 @@ def test_welcome_carries_the_human_speed_limit_and_an_old_welcome_declares_none(
     assert old == WELCOME and messages.PROTOCOL_VERSION == 1
     with pytest.raises(ProtocolError, match=r"human_max_joint_speed"):
         decode(Welcome.TYPE, _changed(WELCOME, ("human_max_joint_speed",), "fast"))
+
+
+def test_welcome_carries_the_human_tip_box_and_an_old_welcome_declares_none():
+    # The box the robot app's human checker holds a person's gripper tip in:
+    # its lowest and its highest corner, in the arm's base frame. The human
+    # program keeps the tip of the pose it solves for inside it.
+    box = [[0.1, -0.3, -0.01], [0.5, 0.3, 0.55]]
+    sent = dataclasses.replace(WELCOME, human_tip_box=box)
+    assert json.loads(sent.to_payload())["human_tip_box"] == box
+    assert decode(Welcome.TYPE, sent.to_payload()) == sent
+    # A robot app whose checker has no such box says so with null.
+    assert json.loads(WELCOME.to_payload())["human_tip_box"] is None
+    # A WELCOME from a robot app that knows no such field declares no box,
+    # and the protocol version did not change for the field.
+    old = decode(Welcome.TYPE, _without(WELCOME, "human_tip_box"))
+    assert old.human_tip_box is None
+    assert old == WELCOME and messages.PROTOCOL_VERSION == 1
+    with pytest.raises(ProtocolError, match=r"human_tip_box: expected a list"):
+        decode(Welcome.TYPE, _changed(WELCOME, ("human_tip_box",), "wide"))
+    with pytest.raises(
+        ProtocolError, match=r"human_tip_box\[1\]\[0\]: expected a number"
+    ):
+        bad = [[0.1, -0.3, -0.01], ["far", 0.3, 0.55]]
+        decode(Welcome.TYPE, _changed(WELCOME, ("human_tip_box",), bad))
 
 
 def test_human_setpoint_round_trips_and_is_newest_wins():
