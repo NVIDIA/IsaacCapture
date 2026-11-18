@@ -109,7 +109,7 @@ state:
 # makes a person the control owner, is refused and no human target moves the arm.
 human:
   enabled: false  # whether a person may take the arm over and drive it
-  require_live_view: true  # false: the person at the controller must see the arm itself
+  require_live_view: true  # the live view is the viewer's page with its live picture (run_viewer.sh)
   # The oldest live view a person may take the arm over and drive with. An older
   # one refuses the takeover and ends a drive in a hold.
   view_age_limit_s: 0.5

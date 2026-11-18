@@ -686,10 +686,11 @@ class Bridge:
                 self._changed.wait(0.01)
 
 
-def open_cuda_slots(
-    subscribed: Mapping[str, Any], camera_pr: Path, gpu_id: int
-) -> SlotReader:
-    """Open the receiver's slots with the pull request's CudaIpcClient (CuPy)."""
+def load_cuda(camera_pr: Path, gpu_id: int) -> tuple[Any, Any]:
+    """The pull request's consumer module and CuPy, with the CUDA context made.
+
+    The part of open_cuda_slots that takes time; it needs no receiver.
+    """
     source = camera_pr / "cuda_ipc_consumer" / "consumer.py"
     spec = importlib.util.spec_from_file_location("agentic_remote_camera_pr", source)
     if spec is None or spec.loader is None:
@@ -699,6 +700,22 @@ def open_cuda_slots(
     spec.loader.exec_module(module)
     import cupy
 
+    with cupy.cuda.Device(gpu_id):
+        cupy.cuda.runtime.memGetInfo()  # the first CUDA call makes the context
+    return module, cupy
+
+
+def open_cuda_slots(
+    subscribed: Mapping[str, Any],
+    camera_pr: Path,
+    gpu_id: int,
+    loaded: tuple[Any, Any] | None = None,
+) -> SlotReader:
+    """Open the receiver's slots with the pull request's CudaIpcClient (CuPy).
+
+    `loaded` is what load_cuda() gave, when it was called beforehand.
+    """
+    module, cupy = loaded or load_cuda(camera_pr, gpu_id)
     client = module.CudaIpcClient("", [])
     client._open_streams(dict(subscribed))
     arrays = {key: slot.array for key, slot in client.slots.items()}
@@ -710,6 +727,27 @@ def open_cuda_slots(
     reader = SlotReader(arrays, to_host)
     reader.owner = client  # keeps the shared buffers open
     return reader
+
+
+def _cuda_slots_loaded_first(
+    camera_pr: Path,
+) -> Callable[[Mapping[str, Any], Path, int], SlotReader]:
+    """open_cuda_slots with load_cuda() done now, for GPU 0 (check_catalog takes no other).
+
+    What load_cuda() raises now is raised when the slots are asked for.
+    """
+    try:
+        loaded = load_cuda(camera_pr, 0)
+    except Exception as problem:
+        failure = problem
+
+        def fail(subscribed: Mapping[str, Any], camera_pr: Path, gpu_id: int) -> Any:
+            raise failure
+
+        return fail
+    return lambda subscribed, camera_pr, gpu_id: open_cuda_slots(
+        subscribed, camera_pr, gpu_id, loaded
+    )
 
 
 def _listen(path: str) -> socket.socket:
@@ -794,7 +832,10 @@ def main(
         if not args.camera_pr:
             _complain(f"--camera-pr or {CAMERA_PR_ENV} is needed")
             return EXIT_NOT_RUN
-        open_slots = open_cuda_slots
+        # CuPy and the CUDA context before the receiver is subscribed to: the
+        # receiver waits on a subscriber that does not read, up to 2 s, and its
+        # other consumers get no notification meanwhile.
+        open_slots = _cuda_slots_loaded_first(Path(args.camera_pr))
     rules = StreamRules(
         streams=(args.streams[0], args.streams[1]),
         width=args.width,

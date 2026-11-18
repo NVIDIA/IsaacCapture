@@ -1,0 +1,252 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+The live picture: the block the example's launcher (viewer_live) puts before the
+end of the experiment's page. The page above it is the experiment's own.
+
+The page with the live picture showing is the live view. The script fetches
+each camera picture by its number, draws it and tells the viewer that it has
+(POST /api/live/shown), which the viewer turns into VIEW_STATUS for the robot.
+A picture counts as showing only while at least three quarters of its area lie
+inside the browser window, in a visible tab.
+
+The viewer serves each load of the page on its own machine with a view token:
+a secret that goes out with every request for a picture and with every
+acknowledgement. Only the page loaded last has the valid one. A page opened
+from another machine gets no view token: it shows the pictures to watch and
+tells the viewer nothing.
+-->
+<script>
+'use strict';
+(function () {
+  // The page's own picture, its "Follow live" button and its two switches.
+  // Without one of them this script does nothing.
+  const photo = document.getElementById('photo');
+  const followLive = document.getElementById('live');
+  let known = false;
+  try { known = typeof follow === 'boolean' && typeof playing === 'boolean'; } catch (error) { known = false; }
+  if (!known || !photo || !followLive || !photo.parentNode) return;
+
+  const PICTURE = '/api/live.jpg', SHOWN = '/api/live/shown', STATE = '/api/live.json';
+  // The view token of this load of the page; the viewer puts it in here.
+  const TOKEN = '__VIEW_TOKEN__';
+  // Without one this is a watch-only page: it was opened from another machine.
+  const WATCH = TOKEN === '';
+  // The share of the live picture's area that must lie inside the window.
+  const SHARE = 0.75;
+  // A request that failed is made again after this long.
+  const RETRY_MS = 1000;
+  const REPLACED = 'This page was loaded again, here or in another tab: reload it for the live picture.';
+  const WATCH_ONLY = 'watch only: the live view is the page opened on the workstation';
+  const runs = document.getElementById('run');
+  const bar = document.createElement('div');
+  const button = document.createElement('button');
+  const note = document.createElement('div');
+  const picture = document.createElement('canvas');
+  const reason = document.createElement('span');
+  const box = document.createElement('section');
+  box.id = 'livePanel';
+  box.className = 'panel';
+  box.style.marginBottom = '18px';
+  bar.className = 'bar';
+  button.id = 'livePicture';
+  reason.id = 'livePictureWhy';
+  reason.style.color = '#ffbd69';
+  note.id = 'livePictureNote';
+  note.className = 'muted';
+  note.style.padding = '0 14px 12px';
+  picture.id = 'livePhoto';
+  // The page styles every canvas as its 3D scene: 580 px high, to be dragged.
+  picture.style.width = '100%';
+  picture.style.height = 'auto';
+  picture.style.cursor = 'default';
+  picture.style.background = 'none';
+  picture.style.touchAction = 'auto';
+  picture.style.display = 'none';
+  bar.append(button, reason);
+  box.append(bar, note, picture);
+  // At the top of the column that holds the page's own picture: in the window
+  // without scrolling.
+  const column = typeof photo.closest === 'function' ? photo.closest('aside') : null;
+  if (column) column.insertBefore(box, column.firstChild);
+  else photo.parentNode.insertBefore(box, photo);
+
+  // wanted: the operator's choice. available, why: the viewer's answer.
+  // shown: the live picture is on the page. replaced: a newer load of the page
+  // has the valid view token. turn: counts the changes of shown.
+  let wanted = true, available = false, why = 'asking the viewer';
+  let shown = false, replaced = false, turn = 0;
+  // inWindow: most of the live picture lies inside the browser window.
+  // counted: a picture drawn now is acknowledged as one the person sees.
+  let inWindow = false, counted = false;
+  // The number of the picture drawn last, when the last ones were drawn, and
+  // what the viewer tells the robot of the live view.
+  let drawnSeq = 0, drawnAt = [], view = null;
+
+  // The browser says how much of the live picture is inside the window.
+  const observer = typeof IntersectionObserver === 'function'
+    ? new IntersectionObserver(entries => {
+      const last = entries[entries.length - 1];
+      inWindow = last.isIntersecting && last.intersectionRatio >= SHARE;
+      sync();
+    }, {threshold: [0, SHARE, 1]})
+    : null;
+
+  // Where the browser cannot say: the same from the picture's box.
+  function boxInWindow() {
+    const at = picture.getBoundingClientRect();
+    const wide = Math.min(at.right, window.innerWidth) - Math.max(at.left, 0);
+    const high = Math.min(at.bottom, window.innerHeight) - Math.max(at.top, 0);
+    const area = at.width * at.height;
+    return area > 0 && wide > 0 && high > 0 && wide * high >= SHARE * area;
+  }
+
+  function acknowledge(seq, visible) {
+    fetch(SHOWN, {method: 'POST', cache: 'no-store',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({seq: seq, visible: visible, token: TOKEN})}).catch(() => {});
+  }
+
+  // Whether a picture drawn now is one the person sees. When that ends, the
+  // viewer is told at once that the picture drawn last shows no longer.
+  function recount() {
+    if (!observer) inWindow = shown && boxInWindow();
+    const count = !WATCH && shown && inWindow && !document.hidden;
+    if (count !== counted) {
+      counted = count;
+      if (!count && drawnSeq) acknowledge(drawnSeq, false);
+    }
+    return counted;
+  }
+
+  // Fetch and draw picture after picture while the live picture is on the
+  // page, and acknowledge each one the person sees. The viewer answers each
+  // request once it has a newer picture.
+  async function pictures(mine) {
+    while (shown && mine === turn) {
+      let wait = 0;
+      try {
+        const answer = await fetch(`${PICTURE}?after=${drawnSeq}${WATCH ? '&watch=1' : ''}`,
+          WATCH ? {cache: 'no-store'} : {cache: 'no-store', headers: {'X-View-Token': TOKEN}});
+        if (answer.status === 403 && !WATCH) {
+          // This page's token is valid no longer, and never will be again.
+          replaced = true;
+          sync();
+          return;
+        }
+        if (answer.status === 200) {
+          const seq = Number(answer.headers.get('X-Picture-Seq'));
+          const bitmap = await createImageBitmap(await answer.blob());
+          if (!shown || mine !== turn) { bitmap.close(); return; }
+          if (picture.width !== bitmap.width || picture.height !== bitmap.height) {
+            picture.width = bitmap.width;
+            picture.height = bitmap.height;
+          }
+          picture.getContext('2d').drawImage(bitmap, 0, 0);
+          bitmap.close();
+          drawnSeq = seq;
+          drawnAt.push(Date.now());
+          if (recount()) acknowledge(seq, true);
+        } else if (answer.status !== 204) {
+          wait = RETRY_MS;
+        }
+      } catch (error) {
+        wait = RETRY_MS;
+      }
+      if (wait) await new Promise(done => setTimeout(done, wait));
+    }
+  }
+
+  // In a few words, beside the button: why this page does not tell the robot
+  // "live". '' when it does.
+  function whyNot() {
+    if (WATCH) return 'watch only: see below';
+    if (replaced) return 'page loaded again: see below';
+    if (!available) return 'no live picture: see below';
+    if (document.hidden) return 'tab hidden';
+    if (!shown) return 'Map picture showing';
+    if (!counted) return 'scroll the live picture into view';
+    if (view && !view.attached) return 'robot not told: see below';
+    if (view && !view.live) return 'robot told: no live view';
+    return '';
+  }
+
+  function told() {
+    if (!view) return '';
+    if (!view.attached) return ` The robot is not told of ${WATCH ? 'a' : 'this'} live view: ${view.why}.`;
+    if ((WATCH || counted) && view.live && typeof view.age_s === 'number') {
+      return ` The robot is told: live view, ${view.age_s.toFixed(2)} s old.`;
+    }
+    return ' The robot is told: no live view.';
+  }
+
+  function sync() {
+    const newest = !runs || runs.value === 'latest';
+    const show = wanted && available && !replaced && follow && !playing && newest && !document.hidden;
+    if (show !== shown) {
+      shown = show;
+      turn += 1;
+      drawnAt = [];
+      picture.style.display = show ? 'block' : 'none';
+      // The page's own picture stays as the page keeps it; it is only hidden.
+      photo.style.display = show ? 'none' : '';
+      if (show) pictures(turn);
+    }
+    recount();
+    const now = Date.now();
+    drawnAt = drawnAt.filter(at => now - at <= 1000);
+    button.disabled = !available || replaced;
+    button.classList.toggle('active', shown);
+    button.textContent = !available || replaced ? 'no live picture' : shown ? 'Map picture' : 'Live picture';
+    reason.textContent = whyNot();
+    note.textContent = (WATCH ? `${WATCH_ONLY}. ` : '') + (replaced ? REPLACED
+      : !available ? why
+      : shown ? `Live camera picture, ${drawnAt.length} a second on this screen. Shown, not stored: no mask and no markers.${told()}`
+      : `The stored picture of the obstacle map. Live picture shows the camera as it is now.${told()}`);
+  }
+
+  async function ask() {
+    try {
+      const answer = await fetch(STATE, {cache: 'no-store'});
+      if (!answer.ok) throw Error(`the viewer answered ${answer.status}`);
+      const state = await answer.json();
+      available = state.available === true;
+      why = state.reason || 'the viewer has no live picture';
+      view = state.view || null;
+    } catch (error) {
+      available = false;
+      why = `no answer from the viewer: ${error.message || error}`;
+    }
+    sync();
+  }
+
+  button.addEventListener('click', () => {
+    if (shown) {
+      wanted = false;
+    } else {
+      wanted = true;
+      // From a replay or an older run: back to following the newest run.
+      if (!follow || playing || (runs && runs.value !== 'latest')) followLive.click();
+    }
+    sync();
+  });
+  followLive.addEventListener('click', () => { wanted = true; });
+  // The page's own handlers switch "follow" and "playing": look after each.
+  for (const kind of ['click', 'input', 'change']) {
+    document.addEventListener(kind, () => setTimeout(sync, 0), true);
+  }
+  document.addEventListener('visibilitychange', sync);
+  if (observer) {
+    observer.observe(picture);
+  } else {
+    // A scroll of any element moves the picture; it reaches the window first.
+    window.addEventListener('scroll', sync, true);
+    window.addEventListener('resize', sync);
+  }
+  setInterval(sync, 250);
+  setInterval(ask, 1000);
+  sync();
+  ask();
+})();
+</script>

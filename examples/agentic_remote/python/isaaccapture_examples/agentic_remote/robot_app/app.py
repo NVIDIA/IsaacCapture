@@ -219,13 +219,14 @@ HUMAN_OFF = "human driving is switched off in this robot app's file (human.enabl
 TAKEOVER_OPEN = "takeover not finished: give the arm back with right A at rest"
 NO_TAKEOVER = "no takeover is open"
 NO_CONTROLLER_DATA = "no fresh controller data: "
+# The live view is the viewer's page on the workstation with its live picture
+# showing (run_viewer.sh); the viewer reports its age in VIEW_STATUS.
 VIEW_NOT_FRESH = "the live view is not fresh: "
-OPEN_THE_VIEW = "; open the live view page in a visible browser tab"
+OPEN_THE_VIEW = "; show the viewer's live picture in a visible browser tab"
 # Said at the start of a robot app whose file lets a person drive without a
 # live view (human.enabled true, human.require_live_view false).
 NO_LIVE_VIEW = (
-    "human driving needs no live view: the person at the controller must see "
-    "the arm itself"
+    "human driving is not tied to a live view (human.require_live_view false)"
 )
 OUTSIDE_HUMAN_LIMITS = "the arm is outside the human limits: "
 # Added to a takeover's refusal when the controller data or the live view were
@@ -622,8 +623,7 @@ def _age_on_arrival(
 def no_live_view_notice(config: RobotAppConfig) -> str | None:
     """NO_LIVE_VIEW when the file lets a person drive without a live view, else None.
 
-    Any driver takes such a file, the real one included: nothing then shows
-    the robot app that the person sees the arm.
+    Any driver takes such a file, the real one included.
     """
     human = config.human
     unseen = human.enabled and not human.require_live_view

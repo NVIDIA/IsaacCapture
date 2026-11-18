@@ -5,15 +5,29 @@
 # Start the experiment's viewer on the workstation: set its environment, then exec
 #   python <experiment folder>/thor_viewer.py --host 127.0.0.1 --runs RUNS \
 #     --token-file FILE "$@"
+# or, with the live picture, this example's launcher, which runs that viewer as
+# it is in its own process:
+#   python -m isaaccapture_examples.agentic_remote.viewer_live \
+#     --experiment-dir <experiment folder> --host 127.0.0.1 --runs RUNS \
+#     --token-file FILE "$@"
 # The experiment is the folder of the rig's earlier, single machine program. Its
 # viewer is a web page for a browser on the runs the agent program records with
 # --record-debug: the obstacle map, the measured joints, refused poses, the
 # collision volumes, the clearance points and the timing graph, while a run goes
-# on and afterwards. It reads files and connects to no robot and no camera.
+# on and afterwards. It reads files and connects to no robot.
+# The live picture is the camera's picture as it arrives, on the same page: the
+# launcher reads the camera receiver through a camera frame bridge of its own.
+# It is shown and never stored.
+# The viewer's page with its live picture showing is the live view: the
+# launcher attaches to the robot link service and tells the robot, with
+# VIEW_STATUS, how fresh the picture on that page is. A person's takeover needs
+# it where the robot app's file says human.require_live_view: true. Without a
+# robot link service the viewer serves everything and attaches once one runs.
 #   ./run_viewer.sh                    # the runs in .state/runs, on 127.0.0.1
 #   ./run_viewer.sh --runs FOLDER --port 8767 --no-auth
+#   ./run_viewer.sh --no-live          # the experiment's viewer alone: no live view
 #
-# Arguments, all optional; they and any other go to the viewer as they are:
+# Arguments, all optional; any other goes to the viewer as it is:
 #   --runs FOLDER      the folder that holds the run folders. Default: .state/runs
 #                      beside this script, where the agent program puts its runs
 #                      with the shipped files; it is made when it is not there
@@ -22,16 +36,29 @@
 #   --token-file FILE  where the viewer keeps its access token. Default:
 #                      .state/viewer.token beside this script
 #   --no-auth          serve without a token
+#   --no-live          no live picture and no live view: the experiment's
+#                      viewer is started alone
+#   --live-fps N       the most live pictures a second, 1 to 60. Default: 30
+#   --live-width PIXELS
+#                      the live picture's greatest width, 64 to 4096. Default: 960
+#   --receiver-socket PATH
+#                      the camera receiver's socket. Default: the one
+#                      configs/camera_receiver_rebot.yaml names
+#   --link-socket PATH the robot link service's local socket, for the live view.
+#                      Default: the one the console attaches to
 #
 # Needs in the environment:
 #   AGENTIC_REMOTE_AGENT_PYTHON    a Python with APAI's packages, numpy, OpenCV
 #                                  and PyYAML
 #   AGENTIC_REMOTE_EXPERIMENT_DIR  the experiment folder, which holds thor_viewer.py
 #   AGENTIC_REMOTE_APAI_SRC        the src folder of the APAI checkout
+# For the live picture and the live view, which are off without it:
+#   AGENTIC_REMOTE_CAMERA_PR       the camera_streamer example of the camera
+#                                  streamer's pull request
 #
-# Exit code 2 and nothing started: a variable that cannot be used, --runs or
-# --token-file without a value, a --runs that names no folder, or a state folder
-# that cannot be made.
+# Exit code 2 and nothing started: a variable that cannot be used, an argument
+# of the above without its value, a --runs that names no folder, or a state
+# folder that cannot be made.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -47,22 +74,45 @@ runs_given=0
 token=""
 token_given=0
 auth=1
+live=1
+live_off="--no-live"
+# The launcher's own arguments, and every other one: the viewer's.
+live_arguments=()
+passed=()
 previous=""
 for argument in "$@"; do
   case "${previous}" in
     --runs) runs="${argument}"; runs_given=1 ;;
     --token-file) token="${argument}"; token_given=1 ;;
+    --live-fps | --live-width | --receiver-socket | --link-socket)
+      live_arguments+=("${previous}" "${argument}")
+      previous=""
+      continue
+      ;;
   esac
+  previous="${argument}"
   case "${argument}" in
     --runs=*) runs="${argument#--runs=}"; runs_given=1 ;;
     --token-file=*) token="${argument#--token-file=}"; token_given=1 ;;
     --no-auth) auth=0 ;;
-    --help | -h) sed -n '5,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --no-live) live=0; continue ;;
+    --live-fps | --live-width | --receiver-socket | --link-socket) continue ;;
+    --live-fps=* | --live-width=* | --receiver-socket=* | --link-socket=*)
+      live_arguments+=("${argument}")
+      continue
+      ;;
+    --help | -h) sed -n '5,61p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
   esac
-  previous="${argument}"
+  passed+=("${argument}")
 done
-if [[ "${previous}" == "--runs" || "${previous}" == "--token-file" ]]; then
-  refuse "${previous} needs a value"
+case "${previous}" in
+  --runs | --token-file | --live-fps | --live-width | --receiver-socket | --link-socket)
+    refuse "${previous} needs a value"
+    ;;
+esac
+if ((live)) && [[ -z "${AGENTIC_REMOTE_CAMERA_PR:-}" ]]; then
+  live=0
+  live_off="AGENTIC_REMOTE_CAMERA_PR is not set"
 fi
 
 python="${AGENTIC_REMOTE_AGENT_PYTHON:-}"
@@ -118,13 +168,25 @@ if ((auth)); then
   fi
 fi
 
+if ((live)); then
+  echo "run_viewer.sh: live picture: on; the page shows the camera's pictures as they arrive and stores none (--no-live turns it off)"
+else
+  echo "run_viewer.sh: live picture: off (${live_off}); the page shows the stored pictures of the runs only, and the robot is told of no live view"
+fi
+
 # The viewer needs no GPU. Should a package it imports look for one, it finds
-# the card of the other programs: index 0 in PCI order.
+# the card of the other programs: index 0 in PCI order. The live picture's
+# camera frame bridge copies the pictures off that card.
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=0
 # Nothing is written into APAI's checkout or the experiment folder.
 export PYTHONDONTWRITEBYTECODE=1
 unset LD_LIBRARY_PATH
+if ((live)); then
+  export PYTHONPATH="${here}/python:${apai}${PYTHONPATH:+:${PYTHONPATH}}"
+  exec "${python}" -m isaaccapture_examples.agentic_remote.viewer_live \
+    --experiment-dir "${experiment}" "${live_arguments[@]}" "${defaults[@]}" "${passed[@]}"
+fi
 export PYTHONPATH="${apai}${PYTHONPATH:+:${PYTHONPATH}}"
 
-exec "${python}" "${viewer}" "${defaults[@]}" "$@"
+exec "${python}" "${viewer}" "${defaults[@]}" "${passed[@]}"

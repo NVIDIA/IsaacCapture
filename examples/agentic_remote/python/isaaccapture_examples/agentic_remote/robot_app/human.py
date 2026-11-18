@@ -524,7 +524,9 @@ class HumanDrive:
             view = self._view_age(now)
             limit = human.view_age_limit_s
             if view is None:
-                reason = "the live view is not fresh (no live view is reported)"
+                reason = (
+                    "the live view is not fresh (the viewer reports no live picture)"
+                )
                 return None, ("view", reason)
             if not 0.0 <= view <= limit:
                 reason = (

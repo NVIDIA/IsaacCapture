@@ -172,9 +172,9 @@ state:
 # moves the arm.
 human:
   enabled: false  # whether a person may take the arm over and drive it
-  # false: the person at the controller stands at the arm and sees it (the owner's decision of 2026-11-17); true asks for a fresh live view (run_workstation.sh --live-view).
-  require_live_view: false
-  view_age_limit_s: 0.5  # first value; read only with require_live_view true
+  # The live view is the viewer's page with its live picture (run_viewer.sh).
+  require_live_view: true
+  view_age_limit_s: 0.5  # first value; measure in the hardware session
   sample_age_limit_s: 0.25  # first value; measure in the hardware session
   # How long ROBOT_STATE shows the stage of the human program after its last
   # link message. The human program is the workstation program that turns

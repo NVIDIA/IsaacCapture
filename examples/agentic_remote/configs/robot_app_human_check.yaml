@@ -8,12 +8,11 @@
 # speeds in rad/s, times in s, jaw openings run from 0 (closed) to 1 (open).
 #
 # A takeover makes a person the control owner, the one who may move the arm. The
-# live view is the browser page on the workstation that shows the camera picture.
+# live view is the viewer's page on the workstation with its live picture showing.
 #
 # This file differs from configs/robot_app.yaml in exactly these keys:
-# - human.enabled is true: a person may take the arm over and drive it.
-# - human.require_live_view is false, as in the rig's file: the person at the
-#   controller stands at the arm and sees it.
+# - human.enabled is true: a person may take the arm over and drive it. The live
+#   view stays required (human.require_live_view: true), as in the rig's file.
 # - limits.human.joint_min and limits.human.joint_max are -2.5 and 2.5 on every
 #   joint, not -3.0 and 3.0: with human.enabled the human joint box must lie inside
 #   rest.region_*.
@@ -123,11 +122,10 @@ state:
 # A person driving the arm with the headset's controller.
 human:
   enabled: true  # whether a person may take the arm over and drive it
-  # false: the person at the controller stands at the arm and sees it (the owner's decision of 2026-11-17); true asks for a fresh live view (run_workstation.sh --live-view).
-  require_live_view: false
+  # The live view is the viewer's page with its live picture (run_viewer.sh).
+  require_live_view: true
   # The oldest live view a person may take the arm over and drive with. An older
-  # one refuses the takeover and ends a drive in a hold. Not asked while
-  # require_live_view is false.
+  # one refuses the takeover and ends a drive in a hold.
   view_age_limit_s: 0.5
   # The oldest controller data that count as fresh: their age when the workstation
   # sent them plus the time since they arrived. Older ones refuse a takeover and
