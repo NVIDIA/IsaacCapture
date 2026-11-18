@@ -3064,39 +3064,54 @@ Rules that hold through all steps:
     arm had settled and the target was under the floor of the low gripper tip`).
   - **What the human program does while the drive waits.** Once ROBOT_STATE has shown,
     for 0.15 s, a drive that has this engagement's joint target and has sent no
-    setpoint (its start read lasts about 0.06 s), the joint target follows the hand
-    and the note says `raise the hand: the gripper is under the table clearance`, or,
-    with the tip above the height the robot app names, `raise the hand: the gripper is
-    low and the robot app waits for a lift`. The joint target stays within
-    `ik.max_ahead_rad` less 0.005 rad of the measured arm, 0.04 rad on the rig, so the
-    robot app's first step stays inside its step limit. A hand that rises lifts the
-    gripper out with that squeeze. With a hand that does not rise the engagement ends a
-    second after the joint target's tip last rose (`the arm did not follow the squeeze
-    within 1 s`): squeeze again and raise the hand. By test (`test_lift_out.py`, APAI's
-    mock arm made to settle 3 mm under each target, at the rig's 0.8 rad/s, the human
-    program's graph, solver and logic making the targets): a first squeeze with a still
-    hand left the tip at 7.9 mm, from 10.8 mm; a second still squeeze and a third with
-    the hand 2 cm to the right at one height each sent nothing and ended after 1 s; a
-    fourth with the hand rising 3 cm lifted the tip to 34.9 mm in one drive of 191
-    setpoints, whose first one went straight up, inside the hand's speed limit. Before
-    this the first target stood until the robot app followed it, and no squeeze lifted
-    such an arm.
+    setpoint (its start read lasts about 0.06 s), the human program takes the drive to
+    wait for a lift, and the note says `raise the hand: the gripper is under the table
+    clearance`, or, with the measured tip above the height the robot app names,
+    `raise the hand: the gripper is low and the robot app waits for a lift`. The joint
+    target then goes toward the hand's pose, but no further than the robot app reaches
+    from the measured arm in one step. No joint lies further from the measured arm than
+    0.9 of one step of the robot app (0.014 rad on the rig, 0.8 degrees), nor than
+    `ik.max_ahead_rad` less 0.005 rad, and the tip lies no further from the measured
+    arm's tip than `retarget.max_linear_velocity` allows in one setpoint period (5 mm
+    on the rig). A step that does not fit is tried at a half, a quarter and an eighth
+    of its length. This holds wherever the tip is: under the table clearance, inside
+    the last grasp region above it, and with a gripper that is not low at all (see
+    [Known gaps](#known-gaps)). The robot app's first setpoint is then that joint
+    target: toward the hand's pose, not cut by the speed clamp, at most 5 mm at the tip.
+    The robot app starts once the joint target's tip is within 1 mm of the floor, so a
+    hand that rises lifts the gripper out with that squeeze where one such step
+    reaches that far; how deep an arm may have settled for that is under
+    [Known gaps](#known-gaps). Otherwise the engagement ends a second after the joint
+    target's tip last rose (`the arm did not follow the squeeze within 1 s`): squeeze
+    again and raise the hand. By test (`test_lift_out.py`, APAI's mock arm made to
+    settle 3 mm under each target, at the rig's 0.8 rad/s, the human program's graph,
+    solver and logic making the targets): a first squeeze with a still hand left the
+    tip at 7.9 mm, from 10.8 mm; a second still squeeze and a third with the hand 2 cm
+    to the right at one height each sent nothing and ended after 1 s; a fourth with
+    the hand rising 3 cm lifted the tip to 34.9 mm in one drive of 191 setpoints, whose
+    first one went straight up, inside the hand's speed limit.
   - **Below APAI's own table clearance every step must rise.** That is the escape rule
     of APAI's human checker: under its table clearance it refuses every step that does
     not rise, a slide at one height included (`TCP z=... below table clearance ...
     outside the grasp exemption zone`). The human program therefore moves its joint
-    target there only where every step of the robot app lifts the tip. While the drive
-    waits, the joint target is this pass's step toward the hand's pose, and it is
-    taken only when the robot app's way to it from the measured arm rises with every
-    step and its first step keeps the tip inside the hand's speed limit
-    (`retarget.max_linear_velocity`, 5 mm in one setpoint on the rig): the arm starts
-    on the hand's own way, no further than the hand has asked. Once the robot app
-    drives, the next joint target goes out when ROBOT_STATE shows the robot app's own
-    at the last one, so that no step is cut by the clamp: under the clearance the arm
-    rises in steps, about half as fast as elsewhere, and a hand that goes sideways or
-    down there moves nothing. This needs a robot app that names the height in WELCOME
-    (`human_tip_floor`); under an older one a step that does not rise still ends the
-    drive in a hold: lift straight up first.
+    target, where the last one's tip is under the height the robot app names, only
+    when two things hold. First, the hand's pose is above that tip by more than
+    0.2 mm, twice what a solve may leave of its pose (`ik.tol`, 0.1 mm): what a solve
+    leaves upward is not a rise the hand asked for. Second, every step of the robot
+    app toward the new joint target lifts the tip. So a hand that stays at one height,
+    goes sideways or goes down moves nothing there, in poses folded near the base too,
+    where what a solve leaves comes out upward on every pass. A hand that rises a
+    little while it goes sideways is followed, since each such step rises: in a check
+    on the rig files a hand that rose 0.3 to 1 mm while it went 5 cm sideways took the
+    tip 2 to 4 cm along the table. While the drive waits,
+    the one step of the item above is taken only if its tip is also higher than the
+    last joint target's and the robot app's step to it from the measured arm rises.
+    Once the robot app drives, the next joint target goes out when ROBOT_STATE shows
+    the robot app's own at the last one, so that no step is cut by the clamp: under
+    the clearance the arm rises in steps, about half as fast as elsewhere. This needs
+    a robot app that names the height in WELCOME (`human_tip_floor`); under an older
+    one a step that does not rise still ends the drive in a hold: lift straight up
+    first.
   - **Above the clearance, inside the last grasp region,** a slide at one height is
     followed, and it is how a region without a ceiling is left: such a region is a
     column with no top, in which the tip is never lowered by more than 1 mm under the
@@ -3198,8 +3213,9 @@ measured on the arm.
   measured pose, and it stands until a ROBOT_STATE shows the Thor's drive at it: about
   0.15 s in which the arm does not move yet. A drive that does not start within 1 s ends
   the engagement with `the arm did not follow the squeeze within 1 s`. With a low
-  gripper tip the Thor's drive waits for a lift, and the joint target follows the hand
-  instead: see "A low gripper tip" under
+  gripper tip that has settled, the Thor's drive waits for a lift. The joint target
+  then does not stand: it goes toward the hand's pose, one step of the Thor from the
+  measured arm and no further. See "A low gripper tip" under
   [A takeover, step by step](#a-takeover-step-by-step).
 - **A second squeeze right after a release waits for the arm to be at rest.** A
   ROBOT_STATE made while the arm still moved gives a pose the arm has left; an
@@ -3344,7 +3360,7 @@ From tests and from reading the checkers; nothing was run on the arm.
 | The hand is more than 50 cm from the gripper tip (`ik.max_ahead_m`), or turned more than 115 degrees ahead of it | `the hand is N cm from the gripper tip, over the 50 cm believed`, `the hand is turned N deg ahead of the arm (115 are followed)` | Unlikely: a tracking jump, or a hand carried far past a wall, a joint limit or the end of the reach |
 | The hand is faster than 2 m/s or 10 rad/s (`retarget.reject_linear_velocity`, `retarget.reject_angular_velocity`) | `the hand moved too fast for the rate limiter` | Unlikely: a jerk or a tracking glitch |
 | An IK jump that halving the tip's step three times does not remove | `IK jump of X rad on joint index i, the limit is 0.05` | Rare: near a folded or a stretched-out arm. None in the 54 pushes of the tests above. In one of nine one-minute test runs with the arm standing out of reach near its base, a hand that slid 15 cm to each side with a turning wrist ended on a jump of 0.084 rad after 12 s |
-| The gripper is low and the hand does not rise within a second | `the arm did not follow the squeeze within 1 s`, after the note `raise the hand: ...` | Whenever a low gripper is squeezed with a hand that is still or goes sideways: squeeze again and raise the hand. If a raised hand does not lift it either, the arm has settled too far: right B, then hold right B for 1 s, then squeeze and lift |
+| The gripper is low, the arm has settled under the highest it was, and the hand does not rise within a second | `the arm did not follow the squeeze within 1 s`, after the note `raise the hand: ...` | Whenever such a gripper is squeezed with a hand that is still, goes sideways or goes down, also in poses folded near the base: squeeze again and raise the hand. If a raised hand does not lift it either, the arm has settled deeper than one step of the Thor lifts it: on the rig files more than about 3.6 mm at 0.8 rad/s, less in a folded pose, with a hand that also goes sideways and at a lower `limits.human.max_joint_speed` (see [Known gaps](#known-gaps)). Then: right B, then hold right B for 1 s, then squeeze and lift |
 | The gripper is lowered again inside the agent's last grasp region, above the table clearance | `lift the gripper: the gripper tip is inside the last grasp region, and the target would lower it to z=... m` (the Thor's rule) | Likely where a person reaches down again at the place of a failed grasp: the robot app names no such region, so the human program cannot stop the tip above it |
 | The gripper is turned over until its wrist camera would face down | `wrist camera would face down: camera-up axis z=... < -0.10` (APAI's human checker, read in its harness, not provoked in a test) | Possible: a wrist rolled or pitched more than about a quarter turn from camera-up |
 | A link of the arm comes within 1 cm of the table plane | `link/joint N at z=... would hit the table` (APAI's human checker) | Possible with the wrist bent down over the table |
@@ -3884,7 +3900,7 @@ headset cannot read it; the console's bells and a second person are for that.
 | `at the workspace limit: table` | The same for the lowest wall under a robot app that names the height under which the gripper tip is low: the tip stands 1 cm above it, 3 cm above the table plane on the rig, with the hand below. A tip that was under it at the squeeze stands where it was and only rises |
 | `out of reach` | The arm follows the hand and the pose it is to go to has had no IK solution for five passes in a row (`ik.max_failures`): the arm stands at its last joint target. It follows again, with no new squeeze, once the hand is back where a step toward it solves. Behind a wall's note, ahead of the others |
 | `at a joint limit: joint N` | The arm follows the hand and joint N, counted from 1, stands 0.01 rad inside the joint box the robot app names for a person, with the hand asking for more. The arm stands; it follows again once a step toward the hand takes that joint back inside |
-| `raise the hand: the gripper is under the table clearance`, `raise the hand: the gripper is low and the robot app waits for a lift` | The grip is squeezed and the Thor's drive has had the engagement's joint target for 0.15 s without sending a setpoint: the gripper tip is low and the arm has settled under the highest it was. The first where the measured tip is under the height the robot app names, the second inside the agent's last grasp region above it or under a robot app that names no height. Raise the hand; with a hand that does not rise the engagement ends after a second |
+| `raise the hand: the gripper is under the table clearance`, `raise the hand: the gripper is low and the robot app waits for a lift` | The grip is squeezed and the Thor's drive has had the engagement's joint target for 0.15 s without sending a setpoint. As a rule the gripper tip is low and the arm has settled under the highest it was; a start of the Thor's drive that takes about 0.2 s or more shows the second note with a gripper that is not low ([Known gaps](#known-gaps)). The first where the measured tip is under the height the robot app names, the second above it (inside the agent's last grasp region) or under a robot app that names no height. Raise the hand: the arm starts with one step of the Thor toward the hand's pose, and under that height only where the hand's pose is above the gripper tip, so a hand that stays level moves nothing there. With a hand that does not rise, or an arm that has settled deeper than that one step lifts it, the engagement ends after a second |
 | `the robot app is behind: the arm follows slower` | The arm follows the hand, and the joint target was held back on five passes in a row, or on more than half of the last ones, for a Thor whose loop pauses or runs slow. It goes once the joint target was not held back for up to 0.4 s. With `hand N cm ahead: ...` behind it; when a wall is named too, the wall and this are said and how far the hand is ahead is not |
 | `wait: the arm is still stopping` | The person owns the arm and the grip was squeezed again before the ROBOT_STATEs showed the drive of the engagement before as ended and the arm at rest: two readings of every joint that agree, both begun after the Thor's last setpoint. About a third of a second after a release at speed on the simulated arm, at most half a second. The squeeze counts from then on; keep it squeezed |
 | `wait: the robot app still reports the last drive; if this stays, type stop` | The person owns the arm and the robot app has gone on reporting the drive of an ended engagement for more than a second, with the grip released or squeezed: no squeeze counts until a ROBOT_STATE shows that drive as ended. A drive ends within one setpoint period of the released grip, so this means the Thor's drive is stuck |
@@ -4685,20 +4701,57 @@ On the human path:
   still ends a drive
   ([What still asks for a new squeeze](#what-still-asks-for-a-new-squeeze)).
 - **An arm that settled far under its highest point is not lifted by a squeeze.** While
-  the Thor's drive waits for a lift, the joint target goes only as far from the
-  measured arm as the Thor reaches with steps that all rise, which as a rule is one
-  step of the joint target. The Thor starts once the target is within 1 mm of the
-  highest tip it measured for this owner, so an arm that came to rest too far under
-  that point stays where it is, and every squeeze ends `the arm did not follow the
-  squeeze within 1 s`. Checked in tests on the rig files, with APAI's checkers over
-  stand-in motors: an arm 1.4 and 2.9 mm under was lifted by a hand raised 3 cm, in
-  3 s and in 0.3 s, straight up, with a first setpoint of 0.5 to 1.9 mm; an arm 4.3,
-  5.8 and 8.6 mm under was not; a hand raised 3 cm and moved 3 cm to the side lifted
-  the arm 1.4 mm under and not the one 2.9 mm under. A hand that was still, moved
-  0.3 to 2 mm to any side, trembled or turned 5 degrees moved nothing. By how much
-  the rig's arm settles is not measured. A new takeover starts a new floor at the
-  measured tip: press right B, which is a STOP, hold right B for 1 s to take the arm
-  again, then squeeze and lift.
+  the Thor's drive waits for a lift, the joint target goes one step of the Thor from
+  the measured arm and no further, and the Thor starts once the target's tip is within
+  1 mm of the highest tip it measured for this owner. A squeeze therefore lifts an arm
+  that came to rest no deeper under that point than 1 mm plus the rise of that one
+  step. A deeper one stays where it is, and every squeeze ends `the arm did not follow
+  the squeeze within 1 s`. The step is set by `limits.human.max_joint_speed`, so the
+  depth shrinks with that limit; it also depends on the pose and on how the hand
+  moves. Checked on the rig files, with APAI's checkers over stand-in motors, on a
+  fake clock and with the limit replaced in memory, not on the arm: 1248 squeezes in
+  four poses (the rig's low pose, stretched forward, turned 34 degrees, folded near
+  the base), under the table clearance and inside the last grasp region above it, at
+  depths 0.4 mm apart. A hand raised 3 cm straight up, in 3 s or in 0.3 s, lifted an
+  arm up to 3.6 mm under at 0.8 rad/s (4.0 to 4.4 mm stretched forward, 2.4 mm
+  folded), up to 2.4 mm under at 0.4 rad/s (1.6 mm folded) and up to 1.6 mm under at
+  0.2 rad/s (1.2 mm folded); `test_rig_configs.py` holds the rig's low pose under the
+  clearance to that at the three limits, each with the next depth, 0.4 mm deeper,
+  not lifted. A hand raised 3 cm and moved 3 cm to the right or toward the person in
+  1 s lifted an arm of the same depth or up to 1.2 mm less; at 0.2 rad/s, folded and
+  under the clearance, it did not lift an arm 1.2 mm under. No arm 4.8 mm or more
+  under was lifted at any of the three limits. Each of the 330 lifts began with a
+  setpoint of at most 4.9 mm at the tip, on the hand's way, and no drive ended
+  refused. A hand that was still, went sideways or down, trembled or turned its wrist
+  sent nothing in 506 of 506 squeezes on arms 1.4 and 2.9 mm under, at 0.8 rad/s. A
+  hand that first goes 5 mm or more sideways and then rises does not lift the arm in
+  that squeeze, because the joint target already stands at the edge of its one step:
+  release, squeeze again and raise the hand straight up. The one step is measured
+  from the newest ROBOT_STATE, and the Thor steps from its own reading of the arm. Two
+  readings of a holding arm that differ by more than a tenth of a step (0.0016 rad at
+  0.8 rad/s, 0.0004 rad at 0.2 rad/s) can cut the first setpoint, and the drive then
+  ends refused after that one rising setpoint: squeeze again. In a check with
+  readings varied at random this did not happen at 0.8 rad/s up to a difference of
+  0.002 rad, and happened in 4 of 67 lifts at 0.2 rad/s with a difference of up to
+  0.001 rad. How still a holding joint reads on the rig is not measured. By
+  how much the rig's arm settles is not measured. A new takeover starts a new floor at
+  the measured tip: press right B, which is a STOP, hold right B for 1 s to take the
+  arm again, then squeeze and lift.
+- **A slow start of the Thor's drive is taken for a wait for a lift.** ROBOT_STATE
+  says that a human drive runs and how many setpoints it has sent, not why it has sent
+  none. From 0.15 s on the human program takes such a drive to wait for a lift. A
+  start that takes about 0.2 s or more, for the start read of the joints or the
+  checker's begin, therefore shows the note `raise the hand: the gripper is low and
+  the robot app waits for a lift` although the gripper is not low, and the arm starts
+  with one ordinary step of the joint target on the hand's way, where the first joint
+  target otherwise stands until the Thor's drive is shown at it. By test on the rig
+  files (`test_rig_configs.py`, APAI's checkers over stand-in motors, the start read
+  made 0.2 and 0.3 s longer in memory, the hand going 10 cm at 20 cm a second up,
+  down, toward the person or to the left from the raised pose): the first setpoint
+  moved the farthest joint 0.014 rad and the tip 2.7 to 3.5 mm along the hand's way,
+  no step was cut by the clamp, nothing went down that the hand did not ask for, and
+  no drive ended refused. The start read lasts about 0.06 s in the tests; how long it
+  takes on the rig's motor bus is not measured.
 - **How still a holding joint reads is not measured.** A second squeeze waits until two
   readings of every joint agree within 0.002 rad. On an arm whose readings differ by
   more at rest, every second squeeze within half a second of a release waits that half
@@ -6555,7 +6608,7 @@ headset, no Teleop Session Server and no arm:
 | The human program at the robot app's own socket, as on the Thor | By tests (`test_human_on_thor.py`), on one machine. In the test process, on the simulated arm and a fake clock: a robot app with its socket in a temporary folder and a local client of the test in the role `human`; once the robot app's program on a thread with a dialer of the test. Three tests as processes: the robot link service, the robot app with `--arm sim`, `configs/robot_app_demo2.yaml` and `--human-socket`, the console on a pseudo-terminal and `bash run_human.sh --controller synthetic:lift` on a copy of `configs/human.yaml` that names the socket; and twice the robot app with a robot connection that nothing answers, on `configs/robot_app_human_check.yaml` as shipped and on a copy that requires no live view | The client got WELCOME, ROBOT_STATE and the RESULTs of its own requests, and `health.human.local_program` said whether it was attached; a takeover and a hand-back asked for at the socket were answered as on the robot connection; a second human program and every other role were refused; a client that did not read was cut off, and no send of the robot app took a quarter of a second meanwhile; of two human programs one was followed, and a second one that kept sending was told of once; a STOP at the socket was served ahead of requests that had arrived before it; a STOP behind a refused LOCAL_HELLO (the console's raw STOP, a second human program's) reached the robot app; a STOP sent while the arm was being connected held no HUMAN_SETPOINT back afterwards; a `~` in `--human-socket` named the path of `configs/human_rebot.yaml`; the socket's file had mode 0600 and went with the robot app. With the robot connection lost during a squeeze the drive ended in a hold and the person kept the arm; a new squeeze moved nothing, for want of a live view, in a robot app whose file requires it; right B's STOP was taken. As processes: right B, the takeover, a lift of 5 cm, the typed `rest` and right A ran with the console showing `human program at the robot app`; with no robot connection at all right B's STOP reached the robot app. On `configs/robot_app_human_check.yaml` as shipped, which requires the live view, the takeover it asked for was refused with `the live view is not fresh: no VIEW_STATUS has arrived; show the viewer's live picture in a visible browser tab`. On a copy of that file with `human.require_live_view: false` the takeover was taken, the squeeze lifted the arm, and a `rest` typed at the Thor terminal and right A ended the takeover. The three process tests take about 50 s |
 | The jaws under a person's trigger | By tests (`test_human_jaws.py`), in the test process, on the simulated arm and a fake clock, with the human targets the tests make; one of them on APAI's software arm | A held object stayed held through a takeover with the trigger released; a trigger short of the grip level moved nothing; once it had reached the grip level, or crossed it, the jaws followed it, the grip squeezed or not; nothing closed beyond the grip level before a measured full open; after one, a close on an object ended in the light hold; a STOP, stale controller data, a lost robot connection and a drive that the grip did not end each ended the jaw motion in a light hold; without a fresh live view the jaws opened and did not close; with `human.trigger_jaws: false` the trigger did nothing; a jaw opening outside 0 to 1, or no number, was refused; without a known grip level the trigger moved nothing; the hand-back was refused until the trigger had opened the jaws fully |
 | The trigger in the human program and on the console, and a person opening the jaws an agent left closed | By tests: the logic on stand-ins (`test_human_logic.py`); the script `grasp` on the real retargeting graph, pass by pass against a stand-in for the Thor (`test_human_feed.py`, `test_human_program.py`); the console's jaws line (`test_console.py`); and one test of `test_demo2_programs.py`, in the test process and on the machine's clock, on APAI's software arm with the robot link service, the console, a live view of the viewer's parts and the human program attached | The jaw opening was 1.0 minus the trigger's value, the grip squeezed or not, fully open at or below 0.05 and closed at or above 0.95; no jaw opening went out on a pass without a usable trigger, or while ROBOT_STATE did not show the person as the control owner; the trigger changed nothing else of a HUMAN_SETPOINT; the note said which way the trigger goes while the arm followed the hand, behind every note about the arm; `grasp` asked for closed and then for open jaws and moved no joint; the console printed the jaws line below its status line. With the programs together: an agent client closed the jaws on an object half the jaw travel wide and asked for help; through the takeover and a lift of 1 cm with the trigger released the jaws got no command, and the note read `pull the trigger to the grip level to move the jaws`; the trigger, pulled all the way, reached the grip level 0.00 and moved nothing; released, it opened the jaws in ten steps of 0.05 until they were measured fully open and empty; after the typed `rest` right A gave the arm back. The test takes about 14 s |
-| A takeover with a low gripper tip, and the lift | By tests (`test_lift_out.py`), in the test process, on a fake clock, on APAI's checkers and its software arm with APAI's `mock` profile | A takeover was granted with the gripper tip under the table clearance, after a grasp and with no grasp region, and its line ended `; the gripper tip is low: only a lift is taken until it is clear`; with another complaint of the human checker (beside the workspace, under the table plane, outside the joint box) it was refused; the typed `rest` stayed refused there; a person's lift, step by step, brought the tip clear, and `rest` was then taken; a target and a step that would have lowered the tip were refused with `lift the gripper: ...` and the arm held; the tip was held against where it was measured, not where the drive began; a slide under the table clearance was refused by APAI's human checker, and one above it left the region; the simulated arm's checkers knew no table; a link at the table with a low tip was refused (the exception holds the gripper tip only), and a takeover inside the last grasp region above the clearance ended its line with the low-tip text; a hand that went down 0.7 mm or 0.2 mm per target was followed for less than 1 mm in all and then refused, inside the region and between the two table clearances; four squeezes that each lowered the target did not bring the tip more than 1 mm down; on an arm made to settle 8 mrad under every target, four squeezes of one target each left the tip where the first had left it (10.8, 8.2, 8.2, 8.2, 8.2 mm) with no drive refused, and a lift from there was followed once its target was back at the highest measured height. With the human program's graph, solver and logic making the targets on such an arm: a still squeeze left the tip at 7.9 mm; a second still squeeze sent nothing, the note said `raise the hand: the gripper is under the table clearance`, and the engagement ended after 1 s; a third with the hand rising 3 cm lifted the tip to 34.9 mm in one drive of 199 setpoints, with no step refused |
+| A takeover with a low gripper tip, and the lift | By tests (`test_lift_out.py`), in the test process, on a fake clock, on APAI's checkers and its software arm with APAI's `mock` profile | A takeover was granted with the gripper tip under the table clearance, after a grasp and with no grasp region, and its line ended `; the gripper tip is low: only a lift is taken until it is clear`; with another complaint of the human checker (beside the workspace, under the table plane, outside the joint box) it was refused; the typed `rest` stayed refused there; a person's lift, step by step, brought the tip clear, and `rest` was then taken; a target and a step that would have lowered the tip were refused with `lift the gripper: ...` and the arm held; the tip was held against where it was measured, not where the drive began; a slide under the table clearance was refused by APAI's human checker, and one above it left the region; the simulated arm's checkers knew no table; a link at the table with a low tip was refused (the exception holds the gripper tip only), and a takeover inside the last grasp region above the clearance ended its line with the low-tip text; a hand that went down 0.7 mm or 0.2 mm per target was followed for less than 1 mm in all and then refused, inside the region and between the two table clearances; four squeezes that each lowered the target did not bring the tip more than 1 mm down; on an arm made to settle 8 mrad under every target, four squeezes of one target each left the tip where the first had left it (10.8, 8.2, 8.2, 8.2, 8.2 mm) with no drive refused, and a lift from there was followed once its target was back at the highest measured height. With the human program's graph, solver and logic making the targets on such an arm: a still squeeze left the tip at 7.9 mm; a second still squeeze sent nothing, the note said `raise the hand: the gripper is under the table clearance`, and the engagement ended after 1 s; a third with the hand 2 cm to the right at one height sent nothing either; a fourth with the hand rising 3 cm lifted the tip to 34.9 mm in one drive of 191 setpoints, with no step refused. On the rig files (`test_rig_configs.py`, APAI's `rebot_rs` checkers over stand-in motors, the arm put at rest under its highest tip in memory, the hand raised 3 cm in 3 s and in 0.3 s): inside the last grasp region with the tip at 45 mm, an arm 2.8 mm under its highest tip was lifted, its first setpoint 1.9 mm, and arms 5.0, 7.2 and 8.6 mm under got no setpoint; an arm at 17 mm whose highest tip was at 25 mm got none, and one stretched forward at 17 mm under a highest tip at 21 mm was lifted with a first setpoint of 3.1 to 3.4 mm; folded near the base with the tip at 11 mm, a hand that went 5 cm toward the person at one height moved nothing; no drive ended refused |
 | Every stretch of time in a sample age and in a view age | By tests (`test_freshness.py`), in the test process, on the simulated arm and a fake clock, with the test's client in the role `human` once on the robot connection and once at the robot app's own socket; one test runs the human program's `main()` | Controller data that were 0.14 s old when sent and 0.12 s on the way started no drive: no joint target went out, the person kept the arm, and `health.human.refusal` read `no fresh controller data: 0.26... s old, the limit is 0.25 s`. A takeover was refused just outside the limit and taken just inside it, wherever the time lay: at the human program, on the way, or counted from the ROBOT_STATE for a sender without `sent_mono_s`. The wait at the robot app counted too. A drive ended in a hold when its targets, or the view's reports, took too long on the way. A HUMAN_SETPOINT that names no time had no known age; a time from the future was not trusted. A VIEW_STATUS delayed on its way was as old as it was, and one that does not say when it was sent was not fresh; the view age at the Thor was the picture's age whatever the link took. The human program stamped each HUMAN_SETPOINT with the age and the time of the moment it sent it; a takeover whose joint read let the controller data or the live view run out was refused with `...; the joint read took ... s`; the time of the controller feed's own step, for the script feed and for the teleop feed on a stand-in session, was in the sample age the human program sent |
 | A torque release whose driver call fails | By tests (`test_release_failed.py`), in the test process, on a fake clock, on the simulated arm and on APAI's mock driver | The RESULT was `failed` with `fault: torque release failed, the motors may be on or off: ...`; the motion was `release_failed`, `torque_on` true, and a fault-stop latched; no line said that the motors are off. After `reset` a task, `open` and `rest` were refused with `a torque release failed and the motors may be on or off; ...` and nothing was sent to the arm or the jaws. A shutdown started no return to rest, tried the release again and left the robot app running while it failed; once the release worked, the same shutdown closed the app. A second release at measured rest ended `rest_unpowered`. An arm port that knew its motors were off was shown as `rest_unpowered`. With APAI a release that failed after the driver had disconnected was not shown as off, and the arm port counted a release only once the driver's call had returned |
 | A jaw command the agent gave up on, and a GRIPPER's expiry | By tests (`test_gripper_timeout.py`): the real robot app on the simulated arm with the agent's arm adapter, its wait shortened to 0.3 s, on a robot connection that keeps link messages back; the arm adapter against a scripted robot side; the robot app on a fake clock with the test's client | A GRIPPER that arrived after the adapter had given up was `refused` and the jaws got nothing; a close that ran when the adapter gave up was cancelled and left in the light hold, never opened; the adapter sent one STOP from `agent`, also inside a skill, and its next jaw command sent nothing; a jaw command answered in time sent no STOP and the agent kept the arm. A GRIPPER past its expiry was refused at once with `the jaw command expired ... s ago`; one that expired while it waited never started, and the commands before and after it ran; one inside its expiry ran as one without; a GRIPPER without the field never expired; the agent program's GRIPPER carried the end of its own wait |

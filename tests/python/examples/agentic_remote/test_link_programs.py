@@ -1547,6 +1547,58 @@ def test_the_readme_quotes_the_rule_of_the_lift_as_the_robot_app_has_it():
     assert "`test_lift_out.py`" in readme_section("## Run the tests")
 
 
+def test_the_readme_gives_the_joint_target_of_a_waiting_drive_as_the_logic_has_it():
+    # A drive of the robot app waits for a lift while it sends nothing for an
+    # arm that has settled under its highest gripper tip.
+    from isaaccapture_examples.agentic_remote.human import logic
+    from isaaccapture_examples.agentic_remote.robot_app.human import SPEED_MARGIN
+
+    steps = one_line(readme_section("### A takeover, step by step"))
+    rule = steps[steps.index(LOW_TIP_ITEM) :]
+    rig = yaml.safe_load(RIG_HUMAN_YAML.read_text(encoding="utf-8"))
+    robot = yaml.safe_load((CONFIGS / "robot_app_rebot.yaml").read_text("utf-8"))
+    # When the human program takes the drive to wait, and its two notes.
+    assert f"for {logic.LIFT_AFTER_S:g} s, a drive that has this engagement's" in rule
+    for note in (logic.NOTE_RAISE_TABLE, logic.NOTE_RAISE):
+        assert f"`{note}`" in rule
+    # One step of the robot app from the measured arm, with the rig's numbers.
+    one_step = "no further than the robot app reaches from the measured arm in one step"
+    assert one_step in rule
+    speed, period = robot["limits"]["human"]["max_joint_speed"], 0.02
+    assert robot["executor"]["period_s"] == period
+    step = logic.JOINT_SPEED_SHARE * SPEED_MARGIN * speed * period
+    share = f"{logic.JOINT_SPEED_SHARE:g} of one step of the robot app"
+    assert f"{share} ({step:.3f} rad on the rig, 0.8 degrees)" in rule
+    assert f"`ik.max_ahead_rad` less {logic.LIFT_SLACK_RAD:g} rad" in rule
+    tip_mm = 1000 * rig["retarget"]["max_linear_velocity"] * period
+    assert f"allows in one setpoint period ({tip_mm:g} mm on the rig)" in rule
+    assert logic.LIFT_SHARES == (1.0, 0.5, 0.25, 0.125)
+    assert "is tried at a half, a quarter and an eighth of its length" in rule
+    assert "This holds wherever the tip is" in rule
+    # Under the named height: the hand's pose above the tip.
+    tol_mm = 1000 * rig["ik"]["tol"]
+    assert logic.LIFT_ASKED_TOLS == 2.0
+    assert (
+        f"above that tip by more than {logic.LIFT_ASKED_TOLS * tol_mm:g} mm, twice "
+        f"what a solve may leave of its pose (`ik.tol`, {tol_mm:g} mm)"
+    ) in rule
+    assert "goes sideways or goes down moves nothing there" in rule
+    # What it leaves open is under the known gaps, and the old bound is gone.
+    gaps = one_line(readme_section("## Known gaps"))
+    for gap in (
+        "An arm that settled far under its highest point is not lifted by a squeeze.",
+        "A slow start of the Thor's drive is taken for a wait for a lift.",
+    ):
+        assert f"**{gap}**" in gaps
+    assert "the depth shrinks with that limit" in gaps
+    taken = f"From {logic.LIFT_AFTER_S:g} s on the human program takes such a drive"
+    assert taken in gaps
+    whole = one_line(README.read_text(encoding="utf-8"))
+    assert "0.04 rad on the rig" not in whole
+    assert "the joint target follows the hand" not in whole
+    assert (TESTS / "test_rig_configs.py").is_file()
+
+
 def test_the_readme_quotes_what_the_trigger_is_told_as_the_programs_say_it():
     from isaaccapture_examples.agentic_remote.console import status
     from isaaccapture_examples.agentic_remote.human import logic
