@@ -141,12 +141,47 @@ private:
     core::SchemaPusherConfig m_config;
 };
 
+//! What the fake wrist source reports for each hand: different orientation and position per side, so a WRIST_SAMPLE
+//! labelled with the wrong hand is visible on the wire.
+XrPosef fake_wrist_pose(XrHandEXT hand)
+{
+    return hand == XR_HAND_LEFT_EXT ? XrPosef{ { 0.0f, 0.0f, 0.0f, 1.0f }, { -0.25f, 1.0f, -0.5f } } :
+                                      XrPosef{ { 0.0f, 1.0f, 0.0f, 0.0f }, { 0.25f, 1.25f, -0.375f } };
+}
+
+bool same_pose(const XrPosef& a, const XrPosef& b)
+{
+    return a.orientation.x == b.orientation.x && a.orientation.y == b.orientation.y &&
+           a.orientation.z == b.orientation.z && a.orientation.w == b.orientation.w && a.position.x == b.position.x &&
+           a.position.y == b.position.y && a.position.z == b.position.z;
+}
+
+//! Exact text of a pose (hex floats), for comparing what the bridge-side wrist source was built from.
+std::string pose_text(const XrPosef& pose)
+{
+    char text[256];
+    std::snprintf(text, sizeof(text), "q=(%a %a %a %a) p=(%a %a %a)", pose.orientation.x, pose.orientation.y,
+                  pose.orientation.z, pose.orientation.w, pose.position.x, pose.position.y, pose.position.z);
+    return text;
+}
+
+std::string wrist_config_text(const core::WristTrackingSourceConfig& config)
+{
+    return "mode=" + std::to_string(static_cast<int>(config.mode)) + " left " + pose_text(config.left_aim_to_wrist) +
+           " right " + pose_text(config.right_aim_to_wrist);
+}
+
 class FakeWristSource final : public core::IWristTrackingSource
 {
 public:
-    core::WristTrackingSample query(XrHandEXT, int64_t) override
+    //! Logs the config it was built from, as the OpenXR wrist source would apply it.
+    explicit FakeWristSource(const core::WristTrackingSourceConfig& config)
     {
-        return {};
+        log_event("wrist source " + wrist_config_text(config));
+    }
+    core::WristTrackingSample query(XrHandEXT hand, int64_t) override
+    {
+        return { .pose = fake_wrist_pose(hand), .valid = true, .tracked = true };
     }
 };
 
@@ -154,8 +189,12 @@ public:
 class FakePullChannel final : public core::IPluginPullChannel
 {
 public:
-    explicit FakePullChannel(bool has_wrist) : m_has_wrist(has_wrist)
+    explicit FakePullChannel(const std::optional<core::WristTrackingSourceConfig>& wrist)
     {
+        if (wrist)
+        {
+            m_wrist.emplace(*wrist);
+        }
     }
     void update() override
     {
@@ -167,23 +206,22 @@ public:
     }
     core::IWristTrackingSource& wrist_tracking_source() override
     {
-        if (!m_has_wrist)
+        if (!m_wrist)
         {
             throw std::logic_error("wrist tracking pull was not declared");
         }
-        return m_wrist;
+        return *m_wrist;
     }
 
 private:
-    bool m_has_wrist;
-    FakeWristSource m_wrist;
+    std::optional<FakeWristSource> m_wrist;
 };
 
 class FakeSession final : public core::IPluginSession
 {
 public:
     FakeSession(const std::string& app_name, const core::PluginSessionRequirements& requirements)
-        : m_pull(requirements.wrist_tracking_pull.has_value())
+        : m_pull(requirements.wrist_tracking_pull)
     {
         log_event("session open app=" + app_name);
     }
@@ -407,7 +445,7 @@ private:
 class RawClient
 {
 public:
-    explicit RawClient(uint16_t port, bool send_hello = true)
+    explicit RawClient(uint16_t port, bool send_hello = true, core::WristTrackingSourceConfig wrist = {})
         : m_transport(std::make_unique<TcpTransport>(TcpSocket::connect(Endpoint{ "127.0.0.1", port }, kWait)))
     {
         if (!send_hello)
@@ -416,9 +454,7 @@ public:
         }
         protocol::Hello hello;
         hello.app_name = "raw";
-        hello.requirements = { .schema_push = true,
-                               .hand_tracking_push = true,
-                               .wrist_tracking_pull = core::WristTrackingSourceConfig{} };
+        hello.requirements = { .schema_push = true, .hand_tracking_push = true, .wrist_tracking_pull = wrist };
         send(protocol::FrameType::Hello, protocol::kSessionChannelId, protocol::encode_hello(hello));
         m_heartbeat = std::thread(
             [this]
@@ -955,6 +991,48 @@ TEST_CASE("Bridge pushes the newest sample per pass, drops stale ones and applie
     REQUIRE(pushed_times(bridge.log(), "left").size() == 2);
     REQUIRE(status_sum(bridge.log(), "rx hand") == 12);
     REQUIRE(status_sum(bridge.log(), "applied") == 2);
+}
+
+TEST_CASE("Every WRIST_SAMPLE on the wire carries the hand its pose was sampled for", "[remote_device_bridge][unit]")
+{
+    BridgeProcess bridge;
+    RawClient client(bridge.port());
+    REQUIRE(accepted(client));
+    REQUIRE(client.send(protocol::FrameType::OpenPull, 3, {}));
+
+    std::map<XrHandEXT, int> seen;
+    for (int i = 0; i < 20; ++i)
+    {
+        const auto frame = client.wait_for(protocol::FrameType::WristSample);
+        REQUIRE(frame.has_value());
+        REQUIRE(frame->header.channel_id == 3);
+        const protocol::WristSample sample = protocol::decode_wrist_sample(frame->payload);
+        INFO("wire hand " << side(sample.hand) << ", pose " << pose_text(sample.sample.pose));
+        REQUIRE(sample.sample.valid);
+        REQUIRE(sample.sample.tracked);
+        REQUIRE(same_pose(sample.sample.pose, fake_wrist_pose(sample.hand)));
+        ++seen[sample.hand];
+    }
+    REQUIRE(seen[XR_HAND_LEFT_EXT] >= 5);
+    REQUIRE(seen[XR_HAND_RIGHT_EXT] >= 5);
+}
+
+TEST_CASE("The aim-to-wrist offsets declared in HELLO reach the bridge's wrist source unchanged",
+          "[remote_device_bridge][unit]")
+{
+    // Non-default and different on every component, so a lost, swapped or altered offset changes the text.
+    const core::WristTrackingSourceConfig wrist{
+        .mode = core::WristTrackingSourceMode::Controller,
+        .left_aim_to_wrist = { { -0.5f, 0.5f, -0.5f, 0.5f }, { -0.0625f, 0.125f, -0.25f } },
+        .right_aim_to_wrist = { { 0.25f, -0.75f, 0.5f, 0.125f }, { 0.375f, -0.1875f, 0.03125f } }
+    };
+    REQUIRE(wrist_config_text(wrist) != wrist_config_text({}));
+
+    BridgeProcess bridge;
+    RawClient client(bridge.port(), true, wrist);
+    REQUIRE(accepted(client));
+    REQUIRE(bridge.wait_log("wrist source " + wrist_config_text(wrist) + "\n"));
+    REQUIRE(bridge.count("wrist source ") == 1);
 }
 
 TEST_CASE("With --clock-source=one-way the bridge never PINGs and streams on the one-way offset",
