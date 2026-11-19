@@ -21,3 +21,7 @@ endif()
 if(TARGET manus_calibration_core)
     add_subdirectory(manus_calibration)
 endif()
+
+if(TARGET jmex_plugin_core)
+    add_subdirectory(jmex)
+endif()
