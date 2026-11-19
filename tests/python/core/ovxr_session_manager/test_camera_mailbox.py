@@ -146,6 +146,12 @@ def test_produced_but_invalid_image_is_omitted_and_error_is_contained(monkeypatc
     assert "without completed LdrColor" in mailbox.error()
 
 
+def test_unfinished_color_reports_its_event_status():
+    frame = FrameOutputs(1, _outputs(_frame(1.0, 1, status=2)))
+    with pytest.raises(RuntimeError, match=r"LdrColor event status \[2\]"):
+        frame.latest_color("/Camera")
+
+
 def test_mapping_failure_is_contained_without_reusing_stale_pixels(monkeypatch):
     def fail(*_args):
         raise RuntimeError("map failed")

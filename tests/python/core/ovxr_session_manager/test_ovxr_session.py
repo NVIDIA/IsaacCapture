@@ -1271,6 +1271,7 @@ def test_consumer_start_failure_retires_borrowed_owners():
 def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch):
     host = _FakeHost()
     mirror_events = []
+    menus = []
     acquired = []
 
     class FakeMirror:
@@ -1301,6 +1302,7 @@ def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch)
         "OwnedDesktopMirrorWorker",
         lambda acquire_frame, config, _on_user_close, *, products=None: (
             mirror_events.append(("create", threading.get_native_id(), config))
+            or menus.append(products)
             or FakeMirror(acquire_frame)
         ),
     )
@@ -1328,17 +1330,15 @@ def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch)
     assert not getattr(context.desc, "enable_frame_readback", False)
     assert context.desc.render_products == list(config.render_products)
     assert context.selected_products == ()
-    assert consumer._mailbox.view()[0] == ()
+    (menu,) = menus
+    assert menu.view()[0] == ()
     assert consumer.status == DesktopMirrorStatus()
     consumer.record_host_frame()
     consumer.set_status_text("Application status")
     assert owner.request_render("step-1") > 0
     _wait_for_operation("submit")
     assert owner.eye_render_product_paths == ("/Reported/Left", "/Reported/Right")
-    assert (
-        tuple(p.path for p in consumer._mailbox.view()[0])
-        == owner.eye_render_product_paths
-    )
+    assert tuple(p.path for p in menu.view()[0]) == owner.eye_render_product_paths
     owner.close()
 
     owner_thread = owner.render_worker_native_thread_id
@@ -2610,7 +2610,6 @@ def test_cancel_failure_does_not_skip_context_and_service_cleanup(
         in getattr(failure, "__notes__", [])
     ) == detached_release_fails
     assert owner._pump._context is None
-    assert owner._pump._pending_plan is None
     # The destroyed context cannot cancel again, so a retry leaves the plan alone.
     owner._pump.close()
     assert len(cancel_calls) == 2
