@@ -5,8 +5,8 @@ OVXR installation
 =================
 
 Any application that supplies an OVRTX renderer and an OVStage can use Isaac
-Capture for XR presentation and teleoperation input. Select the ``ovxr`` extra when installing Isaac Capture
-to include OVXR and its rendering dependencies.
+Capture for XR presentation and teleoperation input. Select the ``ovxr`` extra
+when installing Isaac Capture to include OVXR and its rendering dependencies.
 
 Install XR support
 ------------------
@@ -125,21 +125,24 @@ Use from another application
 and ``OvxrSessionConfig``. Implement ``OvxrApplicationInterface`` to supply the
 application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
 The binding also supplies optional ``frame_consumers`` after the application has
-resolved its auxiliary render-product paths. Supply both stereo camera paths in
-``camera_paths``. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
+resolved its auxiliary render-product paths. ``camera_paths`` is required and
+must contain both stereo cameras. Set ``up_axis="Y"`` for a Y-up Stage; the
+default is ``"Z"``.
 
 ``CameraPanelConsumer`` and ``OwnedDesktopMirror`` implement the same
 ``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
 ``CameraPanelConfig`` values, each pairing a render-product path with its placement
 and image bound. Configure the mirror's camera choices with ``MirrorProduct``
 values for the auxiliary cameras. The mirror lists the two eyes from the bound
-OVXR frame, followed by those cameras. Either consumer can be enabled independently.
+OVXR frame, followed by those cameras, so its menu is empty until the first
+renderable frame. Either consumer can be enabled independently.
 
-Read ``session.eye_render_product_paths`` for the active ``(left, right)`` pair,
-including when OVXR chooses the paths and the mirror is disabled. It returns
-``None`` until the first renderable frame binds successfully and after the session
-closes. Auxiliary cameras are excluded. Inside a frame consumer,
-``frame.eye_render_product_paths`` supplies the same pair for that frame.
+Read ``session.eye_render_product_paths`` from any thread for the active
+``(left, right)`` pair, including when OVXR chooses the paths and the mirror is
+disabled. It returns ``None`` until the first renderable frame binds
+successfully and after the session closes. It follows the pair in each bound
+frame. Auxiliary cameras are excluded. Inside a frame consumer,
+``frame.eye_render_product_paths`` supplies the same pair.
 
 Camera-panel attachment failure disables panels and logs the reason without
 blocking teleoperation input. An incomplete GPU copy disables the affected panel;

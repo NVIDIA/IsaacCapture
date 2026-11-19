@@ -449,8 +449,8 @@
   <section id="ovxr-installation">
 <h1>OVXR installation<a class="headerlink" href="#ovxr-installation" title="Link to this heading">#</a></h1>
 <p>Any application that supplies an OVRTX renderer and an OVStage can use Isaac
-Capture for XR presentation and teleoperation input. Select the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra when installing Isaac Capture
-to include OVXR and its rendering dependencies.</p>
+Capture for XR presentation and teleoperation input. Select the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra
+when installing Isaac Capture to include OVXR and its rendering dependencies.</p>
 <section id="install-xr-support">
 <h2>Install XR support<a class="headerlink" href="#install-xr-support" title="Link to this heading">#</a></h2>
 <p>Follow <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> to build Isaac Capture and
@@ -550,19 +550,22 @@ not OVUI’s separate asynchronous upload API. See the <a class="reference exter
 and <code class="docutils literal notranslate"><span class="pre">OvxrSessionConfig</span></code>. Implement <code class="docutils literal notranslate"><span class="pre">OvxrApplicationInterface</span></code> to supply the
 application’s renderer, Stage and ordinal ledger in an <code class="docutils literal notranslate"><span class="pre">OvxrSessionBinding</span></code>.
 The binding also supplies optional <code class="docutils literal notranslate"><span class="pre">frame_consumers</span></code> after the application has
-resolved its auxiliary render-product paths. Supply both stereo camera paths in
-<code class="docutils literal notranslate"><span class="pre">camera_paths</span></code>. Set <code class="docutils literal notranslate"><span class="pre">up_axis=&quot;Y&quot;</span></code> for a Y-up Stage; the default is <code class="docutils literal notranslate"><span class="pre">&quot;Z&quot;</span></code>.</p>
+resolved its auxiliary render-product paths. <code class="docutils literal notranslate"><span class="pre">camera_paths</span></code> is required and
+must contain both stereo cameras. Set <code class="docutils literal notranslate"><span class="pre">up_axis=&quot;Y&quot;</span></code> for a Y-up Stage; the
+default is <code class="docutils literal notranslate"><span class="pre">&quot;Z&quot;</span></code>.</p>
 <p><code class="docutils literal notranslate"><span class="pre">CameraPanelConsumer</span></code> and <code class="docutils literal notranslate"><span class="pre">OwnedDesktopMirror</span></code> implement the same
 <code class="docutils literal notranslate"><span class="pre">OvxrFrameConsumer</span></code> lifecycle. Configure panels with a tuple of
 <code class="docutils literal notranslate"><span class="pre">CameraPanelConfig</span></code> values, each pairing a render-product path with its placement
 and image bound. Configure the mirror’s camera choices with <code class="docutils literal notranslate"><span class="pre">MirrorProduct</span></code>
 values for the auxiliary cameras. The mirror lists the two eyes from the bound
-OVXR frame, followed by those cameras. Either consumer can be enabled independently.</p>
-<p>Read <code class="docutils literal notranslate"><span class="pre">session.</span><wbr><span class="pre">eye_</span><wbr><span class="pre">render_</span><wbr><span class="pre">product_</span><wbr><span class="pre">paths</span></code> for the active <code class="docutils literal notranslate"><span class="pre">(left,</span> <span class="pre">right)</span></code> pair,
-including when OVXR chooses the paths and the mirror is disabled. It returns
-<code class="docutils literal notranslate"><span class="pre">None</span></code> until the first renderable frame binds successfully and after the session
-closes. Auxiliary cameras are excluded. Inside a frame consumer,
-<code class="docutils literal notranslate"><span class="pre">frame.</span><wbr><span class="pre">eye_</span><wbr><span class="pre">render_</span><wbr><span class="pre">product_</span><wbr><span class="pre">paths</span></code> supplies the same pair for that frame.</p>
+OVXR frame, followed by those cameras, so its menu is empty until the first
+renderable frame. Either consumer can be enabled independently.</p>
+<p>Read <code class="docutils literal notranslate"><span class="pre">session.</span><wbr><span class="pre">eye_</span><wbr><span class="pre">render_</span><wbr><span class="pre">product_</span><wbr><span class="pre">paths</span></code> from any thread for the active
+<code class="docutils literal notranslate"><span class="pre">(left,</span> <span class="pre">right)</span></code> pair, including when OVXR chooses the paths and the mirror is
+disabled. It returns <code class="docutils literal notranslate"><span class="pre">None</span></code> until the first renderable frame binds
+successfully and after the session closes. It follows the pair in each bound
+frame. Auxiliary cameras are excluded. Inside a frame consumer,
+<code class="docutils literal notranslate"><span class="pre">frame.</span><wbr><span class="pre">eye_</span><wbr><span class="pre">render_</span><wbr><span class="pre">product_</span><wbr><span class="pre">paths</span></code> supplies the same pair.</p>
 <p>Camera-panel attachment failure disables panels and logs the reason without
 blocking teleoperation input. An incomplete GPU copy disables the affected panel;
 the consumer rechecks its copy stream before releasing the borrowed output.
