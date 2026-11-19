@@ -203,6 +203,34 @@ TEST_CASE("a closed peer is reported, not thrown", "[unit][camera][socket]")
     REQUIRE(server->send(bytes_of("anyone?")) == SendStatus::CLOSED);
 }
 
+TEST_CASE("a peer that closed without reading everything still delivers what it sent", "[unit][camera][socket]")
+{
+    TemporaryDirectory directory;
+    MessageListener listener(directory.socket_path());
+    listener.listen();
+    std::optional<MessageSocket> server;
+    {
+        MessageSocket client = MessageSocket::connect(directory.socket_path());
+        server = listener.accept(1s);
+        REQUIRE(server.has_value());
+        REQUIRE(client.send(bytes_of("first")) == SendStatus::SENT);
+        REQUIRE(client.send(bytes_of("second")) == SendStatus::SENT);
+        REQUIRE(server->send(bytes_of("never read")) == SendStatus::SENT);
+    }
+
+    // The kernel reports the reset ahead of the messages; the socket reports it after them.
+    std::array<std::byte, 32> buffer;
+    ReceivedMessage received = server->receive(buffer, 1s);
+    REQUIRE(received.status == ReceiveStatus::MESSAGE);
+    REQUIRE(text_of(buffer, received.bytes) == "first");
+    received = server->receive(buffer, 1s);
+    REQUIRE(received.status == ReceiveStatus::MESSAGE);
+    REQUIRE(text_of(buffer, received.bytes) == "second");
+
+    REQUIRE(server->receive(buffer, 1s).status == ReceiveStatus::CLOSED);
+    REQUIRE(server->receive(buffer, 1s).status == ReceiveStatus::CLOSED);
+}
+
 TEST_CASE("receive and accept time out when nothing arrives", "[unit][camera][socket]")
 {
     Connection connection;
