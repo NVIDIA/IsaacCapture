@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The OVXR pin is declared for wheels, for the source tree and in the guide."""
+"""Dependencies are declared for wheels and for the source tree; pins also in the guide."""
 
 import tomllib
 from importlib import metadata
@@ -10,13 +10,19 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[4]
+_WHEEL = _ROOT / "src/core/python"
 _GUIDE = _ROOT / "docs/source/getting_started/ovxr.rst"
+_PROJECT = tomllib.loads((_ROOT / "pyproject.toml").read_text())["project"]
 
 
-def _wheel_extra() -> list[str]:
-    text = (_ROOT / "src/core/python/requirements-ovxr.txt").read_text()
-    lines = (line.strip() for line in text.splitlines())
-    return sorted(line for line in lines if line and not line.startswith("#"))
+def _normalized(requirements) -> list[str]:
+    return sorted(r.replace('"', "'").replace(" ", "") for r in requirements)
+
+
+def _wheel_requirements(extra: str | None) -> list[str]:
+    name = f"requirements-{extra}.txt" if extra else "requirements.txt"
+    lines = (line.strip() for line in (_WHEEL / name).read_text().splitlines())
+    return _normalized(line for line in lines if line and not line.startswith("#"))
 
 
 def _pinned(requirements: list[str], name: str) -> str:
@@ -28,17 +34,30 @@ def _pinned(requirements: list[str], name: str) -> str:
     return version
 
 
-def test_ovxr_extra_matches_between_wheel_and_source_tree():
-    project = tomllib.loads((_ROOT / "pyproject.toml").read_text())["project"]
-    assert _wheel_extra() == sorted(project["optional-dependencies"]["ovxr"])
+def test_source_tree_and_wheel_declare_the_same_extras():
+    wheel = {
+        path.stem.removeprefix("requirements-")
+        for path in _WHEEL.glob("requirements-*.txt")
+    }
+    assert wheel == set(_PROJECT["optional-dependencies"])
 
 
-def test_guide_names_the_pinned_ovxr():
-    assert f"``{_pinned(_wheel_extra(), 'ovxr')}``" in _GUIDE.read_text()
+@pytest.mark.parametrize("extra", [None, *_PROJECT["optional-dependencies"]])
+def test_source_tree_and_wheel_declare_the_same_requirements(extra):
+    source = (
+        _PROJECT["optional-dependencies"][extra] if extra else _PROJECT["dependencies"]
+    )
+    assert _normalized(source) == _wheel_requirements(extra)
+
+
+def test_guide_names_the_pinned_ovxr_and_ovui():
+    guide = _GUIDE.read_text()
+    assert f"``{_pinned(_wheel_requirements('ovxr'), 'ovxr')}``" in guide
+    assert f"OVUI {_pinned(_wheel_requirements('desktop-mirror'), 'ovui')} " in guide
 
 
 def test_guide_names_the_providers_the_pinned_ovxr_requires():
-    pin = _pinned(_wheel_extra(), "ovxr")
+    pin = _pinned(_wheel_requirements("ovxr"), "ovxr")
     try:
         installed = metadata.version("ovxr")
     except metadata.PackageNotFoundError:
