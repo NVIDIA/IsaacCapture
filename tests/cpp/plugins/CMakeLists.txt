@@ -11,6 +11,7 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(spacemouse)
     add_subdirectory(gamepad)
+    add_subdirectory(camera_synthetic)
 endif()
 
 if(BUILD_PLUGIN_OGLO)
