@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 # Plugins that publish device status (see PluginDeviceStatusPublisher); others launch unmonitored.
 _MONITORED_PLUGIN_NAMES = frozenset(
-    {"manus_hand_plugin", "avatar_hand_plugin", "spacemouse", "gamepad"}
+    {"manus_hand_plugin", "avatar_hand_plugin", "spacemouse", "gamepad", "revohuman"}
 )
 
 

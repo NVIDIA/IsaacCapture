@@ -273,6 +273,23 @@ devices:
           url: https://wuji.tech/en/
         - email: sales@wuji.tech
 
+  - id: revohuman-glove
+    name: RevoHuman Glove
+    url: https://github.com/BrainCoTech/brainco-revohuman-sdk
+    group: peripheral
+    modes: Hand tracking, joint encoders, tactile
+    since: main
+    details:
+      setup:
+        - label: RevoHuman Glove docs
+          doc: /device/hand_tracking/revohuman
+        - label: RevoHuman Glove Plugin
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/revohuman
+      requirements:
+        - Linux, x86_64 or aarch64
+        - RevoHuman C SDK 0.1.3
+        - USB connection to the plugin host
+
   - id: noitom
     name: Noitom Robotics Motion Capture
     url: https://www.noitomrobotics.com
