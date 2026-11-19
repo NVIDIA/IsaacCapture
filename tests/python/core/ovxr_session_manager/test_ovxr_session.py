@@ -36,6 +36,13 @@ class _WorkerAbort(BaseException):
     pass
 
 
+def _bound_plan(*paths):
+    if not paths:
+        paths = ("/Runtime/Left", "/Runtime/Right")
+    products = SimpleNamespace(num_render_products=len(paths), render_products=paths)
+    return SimpleNamespace(step_result=77, render_products=products)
+
+
 class _FakeContext:
     operations: ClassVar[list[tuple[str, int]]] = []
     create_error: BaseException | None = None
@@ -1115,6 +1122,71 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
     ]
 
 
+def test_eye_paths_follow_the_bound_plan_without_ending_the_session(caplog):
+    pump = ovxr_session.OvxrSession(
+        _FakeHost(), _config(render_products=("/Asked/Left", "/Asked/Right"))
+    )._pump
+    with caplog.at_level("WARNING"):
+        # A plan without both eyes is reported once and leaves the pair unset.
+        pump._observe_eye_paths(_bound_plan("/Only/Left"))
+        pump._observe_eye_paths(_bound_plan("/Only/Left"))
+        assert pump.eye_render_product_paths is None
+        assert caplog.text.count("eye render products are unavailable") == 1
+        # The plan names what OVXR rendered; a differing request is reported once.
+        plan = _bound_plan("/Bound/Left", "/Bound/Right", "/Wrist")
+        pump._observe_eye_paths(plan)
+        pump._observe_eye_paths(plan)
+        assert pump.eye_render_product_paths == ("/Bound/Left", "/Bound/Right")
+        assert caplog.text.count("instead of the configured") == 1
+        pump._observe_eye_paths(_bound_plan("/Asked/Left", "/Asked/Right"))
+        assert pump.eye_render_product_paths == ("/Asked/Left", "/Asked/Right")
+        # A later incomplete plan must not keep reporting the earlier pair.
+        pump._observe_eye_paths(_bound_plan("/Only/Left"))
+        assert pump.eye_render_product_paths is None
+        assert caplog.text.count("eye render products are unavailable") == 1
+
+
+@pytest.mark.parametrize("configured", [(), ("/Custom/Left", "/Custom/Right")])
+def test_eye_render_product_paths_without_mirror(monkeypatch, configured):
+    # Use the released plan layout so the public result must outlive native storage.
+    bindings = pytest.importorskip("ovxr._src.bindings")
+    ovrtx_bindings = pytest.importorskip("ovrtx._src.bindings")
+    expected = configured or ("/Runtime/Left", "/Runtime/Right")
+    names = (ovrtx_bindings.ovx_string_t * 3)(
+        *(ovrtx_bindings.ovx_string_t(path) for path in (*expected, "/Wrist"))
+    )
+
+    class Context(_FakeContext):
+        def begin_frame(self):
+            # Each plan is valid until submit; submit then reuses the storage.
+            names[0] = ovrtx_bindings.ovx_string_t(expected[0])
+            plan = bindings.ovxr_frame_plan_t()
+            plan.render_products.render_products = names
+            plan.render_products.num_render_products = len(names)
+            return 0, plan
+
+        def bind_frame(self, plan, delta, *, stage_ordinal):
+            plan.step_result = ovrtx_bindings.ovrtx_step_result_handle_t(77)
+            return super().bind_frame(plan, delta, stage_ordinal=stage_ordinal)
+
+        def submit_frame(self, plan, **kwargs):
+            names[0] = ovrtx_bindings.ovx_string_t("/ReusedBuffer")
+            return super().submit_frame(plan, **kwargs)
+
+    api = _fake_ovxr()
+    api.Context = Context
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: api)
+    owner = ovxr_session.OvxrSession(_FakeHost(), _config(render_products=configured))
+    assert owner.eye_render_product_paths is None
+    with owner:
+        assert owner.start()
+        assert owner.eye_render_product_paths is None
+        owner.request_render("first")
+        _wait_for_operation("submit")
+        assert owner.eye_render_product_paths == expected
+    assert owner.eye_render_product_paths is None
+
+
 def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
     events = []
     threads = []
@@ -1124,9 +1196,8 @@ def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
 
     class Context(_FakeContext):
         def begin_frame(self):
-            result, plan = super().begin_frame()
-            plan.step_result = 1
-            return result, plan
+            result, _ = super().begin_frame()
+            return result, _bound_plan()
 
     class Consumer(ovxr_session.OvxrFrameConsumer):
         def __init__(self, name):
@@ -1142,6 +1213,7 @@ def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
             self.record("start")
 
         def on_outputs(self, frame):
+            assert frame.eye_render_product_paths == ("/Runtime/Left", "/Runtime/Right")
             assert frame.latest_color("/missing") is None
             self.record("outputs")
 
@@ -1213,6 +1285,7 @@ def test_consumer_start_failure_retires_borrowed_owners():
 def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch):
     host = _FakeHost()
     mirror_events = []
+    menus = []
     acquired = []
 
     class FakeMirror:
@@ -1243,8 +1316,23 @@ def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch)
         "OwnedDesktopMirrorWorker",
         lambda acquire_frame, config, _on_user_close, *, products=None: (
             mirror_events.append(("create", threading.get_native_id(), config))
+            or menus.append(products)
             or FakeMirror(acquire_frame)
         ),
+    )
+
+    class BoundContext(_FakeContext):
+        def begin_frame(self):
+            return 0, _bound_plan("/Reported/Left", "/Reported/Right")
+
+    api = _fake_ovxr()
+    api.Context = BoundContext
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: api)
+    monkeypatch.setattr(frame_pump, "native_renderer_handle", lambda _renderer: 7)
+    monkeypatch.setattr(
+        frame_pump,
+        "completed_outputs",
+        lambda *_args: SimpleNamespace(contents=SimpleNamespace(output_count=0)),
     )
     config = _config()
     mirror_config = DesktopMirrorConfig()
@@ -1255,16 +1343,16 @@ def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch)
     context = owner._pump._context
     assert not getattr(context.desc, "enable_frame_readback", False)
     assert context.desc.render_products == list(config.render_products)
-    assert _FakeContext.selected_products == ()
-    assert [p.path for p in consumer._mailbox.view()[0]] == [
-        "/OVXR/Render/Products/Left",
-        "/OVXR/Render/Products/Right",
-    ]
+    assert context.selected_products == ()
+    (menu,) = menus
+    assert menu.view()[0] == ()
     assert consumer.status == DesktopMirrorStatus()
     consumer.record_host_frame()
     consumer.set_status_text("Application status")
     assert owner.request_render("step-1") > 0
     _wait_for_operation("submit")
+    assert owner.eye_render_product_paths == ("/Reported/Left", "/Reported/Right")
+    assert tuple(p.path for p in menu.view()[0]) == owner.eye_render_product_paths
     owner.close()
 
     owner_thread = owner.render_worker_native_thread_id
@@ -1699,15 +1787,10 @@ def test_actual_public_destroy_wrapper_distinguishes_consumed_context(
     monkeypatch, failure
 ):
     ovxr = pytest.importorskip("ovxr")
+    from ovxr._src.bindings import ovxr_frame_view_t
+
     host = _FakeHost()
     calls = []
-    invalidations = []
-    native = ovxr.Context.__new__(ovxr.Context)
-    native._handle = 123
-    native._uses_explicit_stage_ordinals = True
-    native._frame_lifetime = SimpleNamespace(
-        invalidate_context=lambda: invalidations.append(True)
-    )
 
     def destroy(_handle, ordinal):
         calls.append(ordinal)
@@ -1716,9 +1799,23 @@ def test_actual_public_destroy_wrapper_distinguishes_consumed_context(
         host.ordinal_ledger.seal_external(ordinal)
         return ovxr.Result.ERROR if failure == "native-result" else ovxr.Result.SUCCESS
 
-    native._bindings = SimpleNamespace(
-        destroy=destroy, get_last_error=lambda: "release failed"
+    native = ovxr.Context(
+        ovxr.ContextDesc(
+            ovrtx_renderer=1, ovstage=2, ordinal_mode=ovxr.StageOrdinalMode.APPLICATION
+        ),
+        bindings=SimpleNamespace(
+            create=lambda _desc: (ovxr.Result.SUCCESS, 123),
+            acquire_frame=lambda _handle: (
+                ovxr.Result.SUCCESS,
+                ovxr_frame_view_t(sequence=1),
+            ),
+            destroy=destroy,
+            get_last_error=lambda: "release failed",
+        ),
     )
+
+    frame = native.acquire_frame()
+    assert frame.is_valid
 
     class WrappedContext(_FakeContext):
         def destroy(self, *, stage_ordinal):
@@ -1737,7 +1834,7 @@ def test_actual_public_destroy_wrapper_distinguishes_consumed_context(
             owner.close()
     consumed = failure in ("native-result", "success")
     assert (owner._pump._context is None) == consumed
-    assert bool(invalidations) == consumed
+    assert frame.is_valid == (not consumed)
     assert (native._handle is None) == consumed
     assert (
         any(isinstance(e, tuple) and e[0] == "environment-close" for e in host.events)
@@ -2187,7 +2284,7 @@ def test_bound_output_reads_finish_before_submit_or_cancel(monkeypatch, release_
     host.renderer = SimpleNamespace(_handle=ctypes.c_void_p(123))
     owner = ovxr_session.OvxrSession(host, _config())
     owner._pump._binding = host.attach_on_render_thread(object())
-    plan = SimpleNamespace(step_result=77)
+    plan = _bound_plan()
     events = []
 
     def bind(_plan, _time, *, stage_ordinal):
@@ -2277,6 +2374,7 @@ def test_no_render_plan_does_not_read_outputs_or_append_layers(monkeypatch):
     monkeypatch.setattr(frame_pump, "completed_outputs", unexpected)
     owner._pump.render(9)
     assert submitted == [{"additional_layers": []}]
+    assert owner.eye_render_product_paths is None
 
 
 @pytest.mark.parametrize("cleanup_boundary", ["outputs", "cancel"])
@@ -2353,7 +2451,7 @@ def test_failed_output_hides_cached_quad_until_successful_refresh(
         return object()
 
     owner._pump._context = SimpleNamespace(
-        begin_frame=lambda: (0, SimpleNamespace(step_result=77)),
+        begin_frame=lambda: (0, _bound_plan()),
         bind_frame=bind,
         submit_frame=lambda *_a, **kw: (
             events.append(kw["additional_layers"]) or 0,
@@ -2484,9 +2582,10 @@ def test_retired_context_is_unpublished_before_lifecycle_unlock(
     assert context is not None
 
 
+@pytest.mark.parametrize("detached_release_fails", [False, True])
 @pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
 def test_cancel_failure_does_not_skip_context_and_service_cleanup(
-    monkeypatch, error_type
+    monkeypatch, error_type, detached_release_fails
 ):
     host = _FakeHost()
     launcher = _ControlledLauncher()
@@ -2502,18 +2601,32 @@ def test_cancel_failure_does_not_skip_context_and_service_cleanup(
     )
     failure = error_type("cancel failed")
 
-    def cancel(_self, _plan):
-        raise failure
+    cancel_calls = []
+
+    def cancel(_self, plan):
+        destroyed = any(name == "destroy" for name, _ in _FakeContext.operations)
+        cancel_calls.append((plan, destroyed))
+        if not destroyed:
+            raise failure
+        if detached_release_fails:
+            raise RuntimeError("detached release failed")
 
     monkeypatch.setattr(_FakeContext, "cancel_frame", cancel)
     owner.start()
-    owner._pump._pending_plan = SimpleNamespace(step_result=0)
+    plan = SimpleNamespace(step_result=0)
+    owner._pump._pending_plan = plan
     with pytest.raises(error_type) as caught:
         owner.close()
     assert caught.value is failure
-    assert "destroy" in [name for name, _thread in _FakeContext.operations]
+    assert cancel_calls == [(plan, False), (plan, True)]
+    assert (
+        "Detached frame release failed: detached release failed"
+        in getattr(failure, "__notes__", [])
+    ) == detached_release_fails
     assert owner._pump._context is None
-    assert owner._pump._pending_plan is None
+    # The destroyed context cannot cancel again, so a retry leaves the plan alone.
+    owner._pump.close()
+    assert len(cancel_calls) == 2
     assert [name for name, _thread in launcher.events] == ["stop-start", "stop-end"]
     assert [event[0] for event in host.events if isinstance(event, tuple)][-2:] == [
         "host-close",
