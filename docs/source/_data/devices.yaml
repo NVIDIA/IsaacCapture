@@ -225,6 +225,22 @@ devices:
         - label: haptikos.tech
           url: https://haptikos.tech/
 
+  - id: realhand-ffg-glove
+    name: RealHand FFG Glove
+    url: https://www.realhand.com/
+    group: peripheral
+    modes: 26-joint human hand tracking from USB glove sensors
+    since: main
+    details:
+      setup:
+        - label: RealHand FFG Glove docs
+          doc: /device/hand_tracking/realhand_ffg_glove
+        - label: RealHand FFG Glove Plugin
+          url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/realhand_ffg_glove
+      requirements:
+        - Linux workstation
+        - USB serial access through the dialout group
+
   - id: oglo-tactile-glove
     name: OGLO Tactile Glove
     url: https://www.opengraphlabs.com/
