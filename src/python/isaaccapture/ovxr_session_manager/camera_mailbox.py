@@ -156,7 +156,7 @@ class FrameOutputs:
 
     @property
     def eye_render_product_paths(self) -> tuple[str, str] | None:
-        """The session's (left, right) eye products; None only outside a session."""
+        """This frame's (left, right) eye products; None if it did not bind both."""
         return self._eye_render_product_paths
 
     def latest_color(self, product_path: str) -> tuple[int, float] | None:

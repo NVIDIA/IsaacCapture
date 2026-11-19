@@ -434,6 +434,8 @@ class OvxrFramePump:
             if not self._eye_paths_failure_logged:
                 self._eye_paths_failure_logged = True
                 _LOGGER.exception("OVXR eye render products are unavailable")
+            # An earlier frame's pair does not describe this frame.
+            self._eye_render_product_paths = None
             return
         if eyes == self._eye_render_product_paths:
             return
