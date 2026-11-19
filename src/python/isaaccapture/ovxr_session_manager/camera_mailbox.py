@@ -43,6 +43,7 @@ def _latest_color_handle(outputs: Any, product_path: str) -> tuple[int, float] |
     """Select the latest *complete* LdrColor frame, not the first array entry."""
     latest: tuple[int, float] | None = None
     produced = False
+    unusable_statuses: set[int] = set()
     for product_index in range(outputs.output_count):
         product = outputs.outputs[product_index]
         if _text(product.render_product_path) != product_path:
@@ -52,19 +53,23 @@ def _latest_color_handle(outputs: Any, product_path: str) -> tuple[int, float] |
             frame = product.output_frames[frame_index]
             for var_index in range(frame.render_var_count):
                 var = frame.output_render_vars[var_index]
-                if (
-                    var.status != _OVRTX_EVENT_STATUS_COMPLETED
-                    or not var.output_handle
-                    or _text(var.source_name) != "LdrColor"
-                ):
+                if _text(var.source_name) != "LdrColor":
+                    continue
+                if var.status != _OVRTX_EVENT_STATUS_COMPLETED or not var.output_handle:
+                    unusable_statuses.add(int(var.status))
                     continue
                 # FrameOutputs exposes numeric IDs to application callbacks.
                 candidate = (var.output_handle.raw_id, float(frame.frame_end_time))
                 if latest is None or candidate[1] >= latest[1]:
                     latest = candidate
     if produced and latest is None:
+        seen = (
+            f" (LdrColor event status {sorted(unusable_statuses)})"
+            if unusable_statuses
+            else ""
+        )
         raise RuntimeError(
-            f"{product_path} produced a frame without completed LdrColor"
+            f"{product_path} produced a frame without completed LdrColor{seen}"
         )
     return latest
 
