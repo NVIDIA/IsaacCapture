@@ -2191,7 +2191,7 @@ async def _run_cli(args: argparse.Namespace) -> int:
             from .livekit_streams import load_livekit_streams
 
             config = dataclasses.replace(config, livekit_streams=load_livekit_streams(args.livekit_streams))
-    except (ValueError, NotImplementedError, OSError, RuntimeError) as exc:
+    except (ValueError, NotImplementedError, OSError) as exc:
         # A malformed episode is a ValueError (EpisodeFormatError); a missing directory an OSError.
         print(f"capture-server: {exc}", file=sys.stderr)
         return 2
