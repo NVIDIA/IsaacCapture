@@ -93,6 +93,9 @@ which uses ``SchemaPusher``).
   ``Pack()``, then call ``pusher_.push_buffer(ptr, size, sample_time_local_common_clock_ns,
   sample_time_raw_device_clock_ns)``. Use a monotonic clock (e.g. ``core::os_monotonic_now_ns()``)
   for the local common clock; use the device's own clock for the raw device clock if available.
+- **Shutdown** — To stop a plugin, the plugin manager sends ``SIGINT`` and kills the process if
+  it is still running 2 seconds later. A plugin that needs longer to close its files sets
+  ``shutdown_timeout_seconds`` (greater than 0, at most 3600) in its ``plugin.yaml``.
 
 Reference implementation: :code-dir:`src/plugins/generic_3axis_pedal`. The plugin holds a
 ``core::SchemaPusher`` member, opens the Linux joystick device, maps axes to
@@ -249,14 +252,20 @@ schema is not sent over the wire.
    cmake --build build --parallel
    cmake --install build
 
-**Run** pusher and printer in separate terminals:
+**Run** pusher and printer in separate terminals. Neither starts CloudXR, so
+start the runtime first (see :ref:`dedicated-cloudxr-runtime`) and source its
+environment in each terminal:
 
 .. code-block:: bash
 
+   python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
+
    # Terminal 1: Start printer
+   source ~/.cloudxr/run/cloudxr.env
    ./install/examples/schemaio/pedal_printer
 
    # Terminal 2: Start pusher
+   source ~/.cloudxr/run/cloudxr.env
    ./install/examples/schemaio/pedal_pusher
 
 The printer discovers the tensor collection created by the pusher and prints received samples.
@@ -287,3 +296,7 @@ example; ``full_body_printer`` is covered in :doc:`body_tracking/index`.
 
 For the shared library build and contribution workflow, see
 :doc:`/development/build_from_source/index` and :doc:`/development/contributing`.
+
+.. seealso::
+
+   Once your device publishes hand or full-body poses, prove it with :doc:`/conformance/overview`.
