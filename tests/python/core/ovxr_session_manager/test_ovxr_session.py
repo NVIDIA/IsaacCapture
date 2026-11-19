@@ -1139,7 +1139,11 @@ def test_eye_paths_follow_the_bound_plan_without_ending_the_session(caplog):
         assert pump.eye_render_product_paths == ("/Bound/Left", "/Bound/Right")
         assert caplog.text.count("instead of the configured") == 1
         pump._observe_eye_paths(_bound_plan("/Asked/Left", "/Asked/Right"))
-    assert pump.eye_render_product_paths == ("/Asked/Left", "/Asked/Right")
+        assert pump.eye_render_product_paths == ("/Asked/Left", "/Asked/Right")
+        # A later incomplete plan must not keep reporting the earlier pair.
+        pump._observe_eye_paths(_bound_plan("/Only/Left"))
+        assert pump.eye_render_product_paths is None
+        assert caplog.text.count("eye render products are unavailable") == 1
 
 
 @pytest.mark.parametrize("configured", [(), ("/Custom/Left", "/Custom/Right")])

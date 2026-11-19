@@ -330,8 +330,9 @@ class OvxrSession:
     def eye_render_product_paths(self) -> tuple[str, str] | None:
         """Return the active (left, right) eye product paths, or None.
 
-        None until the first renderable bind and after close. Safe to read
-        from any thread.
+        None until the first renderable bind, after close, and while the
+        latest bound frame lacks both eye products. Safe to read from any
+        thread.
         """
         return self._pump.eye_render_product_paths
 
