@@ -294,7 +294,7 @@ started first; the Python modules start it themselves):
 .. code-block:: bash
 
    # C++ (after cmake --install)
-   python -m isaaccapture.cloudxr.service start   # runs in the background
+   python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
    source ~/.cloudxr/run/cloudxr.env
    ./install/examples/schemaio/full_body_printer
    ./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
@@ -443,7 +443,7 @@ the same ``--collection-prefix``. Run each in its own shell:
 
 .. code-block:: bash
 
-   python -m isaaccapture.cloudxr.service start   # runs in the background
+   python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
 
    # Shell 1: the plugin
    source ~/.cloudxr/run/cloudxr.env

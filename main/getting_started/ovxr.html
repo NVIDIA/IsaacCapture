@@ -500,9 +500,9 @@
                   
   <section id="ovxr-installation">
 <h1>OVXR installation<a class="headerlink" href="#ovxr-installation" title="Link to this heading">#</a></h1>
-<p>OVXR provides optional XR presentation for applications that use Isaac Capture
-for teleoperation input. Select the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra when installing Isaac Capture
-to include OVXR and its rendering dependencies.</p>
+<p>Any application that supplies an OVRTX renderer and an OVStage can use Isaac
+Capture for XR presentation and teleoperation input. Select the <code class="docutils literal notranslate"><span class="pre">ovxr</span></code> extra
+when installing Isaac Capture to include OVXR and its rendering dependencies.</p>
 <section id="install-xr-support">
 <h2>Install XR support<a class="headerlink" href="#install-xr-support" title="Link to this heading">#</a></h2>
 <p>Follow <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a> to build Isaac Capture and
@@ -514,9 +514,24 @@ uv<span class="w"> </span>pip<span class="w"> </span>check
 </div>
 <p>Replace <code class="docutils literal notranslate"><span class="pre">X.Y</span></code> with the version of your source build, as described in the build
 guide. Base installations and imports do not require OVXR.</p>
-<p>OVXR declares its compatible OVRTX and OVStage versions in its package metadata.
-The consuming application’s dependency constraints must accept those versions.
+<p>Isaac Capture pins OVXR <code class="docutils literal notranslate"><span class="pre">0.2.0.1794933073</span></code>. This release requires OVRTX
+<code class="docutils literal notranslate"><span class="pre">0.7.0.1794596436</span></code> and OVStage <code class="docutils literal notranslate"><span class="pre">0.4.0.1794520352</span></code>. The consuming
+application’s dependency constraints must accept those versions.
 See the package pages below for supported Python versions and platforms.</p>
+</section>
+<section id="upgrading-from-ovxr-0-1">
+<h2>Upgrading from OVXR 0.1<a class="headerlink" href="#upgrading-from-ovxr-0-1" title="Link to this heading">#</a></h2>
+<p>Keep existing <code class="docutils literal notranslate"><span class="pre">OvxrSession</span></code>, <code class="docutils literal notranslate"><span class="pre">OvxrSessionConfig</span></code> and <code class="docutils literal notranslate"><span class="pre">FrameOutputs</span></code> calls.
+<code class="docutils literal notranslate"><span class="pre">FrameOutputs.latest_color()</span></code> continues to return a numeric output ID and sensor
+time when an image is available. Update any application pins or overrides for
+the three packages above, then regenerate the application’s lock file.</p>
+<p>Applications that call OVRTX or OVStage directly must also account for their
+API changes. Pass typed handles back to the provider that issued them and use
+<code class="docutils literal notranslate"><span class="pre">.raw_id</span></code> for numeric storage. Stage ordinals are signed 64-bit integers;
+use <code class="docutils literal notranslate"><span class="pre">ovstage.ORDINAL_MAX</span></code> for latest-value reads. Rebuild native integrations
+against matching headers. See the
+<a class="reference external" href="https://github.com/NVIDIA-Omniverse/ovrtx/blob/main/CHANGELOG.md#070---2026-11-12" rel="noopener noreferrer" target="_blank">OVRTX 0.7 changes</a>
+and <a class="reference external" href="https://github.com/NVIDIA-Omniverse/ovstage/blob/main/CHANGELOG.md#040---2026-11-10" rel="noopener noreferrer" target="_blank">OVStage 0.4 changes</a>.</p>
 </section>
 <section id="optional-packages-and-licenses">
 <h2>Optional packages and licenses<a class="headerlink" href="#optional-packages-and-licenses" title="Link to this heading">#</a></h2>
@@ -587,14 +602,23 @@ not OVUI’s separate asynchronous upload API. See the <a class="reference exter
 and <code class="docutils literal notranslate"><span class="pre">OvxrSessionConfig</span></code>. Implement <code class="docutils literal notranslate"><span class="pre">OvxrApplicationInterface</span></code> to supply the
 application’s renderer, Stage and ordinal ledger in an <code class="docutils literal notranslate"><span class="pre">OvxrSessionBinding</span></code>.
 The binding also supplies optional <code class="docutils literal notranslate"><span class="pre">frame_consumers</span></code> after the application has
-resolved its render-product paths. Capture does not depend on an Isaac Lab task
-or scene configuration. <code class="docutils literal notranslate"><span class="pre">camera_paths</span></code> is required and must contain both stereo
-cameras. Set <code class="docutils literal notranslate"><span class="pre">up_axis=&quot;Y&quot;</span></code> for a Y-up Stage; the default is <code class="docutils literal notranslate"><span class="pre">&quot;Z&quot;</span></code>.</p>
+resolved its auxiliary render-product paths. <code class="docutils literal notranslate"><span class="pre">camera_paths</span></code> is required and
+must contain both stereo cameras. Set <code class="docutils literal notranslate"><span class="pre">up_axis=&quot;Y&quot;</span></code> for a Y-up Stage; the
+default is <code class="docutils literal notranslate"><span class="pre">&quot;Z&quot;</span></code>.</p>
 <p><code class="docutils literal notranslate"><span class="pre">CameraPanelConsumer</span></code> and <code class="docutils literal notranslate"><span class="pre">OwnedDesktopMirror</span></code> implement the same
 <code class="docutils literal notranslate"><span class="pre">OvxrFrameConsumer</span></code> lifecycle. Configure panels with a tuple of
 <code class="docutils literal notranslate"><span class="pre">CameraPanelConfig</span></code> values, each pairing a render-product path with its placement
 and image bound. Configure the mirror’s camera choices with <code class="docutils literal notranslate"><span class="pre">MirrorProduct</span></code>
-values. Either consumer can be enabled independently.</p>
+values for the auxiliary cameras. The mirror lists the two eyes from the bound
+OVXR frame, followed by those cameras, so its menu is empty until the first
+renderable frame. Either consumer can be enabled independently.</p>
+<p>Read <code class="docutils literal notranslate"><span class="pre">session.</span><wbr><span class="pre">eye_</span><wbr><span class="pre">render_</span><wbr><span class="pre">product_</span><wbr><span class="pre">paths</span></code> from any thread for the active
+<code class="docutils literal notranslate"><span class="pre">(left,</span> <span class="pre">right)</span></code> pair, including when OVXR chooses the paths and the mirror is
+disabled. It returns <code class="docutils literal notranslate"><span class="pre">None</span></code> until the first renderable frame binds
+successfully and after the session closes. It follows the pair in each bound
+frame, and is <code class="docutils literal notranslate"><span class="pre">None</span></code> for a bound frame that lacks both eye products.
+Auxiliary cameras are excluded. Inside a frame consumer,
+<code class="docutils literal notranslate"><span class="pre">frame.</span><wbr><span class="pre">eye_</span><wbr><span class="pre">render_</span><wbr><span class="pre">product_</span><wbr><span class="pre">paths</span></code> supplies the same pair.</p>
 <p>Camera-panel attachment failure disables panels and logs the reason without
 blocking teleoperation input. An incomplete GPU copy disables the affected panel;
 the consumer rechecks its copy stream before releasing the borrowed output.
@@ -724,6 +748,7 @@ those resources. There is no automatic retry of uncertain native destruction.</p
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#install-xr-support">Install XR support</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#upgrading-from-ovxr-0-1">Upgrading from OVXR 0.1</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-packages-and-licenses">Optional packages and licenses</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-camera-panels">Optional camera panels</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#optional-desktop-mirror">Optional desktop mirror</a></li>
