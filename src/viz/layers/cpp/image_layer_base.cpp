@@ -222,6 +222,7 @@ void ImageLayerBase::submit(const VizBuffer& src, cudaStream_t stream)
     // mailbox and overwrite src.data while our async memcpy is still
     // reading from it. Cost is ~0.5 ms per 1080p submit on the caller's
     // thread; the render path is unaffected.
+    // Borrowed CUDA IPC frames remain mapped until this copy completes.
     check_cuda(
         cudaStreamSynchronize(stream), layer_type_.c_str(), "cudaStreamSynchronize(submit)", ctx_->cuda_device_id());
 
