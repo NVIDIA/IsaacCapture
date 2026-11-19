@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 RealHand. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "isaaccapture-examples-realhand-p7"
+version = "0.0.0"
+description = "RealHand P7 bimanual end-effector pipeline using official retargeters"
+requires-python = ">=3.11,<3.14"
+dependencies = ["isaaccapture[cloudxr]", "numpy", "scipy>=1.15.0"]
+
+[tool.hatch.build]
+only-include = ["python/isaaccapture_examples/realhand_p7"]
+
+[tool.hatch.build.targets.wheel]
+sources = ["python"]

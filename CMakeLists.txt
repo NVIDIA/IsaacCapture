@@ -72,6 +72,7 @@ option(BUILD_PLUGIN_OGLO "Build OGLO tactile glove plugin (BLE, Linux only; fetc
 option(BUILD_PLUGIN_WUJI_GLOVE "Build Wuji glove plugin (requires the wuji_sdk C SDK)" OFF)
 option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa AvatarExo Glove plugin (Linux; skips if the Avatar SDK is missing)" OFF)
 option(BUILD_EXAMPLES "Build examples" ON)
+option(BUILD_EXAMPLE_REALHAND_P7 "Build the optional RealHand P7 dual-arm example and tests" OFF)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)
 option(BUILD_OVXR_CAMERA_QUADS "Build optional application-owned OVXR camera quad support" OFF)
