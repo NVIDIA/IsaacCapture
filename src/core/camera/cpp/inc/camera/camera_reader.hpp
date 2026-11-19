@@ -75,20 +75,37 @@ struct PluginLocation
 
 /**
  * @brief One image of a frame set. The memory is the plugin's pool, mapped read-only, and
- * stays as it is for as long as the FrameSet the view came from is held.
+ * stays as it is for as long as the FrameSet the view came from is held. It is host memory
+ * (`data`, plane()) or on a GPU (cuda_plane()); stream->on_gpu() says which.
  */
 struct ImageView
 {
     const StreamDescription* stream = nullptr; // what the bytes are; owned by the reader
     ImageInfo info;
-    std::span<const std::byte> data; // the whole slot
+    std::span<const std::byte> data; // host memory: the whole slot
+
+    // On a GPU: where each plane starts on the device, and that device's index in this
+    // process. Planes have an address each because not every kind of GPU memory maps a slot as
+    // one range. Hold the frame set until the device has finished every read that was queued
+    // on it: giving it back lets the camera write the slot again.
+    std::array<CudaAddress, MAX_PLANES_PER_IMAGE> cuda_planes = {};
+    std::uint32_t cuda_device_index = 0;
 
     /**
-     * @brief The bytes of one plane of a pixel image, from its first row to the end of its last.
-     * Rows are stream->planes[index].stride_bytes apart.
+     * @brief The bytes of one plane of a pixel image in host memory, from its first row to the
+     * end of its last. Rows are stream->planes[index].stride_bytes apart.
      * @throws std::out_of_range for a plane the image does not have.
+     * @throws std::logic_error for an image on a GPU.
      */
     std::span<const std::byte> plane(std::uint32_t index) const;
+
+    /**
+     * @brief Where one plane of a pixel image on a GPU starts on the device, as a CUDA address.
+     * Rows are stream->planes[index].stride_bytes apart.
+     * @throws std::out_of_range for a plane the image does not have.
+     * @throws std::logic_error for an image in host memory.
+     */
+    CudaAddress cuda_plane(std::uint32_t index) const;
 };
 
 /**

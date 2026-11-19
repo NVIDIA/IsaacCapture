@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <camera/camera_reader.hpp>
+#include <camera/cuda_pool.hpp>
 #include <camera_synthetic/synthetic_backend.hpp>
 
 #include <algorithm>
@@ -148,9 +149,12 @@ void print_group(const GroupDescription& group, const std::string& endpoint = {}
                 endpoint.c_str());
     for (const StreamDescription& stream : group.streams)
     {
-        std::printf("  %-24s %ux%u %s, %.2f fps, %u slots of %llu bytes\n", stream.id.c_str(), stream.width,
-                    stream.height, name_of(stream), stream.frame_rate, stream.slot_count,
-                    static_cast<unsigned long long>(stream.slot_bytes));
+        std::printf(
+            "  %-24s %ux%u %s, %.2f fps, %u slots of %llu bytes%s%s\n", stream.id.c_str(), stream.width, stream.height,
+            name_of(stream), stream.frame_rate, stream.slot_count, static_cast<unsigned long long>(stream.slot_bytes),
+            stream.memory == core::camera::MemoryKind::CUDA ? ", CUDA memory on " : "",
+            stream.memory == core::camera::MemoryKind::CUDA ? core::camera::cuda_device_name(stream.cuda_device).c_str() :
+                                                              "");
     }
 }
 
@@ -190,11 +194,19 @@ struct Stage
 };
 
 // Whether every byte of the image is what the synthetic backend wrote for its frame number.
-bool is_synthetic(const ImageView& image, std::size_t stream)
+// An image in CUDA memory is copied to `scratch` to be looked at.
+bool is_synthetic(const ImageView& image, std::size_t stream, std::vector<std::byte>& scratch)
 {
-    const std::uint64_t frame = plugins::camera_synthetic::synthetic_frame_number(image.data);
+    std::span<const std::byte> pixels = image.data;
+    if (image.stream->memory == core::camera::MemoryKind::CUDA)
+    {
+        scratch.resize(image.stream->slot_bytes);
+        core::camera::copy_from_cuda(image.stream->cuda_device, scratch, image.cuda_plane(0)); // the slot's start
+        pixels = scratch;
+    }
+    const std::uint64_t frame = plugins::camera_synthetic::synthetic_frame_number(pixels);
     const std::byte fill = plugins::camera_synthetic::synthetic_fill(frame, stream);
-    const auto rest = image.data.subspan(std::min(image.data.size(), sizeof(frame)));
+    const auto rest = pixels.subspan(std::min(pixels.size(), sizeof(frame)));
     return image.info.device_frame_id == frame &&
            std::all_of(rest.begin(), rest.end(), [fill](std::byte value) { return value == fill; });
 }
@@ -233,6 +245,7 @@ int run(const Arguments& arguments)
                                       { "capture -> reader", {} } } };
     std::uint64_t skipped = 0;
     std::uint64_t corrupt = 0;
+    std::vector<std::byte> scratch;
     const std::int64_t started = now_ns();
     for (std::uint32_t i = 0; i < arguments.frames; ++i)
     {
@@ -255,7 +268,7 @@ int run(const Arguments& arguments)
         {
             for (std::size_t stream = 0; stream < frames->image_count(); ++stream)
             {
-                corrupt += is_synthetic(frames->image(stream), stream) ? 0 : 1;
+                corrupt += is_synthetic(frames->image(stream), stream, scratch) ? 0 : 1;
             }
         }
     }
