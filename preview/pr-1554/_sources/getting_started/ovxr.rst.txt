@@ -141,7 +141,8 @@ Read ``session.eye_render_product_paths`` from any thread for the active
 ``(left, right)`` pair, including when OVXR chooses the paths and the mirror is
 disabled. It returns ``None`` until the first renderable frame binds
 successfully and after the session closes. It follows the pair in each bound
-frame. Auxiliary cameras are excluded. Inside a frame consumer,
+frame, and is ``None`` for a bound frame that lacks both eye products.
+Auxiliary cameras are excluded. Inside a frame consumer,
 ``frame.eye_render_product_paths`` supplies the same pair.
 
 Camera-panel attachment failure disables panels and logs the reason without

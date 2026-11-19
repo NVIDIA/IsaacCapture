@@ -564,7 +564,8 @@ renderable frame. Either consumer can be enabled independently.</p>
 <code class="docutils literal notranslate"><span class="pre">(left,</span> <span class="pre">right)</span></code> pair, including when OVXR chooses the paths and the mirror is
 disabled. It returns <code class="docutils literal notranslate"><span class="pre">None</span></code> until the first renderable frame binds
 successfully and after the session closes. It follows the pair in each bound
-frame. Auxiliary cameras are excluded. Inside a frame consumer,
+frame, and is <code class="docutils literal notranslate"><span class="pre">None</span></code> for a bound frame that lacks both eye products.
+Auxiliary cameras are excluded. Inside a frame consumer,
 <code class="docutils literal notranslate"><span class="pre">frame.</span><wbr><span class="pre">eye_</span><wbr><span class="pre">render_</span><wbr><span class="pre">product_</span><wbr><span class="pre">paths</span></code> supplies the same pair.</p>
 <p>Camera-panel attachment failure disables panels and logs the reason without
 blocking teleoperation input. An incomplete GPU copy disables the affected panel;
