@@ -534,6 +534,7 @@ jobs:
             "deviceio_session",
             "schema",
             "plugin_manager",
+            "camera",
         ):
             importlib.import_module(f"isaaccapture.{mod}")
 

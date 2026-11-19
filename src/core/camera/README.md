@@ -160,6 +160,62 @@ Not covered: a process that is stopped while it waits inside `next` is handed, w
 continues, the frame set that arrived meanwhile. A reader that needs to know how old its
 frame is has the times of every step in `timeline()`.
 
+### Python
+
+The same reader as `isaaccapture.camera`:
+
+```python
+from isaaccapture.camera import CameraReader
+
+with CameraReader.open("head") as reader:
+    for frames in reader:
+        left = frames.image(0).array()   # (height, width, 4) uint8, read-only
+```
+
+- An array is a view of the plugin's buffer, not a copy, and cannot be written to. **It
+  keeps its frame set held**: it shows that frame for as long as the array exists, after
+  `release()`, after the loop has moved on and after the reader is closed. The price is the
+  window: an array that is kept counts as a frame set the reader holds.
+- `open` takes the window and the order (`"newest"`, `"in_order"`) as keyword arguments. The
+  window is two by default, not one as in C++: in the loop above `left` still names the array
+  of the frame before while the next frame set is asked for. The order is `"newest"` unless
+  `"in_order"` is given; a larger window alone does not change it, as it does in C++.
+- **Which plugin** is as in C++ ("How a reader finds its camera"). `open` and `list` look
+  through this user's camera plugins; `instance=` or `endpoint=` names one plugin instead.
+  Each `GroupListing` of `list` has the `endpoint` of the plugin that publishes the group.
+- A reader that holds its window's worth raises `CameraWindowExhausted` from `next()`, with
+  what to do about it: drop an array, or copy what is needed from it.
+- `for frames in reader` lets go of the frame set before at each step. With `reader.next()`
+  the caller does: `frames.release()`, or a `with` block.
+- **From an event loop**, wait on `reader.fileno()` and read with `next(0)` until it returns
+  `None`. In newest order the plugin sends a frame set only when it is asked, and `next(0)`
+  is what asks, so call it once before waiting:
+
+  ```python
+  def on_readable():
+      while (frames := reader.next(0)) is not None:   # takes what came, asks for the next
+          use(frames)
+          frames.release()
+
+  loop.add_reader(reader.fileno(), on_readable)
+  on_readable()                                       # the first request
+  ```
+
+  `next(0)` does not wait for a frame set, but it may take up to 20 ms when it exchanges one
+  that waited for the newest (see "A frame set that waited"). A thread that blocks in
+  `next()` is the other way to keep a loop free.
+- `with frames.borrow() as frames:` is for code that must not keep anything: the frame set
+  goes back to the plugin when the block ends, and an array of it that still exists then
+  raises `BufferError` instead of holding the frame set without a word.
+- Arrays are NumPy arrays over host memory. A DLPack export is added with the first pool
+  kind that is not host memory, where it is the way to hand a frame to a tensor library.
+- `bgra8` and `rgba8` images are `(height, width, 4)`, `gray8` is `(height, width)`; `nv12`
+  has two planes, `plane(0)` and `plane(1)`. `data` is the flat bytes of the whole slot.
+- The synthetic camera plugin ships in the package under `plugins/camera_synthetic`. The
+  plugin manager, given `BUNDLED_PLUGINS_DIR` (the package's `plugins` directory, from
+  `isaaccapture.teleop_session_manager`) as its search path, starts it by its name,
+  `camera_synthetic`.
+
 ## Publishing cameras
 
 A camera plugin is one vendor's or one SDK's capture code and this library. The capture code
@@ -304,7 +360,9 @@ settings its own purpose needs, and what it does about a lost or late frame is i
 vendor or SDK called `<name>`:
 
 1. **Directory.** Copy `src/plugins/camera_synthetic` to `src/plugins/camera_<name>`, without
-   `tools/`: `camera_bench` reads any camera plugin and stays where it is.
+   `tools/`: `camera_bench` reads any camera plugin and stays where it is. Leave out the block
+   in `app/CMakeLists.txt` that bundles the plugin into the Python package as well: the wheel
+   does not ship a vendor's SDK.
 2. **`core/`: the backend.** A static library `camera_<name>_core` that links
    `camera::camera` and the SDK. It implements `CameraSource` for one camera and has one
    function that returns the `Backend`, named `<name>`. No type of the SDK leaves this
@@ -704,7 +762,8 @@ its camera asks that of every plugin of its user. Nothing is logged per frame.
 
 `tests/cpp/core/camera`, built as one executable, `camera_tests`. `ctest -L camera` runs them. A
 label is a regular expression, so that also runs the tests of the camera plugins, whose labels
-start with `camera_`; `ctest -L "^camera$"` is the form that selects this library's tests alone.
+start with `camera_`, and in a build with the Python bindings the Python tests below
+(`camera_python`); `ctest -L "^camera$"` is the form that selects this library's tests alone.
 
 - **Unit** (`ctest -L unit`): everything that runs in one process. The endpoint's cases play the
   reader's part with the socket and the codec directly. The reader's cases run it against a
@@ -732,3 +791,10 @@ start with `camera_`; `ctest -L "^camera$"` is the form that selects this librar
   while it holds frame sets gives them back; a reader is told when the plugin's process is
   killed and can still read what it holds; a reader finds two groups on two plugin processes by
   name, and still finds the one after the other was killed.
+
+`tests/python/core/camera` (`ctest -L camera_python`) reads from the synthetic camera plugin
+that is bundled into the package, started as a process and, in one case, through the plugin
+manager. Besides the reading, the cases cover the finding, each in a user's directories of
+its own: a reader that is told nothing finds the plugin; a listing names the endpoint of its
+plugin; two plugins side by side are both found by group; a group on two plugins, and a
+group nobody publishes, are errors that name the endpoints and the directory.
