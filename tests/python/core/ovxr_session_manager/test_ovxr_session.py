@@ -36,6 +36,13 @@ class _WorkerAbort(BaseException):
     pass
 
 
+def _bound_plan(*paths):
+    if not paths:
+        paths = ("/Runtime/Left", "/Runtime/Right")
+    products = SimpleNamespace(num_render_products=len(paths), render_products=paths)
+    return SimpleNamespace(step_result=77, render_products=products)
+
+
 class _FakeContext:
     operations: ClassVar[list[tuple[str, int]]] = []
     create_error: BaseException | None = None
@@ -1115,6 +1122,45 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
     ]
 
 
+@pytest.mark.parametrize("configured", [(), ("/Custom/Left", "/Custom/Right")])
+def test_eye_render_product_paths_without_mirror(monkeypatch, configured):
+    # Use the released plan layout so the public result must outlive native storage.
+    bindings = pytest.importorskip("ovxr._src.bindings")
+    ovrtx_bindings = pytest.importorskip("ovrtx._src.bindings")
+    expected = configured or ("/Runtime/Left", "/Runtime/Right")
+    names = (ovrtx_bindings.ovx_string_t * 3)(
+        *(ovrtx_bindings.ovx_string_t(path) for path in (*expected, "/Wrist"))
+    )
+
+    class Context(_FakeContext):
+        def begin_frame(self):
+            plan = bindings.ovxr_frame_plan_t()
+            plan.render_products.render_products = names
+            plan.render_products.num_render_products = len(names)
+            return 0, plan
+
+        def bind_frame(self, plan, delta, *, stage_ordinal):
+            plan.step_result = ovrtx_bindings.ovrtx_step_result_handle_t(77)
+            return super().bind_frame(plan, delta, stage_ordinal=stage_ordinal)
+
+        def submit_frame(self, plan, **kwargs):
+            names[0] = ovrtx_bindings.ovx_string_t("/ReusedBuffer")
+            return super().submit_frame(plan, **kwargs)
+
+    api = _fake_ovxr()
+    api.Context = Context
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: api)
+    owner = ovxr_session.OvxrSession(_FakeHost(), _config(render_products=configured))
+    assert owner.eye_render_product_paths is None
+    with owner:
+        assert owner.start()
+        assert owner.eye_render_product_paths is None
+        owner.request_render("first")
+        _wait_for_operation("submit")
+        assert owner.eye_render_product_paths == expected
+    assert owner.eye_render_product_paths is None
+
+
 def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
     events = []
     threads = []
@@ -1124,9 +1170,8 @@ def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
 
     class Context(_FakeContext):
         def begin_frame(self):
-            result, plan = super().begin_frame()
-            plan.step_result = 1
-            return result, plan
+            result, _ = super().begin_frame()
+            return result, _bound_plan()
 
     class Consumer(ovxr_session.OvxrFrameConsumer):
         def __init__(self, name):
@@ -1142,6 +1187,7 @@ def test_injected_consumers_follow_frame_and_retirement_order(monkeypatch):
             self.record("start")
 
         def on_outputs(self, frame):
+            assert frame.eye_render_product_paths == ("/Runtime/Left", "/Runtime/Right")
             assert frame.latest_color("/missing") is None
             self.record("outputs")
 
@@ -1246,6 +1292,20 @@ def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch)
             or FakeMirror(acquire_frame)
         ),
     )
+
+    class BoundContext(_FakeContext):
+        def begin_frame(self):
+            return 0, _bound_plan("/Reported/Left", "/Reported/Right")
+
+    api = _fake_ovxr()
+    api.Context = BoundContext
+    monkeypatch.setattr(frame_pump, "_import_ovxr", lambda: api)
+    monkeypatch.setattr(frame_pump, "native_renderer_handle", lambda _renderer: 7)
+    monkeypatch.setattr(
+        frame_pump,
+        "completed_outputs",
+        lambda *_args: SimpleNamespace(contents=SimpleNamespace(output_count=0)),
+    )
     config = _config()
     mirror_config = DesktopMirrorConfig()
     consumer = owned_mirror.OwnedDesktopMirror(mirror_config)
@@ -1255,16 +1315,18 @@ def test_optional_mirror_enables_readback_and_closes_before_context(monkeypatch)
     context = owner._pump._context
     assert not getattr(context.desc, "enable_frame_readback", False)
     assert context.desc.render_products == list(config.render_products)
-    assert _FakeContext.selected_products == ()
-    assert [p.path for p in consumer._mailbox.view()[0]] == [
-        "/OVXR/Render/Products/Left",
-        "/OVXR/Render/Products/Right",
-    ]
+    assert context.selected_products == ()
+    assert consumer._mailbox.view()[0] == ()
     assert consumer.status == DesktopMirrorStatus()
     consumer.record_host_frame()
     consumer.set_status_text("Application status")
     assert owner.request_render("step-1") > 0
     _wait_for_operation("submit")
+    assert owner.eye_render_product_paths == ("/Reported/Left", "/Reported/Right")
+    assert (
+        tuple(p.path for p in consumer._mailbox.view()[0])
+        == owner.eye_render_product_paths
+    )
     owner.close()
 
     owner_thread = owner.render_worker_native_thread_id
@@ -2196,7 +2258,7 @@ def test_bound_output_reads_finish_before_submit_or_cancel(monkeypatch, release_
     host.renderer = SimpleNamespace(_handle=ctypes.c_void_p(123))
     owner = ovxr_session.OvxrSession(host, _config())
     owner._pump._binding = host.attach_on_render_thread(object())
-    plan = SimpleNamespace(step_result=77)
+    plan = _bound_plan()
     events = []
 
     def bind(_plan, _time, *, stage_ordinal):
@@ -2286,6 +2348,7 @@ def test_no_render_plan_does_not_read_outputs_or_append_layers(monkeypatch):
     monkeypatch.setattr(frame_pump, "completed_outputs", unexpected)
     owner._pump.render(9)
     assert submitted == [{"additional_layers": []}]
+    assert owner.eye_render_product_paths is None
 
 
 @pytest.mark.parametrize("cleanup_boundary", ["outputs", "cancel"])
@@ -2362,7 +2425,7 @@ def test_failed_output_hides_cached_quad_until_successful_refresh(
         return object()
 
     owner._pump._context = SimpleNamespace(
-        begin_frame=lambda: (0, SimpleNamespace(step_result=77)),
+        begin_frame=lambda: (0, _bound_plan()),
         bind_frame=bind,
         submit_frame=lambda *_a, **kw: (
             events.append(kw["additional_layers"]) or 0,

@@ -47,6 +47,7 @@ class OvxrFramePump:
         self._pending_plan = None
         self._context_lifecycle_lock = threading.Lock()
         self._last_ordinal: int | None = None
+        self.eye_render_product_paths: tuple[str, str] | None = None
         self._first_ordinal_validated = False
         self._frame_consumers = ()
 
@@ -234,6 +235,16 @@ class OvxrFramePump:
                     )
             if result != ovxr.Result.SUCCESS:
                 return True
+            if active_plan.step_result and self.eye_render_product_paths is None:
+                # The bound stereo plan puts eyes before auxiliary products. Copy
+                # the length-prefixed paths while OVXR still owns the live plan.
+                products = active_plan.render_products
+                if products.num_render_products < 2 or not products.render_products:
+                    raise RuntimeError(
+                        "Bound OVXR stereo frame is missing its eye render products"
+                    )
+                paths = products.render_products
+                self.eye_render_product_paths = (str(paths[0]), str(paths[1]))
             layers = []
             if self._frame_consumers and active_plan.step_result:
                 try:
@@ -291,6 +302,7 @@ class OvxrFramePump:
         return self.render(self._last_ordinal)
 
     def close(self) -> None:
+        self.eye_render_product_paths = None
         first_error: BaseException | None = None
         try:
             with self._host.publication_guard():
@@ -400,7 +412,9 @@ class OvxrFramePump:
             raise first_error
 
     def _on_completed_outputs(self, renderer, outputs) -> list[int]:
-        frame = FrameOutputs(renderer, outputs)
+        frame = FrameOutputs(
+            renderer, outputs, eye_render_product_paths=self.eye_render_product_paths
+        )
         layers = []
         for consumer in self._frame_consumers:
             try:

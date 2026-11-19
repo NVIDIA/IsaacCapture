@@ -133,7 +133,14 @@ cameras. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
 ``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
 ``CameraPanelConfig`` values, each pairing a render-product path with its placement
 and image bound. Configure the mirror's camera choices with ``MirrorProduct``
-values. Either consumer can be enabled independently.
+values for the auxiliary cameras. The mirror lists the two eyes from the bound
+OVXR frame, followed by those cameras. Either consumer can be enabled independently.
+
+Read ``session.eye_render_product_paths`` for the active ``(left, right)`` pair,
+including when OVXR chooses the paths and the mirror is disabled. It returns
+``None`` until the first renderable frame binds successfully and after the session
+closes. Auxiliary cameras are excluded. Inside a frame consumer,
+``frame.eye_render_product_paths`` supplies the same pair for that frame.
 
 Camera-panel attachment failure disables panels and logs the reason without
 blocking teleoperation input. An incomplete GPU copy disables the affected panel;

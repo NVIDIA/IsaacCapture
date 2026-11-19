@@ -134,10 +134,22 @@ class FrameOutputs:
     are shared; GPU mappings belong to the consumer and must be retired by it.
     """
 
-    def __init__(self, renderer: int, outputs: Any) -> None:
+    def __init__(
+        self,
+        renderer: int,
+        outputs: Any,
+        *,
+        eye_render_product_paths: tuple[str, str] | None = None,
+    ) -> None:
         self._renderer = renderer
+        self._eye_render_product_paths = eye_render_product_paths
         self._outputs = outputs
         self._host_images = {}
+
+    @property
+    def eye_render_product_paths(self) -> tuple[str, str] | None:
+        """The session's left and right eye products for this frame, when supplied."""
+        return self._eye_render_product_paths
 
     def latest_color(self, product_path: str) -> tuple[int, float] | None:
         """Return the latest color handle and sensor time, or None for a cadence gap."""

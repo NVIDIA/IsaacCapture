@@ -39,26 +39,22 @@ def _prepared_mirror(*, render_products=(), auxiliary_products=()):
     "eye_paths",
     [(), ("/Render/CustomLeft", "/Render/CustomRight")],
 )
-def test_mirror_menu_includes_eyes_and_camera_labels(monkeypatch, eye_paths):
-    captured = []
-
-    def create_worker(_acquire, _config, _on_close, *, products):
-        captured.extend(products.view()[0])
-        return SimpleNamespace(status=DesktopMirrorStatus(), close=lambda: None)
-
-    monkeypatch.setattr(mirror, "OwnedDesktopMirrorWorker", create_worker)
+def test_mirror_menu_includes_eyes_and_camera_labels(eye_paths):
     owner = _prepared_mirror(
         render_products=eye_paths,
         auxiliary_products=(("/Camera/Head", "Head camera"), ("/Camera/Wrist", None)),
     )
     try:
-        expected_eyes = eye_paths or (
-            "/OVXR/Render/Products/Left",
-            "/OVXR/Render/Products/Right",
-        )
-        assert [(product.path, product.label) for product in captured] == [
-            (expected_eyes[0], "Left eye"),
-            (expected_eyes[1], "Right eye"),
+        assert owner._mailbox.view()[0] == ()
+        active_eyes = eye_paths or ("/Runtime/SelectedLeft", "/Runtime/SelectedRight")
+        frame = Mock(spec=FrameOutputs)
+        frame.eye_render_product_paths = active_eyes
+        frame.latest_color.return_value = None
+        owner.on_outputs(frame)
+        frame.latest_color.assert_called_once_with(active_eyes[0])
+        assert [(p.path, p.label) for p in owner._mailbox.view()[0]] == [
+            (active_eyes[0], "Left eye"),
+            (active_eyes[1], "Right eye"),
             ("/Camera/Head", "Head camera"),
             ("/Camera/Wrist", "Wrist"),
         ]
