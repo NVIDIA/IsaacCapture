@@ -328,7 +328,11 @@ class OvxrSession:
 
     @property
     def eye_render_product_paths(self) -> tuple[str, str] | None:
-        """Return the active (left, right) product paths after the first renderable bind, or None."""
+        """Return the active (left, right) eye product paths, or None.
+
+        None until the first renderable bind and after close. Safe to read
+        from any thread.
+        """
         return self._pump.eye_render_product_paths
 
     @property

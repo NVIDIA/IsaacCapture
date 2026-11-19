@@ -73,12 +73,22 @@ def test_unmap_failure_retains_handle_and_blocks_more_maps(
         gpu_output._api.cache_clear()
 
 
+def test_completed_status_and_null_handle_match_the_provider():
+    b = pytest.importorskip("ovrtx._src.bindings")
+    assert camera_mailbox._OVRTX_EVENT_STATUS_COMPLETED == b.EventStatus.COMPLETED
+    # Output selection relies on a null provider handle being falsy.
+    assert not b.ovrtx_render_var_output_handle_t(0)
+    assert b.ovrtx_render_var_output_handle_t(1)
+
+
 def _string(text):
     encoded = text.encode()
     return SimpleNamespace(ptr=ctypes.c_char_p(encoded), length=len(encoded))
 
 
-def _frame(time, handle, *, color=True, status=1):
+def _frame(
+    time, handle, *, color=True, status=camera_mailbox._OVRTX_EVENT_STATUS_COMPLETED
+):
     vars_ = [
         SimpleNamespace(
             status=status,

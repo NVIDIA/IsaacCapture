@@ -1122,6 +1122,18 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
     ]
 
 
+def test_bound_eye_paths_need_both_eyes_and_report_the_bound_pair(caplog):
+    with pytest.raises(RuntimeError, match="missing its eye render products"):
+        frame_pump._bound_eye_paths(_bound_plan("/Only/Left"), ())
+    plan = _bound_plan("/Bound/Left", "/Bound/Right", "/Wrist")
+    with caplog.at_level("WARNING"):
+        assert frame_pump._bound_eye_paths(plan, ()) == ("/Bound/Left", "/Bound/Right")
+        assert not caplog.records
+        eyes = frame_pump._bound_eye_paths(plan, ("/Asked/Left", "/Asked/Right"))
+    assert eyes == ("/Bound/Left", "/Bound/Right")
+    assert "instead of the configured" in caplog.text
+
+
 @pytest.mark.parametrize("configured", [(), ("/Custom/Left", "/Custom/Right")])
 def test_eye_render_product_paths_without_mirror(monkeypatch, configured):
     # Use the released plan layout so the public result must outlive native storage.
@@ -2556,9 +2568,10 @@ def test_retired_context_is_unpublished_before_lifecycle_unlock(
     assert context is not None
 
 
+@pytest.mark.parametrize("detached_release_fails", [False, True])
 @pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
 def test_cancel_failure_does_not_skip_context_and_service_cleanup(
-    monkeypatch, error_type
+    monkeypatch, error_type, detached_release_fails
 ):
     host = _FakeHost()
     launcher = _ControlledLauncher()
@@ -2581,6 +2594,8 @@ def test_cancel_failure_does_not_skip_context_and_service_cleanup(
         cancel_calls.append((plan, destroyed))
         if not destroyed:
             raise failure
+        if detached_release_fails:
+            raise RuntimeError("detached release failed")
 
     monkeypatch.setattr(_FakeContext, "cancel_frame", cancel)
     owner.start()
@@ -2590,8 +2605,15 @@ def test_cancel_failure_does_not_skip_context_and_service_cleanup(
         owner.close()
     assert caught.value is failure
     assert cancel_calls == [(plan, False), (plan, True)]
+    assert (
+        "Detached frame release failed: detached release failed"
+        in getattr(failure, "__notes__", [])
+    ) == detached_release_fails
     assert owner._pump._context is None
     assert owner._pump._pending_plan is None
+    # The destroyed context cannot cancel again, so a retry leaves the plan alone.
+    owner._pump.close()
+    assert len(cancel_calls) == 2
     assert [name for name, _thread in launcher.events] == ["stop-start", "stop-end"]
     assert [event[0] for event in host.events if isinstance(event, tuple)][-2:] == [
         "host-close",
