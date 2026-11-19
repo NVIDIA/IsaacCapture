@@ -19,6 +19,8 @@ from typing import Any, Callable, TypeVar
 from .gpu_output import MappedGpuImage, MappedOutput, OutputMapCleanupError, _api
 
 _Image = TypeVar("_Image")
+# Native ovrtx_event_status_t value in fetched RenderVar descriptors.
+_OVRTX_EVENT_STATUS_COMPLETED = 1
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ def _latest_color_handle(outputs: Any, product_path: str) -> tuple[int, float] |
     """Select the latest *complete* LdrColor frame, not the first array entry."""
     latest: tuple[int, float] | None = None
     produced = False
+    unusable: set[str] = set()
     for product_index in range(outputs.output_count):
         product = outputs.outputs[product_index]
         if _text(product.render_product_path) != product_path:
@@ -50,13 +53,27 @@ def _latest_color_handle(outputs: Any, product_path: str) -> tuple[int, float] |
             frame = product.output_frames[frame_index]
             for var_index in range(frame.render_var_count):
                 var = frame.output_render_vars[var_index]
-                if _text(var.source_name) != "LdrColor" or not var.output_handle:
+                if _text(var.source_name) != "LdrColor":
                     continue
-                candidate = (int(var.output_handle), float(frame.frame_end_time))
+                if var.status != _OVRTX_EVENT_STATUS_COMPLETED:
+                    reason = _text(var.error_message)
+                    unusable.add(
+                        f"event status {int(var.status)}"
+                        + (f": {reason}" if reason else "")
+                    )
+                    continue
+                if not var.output_handle:
+                    unusable.add("no output handle")
+                    continue
+                # FrameOutputs exposes numeric IDs to application callbacks.
+                candidate = (var.output_handle.raw_id, float(frame.frame_end_time))
                 if latest is None or candidate[1] >= latest[1]:
                     latest = candidate
     if produced and latest is None:
-        raise RuntimeError(f"{product_path} produced a frame without LdrColor")
+        seen = f" (LdrColor: {'; '.join(sorted(unusable))})" if unusable else ""
+        raise RuntimeError(
+            f"{product_path} produced a frame without completed LdrColor{seen}"
+        )
     return latest
 
 
@@ -71,7 +88,7 @@ def _copy_host_rgba(
     mapped = b.ovrtx_render_var_output_t()
     result = lib.ovrtx_map_render_var_output(
         renderer,
-        handle,
+        b.ovrtx_render_var_output_handle_t(handle),
         ctypes.byref(description),
         b.OVRTX_TIMEOUT_INFINITE,
         ctypes.byref(mapped),
@@ -125,10 +142,22 @@ class FrameOutputs:
     are shared; GPU mappings belong to the consumer and must be retired by it.
     """
 
-    def __init__(self, renderer: int, outputs: Any) -> None:
+    def __init__(
+        self,
+        renderer: int,
+        outputs: Any,
+        *,
+        eye_render_product_paths: tuple[str, str] | None = None,
+    ) -> None:
         self._renderer = renderer
+        self._eye_render_product_paths = eye_render_product_paths
         self._outputs = outputs
         self._host_images = {}
+
+    @property
+    def eye_render_product_paths(self) -> tuple[str, str] | None:
+        """This frame's (left, right) eye products; None if it did not bind both."""
+        return self._eye_render_product_paths
 
     def latest_color(self, product_path: str) -> tuple[int, float] | None:
         """Return the latest color handle and sensor time, or None for a cadence gap."""
