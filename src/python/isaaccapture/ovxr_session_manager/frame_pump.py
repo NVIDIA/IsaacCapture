@@ -21,15 +21,16 @@ def _import_ovxr():
     return ovxr
 
 
-def _bound_eye_paths(plan) -> tuple[str, str]:
+def _bound_eye_paths(plan) -> tuple[str, str] | None:
     """Copy the (left, right) eye paths out of a bound stereo plan.
 
     OVXR lists its eye products, in runtime view order, before the application
     products. The strings are borrowed from the live plan, so copy them here.
+    Returns None when the plan does not carry both eye products.
     """
     products = plan.render_products
     if products.num_render_products < 2 or not products.render_products:
-        raise RuntimeError("Bound OVXR stereo frame is missing its eye render products")
+        return None
     paths = products.render_products
     return (str(paths[0]), str(paths[1]))
 
@@ -428,12 +429,14 @@ class OvxrFramePump:
 
     def _observe_eye_paths(self, plan) -> None:
         """Track the bound eye pair; reporting it must not end the session."""
-        try:
-            eyes = _bound_eye_paths(plan)
-        except RuntimeError:
+        eyes = _bound_eye_paths(plan)
+        if eyes is None:
             if not self._eye_paths_failure_logged:
                 self._eye_paths_failure_logged = True
-                _LOGGER.exception("OVXR eye render products are unavailable")
+                _LOGGER.warning(
+                    "OVXR eye render products are unavailable: the bound stereo "
+                    "frame is missing its eye render products"
+                )
             # An earlier frame's pair does not describe this frame.
             self._eye_render_product_paths = None
             return

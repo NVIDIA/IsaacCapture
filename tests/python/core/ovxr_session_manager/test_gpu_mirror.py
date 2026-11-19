@@ -234,9 +234,24 @@ def test_failed_map_cleanup_is_retained_and_prevents_additional_maps():
     assert maps[0].closed
 
 
-@pytest.mark.parametrize("stream,event", [(0, 7), (5, 0), (1, 7), (0, 0)])
-def test_output_readiness_uses_only_the_per_product_event(stream, event):
+@pytest.mark.parametrize(
+    "stream,event,expected",
+    [
+        # The event is the readiness point; a stream beside it is ignored.
+        (0, 7, [("event", 7)]),
+        (1, 7, [("event", 7)]),
+        # Without an event, drain the producer stream instead of reading unordered.
+        (5, 0, [("stream", 5)]),
+        (1, 0, [("stream", 999)]),
+    ],
+)
+def test_output_readiness_prefers_the_event_and_reports_an_unordered_read(
+    stream, event, expected, caplog, monkeypatch
+):
+    from isaaccapture.ovxr_session_manager import gpu_output
     from isaaccapture.ovxr_session_manager.gpu_output import _wait_ready
+
+    monkeypatch.setattr(gpu_output, "_unordered_read_logged", False)
 
     calls = []
     cuda = SimpleNamespace(
@@ -245,8 +260,14 @@ def test_output_readiness_uses_only_the_per_product_event(stream, event):
         cudaStreamSynchronize=lambda value: (calls.append(("stream", value)) or 0,),
     )
     _wait_ready(cuda, SimpleNamespace(stream=stream, wait_event=event))
-    expected = [("event", event)] if event else []
     assert calls == expected
+    # Neither field: nothing to wait on, reported once rather than every frame.
+    calls.clear()
+    with caplog.at_level("WARNING"):
+        _wait_ready(cuda, SimpleNamespace(stream=0, wait_event=0))
+        _wait_ready(cuda, SimpleNamespace(stream=0, wait_event=0))
+    assert calls == []
+    assert caplog.text.count("no readiness event") == 1
 
 
 @pytest.mark.parametrize("copy_failure", [False, True])
