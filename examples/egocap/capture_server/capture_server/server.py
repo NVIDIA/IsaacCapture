@@ -2004,32 +2004,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="play back a recorded episode directory (Zarr tracking groups plus *.mp4 cameras) instead of "
         "acquiring; reported to clients as MOCK mode because the data is recorded, not live",
     )
-    source.add_argument(
-        "--gmsl-ipc",
-        default=None,
-        metavar="SOCKET_PATH",
-        help="live station: read GMSL camera frames from the camera receiver's local frame feed at this Unix "
-        "socket (tracking still comes from IsaacCapture via ISAAC_ROOT); cameras are named with --gmsl-camera",
-    )
     parser.add_argument(
         "--livekit-streams",
         type=Path,
         metavar="FILE",
         help="YAML file naming the LiveKit video streams to offer clients in SessionInit (see livekit_streams.py)",
-    )
-    parser.add_argument(
-        "--gmsl-camera",
-        action="append",
-        default=[],
-        metavar="NAME=STREAM[:WIDTHxHEIGHT]",
-        help="with --gmsl-ipc: logical camera NAME served from feed STREAM, optionally downscaled to WIDTHxHEIGHT "
-        "(the wire protocol caps one image at 2 MiB; a full-resolution head camera can exceed it); repeatable",
-    )
-    parser.add_argument(
-        "--gmsl-fps",
-        type=float,
-        default=60.0,
-        help="with --gmsl-ipc: the feed's frame rate, used to pace and time out polls",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8082)
@@ -2180,72 +2159,12 @@ def _replay_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
     return config, build_replay_source_factory(episode)
 
 
-def _gmsl_cameras(entries: list[str]) -> dict[str, Any]:
-    """Parse ``--gmsl-camera NAME=STREAM[:WIDTHxHEIGHT]`` entries; a malformed or repeated one is an error."""
-    from .launch import GmslCamera
-
-    cameras: dict[str, Any] = {}
-    for entry in entries:
-        name, sep, rest = entry.partition("=")
-        stream, _, size_text = rest.partition(":")
-        if not sep or not name or not stream:
-            raise ValueError(f"--gmsl-camera must be NAME=STREAM[:WIDTHxHEIGHT], got {entry!r}")
-        if name in cameras:
-            raise ValueError(f"--gmsl-camera name {name!r} given twice")
-        size: tuple[int, int] | None = None
-        if size_text:
-            width_text, x, height_text = size_text.partition("x")
-            valid = x and width_text.isdigit() and height_text.isdigit() and int(width_text) * int(height_text) > 0
-            if not valid:
-                raise ValueError(f"--gmsl-camera size must be WIDTHxHEIGHT, got {size_text!r} in {entry!r}")
-            size = (int(width_text), int(height_text))
-        cameras[name] = GmslCamera(stream, size)
-    return cameras
-
-
-def _gmsl_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
-    """Config and source factory for the live station: GMSL cameras from the frame feed plus real tracking.
-
-    The feed is probed once here so every configured camera's stream and size is known (and any unknown
-    stream rejected) before a session asks for it; sessions then subscribe on their own.
-    """
-    from .gmsl_ipc import probe_feed
-    from .launch import build_gmsl_source_factory, gmsl_station_cameras
-
-    cameras = _gmsl_cameras(args.gmsl_camera)
-    if not cameras:
-        raise ValueError("--gmsl-ipc needs at least one --gmsl-camera NAME=STREAM[:WIDTHxHEIGHT]")
-    catalog = probe_feed(args.gmsl_ipc, tuple(dict.fromkeys(c.stream for c in cameras.values())))
-    stations = gmsl_station_cameras(cameras, catalog, fps=args.gmsl_fps, jpeg_quality=args.camera_quality)
-    config = ServerConfig(
-        mock=False,
-        host=args.host,
-        port=args.port,
-        cameras=stations,
-        manus_calibration_dir=_manus_calibration_dir(args),
-        calibration=_calibration_config(args),
-        data_note=(
-            " -- GMSL cameras from the frame feed at "
-            f"{args.gmsl_ipc}: "
-            + ", ".join(
-                f"{name}<-{cam.stream} {stations[name].width}x{stations[name].height}"
-                for name, cam in cameras.items()
-            )
-        ),
-    )
-    return config, build_gmsl_source_factory(
-        args.gmsl_ipc, cameras, stations, calibration_dir=config.manus_calibration_dir
-    )
-
-
 async def _run_cli(args: argparse.Namespace) -> int:
     from .launch import build_source_factory
 
     try:
         if args.replay is not None:
             config, source_factory = _replay_setup(args)
-        elif args.gmsl_ipc is not None:
-            config, source_factory = _gmsl_setup(args)
         else:
             config = ServerConfig(
                 mock=args.mock,
@@ -2272,9 +2191,8 @@ async def _run_cli(args: argparse.Namespace) -> int:
             from .livekit_streams import load_livekit_streams
 
             config = dataclasses.replace(config, livekit_streams=load_livekit_streams(args.livekit_streams))
-    except (ValueError, NotImplementedError, OSError, RuntimeError) as exc:
-        # A malformed episode is a ValueError (EpisodeFormatError); a missing directory an OSError; an
-        # unreachable or malformed frame feed a FeedError (RuntimeError).
+    except (ValueError, NotImplementedError, OSError) as exc:
+        # A malformed episode is a ValueError (EpisodeFormatError); a missing directory an OSError.
         print(f"capture-server: {exc}", file=sys.stderr)
         return 2
     server = CaptureServer(config, source_factory=source_factory)
@@ -2296,13 +2214,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.mock and (used := _mock_only_options_used(args)):
         parser.error(f"{', '.join(used)} only apply with --mock; real acquisition and replay have no such options")
-    if (args.mock or args.replay is not None or args.gmsl_ipc is not None) and args.camera:
+    if (args.mock or args.replay is not None) and args.camera:
         parser.error(
-            "--camera only applies to real OAK-D acquisition; mock cameras use fixed settings, "
-            "replay cameras come from the episode and GMSL cameras are named with --gmsl-camera"
+            "--camera only applies to real OAK-D acquisition; mock cameras use fixed settings "
+            "and replay cameras come from the episode"
         )
-    if args.gmsl_ipc is None and args.gmsl_camera:
-        parser.error("--gmsl-camera only applies with --gmsl-ipc")
     return asyncio.run(_run_cli(args))
 
 

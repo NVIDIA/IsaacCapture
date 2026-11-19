@@ -1250,7 +1250,7 @@ livekit:
     - {name: Head right, track: sensing-right}   # width, height and fps are optional
 ```
 
-`timestamp_basis` applies to every stream and maps to the `LiveKitTimestampBasis` values above (`monotonic_us`=1, `processing_unix_us`=2, `capture_monotonic_us`=4). `url`, `room` and `publisher` are set once under `livekit`; each stream supplies `name`, `track` and optionally `width`, `height` and `fps`. A LiveKit stream name that equals a camera name configured with `--gmsl-camera` is rejected.
+`timestamp_basis` applies to every stream and maps to the `LiveKitTimestampBasis` values above (`monotonic_us`=1, `processing_unix_us`=2, `capture_monotonic_us`=4). `url`, `room` and `publisher` are set once under `livekit`; each stream supplies `name`, `track` and optionally `width`, `height` and `fps`. A LiveKit stream name that equals a configured camera name is rejected.
 
 Each WebSocket binary message consists of a 32-byte header followed immediately by a payload. For CaptureFrame, that payload is the packed tracking blob defined by SessionInit. For CaptureImage, it is the JPEG bytes. The header itself contains no JSON and no field-name strings.
 
