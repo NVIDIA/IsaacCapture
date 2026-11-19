@@ -18,6 +18,11 @@ endif()
 add_subdirectory(plugin_manager)
 add_subdirectory(pusherio)
 
+# The camera interface is built on Linux only
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_subdirectory(camera)
+endif()
+
 if(BUILD_OVXR_CAMERA_QUADS)
     add_subdirectory(ovxr_pip_layer)
 endif()
