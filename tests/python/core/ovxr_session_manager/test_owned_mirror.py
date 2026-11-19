@@ -71,6 +71,22 @@ def test_mirror_menu_includes_eyes_and_camera_labels(monkeypatch, eye_paths):
         owner.close()
 
 
+def test_invalid_camera_products_fail_at_construction_and_eye_clash_once():
+    with pytest.raises(ValueError, match="unique absolute paths and labels"):
+        _prepared_mirror(auxiliary_products=(("Camera/Relative", "Head"),))
+    owner = _prepared_mirror(auxiliary_products=(("/Eye/Left", "Head camera"),))
+    try:
+        frame = Mock(spec=FrameOutputs)
+        frame.eye_render_product_paths = ("/Eye/Left", "/Eye/Right")
+        frame.latest_color.return_value = None
+        with pytest.raises(ValueError, match="unique absolute paths and labels"):
+            owner.on_outputs(frame)
+        # The clash is reported once, not on every later frame.
+        owner.on_outputs(frame)
+    finally:
+        owner.close()
+
+
 @pytest.mark.parametrize("failure_site", ["ui", "images"])
 def test_mirror_close_preserves_failed_retirement(monkeypatch, failure_site):
     events = []

@@ -1122,16 +1122,24 @@ def test_cloudxr_and_ovxr_are_created_and_destroyed_on_the_owner_thread(monkeypa
     ]
 
 
-def test_bound_eye_paths_need_both_eyes_and_report_the_bound_pair(caplog):
-    with pytest.raises(RuntimeError, match="missing its eye render products"):
-        frame_pump._bound_eye_paths(_bound_plan("/Only/Left"), ())
-    plan = _bound_plan("/Bound/Left", "/Bound/Right", "/Wrist")
+def test_eye_paths_follow_the_bound_plan_without_ending_the_session(caplog):
+    pump = ovxr_session.OvxrSession(
+        _FakeHost(), _config(render_products=("/Asked/Left", "/Asked/Right"))
+    )._pump
     with caplog.at_level("WARNING"):
-        assert frame_pump._bound_eye_paths(plan, ()) == ("/Bound/Left", "/Bound/Right")
-        assert not caplog.records
-        eyes = frame_pump._bound_eye_paths(plan, ("/Asked/Left", "/Asked/Right"))
-    assert eyes == ("/Bound/Left", "/Bound/Right")
-    assert "instead of the configured" in caplog.text
+        # A plan without both eyes is reported once and leaves the pair unset.
+        pump._observe_eye_paths(_bound_plan("/Only/Left"))
+        pump._observe_eye_paths(_bound_plan("/Only/Left"))
+        assert pump.eye_render_product_paths is None
+        assert caplog.text.count("eye render products are unavailable") == 1
+        # The plan names what OVXR rendered; a differing request is reported once.
+        plan = _bound_plan("/Bound/Left", "/Bound/Right", "/Wrist")
+        pump._observe_eye_paths(plan)
+        pump._observe_eye_paths(plan)
+        assert pump.eye_render_product_paths == ("/Bound/Left", "/Bound/Right")
+        assert caplog.text.count("instead of the configured") == 1
+        pump._observe_eye_paths(_bound_plan("/Asked/Left", "/Asked/Right"))
+    assert pump.eye_render_product_paths == ("/Asked/Left", "/Asked/Right")
 
 
 @pytest.mark.parametrize("configured", [(), ("/Custom/Left", "/Custom/Right")])
@@ -1146,6 +1154,8 @@ def test_eye_render_product_paths_without_mirror(monkeypatch, configured):
 
     class Context(_FakeContext):
         def begin_frame(self):
+            # Each plan is valid until submit; submit then reuses the storage.
+            names[0] = ovrtx_bindings.ovx_string_t(expected[0])
             plan = bindings.ovxr_frame_plan_t()
             plan.render_products.render_products = names
             plan.render_products.num_render_products = len(names)

@@ -87,11 +87,17 @@ def _string(text):
 
 
 def _frame(
-    time, handle, *, color=True, status=camera_mailbox._OVRTX_EVENT_STATUS_COMPLETED
+    time,
+    handle,
+    *,
+    color=True,
+    status=camera_mailbox._OVRTX_EVENT_STATUS_COMPLETED,
+    error="",
 ):
     vars_ = [
         SimpleNamespace(
             status=status,
+            error_message=_string(error),
             source_name=_string("LdrColor" if color else "XRDepth"),
             output_handle=SimpleNamespace(raw_id=handle) if handle else None,
         )
@@ -146,10 +152,13 @@ def test_produced_but_invalid_image_is_omitted_and_error_is_contained(monkeypatc
     assert "without completed LdrColor" in mailbox.error()
 
 
-def test_unfinished_color_reports_its_event_status():
-    frame = FrameOutputs(1, _outputs(_frame(1.0, 1, status=2)))
-    with pytest.raises(RuntimeError, match=r"LdrColor event status \[2\]"):
-        frame.latest_color("/Camera")
+def test_unusable_color_reports_why():
+    failed = FrameOutputs(1, _outputs(_frame(1.0, 1, status=2, error="device lost")))
+    with pytest.raises(RuntimeError, match="LdrColor: event status 2: device lost"):
+        failed.latest_color("/Camera")
+    without_handle = FrameOutputs(1, _outputs(_frame(1.0, 0)))
+    with pytest.raises(RuntimeError, match="LdrColor: no output handle"):
+        without_handle.latest_color("/Camera")
 
 
 def test_mapping_failure_is_contained_without_reusing_stale_pixels(monkeypatch):
