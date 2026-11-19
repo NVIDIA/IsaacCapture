@@ -21,7 +21,7 @@ def _import_ovxr():
     return ovxr
 
 
-def _bound_eye_paths(plan, configured: tuple[str, ...]) -> tuple[str, str]:
+def _bound_eye_paths(plan) -> tuple[str, str]:
     """Copy the (left, right) eye paths out of a bound stereo plan.
 
     OVXR lists its eye products, in runtime view order, before the application
@@ -31,15 +31,7 @@ def _bound_eye_paths(plan, configured: tuple[str, ...]) -> tuple[str, str]:
     if products.num_render_products < 2 or not products.render_products:
         raise RuntimeError("Bound OVXR stereo frame is missing its eye render products")
     paths = products.render_products
-    eyes = (str(paths[0]), str(paths[1]))
-    if configured and eyes != tuple(configured[:2]):
-        # The plan names what OVXR rendered; report it over the request.
-        _LOGGER.warning(
-            "OVXR bound eye render products %s instead of the configured %s",
-            eyes,
-            tuple(configured[:2]),
-        )
-    return eyes
+    return (str(paths[0]), str(paths[1]))
 
 
 class OvxrFramePump:
@@ -69,6 +61,7 @@ class OvxrFramePump:
         self._context_lifecycle_lock = threading.Lock()
         self._last_ordinal: int | None = None
         self._eye_render_product_paths: tuple[str, str] | None = None
+        self._eye_paths_failure_logged = False
         self._first_ordinal_validated = False
         self._frame_consumers = ()
 
@@ -261,11 +254,8 @@ class OvxrFramePump:
                     )
             if result != ovxr.Result.SUCCESS:
                 return True
-            if active_plan.step_result and self._eye_render_product_paths is None:
-                # The context fixes its eye products, so the first bind decides.
-                self._eye_render_product_paths = _bound_eye_paths(
-                    active_plan, tuple(self._config.render_products)
-                )
+            if active_plan.step_result:
+                self._observe_eye_paths(active_plan)
             layers = []
             if self._frame_consumers and active_plan.step_result:
                 try:
@@ -435,6 +425,27 @@ class OvxrFramePump:
                     first_error.add_note(f"Dependent cleanup failed: {exc}")
         if first_error is not None:
             raise first_error
+
+    def _observe_eye_paths(self, plan) -> None:
+        """Track the bound eye pair; reporting it must not end the session."""
+        try:
+            eyes = _bound_eye_paths(plan)
+        except RuntimeError:
+            if not self._eye_paths_failure_logged:
+                self._eye_paths_failure_logged = True
+                _LOGGER.exception("OVXR eye render products are unavailable")
+            return
+        if eyes == self._eye_render_product_paths:
+            return
+        configured = tuple(self._config.render_products[:2])
+        if configured and eyes != configured:
+            # The plan names what OVXR rendered; report it over the request.
+            _LOGGER.warning(
+                "OVXR bound eye render products %s instead of the configured %s",
+                eyes,
+                configured,
+            )
+        self._eye_render_product_paths = eyes
 
     def _on_completed_outputs(self, renderer, outputs) -> list[int]:
         frame = FrameOutputs(
