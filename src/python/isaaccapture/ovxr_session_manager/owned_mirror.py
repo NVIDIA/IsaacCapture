@@ -47,6 +47,7 @@ class OwnedDesktopMirror(OvxrFrameConsumer):
     ) -> None:
         self._config = config
         self._camera_products = tuple(camera_products)
+        self._eye_paths: tuple[str, str] | None = None
         self._mailbox = OwnedMirrorMailbox(
             config.max_fps, gpu_mapper=OwnedCudaImagePool()
         )
@@ -65,16 +66,6 @@ class OwnedDesktopMirror(OvxrFrameConsumer):
         config: OvxrSessionConfig,
         request_shutdown: Callable[[], None],
     ) -> None:
-        eye_paths = config.render_products or (
-            "/OVXR/Render/Products/Left",
-            "/OVXR/Render/Products/Right",
-        )
-        products = (
-            MirrorProduct(eye_paths[0], "Left eye"),
-            MirrorProduct(eye_paths[1], "Right eye"),
-            *self._camera_products,
-        )
-        self._mailbox.set_products(products)
         self._worker = OwnedDesktopMirrorWorker(
             self._mailbox.snapshot,
             self._config,
@@ -83,6 +74,16 @@ class OwnedDesktopMirror(OvxrFrameConsumer):
         )
 
     def on_outputs(self, frame: FrameOutputs) -> None:
+        eye_paths = frame.eye_render_product_paths
+        if eye_paths is not None and eye_paths != self._eye_paths:
+            self._mailbox.set_products(
+                (
+                    MirrorProduct(eye_paths[0], "Left eye"),
+                    MirrorProduct(eye_paths[1], "Right eye"),
+                    *self._camera_products,
+                )
+            )
+            self._eye_paths = eye_paths
         # The UI owns its GPU copies independently of render-thread consumers.
         self._mailbox.on_outputs(frame)
 
