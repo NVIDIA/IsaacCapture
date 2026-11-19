@@ -1922,4 +1922,3 @@ async def test_find_teleop_tab_follows_the_page_to_another_socket() -> None:
     assert click.await_args.args == ("ws://teleop",)
     # Found by moving the forward, not by the mid-timeout am start re-fire.
     relaunch.assert_not_called()
-
