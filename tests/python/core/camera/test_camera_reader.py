@@ -1,7 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The camera reader, against the synthetic camera plugin shipped in the package."""
+"""The camera reader, against the synthetic camera plugin shipped in the package.
+
+The tests of cameras in CUDA memory need a CUDA device and CuPy, and are skipped without:
+``uv run --extra dev --extra cuda pytest``.
+"""
 
 import select
 import shutil
@@ -104,6 +108,24 @@ def plugin(short_directory, start_plugin):
     return endpoint, process
 
 
+@pytest.fixture
+def cuda_plugin(short_directory, start_plugin):
+    """A running plugin whose synthetic cameras are in CUDA memory; gives its endpoint and CuPy."""
+    cupy = pytest.importorskip("cupy")
+    if not cupy.cuda.is_available():
+        pytest.skip("no CUDA device")
+    endpoint = str(short_directory / "cameras.sock")
+    start_plugin(
+        f"--endpoint={endpoint}",
+        "--camera=head:memory=gpu,width=160,height=120,fps=120",
+        "--camera=sky:memory=gpu,width=66,height=48,streams=1,format=nv12,fps=120",
+    )
+    assert wait_until(lambda: published(endpoint=endpoint)), (
+        "the camera plugin did not start serving"
+    )
+    return endpoint, cupy
+
+
 def assert_synthetic(image, stream):
     """Every byte of a synthetic image is known from its frame number and its stream."""
     data = image.data
@@ -182,6 +204,110 @@ def test_each_pixel_format_has_its_shape(plugin):
         assert nv12.data.shape == (64 * 48 * 3 // 2,)
         with pytest.raises(IndexError):
             nv12.plane(2)
+
+
+def test_an_image_is_asked_for_in_the_memory_it_is_in(plugin):
+    endpoint, _ = plugin
+    with CameraReader.open("head", endpoint=endpoint) as reader:
+        stream = reader.group.streams[0]
+        assert stream.memory == "host"
+        assert not stream.on_gpu
+        assert stream.cuda_device is None
+        with reader.next(2.0) as frames:
+            with pytest.raises(ValueError, match="host memory"):
+                frames.image(0).cuda_array()
+            with pytest.raises(ValueError, match="host memory"):
+                frames.image(0).cuda_plane(0)
+
+
+def test_an_image_in_cuda_memory_is_read_on_the_device(cuda_plugin):
+    endpoint, cupy = cuda_plugin
+    head, sky = CameraReader.list(endpoint=endpoint)
+    assert [stream.memory for stream in head.streams] == ["cuda", "cuda"]
+    assert all(stream.on_gpu for stream in head.streams)
+    assert head.streams[0].cuda_device.startswith("GPU-")
+    assert head.streams[0].cuda_device == sky.streams[0].cuda_device
+
+    with CameraReader.open("head", endpoint=endpoint) as reader:
+        with reader.next(2.0) as frames:
+            for stream in range(2):
+                image = frames.image(stream)
+                plane = image.cuda_array()
+                assert plane.shape == (120, 160, 4)
+                assert plane.device == 0
+                pixels = cupy.asarray(plane)
+                assert pixels.shape == (120, 160, 4)
+                assert pixels.dtype == cupy.uint8
+                # A view of the plugin's buffer on the device, not a copy.
+                assert pixels.data.ptr == plane.__cuda_array_interface__["data"][0]
+                on_host = cupy.asnumpy(pixels).reshape(-1)
+                frame = int.from_bytes(on_host[:8].tobytes(), "little")
+                assert image.device_frame_id == frame
+                assert np.all(on_host[8:] == (frame + 17 * stream) & 0xFF)
+                # A kernel on the device reads it where it is.
+                assert int(pixels[5:, :, :].max()) == (frame + 17 * stream) & 0xFF
+                del pixels, plane
+
+            image = frames.image(0)
+            for on_the_host in (
+                image.array,
+                lambda: image.plane(0),
+                lambda: image.data,
+            ):
+                with pytest.raises(ValueError, match="on a GPU"):
+                    on_the_host()
+            with pytest.raises(IndexError):
+                image.cuda_plane(1)
+
+    # Rows that are longer than their pixels, and two planes.
+    with CameraReader.open("sky", endpoint=endpoint) as reader:
+        with reader.next(2.0) as frames:
+            image = frames.image(0)
+            assert image.stream.strides == [66, 66]
+            luma = cupy.asarray(image.cuda_plane(0))
+            chroma = cupy.asarray(image.cuda_plane(1))
+            assert luma.shape == (48, 66)
+            assert chroma.shape == (24, 33, 2)
+            assert chroma.data.ptr - luma.data.ptr == 66 * 48
+            frame = image.device_frame_id
+            assert int(luma[40, 60]) == frame & 0xFF
+            assert int(chroma[20, 30, 1]) == frame & 0xFF
+            with pytest.raises(ValueError, match="one plane"):
+                image.cuda_array()
+            del luma, chroma
+
+
+def test_an_array_on_the_device_shows_its_frame_for_as_long_as_it_exists(cuda_plugin):
+    endpoint, cupy = cuda_plugin
+    with CameraReader.open("head", endpoint=endpoint, window=1) as reader:
+        frames = reader.next(2.0)
+        pixels = cupy.asarray(frames.image(0).cuda_array())
+        kept = cupy.asnumpy(pixels)
+
+        # The frame set is let go of; the array still holds it. The camera goes through its
+        # pool many times and the pixels on the device stay, and the window stays taken.
+        frames.release()
+        with pytest.raises(RuntimeError, match="given back"):
+            frames.image(0)
+        with pytest.raises(
+            CameraWindowExhausted, match="An array taken from a frame set"
+        ):
+            reader.next(0.1)
+        time.sleep(0.3)
+        assert np.array_equal(cupy.asnumpy(pixels), kept)
+
+        del pixels
+        newer = reader.next(2.0)
+        assert newer is not None
+        assert newer.skipped > 0
+        newer.release()
+
+        # A block a frame set was borrowed for ends with its arrays gone, on the device too.
+        with pytest.raises(BufferError, match="still exists at the end of the block"):
+            with reader.next(2.0).borrow() as frames:
+                plane = frames.image(0).cuda_array()
+        del plane
+        assert reader.next(2.0) is not None
 
 
 def test_a_loop_keeps_the_array_of_one_frame_while_it_asks_for_the_next(plugin):

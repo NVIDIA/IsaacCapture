@@ -3,6 +3,7 @@
 
 #include "inc/camera/camera_reader.hpp"
 
+#include "inc/camera/cuda_pool.hpp"
 #include "inc/camera/endpoint_path.hpp"
 #include "inc/camera/host_pool.hpp"
 #include "inc/camera/message_socket.hpp"
@@ -296,6 +297,13 @@ std::string find_endpoint_of(const std::string& group)
 namespace detail
 {
 
+// A reader's mapping of one stream's pool, in the kind of memory the stream is in.
+struct PoolView
+{
+    std::optional<HostPoolView> host;
+    std::optional<CudaPoolView> cuda;
+};
+
 // Shared by a reader and the frame sets it handed out, so a frame set can be given back after
 // its reader is gone.
 class ReaderState
@@ -408,7 +416,7 @@ public:
     MessageSocket socket;
     GroupDescription group;
     ReaderOptions options;
-    std::vector<HostPoolView> pools; // one per stream
+    std::vector<PoolView> pools; // one per stream
     std::atomic<std::uint32_t> held{ 0 }; // frame sets handed out and not yet given back
 
     // The reading thread only.
@@ -429,6 +437,10 @@ std::span<const std::byte> ImageView::plane(std::uint32_t index) const
     {
         throw std::out_of_range("the image has no plane " + std::to_string(index));
     }
+    if (stream->on_gpu())
+    {
+        throw std::logic_error("the image is on a GPU: cuda_plane() says where a plane is on the device");
+    }
     const PlaneSize size = plane_size_of(stream->pixel_format, stream->width, stream->height, index);
     const std::uint64_t offset = stream->planes[index].offset_bytes;
     const std::uint64_t bytes = stream->planes[index].stride_bytes * (size.rows - 1) + size.row_bytes;
@@ -437,6 +449,19 @@ std::span<const std::byte> ImageView::plane(std::uint32_t index) const
         throw std::out_of_range("plane " + std::to_string(index) + " does not lie inside the image's slot");
     }
     return data.subspan(offset, bytes);
+}
+
+CudaAddress ImageView::cuda_plane(std::uint32_t index) const
+{
+    if (stream == nullptr || index >= stream->plane_count)
+    {
+        throw std::out_of_range("the image has no plane " + std::to_string(index));
+    }
+    if (!stream->on_gpu())
+    {
+        throw std::logic_error("the image is in host memory: plane() gives the bytes of a plane");
+    }
+    return cuda_planes[index];
 }
 
 FrameSet::FrameSet(std::shared_ptr<detail::ReaderState> state, const FrameEvent& event)
@@ -477,8 +502,20 @@ ImageView FrameSet::image(std::size_t stream) const
     }
     const StreamDescription& description = m_state->group.streams[stream];
     const ImageInfo& info = m_event.images[stream];
-    const std::span<const std::byte> slot = m_state->pools[stream].slot(info.slot);
-    return { &description, info, slot };
+    const detail::PoolView& pool = m_state->pools[stream];
+    if (pool.cuda)
+    {
+        // A CUDA pool maps a slot as one range, so a plane is at its offset in the slot.
+        ImageView view{ &description, info, {}, {}, pool.cuda->device_index() };
+        const CudaAddress slot = pool.cuda->slot(info.slot);
+        for (std::uint32_t plane = 0; plane < description.plane_count; ++plane)
+        {
+            view.cuda_planes[plane] = slot + description.planes[plane].offset_bytes;
+        }
+        return view;
+    }
+    const std::span<const std::byte> slot = pool.host->slot(info.slot);
+    return { &description, info, slot, {}, 0 };
 }
 
 void FrameSet::release() noexcept
@@ -545,7 +582,17 @@ CameraReader CameraReader::open(const std::string& group, const ReaderOptions& o
         for (std::size_t i = 0; i < state->group.streams.size(); ++i)
         {
             const StreamDescription& stream = state->group.streams[i];
-            state->pools.emplace_back(std::move(answer.descriptors[i]), stream.slot_count, stream.slot_bytes);
+            detail::PoolView pool;
+            if (stream.memory == MemoryKind::CUDA)
+            {
+                pool.cuda.emplace(
+                    std::move(answer.descriptors[i]), stream.cuda_device, stream.slot_count, stream.slot_bytes);
+            }
+            else
+            {
+                pool.host.emplace(std::move(answer.descriptors[i]), stream.slot_count, stream.slot_bytes);
+            }
+            state->pools.push_back(std::move(pool));
         }
     }
     catch (const std::exception& error)

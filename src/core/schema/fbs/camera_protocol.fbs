@@ -16,7 +16,7 @@ namespace core;
 
 // Zero means "a value this build does not know" for the kinds a newer peer may extend.
 enum CameraPixelFormat : uint32 { Unknown = 0, Bgra8 = 1, Rgba8 = 2, Nv12 = 3, Gray8 = 4 }
-enum CameraMemoryKind : uint32 { Unknown = 0, Host = 1 }
+enum CameraMemoryKind : uint32 { Unknown = 0, Host = 1, Cuda = 2 }
 enum CameraDeliveryOrder : uint32 { Default = 0, Newest = 1, InOrder = 2 }
 
 // Bits of CameraFrameRef.flags. A bit this build does not know is passed on untouched.
@@ -45,6 +45,9 @@ table CameraStream {
   slot_bytes: uint64 (id: 6);
   slot_count: uint32 (id: 7);
   frame_rate: float64 (id: 8);
+
+  // CameraMemoryKind.Cuda only: the UUID of the device the pool is on, 16 bytes.
+  cuda_device: [ubyte] (id: 9);
 }
 
 // Streams that are captured together and published as one frame set.
@@ -73,8 +76,9 @@ table CameraHandshakeRequest {
 // that was asked for, or every group the plugin publishes when the request named none.
 //
 // Attachments, for a group that was asked for: one file descriptor per stream, in stream
-// order, for the stream's pool. That is the rule for CameraMemoryKind.Host; a kind of memory
-// that needs something else says so when it is added.
+// order, for the stream's pool: the sealed memory file of CameraMemoryKind.Host, or the
+// descriptor the CUDA driver exports for the allocation of CameraMemoryKind.Cuda. A kind of
+// memory that needs something else says so when it is added.
 table CameraHandshakeResponse {
   // The version both sides speak on this connection: the reader's or the plugin's newest,
   // whichever is older.

@@ -26,11 +26,13 @@ struct CameraConfig
     std::map<std::string, std::string> options; // the backend's own settings
 };
 
-// A free slot of one stream, for the next image.
+// A free slot of one stream, for the next image. Which of the two is set follows the stream's
+// kind of memory.
 struct WritableImage
 {
     std::uint32_t slot = 0;
-    std::span<std::byte> data;
+    std::span<std::byte> data; // host memory
+    CudaAddress cuda = 0; // CUDA memory: where the slot starts on the stream's device
 };
 
 /**
@@ -58,10 +60,13 @@ public:
      */
     virtual std::optional<WritableImage> acquire(std::size_t stream) = 0;
 
-    // The slots of one stream's pool, and the memory of one of them. The memory stays where it
-    // is for as long as the output exists, so an SDK can be given it once.
+    // The slots of one stream's pool, and the memory of one of them: host memory, or where the
+    // slot starts on the stream's device. The memory stays where it is for as long as the
+    // output exists, so an SDK can be given it once. Each throws std::logic_error for a stream
+    // in the other kind of memory.
     virtual std::uint32_t slot_count(std::size_t stream) const = 0;
     virtual std::span<std::byte> slot_memory(std::size_t stream, std::uint32_t slot) = 0;
+    virtual CudaAddress slot_cuda_memory(std::size_t stream, std::uint32_t slot) = 0;
 
     /**
      * @brief Say that the SDK filled this slot.
@@ -85,7 +90,8 @@ public:
     /**
      * @brief Publish one frame set: images[i] is stream i's, in a slot from acquire() or
      * claim(). Publishing says the images are complete, and readers may look at them from
-     * this moment on: call it once everything that writes them has finished.
+     * this moment on: call it once everything that writes them has finished. For CUDA memory
+     * that is after the device has finished the writes, not after they were queued.
      * @param timeline capture_ns and sdk_ready_ns, on the host's monotonic clock.
      * @return The frame set's sequence number.
      */
@@ -110,7 +116,8 @@ public:
 
     /**
      * @brief What the camera publishes: the group, its streams and the size of a slot. A
-     * stream's slot_count may be left 0 to take the plugin's pool size.
+     * stream's slot_count may be left 0 to take the plugin's pool size. A stream in CUDA
+     * memory names its device (cuda_device_uuid() in cuda_pool.hpp).
      */
     virtual GroupDescription describe() const = 0;
 

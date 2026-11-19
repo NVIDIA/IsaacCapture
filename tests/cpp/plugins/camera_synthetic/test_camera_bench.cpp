@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <camera/camera_host.hpp>
+#include <camera/cuda_pool.hpp>
 #include <camera/endpoint_path.hpp>
 #include <camera/options.hpp>
 #include <camera_synthetic/synthetic_backend.hpp>
@@ -180,4 +181,33 @@ TEST_CASE("the bench finds a camera in another process and reports each step", "
     const BenchRun nobody = run_bench(directory, { "--endpoint=" + endpoint, "--group=head" });
     REQUIRE(nobody.exit_code == 1);
     REQUIRE_THAT(nobody.output, ContainsSubstring("no camera plugin answers on"));
+}
+
+TEST_CASE("the bench reads a camera in CUDA memory and checks it on the device's side",
+          "[gpu][integration][camera_synthetic]")
+{
+    if (!cuda_unavailable().empty())
+    {
+        SKIP(cuda_unavailable());
+    }
+    TemporaryDirectory directory;
+    std::filesystem::create_directory(directory.file("run"));
+    const ScopedEnvironment runtime("XDG_RUNTIME_DIR", directory.file("run"));
+    const Backend backend = plugins::camera_synthetic::synthetic_backend();
+    const std::string endpoint = default_endpoint_path(backend.name);
+    prepare_endpoint_directory(endpoint);
+    const CameraConfig config = parse_camera_argument("head:memory=gpu,width=320,height=240,fps=200", backend.name);
+    CameraHost host(endpoint);
+    host.add_camera(std::move(backend.open({ &config, 1 }).front()));
+    host.start();
+
+    const BenchRun listing = run_bench(directory, {});
+    REQUIRE(listing.exit_code == 0);
+    REQUIRE_THAT(listing.output, ContainsSubstring("320x240 bgra8, 200.00 fps") &&
+                                     ContainsSubstring("CUDA memory on " + cuda_device_name(cuda_device_uuid(0))));
+
+    const BenchRun run = run_bench(directory, { "--group=head", "--frames=50", "--check-synthetic" });
+    REQUIRE(run.exit_code == 0);
+    REQUIRE_THAT(run.output, ContainsSubstring("read 50 frame sets"));
+    REQUIRE_THAT(run.output, ContainsSubstring("synthetic pattern: 0 image(s) did not match"));
 }

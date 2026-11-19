@@ -718,6 +718,17 @@ TEST_CASE("a description is checked without sums that can wrap", "[unit][camera]
 
     // A frame rate that is not known is described as 0.
     REQUIRE(with([](GroupDescription& group) { group.streams[0].frame_rate = 0.0; }).empty());
+
+    // A stream in CUDA memory says on which device.
+    REQUIRE_THAT(with([](GroupDescription& group) { group.streams[0].memory = MemoryKind::CUDA; }),
+                 Catch::Matchers::ContainsSubstring("does not say on which device"));
+    REQUIRE(with(
+                [](GroupDescription& group)
+                {
+                    group.streams[0].memory = MemoryKind::CUDA;
+                    group.streams[0].cuda_device = { 7 };
+                })
+                .empty());
 }
 
 TEST_CASE("every group has a session id", "[unit][camera][groups]")
