@@ -184,3 +184,18 @@ def test_gamepad_plugin_ships_runnable_for_teleop_session() -> None:
     assert (binary.external_attr >> 16) & 0o111, (
         "gamepad_plugin lost its executable bit"
     )
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="the plugin is Linux only"
+)
+def test_camera_synthetic_plugin_ships_runnable_for_the_plugin_manager() -> None:
+    """Apps start the bundled camera plugin from BUNDLED_PLUGINS_DIR, so it needs its manifest and exec bit."""
+    bundle = f"{DIST}/plugins/camera_synthetic"
+    with zipfile.ZipFile(_wheel()) as archive:
+        names = set(archive.namelist())
+        binary = archive.getinfo(f"{bundle}/camera_synthetic_plugin")
+    assert f"{bundle}/plugin.yaml" in names
+    assert (binary.external_attr >> 16) & 0o111, (
+        "camera_synthetic_plugin lost its executable bit"
+    )
