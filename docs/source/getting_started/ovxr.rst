@@ -4,8 +4,8 @@
 OVXR installation
 =================
 
-OVXR provides optional XR presentation for applications that use Isaac Capture
-for teleoperation input. Select the ``ovxr`` extra when installing Isaac Capture
+Any application that supplies an OVRTX renderer and an OVStage can use Isaac
+Capture for XR presentation and teleoperation input. Select the ``ovxr`` extra when installing Isaac Capture
 to include OVXR and its rendering dependencies.
 
 Install XR support
@@ -125,9 +125,8 @@ Use from another application
 and ``OvxrSessionConfig``. Implement ``OvxrApplicationInterface`` to supply the
 application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
 The binding also supplies optional ``frame_consumers`` after the application has
-resolved its render-product paths. Capture does not depend on an Isaac Lab task
-or scene configuration. ``camera_paths`` is required and must contain both stereo
-cameras. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
+resolved its auxiliary render-product paths. Supply both stereo camera paths in
+``camera_paths``. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
 
 ``CameraPanelConsumer`` and ``OwnedDesktopMirror`` implement the same
 ``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
