@@ -228,7 +228,7 @@ human:
   #               opening stops the jaws at the driver's next pass, 0.05 s,
   #               and they then follow the trigger: a slip of the trigger of
   #               0.1 s moves jaws that grip an object not at all, one of
-  #               0.2 s by about 0.01 of their travel (stand-in motors). A
+  #               0.2 s by 0.01 to 0.03 of their travel (stand-in motors). A
   #               STOP ends an opening as it ends the typed open.
   #   steps       every opening goes in steps of gripper.open_step, each a
   #               short push from where the jaws read. Measured on the rig:

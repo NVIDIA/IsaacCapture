@@ -97,6 +97,8 @@ from isaaccapture_examples.agentic_remote.robot_app import (  # noqa: E402
     app as app_module,
 )
 from isaaccapture_examples.agentic_remote.robot_app.config import (  # noqa: E402
+    JAW_RELEASE_OPEN_FULLY,
+    JAW_RELEASES,
     ConfigError,
     RobotAppConfig,
     load_config,
@@ -1707,11 +1709,13 @@ DIFFERS: dict[Path, dict[str, Any]] = {
         "human.require_live_view": False,
         **INSIDE_REGION,
     },
-    # The live view stays required, as in the rig's file.
+    # The live view stays required, as in the rig's file, and a person's joint
+    # speed limit is that file's.
     ROBOT_HUMAN_CHECK: {
         "human.enabled": True,
-        "limits.human.max_joint_speed": 0.8,
-        "limits.human.max_step_rad": 0.05,
+        "limits.human.max_joint_speed": shipped_file("robot_app_rebot.yaml")[
+            "limits.human.max_joint_speed"
+        ],
         **INSIDE_REGION,
     },
 }
@@ -1774,12 +1778,23 @@ def test_the_demo_2_robot_files_differ_from_the_shipped_one_only_where_listed(
     assert app_module.no_live_view_notice(check) is None
     # The speed of the headset checks is the rig's, and so is the farthest a
     # human target may lie from the last joint target sent: the checks run
-    # with the rig's human file, whose own limit lies below that one.
+    # with the rig's human file, whose own limit lies below that one. That
+    # step limit is the one-machine demo's as well.
     rig = load_config(CONFIGS / "robot_app_rebot.yaml")
     assert check.limits.human.max_joint_speed == rig.limits.human.max_joint_speed
-    assert rig.limits.human.max_joint_speed == 0.8  # the owner's cap for a person
-    assert check.limits.human.max_step_rad == rig.limits.human.max_step_rad == 0.05
-    assert demo.limits.human.max_step_rad == 0.1  # the one-machine demo's own
+    step = rig.limits.human.max_step_rad
+    assert check.limits.human.max_step_rad == demo.limits.human.max_step_rad == step
+    ahead = shipped_file("human_rebot.yaml")["ik.max_ahead_rad"]
+    assert 0.0 < ahead < step
+    # The table and the tip box of a person are the rig file's alone: the
+    # simulated arm of the headset checks knows neither.
+    human = rig.limits.human
+    assert human.table_clearance_m is not None
+    assert human.workspace_min is not None and human.workspace_max is not None
+    for other in (check, demo):
+        person = other.limits.human
+        assert person.table_clearance_m is None
+        assert person.workspace_min is None and person.workspace_max is None
 
 
 # The waits of this file
@@ -2164,19 +2179,25 @@ def test_demo_2_with_the_agent_failing_first_runs_as_processes(
 
 @link
 @apai
+@pytest.mark.parametrize("jaw_release", JAW_RELEASES)
 def test_a_person_opens_the_jaws_the_agent_left_closed_and_gives_the_arm_back(
-    make_mock_stage: Callable[..., Stage],
+    make_mock_stage: Callable[..., Stage], jaw_release: str
 ) -> None:
     """The jaws, the gripper's fingers, under the trigger of a person's controller.
 
     A jaw opening is a share of the jaw travel: 1.0 fully open, 0.0 closed.
     Every HUMAN_SETPOINT carries the one the trigger asks for. The grip level
     is the opening in force at the takeover: the robot app ignores the trigger
-    until the opening it asks for has reached that level.
+    until the opening it asks for has reached that level. human.jaw_release
+    says how the jaws open once the trigger is let go.
     """
     import test_apai_app as apai
 
-    stage = make_mock_stage()
+    config = mock_config()
+    # The mock scene's file has the value every shipped file has.
+    assert config.human.jaw_release == JAW_RELEASE_OPEN_FULLY
+    released = dataclasses.replace(config.human, jaw_release=jaw_release)
+    stage = make_mock_stage(dataclasses.replace(config, human=released))
     h = stage.h
     desk = stage.console()
     stage.live_view()
@@ -2289,8 +2310,8 @@ def test_a_person_opens_the_jaws_the_agent_left_closed_and_gives_the_arm_back(
     assert len(h.spy.jaw_commands) == agents
     assert stage.state.gripper.opening == pytest.approx(0.5)
 
-    # The trigger is released: the jaws open in steps until they are fully open,
-    # which proves them empty.
+    # The trigger is released: the jaws open until they are fully open, which
+    # proves them empty.
     began = time.monotonic()
     stage.cues.give("let go")
     opened = stage.shows(lambda s: jaw_facts(s).get("opened"))
@@ -2306,11 +2327,22 @@ def test_a_person_opens_the_jaws_the_agent_left_closed_and_gives_the_arm_back(
     assert (gripper.opening, gripper.last_target) == (pytest.approx(1.0),) * 2
     assert (gripper.may_be_holding, gripper.load) == (False, "empty")
     steps = h.spy.jaw_commands[agents:]
-    # The mock counts the jaw position from 0 open: 0.5 to 0 in steps of 0.05.
-    wanted = [0.5 - 0.05 * count for count in range(1, 11)]
-    assert [position for position, _ in steps] == pytest.approx(wanted, abs=1e-9)
-    assert [effort for _, effort in steps] == [OPEN_EFFORT] * 10
-    assert owners[agents - before :] == [HUMAN] * 10
+    jaws = h.config.gripper
+    # The mock counts the jaw position from 0 open.
+    if jaw_release == JAW_RELEASE_OPEN_FULLY:
+        # One opening. APAI's mock arm has no opening of its own, so its
+        # effort is the file's.
+        wanted = [(pytest.approx(0.0), jaws.follow_open_effort)]
+    else:
+        # From 0.5 to fully open in steps of gripper.open_step.
+        count = round(0.5 / jaws.open_step)
+        assert count > 1 and count * jaws.open_step == pytest.approx(0.5)
+        wanted = [
+            (pytest.approx(0.5 - jaws.open_step * step, abs=1e-9), OPEN_EFFORT)
+            for step in range(1, count + 1)
+        ]
+    assert steps == wanted
+    assert owners[agents - before :] == [HUMAN] * len(wanted)
     person.wait_said(
         "; jaws follow the trigger yes, grip level 0.00, trigger asks 1.00"
     )
@@ -2328,7 +2360,7 @@ def test_a_person_opens_the_jaws_the_agent_left_closed_and_gives_the_arm_back(
     stage.cues.give("given back")
     assert h.spy.pose() == pytest.approx(REST, abs=h.config.rest.rest_tol_rad)
     # Nothing closed the jaws again, and nobody else's trigger moves them.
-    after = h.spy.jaw_commands[agents + 10 :]
+    after = h.spy.jaw_commands[agents + len(wanted) :]
     assert all(position == pytest.approx(0.0) for position, _ in after), after
     assert ended.gripper.opening == pytest.approx(1.0)
     requests = [request.request for request in person.tap.of(OwnerRequest)]
@@ -2346,6 +2378,7 @@ def test_a_person_opens_the_jaws_the_agent_left_closed_and_gives_the_arm_back(
     stage.holds()
     assert person.end() == 0
     print(
-        f"measured: the jaws opened from 0.5 in {len(steps)} steps and {took:.2f} s; "
+        f"measured: with human.jaw_release {jaw_release} the jaws opened from 0.5 "
+        f"in {len(steps)} jaw command(s) and {took:.2f} s; "
         f"{len(after)} jaw command(s) from there to the hand-back: {after}"
     )
