@@ -13,6 +13,18 @@ Read [`README.md`](README.md) first: it has the terms (stream, group, window, or
 
 - **Linux only.** The library and its tests are added under `CMAKE_SYSTEM_NAME STREQUAL "Linux"`.
 
+## Reading cameras
+
+- **`camera_reader.hpp` shows the types of `types.hpp` only.** The socket, the pools and the protocol's messages stay in `camera_reader.cpp`; an application that includes the reader does not see them.
+- **The reader makes no copies and no conversions.** A view is the plugin's buffer. Pixel conversion, if a consumer wants it, is a separate step on top.
+- **A frame set outlives its reader safely.** Both share one state object; keep it that way rather than making `FrameSet` point back at the reader.
+- **Releasing must never throw or block.** It runs in destructors, possibly on another thread; a plugin that is gone takes its frames back by itself.
+- **The plugin is trusted for content, not for bounds.** Check a frame event against the group before handing out views, and check the handshake answer in `open` before mapping anything: the protocol version, that it is the group that was asked for, `problem_with` for the description, one pool per stream.
+- **A newest-order reader asks; it does not drain.** `next` sends the request and takes the answer. Do not go back to reading whatever is queued and keeping the last: what is queued was held when it was published.
+- **A full window is an error, not a wait.** `next` by a reader that holds its window's worth throws `CameraWindowExhausted`; it does not time out as if no frame had come.
+- **An empty location looks; a named one does not.** With no endpoint and no instance the reader asks every endpoint `default_endpoint_paths()` lists. With either, it talks to that one plugin alone: the full handshake timeout, and an error if the plugin is not there. Do not fall back from one to the other.
+- **Looking stays plain.** The endpoints are asked one after another, each with a short fixed timeout. A refused connection is passed over silently. An endpoint that fails to say what it publishes (no answer in time, a refusal, a closed connection, any other failure) is passed over too, named with its reason in `open`'s error and left out by `list`; do not narrow that to the timeout. A group on two endpoints is an error, never a choice. No cache, no index file, no retry, no thread, and no option for any of it.
+
 ## Slots, windows and leases
 
 - **The slot and lease code uses the standard library only.** `types.hpp`, `publisher.hpp` and their sources have no slot memory, sockets, logging or platform headers in them. Memory, connections and platform calls stay in the files of the next section.
@@ -35,6 +47,37 @@ Read [`README.md`](README.md) first: it has the terms (stream, group, window, or
 - **Readers cannot write.** A pool is sealed before its descriptor leaves the process, and a reader maps it read-only. Do not hand a reader a writable mapping.
 - **Derive what both sides can compute.** A pool's layout follows from the slot count and slot size in the stream's description; do not send it separately.
 
+## The protocol
+
+The schema is [`../schema/fbs/camera_protocol.fbs`](../schema/fbs/camera_protocol.fbs). Read [`../schema/AGENTS.md`](../schema/AGENTS.md) and "The protocol" in the [`README.md`](README.md) before changing it: a reader and a plugin from different releases must keep understanding each other, and the golden check enforces it.
+
+- **Few messages, and no fewer than correctness needs.** A connection has one purpose, stated in the handshake; do not add a message for what a handshake field can say. A newest-order reader asks for each frame set (`CameraAcquire`): do not fold that back into sending frame sets as they are published.
+- **This is local IPC.** Lease ids, slot indices and attached descriptors name resources of one machine. Do not reuse the envelope as a network or recording format, and do not wrap it in the recorder's `Record` tables or its `DeviceDataTimestamp`.
+- **A new message says whether it may be ignored.** One that only informs is sent with `skippable`; an operation the peer must carry out is not, and needs a protocol version so that it is only sent to a peer that knows it.
+- **The numbers are the protocol.** Union members, flag bits and enum values are written out in the schema and pinned by `static_assert` and a test; a member keeps its number.
+- **FlatBuffers stays inside the codec.** Its users see the library's own types; only `codec.cpp` and tests include the generated header.
+- **Decoded bytes are untrusted.** Verify, then bound every count against the fixed arrays it fills, and check for a body behind a body type. The decoder establishes structure only; what a description means is checked by `problem_with` where it is used.
+- **The encoder refuses, it does not truncate.** A count that does not fit is an error to the caller, never a shorter message.
+- **A group this build cannot read is an entry, not an error.** A kind added by a newer plugin marks its group `unsupported` and leaves the other groups of the same response readable.
+- **A new enum value needs both sides.** The enum in `types.hpp` and the schema enum carry the same numbers (pinned by `static_assert`), and the decoder must accept the value before a plugin sends it.
+- **The frame path does not allocate.** Keep `encode(const FrameEvent&)` free of containers that do.
+- **Evolution is tested with hand-built messages.** A passing golden comparison shows layout, not that two releases understand each other: a rule about newer or older peers gets a test that builds the message that peer would send.
+
+## The endpoint
+
+Read "What runs where" in the [`README.md`](README.md) before changing it.
+
+- **Nothing sits between publish and the socket.** A frame event is encoded and sent inside `send_event`, on the publishing thread. Do not add a queue or a thread hop there, and do not log per frame.
+- **The endpoint's `send_event` takes no other lock.** The group's lock it runs under is also what serialises each connection's event encoder.
+- **Unsubscribe before a connection is destroyed.** `Publisher::unsubscribe` returning is the guarantee that no `send_event` is running or will start for that sink.
+- **A reader is untrusted.** Whatever it sends can at most get it dropped; it must not stop the thread or affect other readers.
+- **Reserve, answer, activate.** The handshake response is the first message a reader receives: `subscribe`, send the response with its descriptors, then `activate`. Every way out of that sequence ends in `drop()`, which is the one place a subscription is given up.
+- **The constructor takes the path; only `start()` listens.** Readers find a plugin by connecting to every endpoint of their user, so an endpoint that accepts before it can answer costs each of them a wait. Do not listen in the constructor, and call `listen()` before the service thread begins: a listener that does not listen yet polls as hung up.
+
 ## Tests
 
 - **Tests need no camera and no GPU.** They carry the `unit` tag; a case that starts a second process carries `integration` instead.
+- **A test does not assume which thread runs first.** A reader's request and the camera's publish come from two threads and are served in either order: have the reader ask for what comes after a frame set it names, not for "anything", when the test expects a particular one. Run the suite on one CPU (`taskset -c 0`) before pushing; CI's slower machines find these, a workstation does not.
+- **A test waits for what the plugin's thread does; it does not assume it.** `next` returning says nothing about whether the plugin has taken the reader's request, so wait for the effect (`Served::wait_until_sent`) before counting what was sent.
+- **A test's helper thread is stopped and joined however the test ends.** A failed `REQUIRE` throws, and a `std::thread` that is still joinable then aborts the process instead of reporting the failure. Use `std::jthread`, or a guard whose destructor joins.
+- **Tests that look through the user's plugins get a directory of their own.** `EndpointDirectory` (`tests/cpp/core/camera/endpoint_directory.hpp`) points `XDG_RUNTIME_DIR` at a temporary directory and puts it back; a test that uses the real one finds whatever camera plugin the developer has running.
