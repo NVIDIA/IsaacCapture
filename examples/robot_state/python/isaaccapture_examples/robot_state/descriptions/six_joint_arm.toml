@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Robot description of a six-joint arm with one gripper.
+robot = "rebot_b601"
+
+[series.arm]
+shape = "joints"
+rate_hz = 20.0
+joints = [
+  { name = "joint1",  kind = "revolute", min = -2.8,  max = 2.8 },
+  { name = "joint2",  kind = "revolute", min = -0.05, max = 3.14 },
+  { name = "joint3",  kind = "revolute", min = -0.05, max = 3.14 },
+  { name = "joint4",  kind = "revolute", min = -1.69, max = 1.79 },
+  { name = "joint5",  kind = "revolute", min = -1.57, max = 1.57 },
+  { name = "joint6",  kind = "revolute", min = -3.14, max = 3.14 },
+  { name = "gripper", kind = "gripper",  min = 0.0,   max = 1.0 },  # 0 closed, 1 open
+]
+
+[series.status]
+shape = "status"
+readings = ["motors_on", "fault"]

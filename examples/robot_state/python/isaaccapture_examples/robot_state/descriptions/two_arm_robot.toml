@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Robot description of a two-arm robot with a waist and a force sensor in each wrist.
+robot = "two_arm_example"
+
+# A shape this robot defines: one record holds these fields.
+[shapes.force]
+fields = [
+  { name = "fx", unit = "N" },
+  { name = "fy", unit = "N" },
+  { name = "fz", unit = "N" },
+  { name = "tx", unit = "N*m" },
+  { name = "ty", unit = "N*m" },
+  { name = "tz", unit = "N*m" },
+]
+
+[series.left_arm]
+shape = "joints"
+has_effort = true
+joints = [
+  { name = "l_shoulder_pan",  kind = "revolute",   min = -3.1, max = 3.1, max_velocity = 2.0, max_effort = 40.0 },
+  { name = "l_shoulder_lift", kind = "revolute",   min = -2.0, max = 2.0, max_velocity = 2.0, max_effort = 40.0 },
+  { name = "l_elbow",         kind = "revolute",   min = -2.5, max = 2.5, max_velocity = 2.5, max_effort = 25.0 },
+  { name = "l_wrist_roll",    kind = "continuous" },
+  { name = "l_gripper",       kind = "gripper",    min = 0.0, max = 0.08, unit = "m" },
+]
+
+[series.right_arm]
+shape = "joints"
+has_effort = true
+joints = [
+  { name = "r_shoulder_pan",  kind = "revolute",   min = -3.1, max = 3.1, max_velocity = 2.0, max_effort = 40.0 },
+  { name = "r_shoulder_lift", kind = "revolute",   min = -2.0, max = 2.0, max_velocity = 2.0, max_effort = 40.0 },
+  { name = "r_elbow",         kind = "revolute",   min = -2.5, max = 2.5, max_velocity = 2.5, max_effort = 25.0 },
+  { name = "r_wrist_roll",    kind = "continuous" },
+  { name = "r_gripper",       kind = "gripper",    min = 0.0, max = 0.08, unit = "m" },
+]
+
+[series.waist]
+shape = "joints"
+joints = [
+  { name = "waist_yaw", kind = "revolute", min = -1.5, max = 1.5 },
+]
+
+[series.left_wrist_force]
+shape = "force"
+rate_hz = 50.0
+attributes = { at = "l_wrist" }
+
+[series.right_wrist_force]
+shape = "force"
+rate_hz = 50.0
+attributes = { at = "r_wrist" }
+
+[series.status]
+shape = "status"
+stale_after_s = 2.0
+readings = ["motors_on", "fault", { name = "battery", kind = "number", unit = "V" }]
