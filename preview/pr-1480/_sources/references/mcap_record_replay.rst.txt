@@ -160,7 +160,7 @@ controllers, and full body), see ``examples/deviceio_live_view/`` and its
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/deviceio_live_view
+   uv pip install -e ./examples/deviceio_live_view --no-sources
    python -m isaaccapture_examples.deviceio_live_view --accept-eula
 
 A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
@@ -177,7 +177,7 @@ From the repo root, in a venv set up as in :ref:`step 4 of Build from source <bu
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/mcap_record_replay --no-sources
    python -m isaaccapture_examples.mcap_record_replay.live_full_body --accept-eula
    python -m isaaccapture_examples.mcap_record_replay.live_full_body --port 8090 --accept-eula
 
@@ -192,7 +192,7 @@ From the repo root, in the same venv:
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/mcap_record_replay --no-sources
    R="python -m isaaccapture_examples.mcap_record_replay.record_hand"
    $R              # 5 s → ./recordings/hands_<timestamp>.mcap
    $R 10           # record for 10 seconds
@@ -201,10 +201,9 @@ From the repo root, in the same venv:
 Recordings are written to ``./recordings/`` relative to where you run the
 command, and the replay scripts look there when given no path.
 
-The example never downloads a published wheel — it runs against the
-``isaaccapture`` next to it, built from this checkout.  The install is editable,
-so edits under ``src/python/`` need no rebuild; for C++ changes see
-:ref:`step 4 of Build from source <build-from-source-editable-examples>`.  From
+The example runs against the ``isaaccapture`` wheel installed in step 4, which
+``--no-sources`` keeps in place; after a rebuild, rerun that install (see
+:ref:`step 4 of Build from source <build-from-source-editable-examples>`).  From
 ``install/examples/mcap_record_replay`` (after ``cmake
 --install``) it picks up the wheel you just built instead — see
 :doc:`/development/build_from_source/index`.
