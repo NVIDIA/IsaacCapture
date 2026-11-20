@@ -55,6 +55,7 @@ Table of Contents
 
    teleop/quick_start
    teleop/teleop_session
+   teleop/robot_state
    teleop/control_state_machine
 
 .. toctree::
