@@ -22,6 +22,10 @@ if(TARGET manus_calibration_core)
     add_subdirectory(manus_calibration)
 endif()
 
+if(BUILD_PLUGIN_OMNIGLOVE)
+    add_subdirectory(omniglove)
+endif()
+
 if(TARGET jmex_plugin_core)
     add_subdirectory(jmex)
 endif()

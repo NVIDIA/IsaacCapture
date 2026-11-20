@@ -5,12 +5,13 @@
 // XR_MNDX_xdev_space preferred, controller aim pose as the fallback.
 #pragma once
 
+#include "wrist_source_config.hpp"
+
 #include <deviceio_session/deviceio_session.hpp>
 #include <deviceio_trackers/controller_tracker.hpp>
 #include <log_bridge/logger.hpp>
 #include <openxr/openxr.h>
 #include <oxr_utils/oxr_session_handles.hpp>
-#include <pusherio/wrist_tracking_source.hpp>
 
 #include <XR_MNDX_xdev_space.h>
 #include <memory>
@@ -19,8 +20,6 @@
 namespace plugin_utils
 {
 
-using WristSourceMode = core::WristTrackingSourceMode;
-using WristSourceConfig = core::WristTrackingSourceConfig;
 using WristSample = core::WristTrackingSample;
 
 /**
