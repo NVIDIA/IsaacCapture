@@ -25,6 +25,7 @@
 #include <schema/serialized.hpp>
 #include <schema/timestamp_generated.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -55,7 +56,26 @@ py::class_<Serialized<T>> serialized_class(py::module& m, const char* name, cons
                 const auto bytes = encoded.buffer();
                 return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
             },
-            "Copy this table into standalone FlatBuffer bytes, including when read from a record.");
+            "Copy this table into standalone FlatBuffer bytes, including when read from a record.")
+        .def_static(
+            "from_bytes",
+            [name = std::string(name)](const py::bytes& data)
+            {
+                char* chars = nullptr;
+                py::ssize_t size = 0;
+                if (PyBytes_AsStringAndSize(data.ptr(), &chars, &size) != 0)
+                {
+                    throw py::error_already_set();
+                }
+                std::vector<uint8_t> bytes(chars, chars + size);
+                flatbuffers::Verifier verifier(bytes.data(), bytes.size());
+                if (!verifier.VerifyBuffer<T>(nullptr))
+                {
+                    throw py::value_error("not a valid " + name + " buffer");
+                }
+                return Serialized<T>::adopt(std::move(bytes));
+            },
+            py::arg("data"), "Verify standalone FlatBuffer bytes rooted at this table and wrap a copy of them.");
 }
 
 /*!
