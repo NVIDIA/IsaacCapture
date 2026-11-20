@@ -27,7 +27,9 @@ from isaaccapture import oxr
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.deviceio_session import RemoteSessionHost, RemoteSessionListener
 from isaaccapture.logging_config._native_api import capture_native_output
+from isaaccapture.robot_state import RobotStateStore
 
+from . import _session
 from ._common import (
     BUSY_MESSAGE,
     DEFAULT_TCP_PORT,
@@ -123,6 +125,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "machines (VPN, SSH or stunnel)."
         ),
     )
+    parser.add_argument(
+        "--robot-state-socket",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Local socket on which reader programs on this machine (isaaccapture.robot_state) "
+            "get the robot state a robot app sends; created when the first robot app sends "
+            "some (default: robot_state.sock in this user's isaaccapture runtime directory). "
+            "Its directory must belong to this user and be closed to group and others."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Log debug output.")
     cloudxr = parser.add_argument_group("CloudXR")
     CloudXRLauncher.add_cloudxr_install_dir_argument(cloudxr)
@@ -206,11 +219,18 @@ class _Server:
         stop: _StopRequest,
         *,
         placeholder: bool = False,
+        robot_state_socket: str | None = None,
     ) -> None:
         self._listening = list(listening)
         self._launcher = launcher
         self._stop = stop
         self._placeholder = placeholder
+        # Robot state of the robot app served, kept across robot apps for the server's life.
+        self._robot_state = RobotStateStore()
+        _session.set_hosted_robot_state(self._robot_state)
+        # None: the default path. The service exists from the first robot app that sends robot state.
+        self._robot_state_socket = robot_state_socket
+        self._robot_state_service: Any = None
         self._extensions = None if placeholder else served_extensions()
         self._openxr: Any = None
         # The OpenXR session's, once it exists.
@@ -377,9 +397,38 @@ class _Server:
     def _serve(self, listening: _Listening, fd: int, peer: str) -> None:
         host = RemoteSessionHost.adopt(fd, listening.websocket)
         self._robot = RobotConnection(
-            host, peer, placeholder=self._placeholder, extensions=self._extensions
+            host,
+            peer,
+            placeholder=self._placeholder,
+            extensions=self._extensions,
+            robot_state=self._robot_state,
+            on_robot_state=self._serve_robot_state,
         )
         logger.info("Robot app connected from %s on %s", peer, listening.url)
+
+    def _serve_robot_state(self) -> None:
+        """Open the local socket for reader programs, once a robot app sends robot state."""
+        if self._robot_state_service is not None:
+            return
+        from isaaccapture.robot_state import RobotStateLocalService
+
+        service = RobotStateLocalService(self._robot_state, self._robot_state_socket)
+        try:
+            service.start()
+        except OSError as error:
+            logger.warning(
+                "Reader programs cannot get robot state from this Teleop Session Server: %s",
+                error,
+            )
+            return
+        self._robot_state_service = service
+
+    def _close_robot_state(self) -> None:
+        service, self._robot_state_service = self._robot_state_service, None
+        if service is not None:
+            service.close()
+        if _session._hosted_robot_state is self._robot_state:
+            _session.set_hosted_robot_state(None)
 
     def _refuse(self, listening: _Listening, fd: int, peer: str, text: str) -> None:
         """Refuse a connection with ``text`` beside the loop, which keeps ticking meanwhile."""
@@ -416,6 +465,8 @@ class _Server:
         with ExitStack() as stack:
             stack.callback(self._join_refusals)
             stack.callback(self._close_openxr)
+            # After the robot app's connection, which ends its robot state.
+            stack.callback(self._close_robot_state)
             robot, self._robot = self._robot, None
             if robot is not None:
                 # The trackers read through the OpenXR session, so they close first.
@@ -467,7 +518,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with launcher:
             server = _Server(
-                listening, launcher, stop, placeholder=args.placeholder_openxr
+                listening,
+                launcher,
+                stop,
+                placeholder=args.placeholder_openxr,
+                robot_state_socket=args.robot_state_socket,
             )
             for item in listening:
                 print(f"Teleop Session Server listening on {item.url}", flush=True)

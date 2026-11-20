@@ -24,7 +24,11 @@ from isaaccapture.deviceio_session import DeviceIOSession, TrackerVendor, Vendor
 from isaaccapture.deviceio_trackers._generated_tracker_exports import (
     __all__ as _GENERATED_TRACKERS,
 )
-from isaaccapture.teleop_session_manager._remote import PROTOCOL_VERSION, has_metadata
+from isaaccapture.teleop_session_manager._remote import (
+    PROTOCOL_VERSION,
+    ROBOT_STATE_VERSION,
+    has_metadata,
+)
 
 logger = logging.getLogger("isaaccapture.teleop_session_server.session")
 
@@ -102,6 +106,15 @@ def _generated_pull_trackers() -> dict[str, type]:
 
 _GENERATED_PULL_TRACKERS = _generated_pull_trackers()
 
+# The RobotStateStore of the Teleop Session Server running in this process, None without one.
+_hosted_robot_state: Any | None = None
+
+
+def set_hosted_robot_state(store: Any | None) -> None:
+    """Name the store ``teleop_session_server.hosted_robot_state()`` reads; None clears it."""
+    global _hosted_robot_state
+    _hosted_robot_state = store
+
 
 def served_extensions() -> list[str]:
     """OpenXR extensions for every tracker kind and vendor a robot app may request.
@@ -137,6 +150,8 @@ class SessionRequest:
     trackers: list[tuple[Any, str]]
     vendors: list[tuple[Any, Any]]
     topics: list[str]
+    # The robot app offers to send robot state.
+    robot_state: bool = False
 
 
 def parse_hello(
@@ -213,7 +228,19 @@ def parse_hello(
         trackers=trackers,
         vendors=vendors,
         topics=list(topics),
+        robot_state=_offers_robot_state(hello),
     )
+
+
+def _offers_robot_state(hello: dict) -> bool:
+    """Whether a HELLO offers robot state; any version from 1 on is answered with this server's."""
+    if "robot_state" not in hello:
+        return False
+    offer = hello["robot_state"]
+    version = offer.get("version") if isinstance(offer, dict) else None
+    if _is_bool(version) or not isinstance(version, int) or version < 1:
+        raise HelloError("robot_state must be an object with a version number")
+    return True
 
 
 def _build_tracker(index: int, descriptor: Any, placeholder: bool) -> tuple:
@@ -336,7 +363,9 @@ class RobotConnection:
     """Serves the robot app at the other end of ``host``, one :meth:`step` at a time.
 
     ``extensions`` are the OpenXR session's (None with ``placeholder``). ``ended`` turns true when
-    the connection is over; the server then calls :meth:`close`.
+    the connection is over; the server then calls :meth:`close`. ``robot_state`` is the server's
+    ``RobotStateStore``: a robot app that offers robot state is answered that it is taken, its
+    robot-state link messages go into the store, and ``on_robot_state`` is called.
     """
 
     def __init__(
@@ -346,11 +375,15 @@ class RobotConnection:
         *,
         placeholder: bool,
         extensions: Collection[str] | None,
+        robot_state: Any | None = None,
+        on_robot_state: Callable[[], None] | None = None,
     ) -> None:
         self.host = host
         self.peer = peer
         self._placeholder = placeholder
         self._extensions = extensions
+        self._robot_state = robot_state
+        self._on_robot_state = on_robot_state
         self._hello_deadline = time.monotonic() + HELLO_TIMEOUT_S
         self._request: SessionRequest | None = None
         self._period = 0.0
@@ -428,14 +461,16 @@ class RobotConnection:
                 request.isaaccapture_version or "(unknown)",
                 isaaccapture.__version__,
             )
-        self.host.send_hello_ack(
-            json.dumps(
-                {
-                    "session_id": uuid.uuid4().hex,
-                    "server_version": isaaccapture.__version__,
-                }
-            )
-        )
+        hello_ack: dict[str, Any] = {
+            "session_id": uuid.uuid4().hex,
+            "server_version": isaaccapture.__version__,
+        }
+        takes_robot_state = request.robot_state and self._robot_state is not None
+        if takes_robot_state:
+            # Before HELLO_ACK: the robot app sends robot state as soon as it reads the answer.
+            self.host.attach_robot_state(self._robot_state)
+            hello_ack["robot_state"] = {"version": ROBOT_STATE_VERSION}
+        self.host.send_hello_ack(json.dumps(hello_ack))
         self._request = request
         logger.info(
             "Serving robot app %r at %s: %d tracker(s), %g Hz",
@@ -444,6 +479,12 @@ class RobotConnection:
             len(request.trackers),
             request.tick_rate_hz,
         )
+        if takes_robot_state:
+            logger.info(
+                "Robot app %r at %s sends robot state", request.app_name, self.peer
+            )
+            if self._on_robot_state is not None:
+                self._on_robot_state()
 
     def _start(self, handles: Any) -> None:
         """Start the trackers once the OpenXR session exists."""
