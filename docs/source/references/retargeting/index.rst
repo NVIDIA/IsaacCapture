@@ -380,4 +380,5 @@ See the :doc:`Contributing Guide <../../development/contributing>` for details.
    sharpa
    so101
    joint_space
+   p7
    wuji
