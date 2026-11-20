@@ -10,6 +10,7 @@ These classes provide a clean, declarative way to configure teleop sessions.
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
         McapReplayConfig,
     )
     from isaaccapture.oxr import OpenXRSessionHandles
+    from isaaccapture.robot_state.description import RobotDescription
 
     # Under TYPE_CHECKING only: isaaccapture.viz is not shipped by a BUILD_VIZ=OFF
     # build, and importing it here would make this module unimportable there.
@@ -442,6 +444,11 @@ class TeleopSessionConfig:
         remote_connect_timeout_s: How long entering the session waits for the server to
             answer and report READY, retrying while it is not up yet; ``None`` waits
             without limit.
+        robot_description: What the robot is, for sending robot state to the server: the
+            path of a robot description file, or a loaded
+            ``isaaccapture.robot_state.RobotDescription``. With it the session offers robot
+            state to the server and ``publish_robot_state()`` sends readings. Set only in
+            REMOTE mode.
 
     Example (auto-discovery):
         # Source creates its own tracker automatically!
@@ -514,6 +521,7 @@ class TeleopSessionConfig:
     remote_tick_rate_hz: float = 90.0
     remote_max_tick_age_s: float = 0.25
     remote_connect_timeout_s: Optional[float] = 60.0
+    robot_description: Optional[Union[str, os.PathLike, RobotDescription]] = None
 
     def __post_init__(self) -> None:
         """Validate configuration consistency."""
@@ -627,6 +635,8 @@ class TeleopSessionConfig:
                 )
         elif self.remote_endpoint is not None:
             raise ValueError("remote_endpoint requires mode=SessionMode.REMOTE")
+        elif self.robot_description is not None:
+            raise ValueError("robot_description requires mode=SessionMode.REMOTE")
 
         for name in ("remote_tick_rate_hz", "remote_max_tick_age_s"):
             _require_positive(name, getattr(self, name))

@@ -16,6 +16,8 @@ from types import SimpleNamespace
 from typing import Any
 
 PROTOCOL_VERSION = 1
+# Version of the robot-state link messages, offered in HELLO and answered in HELLO_ACK.
+ROBOT_STATE_VERSION = 1
 
 # Stage named when the server never answered HELLO.
 SERVER_DID_NOT_ANSWER = "server did not answer"
@@ -146,20 +148,22 @@ def build_hello(
     tick_rate_hz: float,
     trackers: list[dict],
     topics: list[str],
+    robot_state: bool = False,
 ) -> str:
-    """The HELLO JSON."""
+    """The HELLO JSON; with ``robot_state`` it offers to send robot state."""
     import isaaccapture
 
-    return json.dumps(
-        {
-            "protocol": PROTOCOL_VERSION,
-            "isaaccapture_version": isaaccapture.__version__,
-            "app_name": app_name,
-            "tick_rate_hz": float(tick_rate_hz),
-            "trackers": trackers,
-            "topics": list(topics),
-        }
-    )
+    hello: dict[str, Any] = {
+        "protocol": PROTOCOL_VERSION,
+        "isaaccapture_version": isaaccapture.__version__,
+        "app_name": app_name,
+        "tick_rate_hz": float(tick_rate_hz),
+        "trackers": trackers,
+        "topics": list(topics),
+    }
+    if robot_state:
+        hello["robot_state"] = {"version": ROBOT_STATE_VERSION}
+    return json.dumps(hello)
 
 
 def describe_stage(status: dict | None) -> str:
@@ -180,6 +184,15 @@ def server_version(hello_ack: str) -> str:
     """The ``server_version`` of a HELLO_ACK, or ``"unknown"``."""
     version = (_parse_object(hello_ack) or {}).get("server_version")
     return version if isinstance(version, str) and version else "unknown"
+
+
+def robot_state_agreed(hello_ack: str) -> bool:
+    """Whether a HELLO_ACK takes robot state in the version this robot app sends."""
+    entry = (_parse_object(hello_ack) or {}).get("robot_state")
+    if not isinstance(entry, dict):
+        return False
+    version = entry.get("version")
+    return type(version) is int and version == ROBOT_STATE_VERSION
 
 
 class Deadline:

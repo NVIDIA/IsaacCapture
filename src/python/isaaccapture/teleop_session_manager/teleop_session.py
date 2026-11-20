@@ -213,6 +213,8 @@ class TeleopSession:
         # server's OpenXR session that the status monitor polls.
         self._remote_session: Any | None = None
         self._remote_openxr: _remote.RemoteOpenXRSession | None = None
+        # config.robot_description as loaded for the REMOTE run in progress.
+        self._robot_description: Any | None = None
 
         # The robot twin's render thread, when config.joint_publisher is set.
         self._twin_runner: Any | None = None
@@ -332,6 +334,86 @@ class TeleopSession:
     def get_device_status(self, device_id: str) -> DeviceStatus | None:
         """Return one cached device status, or ``None`` for an unknown ID."""
         return self._status_monitor.get_device_status(device_id)
+
+    @property
+    def robot_state_active(self) -> bool:
+        """Whether the Teleop Session Server takes this session's robot state.
+
+        True once the server agreed to it while the session is entered; False without
+        ``config.robot_description``, with a server that does not take robot state, and
+        outside the session.
+        """
+        session = self._remote_session
+        if session is None or self._robot_description is None:
+            return False
+        return bool(session.robot_state_active)
+
+    def publish_robot_state(
+        self,
+        series: str,
+        values: Any,
+        *,
+        velocities: Any = None,
+        efforts: Any = None,
+        valid: Any = None,
+        faults: Any = None,
+        time_ns: int | None = None,
+    ) -> bool:
+        """Send one reading of a data series of ``config.robot_description`` to the server.
+
+        ``values`` are in the order the description lists them: the positions of a joints
+        series (with ``velocities``, ``efforts`` and per-joint ``valid`` as it declares
+        them), the readings of a status series (with its ``faults``), or the fields of a
+        shape the robot defines. May be called from any thread while the session is entered.
+
+        Args:
+            series: Name of the data series.
+            time_ns: ``time.monotonic_ns()`` of the reading on this machine; None is now.
+
+        Returns:
+            False when the server does not take robot state or the link is down.
+
+        Raises:
+            RuntimeError: Without ``config.robot_description``, or outside the session.
+            ValueError: The reading does not fit the series' description.
+        """
+        description, session = self._robot_state_target()
+        from isaaccapture.robot_state import records
+
+        now_ns = time.monotonic_ns()
+        sample_ns = now_ns if time_ns is None else time_ns
+        record = records.encode_reading(
+            description,
+            series,
+            values,
+            velocities=velocities,
+            efforts=efforts,
+            valid=valid,
+            faults=faults,
+            time_ns=sample_ns,
+            publish_time_ns=now_ns,
+        )
+        return bool(session.publish_robot_record(series, record, sample_ns))
+
+    def publish_robot_record(
+        self, series: str, record: Any, *, time_ns: int | None = None
+    ) -> bool:
+        """Send one record of a data series whose shape the robot defines.
+
+        ``record`` maps the shape's field names to values, or lists the values in the
+        order the description lists the fields. Otherwise as :meth:`publish_robot_state`.
+        """
+        return self.publish_robot_state(series, record, time_ns=time_ns)
+
+    def _robot_state_target(self) -> tuple[Any, Any]:
+        """The loaded description and the RemoteSession that robot state goes through."""
+        description = self._robot_description
+        if description is None and self.config.robot_description is None:
+            raise RuntimeError("TeleopSessionConfig.robot_description is not set")
+        session = self._remote_session
+        if description is None or session is None:
+            raise RuntimeError("TeleopSession is not active")
+        return description, session
 
     def _discover_sources(self) -> None:
         """Discover DeviceIO sources, output sinks, and external leaf nodes.
@@ -1167,6 +1249,7 @@ class TeleopSession:
                     self._oxr_session = None
                     self._remote_session = None
                     self._remote_openxr = None
+                    self._robot_description = None
                     self._in_context = False
                 raise
 
@@ -1188,6 +1271,7 @@ class TeleopSession:
         self._resolved_plugins = []
         self._remote_session = None
         self._remote_openxr = None
+        self._robot_description = None
 
         mode = self.config.mode
         live_mode = mode == SessionMode.LIVE
@@ -1346,6 +1430,7 @@ class TeleopSession:
             _remote.describe_tracker(tracker, str(index), vendor, owner)
             for index, (tracker, vendor, owner) in enumerate(entries)
         ]
+        description = self._load_robot_description()
         session = stack.enter_context(
             deviceio.RemoteSession.create(
                 [
@@ -1355,11 +1440,20 @@ class TeleopSession:
                 round(config.remote_max_tick_age_s * 1e9),
             )
         )
+        # The HELLO offers robot state only with a description.
+        robot_state: dict[str, bool] = {}
+        if description is not None:
+            from isaaccapture.robot_state import records
+
+            session.set_robot_state(records.declarations(description))
+            robot_state["robot_state"] = True
+        self._robot_description = description
         hello = _remote.build_hello(
             app_name=config.app_name,
             tick_rate_hz=config.remote_tick_rate_hz,
             trackers=descriptors,
             topics=session.subscribed_topics(),
+            **robot_state,
         )
         status = _remote.RemoteStatus(session)
         self._connect_remote(session, hello, status)
@@ -1387,6 +1481,8 @@ class TeleopSession:
                 )
             )
         self._check_server_version(endpoint, session.hello_ack())
+        if self._robot_description is not None:
+            self._start_robot_state(session, endpoint)
 
         last_stage = None
         while True:
@@ -1401,6 +1497,38 @@ class TeleopSession:
                     _remote.not_ready_message(endpoint, stage, deadline.timeout_s)
                 )
         logger.info("Teleop Session Server at %s is ready", endpoint)
+
+    def _load_robot_description(self) -> Any | None:
+        """``config.robot_description`` as a ``RobotDescription``; None when it is not set."""
+        source = self.config.robot_description
+        if source is None:
+            return None
+        from isaaccapture.robot_state.description import (
+            RobotDescription,
+            load_robot_description,
+        )
+
+        if isinstance(source, RobotDescription):
+            return source
+        return load_robot_description(source)
+
+    def _start_robot_state(self, session: Any, endpoint: str) -> None:
+        """Declare the robot's data series and send its description, if the server takes them."""
+        if not _remote.robot_state_agreed(session.hello_ack()):
+            logger.warning(
+                "The Teleop Session Server at %s does not take robot state; none is sent",
+                endpoint,
+            )
+            return
+        from isaaccapture.robot_state import records
+
+        session.start_robot_state()
+        now_ns = time.monotonic_ns()
+        session.publish_robot_record(
+            records.DESCRIPTION_TOPIC,
+            records.encode_description(self._robot_description, now_ns),
+            now_ns,
+        )
 
     @staticmethod
     def _join_remote(
@@ -1670,6 +1798,7 @@ class TeleopSession:
             self._oxr_session = None
             self._remote_session = None
             self._remote_openxr = None
+            self._robot_description = None
             self._in_context = False
 
         if runner_error is not None:
