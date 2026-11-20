@@ -16,12 +16,15 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <live_trackers/live_tactile_tracker_impl.hpp>
 #include <live_trackers/schema_metadata_tracker.hpp>
+#include <live_trackers/schema_tracker.hpp>
 #include <mcap/reader.hpp>
 #include <mcap/recording_traits.hpp>
 #include <mcap/writer.hpp>
 #include <replay_trackers/replay_tactile_tracker_impl.hpp>
 #include <schema/metadata_validation.hpp>
 #include <schema/pedals_generated.h>
+#include <schema/soma_body_joint_poses_generated.h>
+#include <schema/soma_body_joint_rotations_generated.h>
 #include <schema/tactile_array_generated.h>
 #include <schema/tactile_metadata_generated.h>
 #include <schema/test_tracker_metadata_generated.h>
@@ -152,12 +155,12 @@ struct LiveSession
 
     void start_data()
     {
-        runtime.create(DATA_COLLECTION, static_cast<uint32_t>(tracker->max_flatbuffer_size()));
+        runtime.create(DATA_COLLECTION, static_cast<uint32_t>(tracker->max_flatbuffer_size()), "metadata_test");
     }
 
     void start_metadata(uint32_t sample_size = core::TRACKER_METADATA_MAX_SIZE)
     {
-        runtime.create(METADATA_COLLECTION, sample_size);
+        runtime.create(METADATA_COLLECTION, sample_size, std::string(core::TRACKER_METADATA_TENSOR_IDENTIFIER));
     }
 
     void push_data(float left_pedal)
@@ -338,6 +341,72 @@ TEST_CASE("Replay tactile metadata is semantically verified before force data is
 
 #if defined(XR_USE_TIMESPEC)
 
+TEST_CASE("Schema trackers reject a different tensor before decoding or recording", "[unit][tracker_metadata]")
+{
+    constexpr std::string_view collection = "soma_body_demo";
+    constexpr std::string_view expected = "soma_body_joint_poses";
+    constexpr std::string_view actual = "soma_body_joint_rotations";
+    FakeTensorRuntime runtime;
+    const auto path = temp_mcap_path("test_soma_tensor_identifier");
+    const TempFileCleanup cleanup(path);
+    auto writer = open_writer(path);
+    core::McapTrackerChannels<core::SomaBodyJointPosesRecord> channels(*writer, BASE_NAME, { "poses" });
+    core::SchemaTrackerConfig config{ .collection_id = std::string(collection),
+                                      .max_flatbuffer_size = 4096,
+                                      .tensor_identifier = std::string(expected),
+                                      .localized_name = "SOMA body poses" };
+    core::McapTrackerChannels<core::SomaBodyJointPosesRecord>* recording = nullptr;
+    SECTION("live")
+    {
+    }
+    SECTION("recording")
+    {
+        recording = &channels;
+    }
+    core::SchemaTracker<core::SomaBodyJointPosesRecord, core::SomaBodyJointPoses> tracker(
+        runtime.handles(), config, recording);
+    core::Serialized<core::SomaBodyJointPoses> output;
+
+    core::SomaBodyJointPosesT poses;
+    poses.joint_poses.emplace_back(
+        core::SomaBodyJoint_HIPS, core::Pose(core::Point(1, 2, 3), core::Quaternion(0, 0, 0, 1)));
+    const auto pose_bytes = core::pack<core::SomaBodyJointPoses>(poses);
+    runtime.create(std::string(collection), 4096, std::string(expected));
+    runtime.push(std::string(collection), pose_bytes.buffer(), 1);
+    tracker.update(output);
+    REQUIRE(output);
+    CHECK(output->joint_poses()->size() == 1);
+
+    runtime.destroy(std::string(collection));
+    runtime.create(std::string(collection), 2048, std::string(actual));
+    core::SomaBodyJointRotationsT rotations;
+    for (int joint = 0; joint < 77; ++joint)
+    {
+        rotations.joint_rotations.emplace_back(static_cast<core::SomaBodyJoint>(joint), core::Quaternion(0, 0, 0, 1));
+    }
+    const auto rotation_bytes = core::pack<core::SomaBodyJointRotations>(rotations);
+    runtime.push(std::string(collection), rotation_bytes.buffer(), 2);
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        CHECK_THROWS_WITH(tracker.update(output), Catch::Matchers::ContainsSubstring(std::string(actual)) &&
+                                                      Catch::Matchers::ContainsSubstring(std::string(expected)));
+    }
+
+    runtime.destroy(std::string(collection));
+    runtime.create(std::string(collection), 4096, std::string(expected));
+    runtime.push(std::string(collection), pose_bytes.buffer(), 3);
+    CHECK_NOTHROW(tracker.update(output));
+    REQUIRE(output);
+    CHECK(output->joint_poses()->size() == 1);
+    writer->close();
+
+    if (recording)
+    {
+        const auto records = read_channel<core::SomaBodyJointPosesRecord>(path, "poses");
+        CHECK(records.size() == 2);
+    }
+}
+
 TEST_CASE("Live tactile metadata is semantically verified before adoption and recording", "[unit][tracker_metadata]")
 {
     const auto path = temp_mcap_path("test_tactile_metadata");
@@ -347,7 +416,8 @@ TEST_CASE("Live tactile metadata is semantically verified before adoption and re
         auto writer = open_writer(path);
         core::McapTrackerChannels<core::TactileMetadata> channels(*writer, BASE_NAME, { "metadata" });
         core::SchemaMetadataTracker<core::TactileMetadata> tracker(runtime.handles(), DATA_COLLECTION, &channels);
-        runtime.create(METADATA_COLLECTION, core::TRACKER_METADATA_MAX_SIZE);
+        runtime.create(METADATA_COLLECTION, core::TRACKER_METADATA_MAX_SIZE,
+                       std::string(core::TRACKER_METADATA_TENSOR_IDENTIFIER));
 
         core::HandSkeletonRefT hand;
         hand.joint_ids = { core::HandJoint_WRIST };
