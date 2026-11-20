@@ -28,4 +28,5 @@ endif()
 
 if(TARGET Teleop::remote_plugin_session)
     add_subdirectory(remote_device_bridge)
+    add_subdirectory(remote_device_bridge_server)
 endif()

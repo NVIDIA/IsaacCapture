@@ -99,6 +99,11 @@ RemoteAddress parse_remote(const std::string& text, uint16_t default_port)
     return remote;
 }
 
+RemoteAddress parse_bridge_remote(const std::string& text)
+{
+    return parse_remote(text, text.starts_with("ws://") ? kDefaultBridgeWsPort : kDefaultBridgePort);
+}
+
 std::unique_ptr<ITransport> connect_transport(const RemoteAddress& remote, std::chrono::milliseconds timeout)
 {
     TcpSocket socket = TcpSocket::connect(remote.endpoint, timeout);
