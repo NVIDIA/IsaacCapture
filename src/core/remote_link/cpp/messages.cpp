@@ -39,6 +39,12 @@ const char* to_string(LinkMessageType type)
         return "SAMPLES";
     case LinkMessageType::Ready:
         return "READY";
+    case LinkMessageType::RobotStateSetup:
+        return "ROBOT_STATE_SETUP";
+    case LinkMessageType::RobotStateSamples:
+        return "ROBOT_STATE_SAMPLES";
+    case LinkMessageType::RobotStateRecords:
+        return "ROBOT_STATE_RECORDS";
     }
     return "UNKNOWN";
 }
