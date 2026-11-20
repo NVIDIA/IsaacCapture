@@ -76,7 +76,15 @@ constexpr PlaneSize plane_size_of(PixelFormat format, std::uint32_t width, std::
 enum class MemoryKind : std::uint32_t
 {
     HOST = 1, // shared host memory
+    CUDA = 2, // memory of one CUDA device (cuda_pool.hpp)
 };
+
+// Names a CUDA device in every process: the driver's UUID for it. All zero names none.
+using CudaDeviceUuid = std::array<std::uint8_t, 16>;
+
+// The address of a byte of device memory. It means something only on the device it belongs
+// to, in that device's primary context, which is the context CuPy, PyTorch and most SDKs use.
+using CudaAddress = std::uintptr_t;
 
 struct StreamDescription
 {
@@ -90,6 +98,16 @@ struct StreamDescription
     std::uint64_t slot_bytes = 0; // capacity of one slot
     std::uint32_t slot_count = 0;
     double frame_rate = 0.0; // configured or measured, not the sensor mode's maximum
+
+    // CUDA memory only: the device the stream's pool is on.
+    CudaDeviceUuid cuda_device = {};
+
+    // Whether the images are on a GPU, whichever kind of memory carries them there: a reader
+    // then has device addresses for them (ImageView::cuda_plane), not host bytes.
+    constexpr bool on_gpu() const
+    {
+        return memory != MemoryKind::HOST;
+    }
 };
 
 // One or more hardware-synchronised streams that are published as one frame set.

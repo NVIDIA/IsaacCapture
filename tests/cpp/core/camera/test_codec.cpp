@@ -82,6 +82,7 @@ void require_same(const GroupDescription& actual, const GroupDescription& expect
         REQUIRE(a.slot_bytes == e.slot_bytes);
         REQUIRE(a.slot_count == e.slot_count);
         REQUIRE(a.frame_rate == e.frame_rate);
+        REQUIRE(a.cuda_device == e.cuda_device);
     }
 }
 
@@ -361,6 +362,47 @@ TEST_CASE("a description is decoded as it was sent; whether it makes sense is ch
         REQUIRE_FALSE(problem_with(response.groups[0].group).empty());
     }
     REQUIRE(problem_with(round_trip(encoder, response_with({ stereo_group() })).groups[0].group).empty());
+}
+
+TEST_CASE("a stream in CUDA memory is described with its device", "[unit][camera]")
+{
+    GroupDescription group = stereo_group();
+    for (StreamDescription& stream : group.streams)
+    {
+        stream.memory = MemoryKind::CUDA;
+        stream.cuda_device = { 0xb4, 0x37, 0x72, 0x62, 0xe0, 0x0d, 0x16, 0x89,
+                               0xcd, 0xf9, 0xd9, 0xc0, 0x2b, 0x8a, 0xee, 0x17 };
+    }
+    MessageEncoder encoder;
+    const HandshakeResponse response = round_trip(encoder, response_with({ group, stereo_group() }));
+    REQUIRE(response.groups.size() == 2);
+    REQUIRE(response.groups[0].unsupported.empty());
+    require_same(response.groups[0].group, group);
+    REQUIRE(problem_with(response.groups[0].group).empty());
+    // A stream in host memory names no device.
+    require_same(response.groups[1].group, stereo_group());
+
+    // A device that is named in another form than this build's, or not at all, is not guessed at.
+    flatbuffers::FlatBufferBuilder builder;
+    const auto cuda_stream = [&builder](const std::vector<std::uint8_t>* device)
+    {
+        const std::vector<core::CameraPlaneLayout> planes(1, core::CameraPlaneLayout(0, 64));
+        return core::CreateCameraStream(builder, builder.CreateString("head/0"), core::CameraPixelFormat_Gray8,
+                                        core::CameraMemoryKind_Cuda, 64, 64, builder.CreateVectorOfStructs(planes),
+                                        64 * 64, 4, 30.0, device != nullptr ? builder.CreateVector(*device) : 0);
+    };
+    const std::vector<std::uint8_t> short_name = { 1, 2, 3, 4 };
+    for (const std::vector<std::uint8_t>* device : { &short_name, static_cast<const std::vector<std::uint8_t>*>(nullptr) })
+    {
+        builder.Clear();
+        ProtocolMessage decoded =
+            decode_message(finish_response(builder, { build_group(builder, "head", { cuda_stream(device) }) }));
+        const std::vector<GroupEntry> groups = std::get<HandshakeResponse>(std::move(decoded)).groups;
+        REQUIRE(groups.size() == 1);
+        REQUIRE(groups[0].group.id == "head");
+        REQUIRE(groups[0].group.streams.empty());
+        REQUIRE(groups[0].unsupported.find("CUDA device") != std::string::npos);
+    }
 }
 
 TEST_CASE("a group this build cannot read is listed as such, next to the ones it can", "[unit][camera]")

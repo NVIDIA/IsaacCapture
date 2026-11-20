@@ -12,6 +12,7 @@ add_library(camera STATIC
     camera_reader.cpp
     codec.cpp
     config.cpp
+    cuda_pool.cpp
     description.cpp
     endpoint.cpp
     endpoint_path.cpp
@@ -24,6 +25,7 @@ add_library(camera STATIC
     inc/camera/camera_reader.hpp
     inc/camera/camera_source.hpp
     inc/camera/config.hpp
+    inc/camera/cuda_pool.hpp
     inc/camera/endpoint.hpp
     inc/camera/endpoint_path.hpp
     inc/camera/host_pool.hpp
@@ -46,5 +48,14 @@ target_link_libraries(camera
         yaml-cpp::yaml-cpp
         Threads::Threads
 )
+
+# CUDA memory is built in when the CUDA Toolkit's headers are there. Nothing links CUDA: the
+# driver's library is loaded when CUDA memory is first used, so the library and what links it
+# run where no NVIDIA driver is installed.
+if(CUDAToolkit_FOUND)
+    target_compile_definitions(camera PRIVATE CAMERA_HAS_CUDA)
+    target_include_directories(camera SYSTEM PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(camera PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 add_library(camera::camera ALIAS camera)

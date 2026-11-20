@@ -21,6 +21,8 @@ What is in it, included as `<camera/NAME.hpp>` from the target `camera::camera`:
 - `publisher.hpp`: `Publisher`, which decides which pool slot holds which frame set and who may
   still read it.
 - `host_pool.hpp`: `HostPool` and `HostPoolView`, one stream's slots in shared host memory.
+- `cuda_pool.hpp`: `CudaPool` and `CudaPoolView`, one stream's slots in the memory of a CUDA
+  device, shared the same way.
 - `message_socket.hpp`: `MessageListener` and `MessageSocket`, the connection between the
   processes.
 - `endpoint_path.hpp`: where a camera plugin listens.
@@ -157,6 +159,48 @@ Not covered: a process that is stopped while it waits inside `next` is handed, w
 continues, the frame set that arrived meanwhile. A reader that needs to know how old its
 frame is has the times of every step in `timeline()`.
 
+### A camera on a GPU
+
+A camera plugin may publish a camera's frames on a GPU instead of in host memory;
+`stream->on_gpu()` says which. The reader maps the plugin's buffers on that device,
+read-only, and nothing is copied: not to the host and not on the device.
+
+```cpp
+const ImageView left = frames->image(0);
+if (left.stream->on_gpu())
+{
+    // The plane starts at this address on the device, in the device's primary context.
+    process_on_gpu(left.cuda_plane(0), left.cuda_device_index, left.stream->planes[0].stride_bytes);
+}
+```
+
+- **Ask `on_gpu()`, not for the kind of memory.** `stream->memory` says how the memory
+  crosses between the processes, which is the platform's business: memory of a CUDA device
+  is the one kind there is. What `cuda_plane()` gives is a CUDA address whichever kind it
+  is. Each plane has an address of its own; do not work one out from another's.
+- **The address is good in the device's primary context**, the context CuPy, PyTorch and the
+  CUDA runtime (`cudaMalloc`, `cudaMemcpy`) use. `cuda_device_index` is the device's index in
+  this process.
+- **The reader is on the same device.** A process that does not see the device, for example
+  through `CUDA_VISIBLE_DEVICES`, cannot open the camera, and the error says so.
+- **Give the frame set back when the device has finished.** A read that is queued on a CUDA
+  stream may run later. Hold the frame set until it has (`cudaStreamSynchronize`, or a copy
+  back to the host); once it is given back the camera writes the buffer again, and a read
+  that runs late sees the newer pixels.
+- **The buffers cannot be written to.** The device refuses a write through the reader's
+  mapping. A kernel that tries fails, and CUDA is not usable in that process afterwards, so
+  an in-place operation needs a copy first.
+- **A hardware encoder copies first.** NVENC does not register memory of this kind as an
+  input, from the plugin's process or a reader's. Copy the image on the device into memory
+  of your own and encode that; the frame set can go back as soon as the copy has finished.
+- `plane()` and `data` are for host memory and throw for an image on a GPU;
+  `cuda_plane()` is the other way round. `copy_from_cuda` (`cuda_pool.hpp`) copies an image
+  to the host for code that has no use for it on the device.
+- The library needs the CUDA Toolkit's headers when it is built and the NVIDIA driver when
+  CUDA memory is used, and nothing else: a process that reads cameras in host memory runs
+  where no driver is installed. Built without the toolkit, it reports such a camera as one it
+  cannot map.
+
 ### Python
 
 The same reader as `isaaccapture.camera`:
@@ -204,8 +248,19 @@ with CameraReader.open("head") as reader:
 - `with frames.borrow() as frames:` is for code that must not keep anything: the frame set
   goes back to the plugin when the block ends, and an array of it that still exists then
   raises `BufferError` instead of holding the frame set without a word.
-- Arrays are NumPy arrays over host memory. A DLPack export is added with the first pool
-  kind that is not host memory, where it is the way to hand a frame to a tensor library.
+- Arrays are NumPy arrays over host memory. An image on a GPU
+  (`image.stream.on_gpu`) is handed out on the device instead: `cuda_array()` and
+  `cuda_plane(i)` return a `CudaArray`, which CuPy, PyTorch and Numba turn into an array of
+  theirs without a copy, through `__cuda_array_interface__`:
+
+  ```python
+  plane = frames.image(0).cuda_array()             # shape (height, width, 4), on plane.device
+  left = cupy.asarray(plane)                       # or torch.as_tensor(plane, device="cuda:0")
+  ```
+
+  It keeps its frame set held like a NumPy array does, and so does every array made from it.
+  The rules of "A camera on a GPU" apply: the buffer cannot be written to, and the
+  array is kept until the device has finished what reads it.
 - `bgra8` and `rgba8` images are `(height, width, 4)`, `gray8` is `(height, width)`; `nv12`
   has two planes, `plane(0)` and `plane(1)`. `data` is the flat bytes of the whole slot.
 - The synthetic camera plugin ships in the package under `plugins/camera_synthetic`. The
@@ -351,6 +406,17 @@ interface and the protocol carry no encoded video and no encoder control. A cons
 streams or records is a reader: it reads the frames and encodes them itself, with the
 settings its own purpose needs, and what it does about a lost or late frame is its own.
 
+**A camera whose frames are on a GPU** describes its streams with `MemoryKind::CUDA` and the
+device they are on (`cuda_device_uuid()` in `cuda_pool.hpp`). Its slots are then memory of
+that device: `acquire()` gives the slot's address in `WritableImage::cuda`, and
+`slot_cuda_memory()` gives it for an SDK that is handed its buffers up front. The source
+writes there in the device's primary context and publishes **when the device has finished
+writing**, not when the write was queued: readers are other processes, and nothing orders
+their reads behind this process's CUDA streams. A copy from host memory is not finished
+when it returns either; `copy_to_cuda` waits. A camera that can do both takes the option
+`memory`, with `host` or `gpu`: the option says where the frames are, and the plugin takes
+the kind of GPU memory the platform has.
+
 ### Writing a camera plugin
 
 [`src/plugins/camera_synthetic`](../../plugins/camera_synthetic) is the template. For a
@@ -462,13 +528,16 @@ Three different things are true of a slot at different times, and they are kept 
 - **Held**: a lease says a reader may read the slot. It is not reused or rewritten while any
   lease or the ring refers to it, across a camera restart as well.
 - **Done**: `release` says everything the reader started on the slot has finished. For host
-  memory that is the moment it stops reading.
+  memory that is the moment it stops reading. For CUDA memory it is when the device has
+  finished the reads the reader queued.
 
 When a reader goes away its leases are taken back at once. That is right for host memory: a
 reader that is gone reads nothing, and one that closed its connection while still reading
-gets changing pixels, never memory that is gone. It is not evidence that work a reader handed
-to a GPU or a hardware encoder has finished, so a pool kind where such work can outlive the
-connection has to bring its own rule for these slots before it is added.
+gets changing pixels, never memory that is gone. It holds for CUDA memory for the same
+reason: a reader's mapping is read-only and keeps the memory alive, so work that a reader
+left on the device when it released too early, or when it went away, reads newer pixels and
+harms nobody else. A pool kind where late work could write, or could outlive the memory, has
+to bring its own rule for these slots before it is added.
 
 #### Pool budget
 
@@ -516,6 +585,45 @@ Why an anonymous sealed file and not named shared memory (`shm_open`):
   the others see, and cannot make the owner fault by shrinking the file under it.
 - **Access follows the connection.** Only a process that was handed the descriptor can map the
   pool.
+
+#### CUDA pool
+
+`CudaPool` is one stream's slots in the memory of one CUDA device: a single allocation, with
+the slots one stride apart, that the driver exports as a file descriptor
+(`cuMemCreate`, `cuMemExportToShareableHandle`). A reader is sent the descriptor like a host
+pool's and maps the allocation on the same device with `CudaPoolView`, read-only.
+
+```cpp
+const CudaDeviceUuid device = cuda_device_uuid(0);
+CudaPool pool(device, stream.slot_count, stream.slot_bytes);
+CudaAddress pixels = pool.slot(index);                   // the owner's GPU code writes here
+
+CudaPoolView view(std::move(received_descriptor), device, stream.slot_count, stream.slot_bytes);
+CudaAddress image = view.slot(index);                    // a reader's GPU code reads the same memory
+```
+
+It keeps what a host pool gives:
+
+- **Nothing to clean up.** The memory has no name, and is freed when the pool and every
+  mapping of it are gone. A reader's view stays good when the plugin ends or is killed.
+- **Readers cannot damage it.** A view is mapped read-only, and the device refuses a write
+  through it.
+- **Access follows the connection.** Only a process that was handed the descriptor can map
+  the pool.
+
+What differs:
+
+- **A device is named by its UUID.** A device's index differs from process to process, so a
+  stream's description carries the UUID (`nvidia-smi -L` prints it), and each side finds its
+  own index for it.
+- **The layout is derived on both sides**, as for a host pool: the slots one stride apart,
+  rounded up to what the device allocates in. A reader maps the allocation whole, and a
+  description that does not fit the allocation it came with is refused by the driver.
+- **Addresses are per process.** A slot is at a different address in each process that maps
+  the pool; what the processes share is the slot's index.
+- **The driver is loaded when CUDA memory is first used** (`libcuda.so.1`), and the library
+  does not link against it. `cuda_unavailable()` says why CUDA memory cannot be used in this
+  process: built without the CUDA Toolkit, no driver, or no device.
 
 #### Message socket
 
@@ -578,16 +686,16 @@ it connects. A directory that does not exist yet gives an empty list and is not 
 Three things have to cross between the processes: the frame memory, a small event per frame
 set, and the news that a peer has gone.
 
-Frame memory is named by a file descriptor: a sealed memory file here, and the same holds for
-the buffers of hardware capture and codec stacks (DMA-BUF) and for GPU memory that can be
-exported. Attaching a descriptor to a message on a Unix socket is the standard way to hand one
-to another process, so a socket is needed whatever else is used. Once it is there it also
+Frame memory is named by a file descriptor: a sealed memory file or an exported CUDA
+allocation here, and the same holds for the buffers of hardware capture and codec stacks
+(DMA-BUF). Attaching a descriptor to a message on a Unix socket is the standard way to hand
+one to another process, so a socket is needed whatever else is used. Once it is there it also
 carries the events and reports dead peers, which leaves a messaging library nothing to do.
 
 | Considered | Why it is not used |
 |---|---|
 | iceoryx2 | It moves self-contained data through host memory that it allocates. Frame memory that exists only as a descriptor would still need a socket beside it, and its C++ binding adds a Rust toolchain to the build. |
-| CUDA inter-process handles | A way to share one kind of GPU memory, not a way to connect processes: the handle still has to travel over some connection, and host memory and DMA-BUF are not covered. |
+| CUDA inter-process handles | A way to share one kind of GPU memory, not a way to connect processes: the handle still has to travel over some connection, and host memory and DMA-BUF are not covered. A CUDA pool is shared by the descriptor the driver exports, over this socket. |
 | ZeroMQ, gRPC, DDS | They copy the payload or share host memory only, and none of them pass descriptors. |
 | PipeWire, GStreamer | The same mechanism underneath, wrapped in a media graph and, for PipeWire, a daemon. A reader here needs neither. |
 
@@ -638,9 +746,9 @@ is a recording format. A transport that sends frames to another machine carries 
 identifies a capture there (the group's `session_id` and a frame set's `sequence`, its
 times, its flags) in its own messages, and a recorder maps the times to its own timestamps.
 
-The descriptors attached to a handshake response are one per stream, in stream order. That
-is the rule for host memory, the one kind there is. A kind of memory that needs something
-else describes its attachments when it is added.
+The descriptors attached to a handshake response are one per stream, in stream order: the
+memory file of a host pool, or the descriptor the driver exports for a CUDA pool. A kind of
+memory that needs something else describes its attachments when it is added.
 
 #### Schema
 
@@ -745,8 +853,8 @@ subscription ends and every frame set it held goes back to the pool. A reader th
 bytes that are not a message, a message only a plugin sends, or an operation this build
 does not know, is dropped the same way; other readers are not affected.
 
-Why taking the frame sets back at once is right for host memory, and what another kind of
-memory needs before it is served from here, is in
+Why taking the frame sets back at once is right for host and for CUDA memory, and what
+another kind of memory needs before it is served from here, is in
 [What publishing, holding and releasing mean](#what-publishing-holding-and-releasing-mean).
 
 #### Logging
@@ -789,9 +897,16 @@ start with `camera_`, and in a build with the Python bindings the Python tests b
   killed and can still read what it holds; a reader finds two groups on two plugin processes by
   name, and still finds the one after the other was killed.
 
+- **GPU** (`ctest -L gpu`): the cases that need a CUDA device, which are skipped where there
+  is none. A pool and a view of it: the view sees the owner's writes, cannot be written
+  through, and keeps the memory when the pool is gone. A camera in CUDA memory behind a host,
+  read on the device by a reader, next to one in host memory.
+
 `tests/python/core/camera` (`ctest -L camera_python`) reads from the synthetic camera plugin
 that is bundled into the package, started as a process and, in one case, through the plugin
 manager. Besides the reading, the cases cover the finding, each in a user's directories of
 its own: a reader that is told nothing finds the plugin; a listing names the endpoint of its
 plugin; two plugins side by side are both found by group; a group on two plugins, and a
-group nobody publishes, are errors that name the endpoints and the directory.
+group nobody publishes, are errors that name the endpoints and the directory. The cases
+that read a camera in CUDA memory as a CuPy array need a CUDA device and CuPy
+(`uv run --extra dev --extra cuda pytest`), and are skipped without.

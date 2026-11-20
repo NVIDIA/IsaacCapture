@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <camera/camera_reader.hpp>
+#include <camera/cuda_pool.hpp>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -71,6 +72,30 @@ struct Layout
     std::vector<py::ssize_t> strides;
 };
 
+// The shape an array of one plane of a pixel image has; `bytes` is left for the caller.
+Layout plane_layout_of(const StreamDescription& stream, std::uint32_t index)
+{
+    const PlaneSize size = plane_size_of(stream.pixel_format, stream.width, stream.height, index);
+    const auto rows = static_cast<py::ssize_t>(size.rows);
+    const auto stride = static_cast<py::ssize_t>(stream.planes[index].stride_bytes);
+    const auto row_bytes = static_cast<py::ssize_t>(size.row_bytes);
+    switch (stream.pixel_format)
+    {
+    case PixelFormat::BGRA8:
+    case PixelFormat::RGBA8:
+        return { {}, { rows, row_bytes / 4, 4 }, { stride, 4, 1 } };
+    case PixelFormat::NV12:
+        if (index == 1)
+        {
+            return { {}, { rows, row_bytes / 2, 2 }, { stride, 2, 1 } };
+        }
+        [[fallthrough]];
+    case PixelFormat::GRAY8:
+        return { {}, { rows, row_bytes }, { stride, 1 } };
+    }
+    throw std::invalid_argument("the image has a pixel format this binding does not know");
+}
+
 // A read-only array over image memory. Its base holds the frame set, so what the array shows
 // stays that frame for as long as the array exists.
 py::array array_of(const Layout& layout, const Lease& lease)
@@ -81,6 +106,30 @@ py::array array_of(const Layout& layout, const Lease& lease)
     py::detail::array_proxy(array.ptr())->flags &= ~py::detail::npy_api::NPY_ARRAY_WRITEABLE_;
     return array;
 }
+
+// One plane of an image in CUDA memory, as CuPy, PyTorch and Numba take it: an object with
+// __cuda_array_interface__. It holds the frame set, and an array made from it holds this.
+struct CudaArray
+{
+    CudaAddress address = 0;
+    std::uint32_t device = 0;
+    std::vector<py::ssize_t> shape;
+    std::vector<py::ssize_t> strides;
+    Lease lease;
+
+    py::dict interface() const
+    {
+        py::dict description;
+        description["shape"] = py::tuple(py::cast(shape));
+        description["typestr"] = "|u1";
+        // The plugin's buffer is mapped read-only on the device. It is described as writable
+        // because PyTorch takes nothing else; a write through it is refused by the device.
+        description["data"] = py::make_tuple(address, false);
+        description["strides"] = py::tuple(py::cast(strides));
+        description["version"] = 3;
+        return description;
+    }
+};
 
 // One image of a frame set. It does not hold the frame set itself: its arrays do.
 struct Image
@@ -105,6 +154,24 @@ struct Image
         return group->streams[stream];
     }
 
+    // An image is asked for where it is: in host memory or on a GPU.
+    void require_on_gpu(bool on_gpu) const
+    {
+        if (description().on_gpu() != on_gpu)
+        {
+            throw std::invalid_argument(on_gpu ? "the image is in host memory: array(), plane(i) and data give it" :
+                                                 "the image is on a GPU: cuda_array() and cuda_plane(i) give it");
+        }
+    }
+
+    // The image with its description where this object keeps it: the reader may be gone.
+    ImageView described() const
+    {
+        ImageView local = view;
+        local.stream = &description();
+        return local;
+    }
+
     Layout data_layout() const
     {
         return { view.data, { static_cast<py::ssize_t>(view.data.size()) }, { 1 } };
@@ -112,51 +179,54 @@ struct Image
 
     Layout plane_layout(std::uint32_t index) const
     {
-        const StreamDescription& stream_description = description();
-        ImageView local = view;
-        local.stream = &stream_description;
-        const std::span<const std::byte> bytes = local.plane(index);
-        const PlaneSize size =
-            plane_size_of(stream_description.pixel_format, stream_description.width, stream_description.height, index);
-        const auto rows = static_cast<py::ssize_t>(size.rows);
-        const auto stride = static_cast<py::ssize_t>(stream_description.planes[index].stride_bytes);
-        const auto row_bytes = static_cast<py::ssize_t>(size.row_bytes);
-        switch (stream_description.pixel_format)
-        {
-        case PixelFormat::BGRA8:
-        case PixelFormat::RGBA8:
-            return { bytes, { rows, row_bytes / 4, 4 }, { stride, 4, 1 } };
-        case PixelFormat::NV12:
-            if (index == 1)
-            {
-                return { bytes, { rows, row_bytes / 2, 2 }, { stride, 2, 1 } };
-            }
-            [[fallthrough]];
-        case PixelFormat::GRAY8:
-            return { bytes, { rows, row_bytes }, { stride, 1 } };
-        }
-        throw std::invalid_argument("the image has a pixel format this binding does not know");
+        const std::span<const std::byte> bytes = described().plane(index);
+        Layout layout = plane_layout_of(description(), index);
+        layout.bytes = bytes;
+        return layout;
     }
 
     py::array data() const
     {
+        require_on_gpu(false);
         return array_of(data_layout(), lease());
     }
 
     py::array plane(std::uint32_t index) const
     {
+        require_on_gpu(false);
         const Lease held = lease(); // before the layout, which reads the image's memory
         return array_of(plane_layout(index), held);
     }
 
     py::array array() const
     {
+        require_one_plane("array()", "plane(i)");
+        return plane(0);
+    }
+
+    CudaArray cuda_plane(std::uint32_t index) const
+    {
+        require_on_gpu(true);
+        Lease held = lease();
+        const CudaAddress address = described().cuda_plane(index);
+        Layout layout = plane_layout_of(description(), index);
+        return { address, view.cuda_device_index, std::move(layout.shape), std::move(layout.strides), std::move(held) };
+    }
+
+    CudaArray cuda_array() const
+    {
+        require_one_plane("cuda_array()", "cuda_plane(i)");
+        return cuda_plane(0);
+    }
+
+private:
+    void require_one_plane(const char* asked, const char* per_plane) const
+    {
         if (description().plane_count != 1)
         {
-            throw std::invalid_argument("array() is for images with one plane; use plane(i) for " +
-                                        std::string(name_of(description().pixel_format)));
+            throw std::invalid_argument(std::string(asked) + " is for images with one plane; use " + per_plane +
+                                        " for " + name_of(description().pixel_format));
         }
-        return plane(0);
     }
 };
 
@@ -380,6 +450,24 @@ PYBIND11_MODULE(_camera, m)
         .def_readonly("slot_bytes", &StreamDescription::slot_bytes)
         .def_readonly("slot_count", &StreamDescription::slot_count)
         .def_readonly("frame_rate", &StreamDescription::frame_rate)
+        .def_property_readonly(
+            "memory", [](const StreamDescription& s) { return s.memory == MemoryKind::CUDA ? "cuda" : "host"; },
+            "The kind of memory the images are in: 'host', or 'cuda' for memory of one CUDA device. An "
+            "application asks on_gpu, which holds for every kind of GPU memory")
+        .def_property_readonly("on_gpu", &StreamDescription::on_gpu,
+                               "Whether the images are on a GPU: cuda_array() and cuda_plane(i) then give them, "
+                               "and array(), plane(i) and data do not")
+        .def_property_readonly(
+            "cuda_device",
+            [](const StreamDescription& s) -> std::optional<std::string>
+            {
+                if (s.memory != MemoryKind::CUDA)
+                {
+                    return std::nullopt;
+                }
+                return cuda_device_name(s.cuda_device);
+            },
+            "The device of 'cuda' memory, named as nvidia-smi names it ('GPU-...'); None for 'host' memory")
         .def("__repr__",
              [](const StreamDescription& s)
              {
@@ -419,10 +507,32 @@ PYBIND11_MODULE(_camera, m)
         .def_readonly("published_ns", &FrameTimeline::published_ns)
         .def_readonly("sent_ns", &FrameTimeline::sent_ns);
 
+    py::class_<CudaArray>(
+        m, "CudaArray",
+        "One plane of an image in CUDA memory: the plugin's buffer on the device, not a copy. CuPy, PyTorch "
+        "and Numba make an array of it without a copy, through __cuda_array_interface__: "
+        "cupy.asarray(plane), torch.as_tensor(plane, device=f'cuda:{plane.device}'). It keeps its frame set "
+        "held, and so does every array made from it. The buffer is read-only: the device refuses a write to "
+        "it. Keep the array until the device has finished what reads it; when the frame set goes back, the "
+        "camera writes the buffer again.")
+        .def_property_readonly("__cuda_array_interface__", &CudaArray::interface)
+        .def_property_readonly(
+            "shape", [](const CudaArray& a) { return py::tuple(py::cast(a.shape)); },
+            "As ImageView.array() and plane(): (height, width, 4), (height, width) or (height/2, width/2, 2)")
+        .def_readonly("device", &CudaArray::device, "The index, in this process, of the device the buffer is on")
+        .def("__repr__",
+             [](const CudaArray& a)
+             {
+                 return "<CudaArray " + std::string(py::str(py::tuple(py::cast(a.shape)))) +
+                        " on cuda:" + std::to_string(a.device) + ">";
+             });
+
     py::class_<Image>(m, "ImageView",
                       "One image of a frame set. Its arrays are read-only views of the plugin's buffer: no copy "
                       "is made. An array keeps its frame set held, so it shows that frame for as long as it "
-                      "exists and counts against the reader's window until it is gone.")
+                      "exists and counts against the reader's window until it is gone. An image is in the "
+                      "host memory or on a GPU, as stream.on_gpu says: array(), plane(i) and data are for "
+                      "host memory, cuda_array() and cuda_plane(i) for an image on a GPU.")
         .def_property_readonly("stream", &Image::description)
         .def_property_readonly("slot", [](const Image& i) { return i.view.info.slot; })
         .def_property_readonly("flags", [](const Image& i) { return i.view.info.flags; })
@@ -432,7 +542,10 @@ PYBIND11_MODULE(_camera, m)
         .def("array", &Image::array,
              "The pixels as (height, width, 4) for bgra8 and rgba8, (height, width) for gray8. Rows are stride bytes apart.")
         .def("plane", &Image::plane, py::arg("index"),
-             "One plane: nv12 has (height, width) luma and (height/2, width/2, 2) chroma.");
+             "One plane: nv12 has (height, width) luma and (height/2, width/2, 2) chroma.")
+        .def("cuda_array", &Image::cuda_array, "array() for an image on a GPU: the pixels on the device")
+        .def("cuda_plane", &Image::cuda_plane, py::arg("index"),
+             "plane() for an image on a GPU: one plane on the device");
 
     py::class_<Borrowed>(m, "_Borrowed")
         .def("__enter__", [](const Borrowed& borrowed) { return borrowed.frames; })

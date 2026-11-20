@@ -3,6 +3,7 @@
 
 #include "inc/camera/camera_host.hpp"
 
+#include "inc/camera/cuda_pool.hpp"
 #include "inc/camera/endpoint.hpp"
 #include "inc/camera/host_pool.hpp"
 
@@ -19,11 +20,28 @@ namespace core::camera
 namespace
 {
 
+// One stream's slots, in the kind of memory the stream is described with.
+struct StreamPool
+{
+    std::unique_ptr<HostPool> host;
+    std::unique_ptr<CudaPool> cuda;
+
+    std::uint32_t slot_count() const
+    {
+        return host ? host->slot_count() : cuda->slot_count();
+    }
+
+    int descriptor() const
+    {
+        return host ? host->descriptor() : cuda->descriptor();
+    }
+};
+
 // One camera's way into the publisher: slots come from the camera's own pools.
 class PoolOutput final : public FrameOutput
 {
 public:
-    PoolOutput(Publisher& publisher, GroupId group, std::vector<std::unique_ptr<HostPool>>& pools)
+    PoolOutput(Publisher& publisher, GroupId group, std::vector<StreamPool>& pools)
         : m_publisher(publisher), m_group(group), m_pools(pools)
     {
     }
@@ -35,17 +53,34 @@ public:
         {
             return std::nullopt;
         }
-        return WritableImage{ *slot, m_pools.at(stream)->slot(*slot) };
+        const StreamPool& pool = m_pools.at(stream);
+        return pool.host ? WritableImage{ *slot, pool.host->slot(*slot), 0 } :
+                           WritableImage{ *slot, {}, pool.cuda->slot(*slot) };
     }
 
     std::uint32_t slot_count(std::size_t stream) const override
     {
-        return m_pools.at(stream)->slot_count();
+        return m_pools.at(stream).slot_count();
     }
 
     std::span<std::byte> slot_memory(std::size_t stream, std::uint32_t slot) override
     {
-        return m_pools.at(stream)->slot(slot);
+        const StreamPool& pool = m_pools.at(stream);
+        if (!pool.host)
+        {
+            throw std::logic_error("the stream's slots are in CUDA memory: ask for slot_cuda_memory()");
+        }
+        return pool.host->slot(slot);
+    }
+
+    CudaAddress slot_cuda_memory(std::size_t stream, std::uint32_t slot) override
+    {
+        const StreamPool& pool = m_pools.at(stream);
+        if (!pool.cuda)
+        {
+            throw std::logic_error("the stream's slots are in host memory: ask for slot_memory()");
+        }
+        return pool.cuda->slot(slot);
     }
 
     void claim(std::size_t stream, std::uint32_t slot) override
@@ -76,7 +111,7 @@ public:
 private:
     Publisher& m_publisher;
     GroupId m_group;
-    std::vector<std::unique_ptr<HostPool>>& m_pools;
+    std::vector<StreamPool>& m_pools;
 };
 
 struct Camera
@@ -84,7 +119,7 @@ struct Camera
     std::unique_ptr<CameraSource> source;
     std::string id;
     GroupId group = 0;
-    std::vector<std::unique_ptr<HostPool>> pools; // one per stream
+    std::vector<StreamPool> pools; // one per stream
     std::unique_ptr<PoolOutput> output;
     PublisherStats logged; // the counters at the previous log_activity()
 };
@@ -131,26 +166,42 @@ void CameraHost::add_camera(std::unique_ptr<CameraSource> source, std::uint32_t 
             stream.slot_count = slot_count;
         }
     }
+    // A description that is not usable is refused before any memory is allocated for it, and
+    // a camera whose memory cannot be had is not published.
+    if (const std::string problem = problem_with(description); !problem.empty())
+    {
+        throw std::invalid_argument(problem);
+    }
 
     auto camera = std::make_unique<Camera>();
     camera->id = description.id;
-    // Refuses a description that is not usable before any memory is allocated for it.
-    const GroupId group = m_impl->publisher.add_group(description, source->backend_reserve());
-    camera->group = group;
     std::vector<int> descriptors;
     for (const StreamDescription& stream : description.streams)
     {
-        camera->pools.push_back(std::make_unique<HostPool>(stream.slot_count, stream.slot_bytes, "camera." + stream.id));
-        descriptors.push_back(camera->pools.back()->descriptor());
+        StreamPool pool;
+        if (stream.memory == MemoryKind::CUDA)
+        {
+            pool.cuda = std::make_unique<CudaPool>(stream.cuda_device, stream.slot_count, stream.slot_bytes);
+        }
+        else
+        {
+            pool.host = std::make_unique<HostPool>(stream.slot_count, stream.slot_bytes, "camera." + stream.id);
+        }
+        descriptors.push_back(pool.descriptor());
+        camera->pools.push_back(std::move(pool));
     }
+    const GroupId group = m_impl->publisher.add_group(description, source->backend_reserve());
+    camera->group = group;
     m_impl->endpoint.set_group_memory(group, std::move(descriptors));
     camera->output = std::make_unique<PoolOutput>(m_impl->publisher, group, camera->pools);
     camera->source = std::move(source);
 
     const StreamDescription& first = description.streams.front();
-    m_impl->logger->info("camera '{}': {} stream(s), {}x{} at {:.2f} fps, {} slots of {} bytes each", description.id,
-                         description.streams.size(), first.width, first.height, first.frame_rate, first.slot_count,
-                         first.slot_bytes);
+    m_impl->logger->info("camera '{}': {} stream(s), {}x{} at {:.2f} fps, {} slots of {} bytes each in {}",
+                         description.id, description.streams.size(), first.width, first.height, first.frame_rate,
+                         first.slot_count, first.slot_bytes,
+                         first.memory == MemoryKind::CUDA ? "CUDA memory on " + cuda_device_name(first.cuda_device) :
+                                                            std::string("host memory"));
     m_impl->cameras.push_back(std::move(camera));
 }
 

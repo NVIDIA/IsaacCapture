@@ -74,6 +74,10 @@ std::string problem_with(const GroupDescription& group)
         {
             return name + " needs a frame rate that is a number, 0 when it is not known";
         }
+        if (stream.memory == MemoryKind::CUDA && stream.cuda_device == CudaDeviceUuid{})
+        {
+            return name + " is in CUDA memory and does not say on which device";
+        }
         if (stream.width == 0 || stream.height == 0)
         {
             return name + " needs a width and a height";

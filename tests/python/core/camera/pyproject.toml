@@ -12,6 +12,10 @@ dev = [
     "pytest",
     "numpy",
 ]
+# For the tests of cameras in CUDA memory, on a machine with a CUDA device.
+cuda = [
+    "cupy-cuda12x",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

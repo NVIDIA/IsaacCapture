@@ -3,6 +3,7 @@
 
 #include <camera/camera_host.hpp>
 #include <camera/camera_reader.hpp>
+#include <camera/cuda_pool.hpp>
 #include <camera/options.hpp>
 #include <camera_synthetic/synthetic_backend.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -151,13 +152,22 @@ std::unique_ptr<CameraSource> open_synthetic(const std::string& argument)
     return std::move(backend.open({ &config, 1 }).front());
 }
 
-// Every byte of a synthetic image is known from its frame number and its stream.
+// Every byte of a synthetic image is known from its frame number and its stream. An image in
+// CUDA memory is copied to the host to be looked at.
 void require_synthetic(const ImageView& image, std::size_t stream)
 {
-    const std::uint64_t frame = synthetic_frame_number(image.data);
+    std::span<const std::byte> pixels = image.data;
+    std::vector<std::byte> copied;
+    if (image.stream->memory == MemoryKind::CUDA)
+    {
+        copied.resize(image.stream->slot_bytes);
+        copy_from_cuda(image.stream->cuda_device, copied, image.cuda_plane(0)); // the slot's start
+        pixels = copied;
+    }
+    const std::uint64_t frame = synthetic_frame_number(pixels);
     REQUIRE(image.info.device_frame_id == frame);
     const std::byte fill = synthetic_fill(frame, stream);
-    const auto rest = image.data.subspan(sizeof(frame));
+    const auto rest = pixels.subspan(sizeof(frame));
     REQUIRE(std::all_of(rest.begin(), rest.end(), [fill](std::byte value) { return value == fill; }));
 }
 
@@ -262,6 +272,15 @@ TEST_CASE("the synthetic backend refuses options it does not know", "[unit][came
     REQUIRE_THROWS_WITH(open_synthetic("head:fps=0"), ContainsSubstring("camera 'head' (synthetic backend)"));
     REQUIRE_THROWS_WITH(open_synthetic("head:streams=9"), ContainsSubstring("option 'streams'"));
     REQUIRE_THROWS_WITH(open_synthetic("head:format=jpeg"), ContainsSubstring("bgra8, rgba8, gray8 or nv12"));
+    REQUIRE_THROWS_WITH(open_synthetic("head:memory=disk"), ContainsSubstring("host or gpu"));
+    REQUIRE_THROWS_WITH(open_synthetic("head:gpu=0"), ContainsSubstring("names the device of memory=gpu"));
+    REQUIRE(open_synthetic("head:memory=host")->describe().streams[0].memory == MemoryKind::HOST);
+    if (!cuda_unavailable().empty())
+    {
+        // A machine without CUDA says so, and which camera asked for it.
+        REQUIRE_THROWS_WITH(open_synthetic("head:memory=gpu"), ContainsSubstring("camera 'head' (synthetic backend)") &&
+                                                                   ContainsSubstring("CUDA memory cannot be used"));
+    }
 
     const GroupDescription pair = open_synthetic("head")->describe();
     REQUIRE(pair.id == "head");
@@ -331,6 +350,56 @@ TEST_CASE("synthetic cameras reach readers whole and in step", "[unit][camera_sy
     host.stop();
     // What was already on its way is still delivered; then the reader is told.
     REQUIRE_THROWS_AS(read_until_closed(head), CameraDisconnected);
+}
+
+TEST_CASE("a synthetic camera in CUDA memory reaches a reader in another process on the device",
+          "[gpu][integration][camera_synthetic]")
+{
+    if (!cuda_unavailable().empty())
+    {
+        SKIP(cuda_unavailable());
+    }
+    const GroupDescription described = open_synthetic("head:memory=gpu,width=64,height=48")->describe();
+    REQUIRE(described.streams[1].memory == MemoryKind::CUDA);
+    REQUIRE(described.streams[1].cuda_device == cuda_device_uuid(0));
+    REQUIRE_THROWS_WITH(open_synthetic("head:memory=gpu,gpu=255"), ContainsSubstring("there is no CUDA device 255"));
+
+    TemporaryDirectory directory;
+    const std::string endpoint = directory.socket_path();
+    PluginProcess plugin({ "--endpoint=" + endpoint, "--camera=head:memory=gpu,width=320,height=240,fps=120",
+                           "--camera=wrist:width=64,height=48,streams=1,format=gray8,fps=120" });
+    std::optional<CameraReader> reader = open_when_ready({ .endpoint = endpoint }, "head", { .window = 2 });
+    REQUIRE(reader.has_value());
+    REQUIRE(reader->group().streams[0].memory == MemoryKind::CUDA);
+
+    std::uint64_t previous = 0;
+    for (int i = 0; i < 30; ++i)
+    {
+        const std::optional<FrameSet> frames = reader->next(2s);
+        REQUIRE(frames.has_value());
+        REQUIRE(frames->image(0).data.empty());
+        require_synthetic(frames->image(0), 0);
+        require_synthetic(frames->image(1), 1);
+        REQUIRE(frames->sequence() > previous);
+        previous = frames->sequence();
+    }
+    // A camera in host memory is served next to it.
+    std::optional<CameraReader> wrist = open_when_ready({ .endpoint = endpoint }, "wrist");
+    REQUIRE(wrist.has_value());
+    const std::optional<FrameSet> gray = wrist->next(2s);
+    REQUIRE(gray.has_value());
+    require_synthetic(gray->image(0), 0);
+
+    // What a reader holds is its own to read, also when the plugin is killed under it.
+    const std::optional<FrameSet> held = reader->next(2s);
+    REQUIRE(held.has_value());
+    const std::uint64_t frame = held->image(0).info.device_frame_id;
+    REQUIRE(plugin.stop(SIGKILL) == -1);
+    require_synthetic(held->image(0), 0);
+    require_synthetic(held->image(1), 1);
+    REQUIRE(held->image(0).info.device_frame_id == frame);
+    REQUIRE_THROWS_AS(read_until_closed(*reader), CameraDisconnected);
+    require_synthetic(held->image(1), 1);
 }
 
 TEST_CASE("a reader in another process gets frames from the plugin", "[integration][camera_synthetic]")
