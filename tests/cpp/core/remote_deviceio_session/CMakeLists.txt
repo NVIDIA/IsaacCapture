@@ -8,7 +8,10 @@ set(REMOTE_DEVICEIO_SESSION_TEST_SOURCES
 )
 # Socket tests; remote_link has no socket implementation on Windows.
 if(NOT WIN32)
-    list(APPEND REMOTE_DEVICEIO_SESSION_TEST_SOURCES test_remote_session_link.cpp)
+    list(APPEND REMOTE_DEVICEIO_SESSION_TEST_SOURCES
+        test_remote_session_link.cpp
+        test_remote_session_robot_state.cpp
+    )
 endif()
 
 add_executable(remote_deviceio_session_tests ${REMOTE_DEVICEIO_SESSION_TEST_SOURCES})

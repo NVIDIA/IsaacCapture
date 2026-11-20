@@ -10,6 +10,8 @@
 #include <pybind11/stl.h>
 #include <remote_link/reject.hpp>
 #include <remote_link/tcp_transport.hpp>
+#include <robot_state_publisher/robot_state_publisher.hpp>
+#include <robot_state_store/robot_state_store.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -24,11 +26,41 @@
 
 namespace py = pybind11;
 
+namespace
+{
+
+//! The series of RemoteSession.set_robot_state(): objects with the attributes of
+//! isaaccapture.robot_state.records.SeriesDeclaration.
+std::vector<core::RobotSeriesDeclaration> robot_series_from(const py::iterable& series)
+{
+    std::vector<core::RobotSeriesDeclaration> declarations;
+    for (const py::handle entry : series)
+    {
+        core::RobotSeriesDeclaration declaration;
+        declaration.name = entry.attr("name").cast<std::string>();
+        declaration.shape = entry.attr("shape").cast<std::string>();
+        declaration.schema_name = entry.attr("schema_name").cast<std::string>();
+        declaration.schema_encoding = entry.attr("schema_encoding").cast<std::string>();
+        const std::string schema_data = entry.attr("schema_data").cast<py::bytes>();
+        declaration.schema_data.assign(schema_data.begin(), schema_data.end());
+        declaration.message_encoding = entry.attr("message_encoding").cast<std::string>();
+        declaration.stale_after_ns = entry.attr("stale_after_ns").cast<int64_t>();
+        declaration.in_order = entry.attr("in_order").cast<bool>();
+        declaration.rate_hz = entry.attr("rate_hz").cast<double>();
+        declarations.push_back(std::move(declaration));
+    }
+    return declarations;
+}
+
+} // namespace
+
 PYBIND11_MODULE(_deviceio_session, m)
 {
     m.doc() = "Isaac Teleop DeviceIO - Session management";
 
     py::module_::import("isaaccapture.deviceio_trackers._deviceio_trackers");
+    // RemoteSessionHost.attach_robot_state() takes its RobotStateStore.
+    py::module_::import("isaaccapture.robot_state._robot_state");
 
     py::register_local_exception_translator(
         [](std::exception_ptr p)
@@ -253,6 +285,26 @@ PYBIND11_MODULE(_deviceio_session, m)
         .def("latest_status", &core::PyRemoteSession::latest_status,
              "The newest STATUS or READY JSON from the server, or None.")
         .def("hello_ack", &core::PyRemoteSession::hello_ack, "The server's HELLO_ACK JSON ('' before connect()).")
+        .def(
+            "set_robot_state",
+            [](core::PyRemoteSession& self, const py::iterable& series)
+            { self.set_robot_state(robot_series_from(series)); },
+            py::arg("series"),
+            "The data series this session may send as robot state: objects with the attributes of "
+            "isaaccapture.robot_state.records.SeriesDeclaration. Kept for every connection start() makes. Raises "
+            "ValueError for a series that cannot be declared, RuntimeError on a closed session or once "
+            "start_robot_state() ran on the current connection.")
+        .def("start_robot_state", &core::PyRemoteSession::start_robot_state,
+             "Send ROBOT_STATE_SETUP for the declared series. Call it once the HELLO_ACK agreed robot state; a "
+             "server that did not agree is sent no robot-state link message. Idempotent. Raises RuntimeError when "
+             "not connected.")
+        .def_property_readonly("robot_state_active", &core::PyRemoteSession::robot_state_active,
+                               "True from start_robot_state() until the connection is closed.")
+        .def("publish_robot_record", &core::PyRemoteSession::publish_robot_record, py::arg("series"), py::arg("data"),
+             py::arg("sample_time_ns"),
+             "Send one record (bytes) of a declared series at once; sample_time_ns is the time of the reading on "
+             "this machine's monotonic clock. False, sending nothing, before start_robot_state() or once the link "
+             "is down. Raises ValueError for an undeclared series or a record above 1 MiB.")
         .def("update", &core::PyRemoteSession::update,
              "Publish the newest received samples to every tracker. Never waits for data. Raises RuntimeError "
              "with the server's ERROR text, once the link is lost, or while a ws:// connection waits for "
@@ -280,6 +332,11 @@ PYBIND11_MODULE(_deviceio_session, m)
         .def("send_ready", &core::PyRemoteSessionHost::send_ready, py::arg("json"))
         .def("send_error", &core::PyRemoteSessionHost::send_error, py::arg("text"),
              "Send the error that ends the session; close() delivers it before closing the connection.")
+        .def("attach_robot_state", &core::PyRemoteSessionHost::attach_robot_state, py::arg("store").none(true),
+             "Robot-state link messages from the robot app go into `store` (an "
+             "isaaccapture.robot_state.RobotStateStore) from now on, after its begin_session(); None detaches. "
+             "close() and a detach call end_session() on the attached store, once per attach. Does nothing after "
+             "close().")
         .def(
             "start_session",
             [](core::PyRemoteSessionHost& self, const core::PyRemoteSession::TrackerNames& trackers,

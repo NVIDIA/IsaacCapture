@@ -19,6 +19,7 @@
 namespace core
 {
 
+class RobotStateStore;
 class TrackerSampleStreamWriter;
 
 /*!
@@ -32,7 +33,8 @@ std::vector<uint8_t> merge_samples_payloads(std::vector<uint8_t> older, std::vec
  * @brief The server end of a remote session: owns the Link, the sample stream writer and the DeviceIOSession.
  *
  * tick() records one DeviceIOSession update and sends it as one SAMPLES link message; one the link could not send
- * yet is merged into the next one. Call start_session(), tick() and close() from one thread; the other methods are
+ * yet is merged into the next one. Robot-state link messages from the robot go into an attached RobotStateStore and
+ * are dropped without one. Call start_session(), tick() and close() from one thread; the other methods are
  * thread-safe.
  */
 class RemoteSessionHost
@@ -74,10 +76,19 @@ public:
     //! session does not write. Sends nothing once the link is down. Throws what update() throws.
     void tick();
 
+    /*!
+     * @brief Robot-state link messages go into `store` from now on, after store->begin_session(); nullptr detaches.
+     *
+     * The store attached until then gets end_session() first, once per attach, here or in close(). A malformed
+     * payload is dropped and logged, once per attach. Does nothing after close(). Thread-safe.
+     */
+    void attach_robot_state(std::shared_ptr<RobotStateStore> store);
+
     bool alive() const;
     //! Empty while alive.
     std::string close_reason() const;
-    //! Idempotent: ends the DeviceIOSession, then closes the link so that the robot reads every queued message.
+    //! Idempotent: detaches the robot-state store, ends the DeviceIOSession, then closes the link so that the
+    //! robot reads every queued message.
     void close();
 
 private:
@@ -87,6 +98,7 @@ private:
     RemoteSessionHost(std::unique_ptr<ITransport> transport, LinkOptions link_options);
 
     void handle(ReceivedLinkMessage&& message);
+    void handle_robot_state(const ReceivedLinkMessage& message);
     void send_text(LinkMessageType type, const std::string& text);
 
     // The writer outlives the session recording into it.

@@ -29,7 +29,8 @@ target_include_directories(deviceio_session
 # oxr::oxr_utils (OpenXR headers + oxr inc/) and Teleop::openxr_extensions (NVIDIA
 # extension headers) so consumers (Python bindings, apps) compile without linking
 # live_trackers. The remote session headers expose remote_link types (LinkOptions,
-# ClockEstimate, ITransport).
+# ClockEstimate, ITransport) and robot-state types (RobotSeriesDeclaration,
+# RobotStateStore).
 target_link_libraries(deviceio_session
     PUBLIC
         deviceio::deviceio_base
@@ -37,6 +38,8 @@ target_link_libraries(deviceio_session
         Teleop::openxr_extensions
         log_bridge::log_bridge_core
         remote_link::remote_link
+        robot_state::robot_state_publisher
+        robot_state::robot_state_store
     PRIVATE
         deviceio::deviceio_trackers
         deviceio::live_trackers
