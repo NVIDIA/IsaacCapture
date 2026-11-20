@@ -126,7 +126,7 @@ def test_body_cli_rejects_controller_collection_collision(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         module,
-        "build_body_pipeline",
+        "build_full_body_pipeline" if module is record_full_body else "build_body_view",
         MagicMock(side_effect=AssertionError("invalid arguments reached the pipeline")),
     )
     if module is record_full_body:
@@ -284,7 +284,7 @@ def test_body_schema_selection_preserves_controller_defaults(flags, names):
     common.add_body_arguments(parser)
     args = parser.parse_args([*flags, "--soma-body-representation", "joint-poses"])
     common.validate_body_arguments(parser, args)
-    pipeline = common.build_body_pipeline(args)
+    pipeline = common.build_body_view(args).pipeline
     assert {source.name for source in pipeline.get_leaf_nodes()} == names
 
 
@@ -339,13 +339,16 @@ def test_default_body_native_replay_and_renderer(legacy_mcap):
     )
     server = MagicMock()
     viz = FullBodyViz(server)
-    args = argparse.Namespace(body_schema="full-body-pose")
+    parser = argparse.ArgumentParser()
+    common.add_body_arguments(parser)
+    args = parser.parse_args([])
+    common.validate_body_arguments(parser, args)
+    view = common.build_body_view(args)
+    args.body_schema = "soma"
     for _ in range(2):
         with TeleopSession(config) as session:
             for expected in [24, 0, 24, 0]:
-                assert (
-                    common.update_body_visualizer(args, session.step(), viz) == expected
-                )
+                assert view.update_visualizer(session.step(), viz) == expected
                 assert viz.points.points.shape == (24, 3)
                 if expected:
                     np.testing.assert_array_equal(viz.points.points[23], [69, 70, 71])
@@ -371,6 +374,27 @@ def test_default_body_replay_keeps_duration_and_60_hz(
         "full_body",
         "controllers",
     }
+
+
+def test_default_body_replay_builds_a_fresh_pipeline_per_loop(monkeypatch, tmp_path):
+    configs = []
+
+    def session(config):
+        if len(configs) == 2:
+            raise KeyboardInterrupt
+        configs.append(config)
+        return MagicMock()
+
+    monkeypatch.setattr(replay_full_body, "TeleopSession", session)
+    monkeypatch.setattr(
+        replay_full_body, "resolve_mcap", lambda _: tmp_path / "body.mcap"
+    )
+    monkeypatch.setattr(replay_full_body, "mcap_duration_s", lambda _: 0)
+    monkeypatch.setattr(replay_full_body.viser, "ViserServer", MagicMock())
+
+    assert replay_full_body.main(["replay"]) == 0
+    assert len(configs) == 2
+    assert configs[0].pipeline is not configs[1].pipeline
 
 
 def test_body_replay_cli_uses_native_soma_recording(soma_mcap, monkeypatch):

@@ -469,13 +469,16 @@ def test_default_hand_native_replay_keeps_openxr_palm_and_26_joints(legacy_mcap)
     common.add_hand_arguments(parser)
     args = parser.parse_args([])
     assert args.hand_schema == "openxr-hand-pose"
-    visualizers = common.create_hand_visualizers(args, MagicMock())
+    view = common.build_hand_view(args)
+    visualizers = view.create_visualizer(MagicMock())
+    args.hand_schema = "soma"
     for _ in range(2):
         with TeleopSession(config) as session:
             for present in [True, False, True, False]:
-                assert common.update_hand_visualizers(
-                    args, session.step(), visualizers
-                ) == [present, present]
+                assert view.update_visualizer(session.step(), visualizers) == [
+                    present,
+                    present,
+                ]
                 for viz in visualizers.values():
                     assert viz.points.points.shape == (26, 3)
                     if present:
@@ -519,6 +522,25 @@ def test_default_hand_replay_keeps_duration_and_60_hz(
     clock.sleep.assert_called_once_with(1 / 60)
     config = factory.call_args.args[0]
     assert {source.name for source in config.pipeline.get_leaf_nodes()} == {"hands"}
+
+
+def test_default_hand_replay_builds_a_fresh_pipeline_per_loop(monkeypatch, tmp_path):
+    configs = []
+
+    def session(config):
+        if len(configs) == 2:
+            raise KeyboardInterrupt
+        configs.append(config)
+        return MagicMock()
+
+    monkeypatch.setattr(replay_hand, "TeleopSession", session)
+    monkeypatch.setattr(replay_hand, "resolve_mcap", lambda _: tmp_path / "hands.mcap")
+    monkeypatch.setattr(replay_hand, "mcap_duration_s", lambda _: 0)
+    monkeypatch.setattr(replay_hand.viser, "ViserServer", MagicMock())
+
+    assert replay_hand.main(["replay"]) == 0
+    assert len(configs) == 2
+    assert configs[0].pipeline is not configs[1].pipeline
 
 
 def test_hand_replay_cli_uses_native_soma_recording(soma_hand_mcap, monkeypatch):
