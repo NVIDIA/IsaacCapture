@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import os
+import select
 import subprocess
 import tempfile
 from collections.abc import Iterable
@@ -38,6 +40,9 @@ _CODEC_NAME_ALIASES = {
 # Maximum time to wait for FFmpeg to exit after its decoded-frame stream reaches EOF.
 DECODE_TIMEOUT_SECS = 60
 
+# Maximum time FFmpeg may go without writing any frame data before it is considered stalled.
+READ_INACTIVITY_TIMEOUT_SECS = 60
+
 
 @dataclass(frozen=True)
 class VideoStreamInfo:
@@ -59,6 +64,12 @@ class VideoDecodePlan:
     decoder_name: str
 
 
+_PROBE_ENTRIES = (
+    "stream=codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration:"
+    "format=duration:stream_side_data=rotation:stream_tags=rotate"
+)
+
+
 def probe_video_stream(path: Path | str) -> VideoStreamInfo:
     """Read codec and geometry metadata with the external ``ffprobe`` executable."""
     command = [
@@ -68,8 +79,7 @@ def probe_video_stream(path: Path | str) -> VideoStreamInfo:
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=codec_name,width,height,avg_frame_rate,r_frame_rate,nb_frames,duration:"
-        "format=duration",
+        _PROBE_ENTRIES,
         "-of",
         "json",
         str(path),
@@ -104,7 +114,12 @@ def probe_video_stream(path: Path | str) -> VideoStreamInfo:
 
     if width <= 0 or height <= 0:
         raise VideoDecodeError(f"Could not determine video dimensions: {path}")
-    fps = _parse_frame_rate(stream.get("avg_frame_rate") or stream.get("r_frame_rate"))
+    # Frames are autorotated like OpenCV's default, so report the displayed size.
+    if _quarter_turn(stream):
+        width, height = height, width
+    fps = _parse_frame_rate(stream.get("avg_frame_rate"))
+    if fps is None:
+        fps = _parse_frame_rate(stream.get("r_frame_rate"))
     frame_count = _parse_positive_int(stream.get("nb_frames"))
     format_payload = payload.get("format")
     format_duration = (
@@ -181,7 +196,13 @@ def iter_decoded_rgb24_frames(
 
     try:
         while True:
-            payload = _read_exact(process.stdout, frame_bytes)
+            try:
+                payload = _read_exact(process.stdout, frame_bytes)
+            except TimeoutError as exc:
+                _terminate_and_reap(process)
+                raise VideoDecodeError(
+                    _decode_timeout_message(path, plan.decoder_name, stderr_file)
+                ) from exc
             if not payload:
                 break
             if len(payload) != frame_bytes:
@@ -206,6 +227,18 @@ def iter_decoded_rgb24_frames(
         if process.poll() is None:
             _terminate_and_reap(process)
         stderr_file.close()
+
+
+def _quarter_turn(stream: dict[str, Any]) -> bool:
+    """True when the stream's display rotation is 90 or 270 degrees."""
+    angles = [side.get("rotation") for side in stream.get("side_data_list") or []]
+    angles.append((stream.get("tags") or {}).get("rotate"))
+    for angle in angles:
+        try:
+            return round(float(angle)) % 180 == 90
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 def _parse_frame_rate(value: object) -> float | None:
@@ -263,7 +296,6 @@ def _decode_command(
         "error",
         "-c:v",
         decoder_name,
-        "-noautorotate",
         "-i",
         str(path),
         "-map",
@@ -289,11 +321,20 @@ def _decode_command(
     return command
 
 
-def _read_exact(stream: Any, size: int) -> bytes:
+def _read_exact(
+    stream: Any, size: int, inactivity_timeout: float | None = None
+) -> bytes:
+    """Read ``size`` bytes, raising TimeoutError if no data arrives for the timeout."""
+    if inactivity_timeout is None:
+        inactivity_timeout = READ_INACTIVITY_TIMEOUT_SECS
+    fd = stream.fileno()
     chunks: list[bytes] = []
     remaining = size
     while remaining > 0:
-        chunk = stream.read(remaining)
+        # Raw fd reads only: the buffered reader would hide data from select().
+        if not select.select([fd], [], [], inactivity_timeout)[0]:
+            raise TimeoutError("no frame data within the inactivity timeout")
+        chunk = os.read(fd, min(remaining, 1 << 20))
         if not chunk:
             break
         chunks.append(chunk)
@@ -326,22 +367,23 @@ def _terminate_and_reap(process: subprocess.Popen[bytes]) -> None:
     try:
         process.terminate()
     except ProcessLookupError:
-        pass
+        pass  # already exited
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         try:
             process.kill()
         except ProcessLookupError:
-            pass
+            pass  # exited between terminate() and kill()
         try:
             process.wait()
         except ProcessLookupError:
-            pass
+            pass  # already reaped
 
 
 __all__ = [
     "DECODE_TIMEOUT_SECS",
+    "READ_INACTIVITY_TIMEOUT_SECS",
     "H264_GPU_REQUIRED_MESSAGE",
     "UnsupportedVideoCodecError",
     "VideoDecodeError",

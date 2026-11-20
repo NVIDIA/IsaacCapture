@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -190,4 +191,5 @@ def test_unsupported_codec_found_while_reading_first_frame(monkeypatch, capsys):
 def test_script_reads_video_only_through_the_backend():
     # The release image's OpenCV has no video I/O, so a direct cv2.VideoCapture
     # would reject every input there.
-    assert "VideoCapture" not in open(script.__file__).read()
+    source = Path(script.__file__).read_text()
+    assert "VideoCapture" not in source
