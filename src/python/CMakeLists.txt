@@ -35,6 +35,12 @@ if(NOT BUILD_VIZ)
     list(FILTER ISAAC_TELEOP_PYTHON_SOURCES EXCLUDE REGEX "^isaaccapture/viz/")
 endif()
 
+# camera/__init__.py does a top-level `from ._camera import ...`, and _camera is
+# built on Linux only, so without it the package is unimportable and is left out.
+if(NOT TARGET camera_py)
+    list(FILTER ISAAC_TELEOP_PYTHON_SOURCES EXCLUDE REGEX "^isaaccapture/camera/")
+endif()
+
 set(ISAAC_TELEOP_PYTHON_STAGE_DIR "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>")
 
 # Staging copies, it never removes: a .py deleted or renamed in the source tree
