@@ -72,7 +72,7 @@ option(BUILD_PLUGIN_OGLO "Build OGLO tactile glove plugin (BLE, Linux only; fetc
 option(BUILD_PLUGIN_WUJI_GLOVE "Build Wuji glove plugin (requires the wuji_sdk C SDK)" OFF)
 option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa AvatarExo Glove plugin (Linux; skips if the Avatar SDK is missing)" OFF)
 option(BUILD_PLUGIN_JMEX "Build j-mex AgileMaster plugin (Linux x86_64; skips without the MOXI Receiver SDK, stops if MOXIReceiverSDK_DIR holds none)" OFF)
-option(BUILD_PLUGIN_REMOTE_DEVICE_BRIDGE "Build the remote device bridge (remote_device_bridge app and server) and the RemotePluginSession library (POSIX sockets, skipped on Windows)" ON)
+option(BUILD_PLUGIN_REMOTE_DEVICE_BRIDGE "Build the remote device bridge (app and server), the RemotePluginSession library and the synthetic sender; enables manus --remote (POSIX sockets, skipped on Windows)" ON)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)
