@@ -53,10 +53,12 @@ foreach(dir IN LISTS _cf_glob_dirs)
     foreach(pat IN LISTS _cf_patterns)
       file(GLOB_RECURSE _found FOLLOW_SYMLINKS ${dir}/${pat})
       foreach(f IN LISTS _found)
-        # Exclude patterns
+        # Match excludes against the path below ${dir}, so directories above
+        # the checkout (e.g. /work/venv-project/) can't exclude every source.
+        file(RELATIVE_PATH _rel "${dir}" "${f}")
         set(_skip FALSE)
         foreach(ex IN LISTS _cf_exclude_patterns)
-          if (f MATCHES ${ex})
+          if ("/${_rel}" MATCHES "${ex}")
             set(_skip TRUE)
           endif()
         endforeach()
