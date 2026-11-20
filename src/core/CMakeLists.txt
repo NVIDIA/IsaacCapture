@@ -46,6 +46,12 @@ add_subdirectory(cloudxr)
 # Remote session link (transports, messages, Link threads); MCAP- and OpenXR-free.
 add_subdirectory(remote_link)
 
+# Robot state, server end: keeps the newest record of each series; MCAP-library- and OpenXR-free.
+add_subdirectory(robot_state_store)
+
+# Robot state, robot end: record bytes into robot-state link message payloads; MCAP-library- and OpenXR-free.
+add_subdirectory(robot_state_publisher)
+
 # Python wheel packaging (combines both modules)
 if(BUILD_PYTHON_BINDINGS)
     add_subdirectory(python)
