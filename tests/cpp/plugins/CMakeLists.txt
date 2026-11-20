@@ -17,6 +17,10 @@ if(BUILD_PLUGIN_OGLO)
     add_subdirectory(oglo_tactile)
 endif()
 
+if(BUILD_PLUGIN_ORBBEC_EGO_CAMERA)
+    add_subdirectory(orbbec_ego)
+endif()
+
 # Defined on Linux whether or not the Manus SDK is present (see src/plugins/manus_calibration/CMakeLists.txt).
 if(TARGET manus_calibration_core)
     add_subdirectory(manus_calibration)

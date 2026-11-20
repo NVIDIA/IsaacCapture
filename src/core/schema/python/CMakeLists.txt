@@ -3,6 +3,8 @@
 
 pybind11_add_module(schema_py
     oak_bindings.h
+    orbbec_ego_camera_bindings.h
+    orbbec_ego_bindings.h
     controller_bindings.h
     full_body_bindings.h
     gamepad_bindings.h
