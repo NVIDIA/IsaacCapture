@@ -387,6 +387,8 @@ cmd_service_status() {
 cmd_service_logs() {
     parse_remote_args "$@"
     # ssh -t so Ctrl-C reaches journalctl cleanly.
+    # --user requires persistent per-user journals; --user-unit also finds
+    # this user's service logs in the system journal on Thor.
     ssh_run_tty "journalctl --user-unit ${SERVICE_NAME}.service -f"
 }
 
