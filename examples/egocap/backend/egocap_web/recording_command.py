@@ -30,10 +30,11 @@ import re
 import secrets
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from recording_service import ConfigurationError, Disposition, EpisodeResult, StateError
+from recording_service import ConfigurationError, Disposition, EpisodeResult, RecordingPhase, StateError
 
 from .recording_session import (
     CoordinatorBusyError,
@@ -54,6 +55,9 @@ _WIRE_COMPATIBLE_DISPOSITIONS = frozenset({Disposition.KEPT, Disposition.REJECTE
 
 
 _logger = logging.getLogger(__name__)
+
+#: Longest free-text task details a set_task command may carry.
+MAX_TASK_DETAILS_CHARS = 1000
 
 
 class RecordingCommandError(ValueError):
@@ -114,10 +118,14 @@ def _require_str_type(payload: dict[str, Any], field_name: str) -> None:
 def _validate_set_task(payload: dict[str, Any]) -> None:
     """Requires a batch id and a string next-task instruction (any string,
     including empty -- whether empty text is acceptable is a business rule
-    the handler decides, not a shape check). This component only ever
-    edits that text, never a mode/catalog/metadata object."""
+    the handler decides, not a shape check), plus an optional string
+    ``details`` of free-text context. This component only ever edits those,
+    never a mode/catalog/metadata object."""
     _require_str(payload, "batch_id")
     _require_str_type(payload, "task")
+    # Optional free-text details; absent means none, but a present value must be a string.
+    if "details" in payload:
+        _require_str_type(payload, "details")
 
 
 def _validate_batch_target(payload: dict[str, Any]) -> None:
@@ -179,7 +187,7 @@ def _new_batch_id() -> str:
     return f"egocap-batch-{uuid.uuid4()}"
 
 
-def _control_token_valid(candidate: object, expected: str) -> bool:
+def control_token_valid(candidate: object, expected: str) -> bool:
     """Timing-safe comparison against the server's one generated secret.
     Rejects a non-``str``, wrong-length, or non-ASCII candidate before
     ``compare_digest`` itself, which raises ``TypeError`` on non-ASCII
@@ -187,6 +195,14 @@ def _control_token_valid(candidate: object, expected: str) -> bool:
     if not isinstance(candidate, str) or len(candidate) != len(expected) or not candidate.isascii():
         return False
     return secrets.compare_digest(candidate, expected)
+
+
+def interrupted_take(service: Any) -> bool:
+    """Whether the recording service (a snapshot of it, or None) holds a take that was interrupted and waits
+    to be recovered or discarded. The service keeps such a take as its episode, but nothing is writing it."""
+    return (
+        service is not None and service.episode is not None and service.phase is RecordingPhase.RECOVERY_REQUIRED
+    )
 
 
 @dataclass
@@ -216,6 +232,11 @@ class RecordingContext:
     #: auto_fill_operator_name). Never a signal to commit an operator automatically: that
     #: still always requires the operator's own explicit "Set operator" action.
     auto_fill_operator_name: bool = False
+    #: Why station setup does not allow a take right now, or None when it does (see app.py's lifespan for
+    #: what it checks). It decides admission and the readiness that is published, and never interrupts a
+    #: take: a setup fact changing mid-take does not stop it, unlike a capture source going stale. It is asked
+    #: on the event loop at any time, during a take too, so it must answer from memory.
+    setup_gate: Callable[[], str | None] | None = field(default=None, repr=False)
     batch_id: str = field(default_factory=_new_batch_id)
     saved_count: int = 0
     last_result: dict[str, Any] | None = None
@@ -318,11 +339,19 @@ class RecordingContext:
         """Reads the coordinator and advances ``revision`` if the decision state changed since the last look."""
         coordinator_snapshot = self.coordinator.snapshot()
         ready, reason = self.coordinator.readiness()
+        # Station setup outranks a capture reason: it is the earlier step, and fixing it is the operator's move.
+        blocked = self.setup_block()
+        if blocked is not None:
+            ready, reason = False, blocked
         decision_state = self._decision_state(coordinator_snapshot, ready, reason)
         if decision_state != self._last_decision_state:
             self._last_decision_state = decision_state
             self.revision += 1
         return coordinator_snapshot, decision_state
+
+    def setup_block(self) -> str | None:
+        """Why station setup does not allow a take right now, or None; None too when no gate is installed."""
+        return self.setup_gate() if self.setup_gate is not None else None
 
     def refresh(self) -> None:
         """Notices a readiness or in-progress change that no callback announces. Each viewer's sender calls this
@@ -344,6 +373,7 @@ class RecordingContext:
             "current_episode_id": current_episode_id,
             "current_episode_elapsed_ms": elapsed_ms,
             "task_text": coordinator_snapshot.context.task_text,
+            "task_details": coordinator_snapshot.context.task_details,
             # The committed context's operator, exposed only as a PREFILL hint for the entry
             # field -- never used to admit a command: start_episode always requires the
             # browser's own operator_token and never reads this value. null when unconfigured
@@ -367,6 +397,9 @@ class RecordingContext:
                 and ready
                 and coordinator_snapshot.context.task_text.strip() != ""
             ),
+            # Why a take would be refused right now, when station setup or a capture source is the cause;
+            # null when ready, and null when only the task is missing (the page already says so).
+            "not_ready_reason": None if ready else reason,
             # Lets a receiver drop a snapshot older than one it already
             # applied; restarts from 0 with the process, so a receiver
             # compares it only within one connection.
@@ -422,7 +455,7 @@ class RecordingContext:
         place that actually needs current accepted sources and a
         committed instruction. See ``RecordingSessionCoordinator``'s own
         ``start_episode``/``set_task``/``new_batch`` docstrings."""
-        if not _control_token_valid(command.control_token, self.control_token):
+        if not control_token_valid(command.control_token, self.control_token):
             return "rejected", "Enter the current recording control token"
         if command.payload.get("batch_id") != self.batch_id:
             return "rejected", "no matching batch"
@@ -443,12 +476,20 @@ class RecordingContext:
                 # Whitespace-only text is not a real instruction either.
                 if task.strip() == "":
                     return "rejected", "task text cannot be empty"
-                self.coordinator.set_task(task)
+                details = command.payload.get("details", "").strip()
+                # Bounded so a stray paste cannot bloat every episode's metadata.
+                if len(details) > MAX_TASK_DETAILS_CHARS:
+                    return "rejected", f"details are limited to {MAX_TASK_DETAILS_CHARS} characters"
+                self.coordinator.set_task(task, task_details=details)
                 self.revision += 1
                 return "ok", None
             if command.action == "start_episode":
                 if self.coordinator.snapshot().context.task_text.strip() == "":
                     return "rejected", "set a task before starting an episode"
+                # Station setup decides admission here; it never stops a take already recording (see setup_gate).
+                blocked = self.setup_block()
+                if blocked is not None:
+                    return "rejected", blocked
                 await self.coordinator.start_episode(operator)
                 return "ok", None
             if command.action == "stop_episode":

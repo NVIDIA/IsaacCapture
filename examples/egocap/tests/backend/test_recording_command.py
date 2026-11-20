@@ -22,6 +22,7 @@ import pytest
 
 from egocap.recording.episode_layout import manifest_path
 from egocap_web.recording_command import (
+    MAX_TASK_DETAILS_CHARS,
     RecordingCommandError,
     RecordingContext,
     handle_recording_command,
@@ -116,6 +117,17 @@ def test_set_task_wrong_typed_task_is_rejected():
         parse_recording_command(raw)
 
 
+def test_set_task_wrong_typed_details_is_rejected():
+    raw = {"request_id": "r8b", "action": "set_task", "payload": {"batch_id": "b1", "task": "t", "details": 5}}
+    with pytest.raises(RecordingCommandError):
+        parse_recording_command(raw)
+
+
+def test_set_task_details_are_optional():
+    raw = {"request_id": "r8c", "action": "set_task", "payload": {"batch_id": "b1", "task": "t"}}
+    assert "details" not in parse_recording_command(raw).payload
+
+
 def test_new_batch_accepts_flat_batch_id():
     command = parse_recording_command({"request_id": "r9", "action": "new_batch", "payload": {"batch_id": "b1"}})
     assert command.action == "new_batch"
@@ -145,6 +157,39 @@ async def test_set_task_commits_real_text(tmp_path: Path):
     assert reply["outcome"] == "ok"
     assert reply["reason"] is None
     assert reply["snapshot"]["task_text"] == "Pour water."
+
+
+async def test_set_task_commits_details_and_a_later_set_without_them_clears_them(tmp_path: Path):
+    context = await _open_context(tmp_path)
+    bid = context.batch_id
+    reply = await handle_recording_command(
+        _command("set_task", {"batch_id": bid, "task": "Pour water.", "details": "Left hand, blue cup."}), context
+    )
+    assert reply["outcome"] == "ok"
+    assert reply["snapshot"]["task_details"] == "Left hand, blue cup."
+    reply = await handle_recording_command(_command("set_task", {"batch_id": bid, "task": "Pour water."}), context)
+    assert reply["snapshot"]["task_details"] == ""
+
+
+async def test_set_task_whitespace_only_details_are_stored_as_empty(tmp_path: Path):
+    context = await _open_context(tmp_path)
+    reply = await handle_recording_command(
+        _command("set_task", {"batch_id": context.batch_id, "task": "Pour water.", "details": "   "}), context
+    )
+    assert reply["outcome"] == "ok"
+    assert reply["snapshot"]["task_details"] == ""
+
+
+async def test_set_task_overlong_details_are_rejected_and_change_nothing(tmp_path: Path):
+    context = await _open_context(tmp_path)
+    bid = context.batch_id
+    too_long = "x" * (MAX_TASK_DETAILS_CHARS + 1)
+    reply = await handle_recording_command(
+        _command("set_task", {"batch_id": bid, "task": "New task", "details": too_long}), context
+    )
+    assert reply["outcome"] == "rejected"
+    assert str(MAX_TASK_DETAILS_CHARS) in reply["reason"]
+    assert reply["snapshot"]["task_text"] != "New task"
 
 
 async def test_set_task_empty_task_text_is_rejected_as_a_real_outcome_not_a_protocol_error(tmp_path: Path):
@@ -673,3 +718,47 @@ async def test_auto_fill_operator_name_defaults_off_and_reflects_the_constructor
     await coordinator.open()
     on = RecordingContext(coordinator=coordinator, control_token=TEST_CONTROL_TOKEN, auto_fill_operator_name=True)
     assert on.snapshot()["auto_fill_operator_name"] is True
+
+
+async def test_station_setup_blocks_a_take_at_admission_with_its_reason(tmp_path: Path):
+    context = await _open_context(tmp_path)
+    blocked: list[str | None] = ["select a station before recording"]
+    context.setup_gate = lambda: blocked[0]
+    snapshot = context.snapshot()
+    assert snapshot["ready_to_record"] is False
+    assert snapshot["not_ready_reason"] == "select a station before recording"
+    reply = await handle_recording_command(_command("start_episode", {"batch_id": context.batch_id}), context)
+    assert (reply["outcome"], reply["reason"]) == ("rejected", "select a station before recording")
+    assert reply["snapshot"]["episode_phase"] == "IDLE"
+    # Clearing the cause is announced to every viewer without any command being sent.
+    revision = context.revision
+    blocked[0] = None
+    context.refresh()
+    assert context.revision == revision + 1
+    assert context.snapshot()["ready_to_record"] is True and context.snapshot()["not_ready_reason"] is None
+    started = await handle_recording_command(_command("start_episode", {"batch_id": context.batch_id}), context)
+    assert started["outcome"] == "ok"
+    # Station setup is asked at admission only: a cause appearing mid-take never interrupts the take.
+    blocked[0] = "station 'Bench A': no camera is assigned to the ego (head) role"
+    stopped = await handle_recording_command(
+        _command(
+            "stop_episode", {"batch_id": context.batch_id, "episode_id": started["snapshot"]["current_episode_id"]}
+        ),
+        context,
+    )
+    assert (stopped["outcome"], stopped["snapshot"]["last_result"]["disposition"]) == ("ok", "KEPT")
+
+
+async def test_a_capture_reason_is_published_when_station_setup_allows_a_take(tmp_path: Path):
+    def factory() -> ServiceConfig:
+        return ServiceConfig(output_root=tmp_path / "out", numeric_sources=(NUMERIC,), video_sources=())
+
+    coordinator = RecordingSessionCoordinator(
+        factory, queue_capacity=8, readiness_check=lambda: (False, "capture is not running")
+    )
+    coordinator.set_task("Pour water.")
+    context = RecordingContext(coordinator=coordinator, control_token=TEST_CONTROL_TOKEN, setup_gate=lambda: None)
+    assert context.snapshot()["not_ready_reason"] == "capture is not running"
+    # Station setup outranks the capture reason: it is the earlier step.
+    context.setup_gate = lambda: "select a station before recording"
+    assert context.snapshot()["not_ready_reason"] == "select a station before recording"

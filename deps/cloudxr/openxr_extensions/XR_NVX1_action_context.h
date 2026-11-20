@@ -1,5 +1,5 @@
 // Copyright 2026, NVIDIA CORPORATION.
-// SPDX-License-Identifier: Apache-2.0 or BSL-1.0
+// SPDX-License-Identifier: Apache-2.0 OR BSL-1.0
 /*!
  * @file
  * @brief Header for OpenXR XR_NVX1_action_context extension.

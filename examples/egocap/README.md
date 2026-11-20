@@ -56,7 +56,11 @@ pytest fixture; the rest of `tests/backend` needs no Node/npm.
 Three processes, each in its own terminal, from `egocap/`:
 
 ```bash
-# 1. A standalone mock CaptureServer -- synthetic tracking and camera frames, no hardware
+# 1. A standalone mock CaptureServer -- synthetic tracking and camera frames, no hardware.
+#    This starts with no synthetic delay (--controller-delay-ms/--glove-delay-ms/--delay-jitter-ms add
+#    one), and its cameras are plain CaptureServer JPEG streams, which carry no camera clock evidence:
+#    a recorded take is kept but automatic time alignment refuses it. Aligned output needs the cameras
+#    published through LiveKit (see LIVEKIT_PREVIEW.md).
 uv run capture-server --mock
 
 # 2. The backend, connecting to CaptureServer and serving both frontends -- note the
@@ -76,6 +80,62 @@ backend printed at startup — both are required before any recording command is
 [`frontend/README.md`](frontend/README.md) for the full station-file and environment-variable
 reference.
 
+## One command for the whole stack
+
+`tools/start_system.py` deploys the camera sender to the Orin, then starts LiveKit, CaptureServer, the backend
+(which owns the recorder), the camera receiver and the bridge, and stops them all on Ctrl-C:
+
+```bash
+uv run python tools/start_system.py --orin user@orin --deploy-script PATH --livekit-server PATH --bridge PATH --open
+```
+
+It prints the page URL and the recording control token. CaptureServer runs real acquisition, which needs a built
+IsaacCapture checkout (`ISAAC_ROOT`) and tracking hardware, and it opens only the cameras it is given with
+`--capture-camera NAME=DEVICE_ID`. The default station file (`--station-config`) is the shipped example, which
+requests three cameras, so the launcher refuses to start unless each one is given; use a station file whose
+`video_sources` name no CaptureServer cameras when the video comes from the Orin through LiveKit.
+
+`--mock` runs without hardware: CaptureServer gives synthetic tracking and cameras, and a local mock sender replaces
+the Orin, so nothing real is started and `--orin` is refused. The mock sender is `camera_streamer`'s `mock_sender.py`.
+It is not in this tree (it is added by the camera_streamer mock-sender change, PR #1476), so give its path with
+`--mock-sender` or `EGOCAP_MOCK_SENDER`; it needs `ffmpeg` with `libx265`. With `--bridge`, `--livekit-server` and the
+mock sender the mock video goes through the same receiver, bridge and page, with the frame-ready time as its
+timestamp because the mock sender has no clock to measure. A recording made in this mode is synthetic data.
+
+Without `--orin` or `--mock` only the PC side starts. `--skip-deploy` reuses the previous release. The sender runs
+for `--seconds` (default one hour) and the launcher stops the whole stack when it ends, so a take in progress is
+cut off; the launcher prints the stop time at startup. The sender release the profile describes, its deploy tool, the
+timesync tool, the LiveKit server and the bridge are not in this tree's base, so pass their paths (or set
+`EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_TIMESYNC_TOOL`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`); `--orin` needs the timesync
+tool and refuses to start without it. `--orin` also needs an IPv4 address, because the bridge finds the sender's chrony
+by it. After the bridge starts, the launcher runs time sync through `src/core/timesync/tools/timesync_tool.py` (see that
+module's README): `ensure-local` (which may install chrony on this PC), an unprivileged chronyd on this PC that measures
+the Orin's clock, and `configure-remote` on the Orin; each step has a timeout. These steps run before the page address
+is printed, and a failure leaves the preview up with capture times unavailable (`--require-chrony` makes it fatal). For
+the SIPL backend the launcher also stops `nvargus-daemon` on the Orin before starting the sender, since it holds the
+cameras; it does not restart it.
+
+The page needs the frontend built once (`cd frontend && npm install && npm run build`); the launcher refuses to start
+without `frontend/dist`. For the default receiver, the launcher runs the receiver's `setup.sh` (venv, requirements,
+native decoder) when the venv or decoder is missing and the camera chain starts (`--orin`, or `--mock` with the
+bridge); `CAMERA_RECEIVER_VENV` and `CAMERA_RECEIVER_PYTHON` select the environment as they do for the receiver's own
+scripts.
+
+The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (30 fps, 4 Mbit/s HEVC). Pass another file with `--sender-config`, or override single values with
+`--fps`, `--bitrate-mbps` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
+built from the same effective values. [`CAMERA_SETTINGS.md`](CAMERA_SETTINGS.md) says which component owns which
+setting and lists every key.
+
+### Integration boundary
+
+The launcher composes the current capture, receiver and browser stack. Its orchestration may be consolidated with
+shared camera startup and transport provisioning once those services cover the same workflow (setup, preview,
+recording admission, recovery and shutdown); until then it is the supported way to start the stack.
+
+| Current path | Intended owner or replacement | Reuse, adapt or retire | Follow-up and landing condition |
+| --- | --- | --- | --- |
+| `tools/start_system.py` | Camera startup and transport provisioning | Adapt the orchestration; retire duplicated setup only where it is covered | Consolidate operational setup with the shared services. Lands when setup, preview, recording admission, recovery and shutdown remain available. |
+
 ## Real hardware
 
 CaptureServer's real mode needs its own Python bindings built in an
@@ -90,9 +150,10 @@ process that differs.
 - The **capture/recording page** (`frontend/`) is always served once built; see
   [`frontend/README.md`](frontend/README.md) for its development setup and the live protocol it
   consumes.
-- The **recordings browser** (`recordings_frontend/`) is an optional, unauthenticated file
-  browser over the recording output root — off by default (`EGOCAP_RECORDINGS_ENABLED=1` to
-  enable). See [`recordings_frontend/README.md`](recordings_frontend/README.md).
+- The **recordings browser** (`recordings_frontend/`) is an optional file browser over the
+  recording output root — off by default (`EGOCAP_RECORDINGS_ENABLED=1` to enable), and it asks
+  for the control token before it lists or serves anything. See
+  [`recordings_frontend/README.md`](recordings_frontend/README.md).
 
 ## Configuration
 

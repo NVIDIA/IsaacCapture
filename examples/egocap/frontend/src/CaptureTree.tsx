@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The capture page's main data body: an expandable Head/Controllers/Hands
  * tree with complete measurement tables, replacing the old plain-text

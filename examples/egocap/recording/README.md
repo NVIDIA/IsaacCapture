@@ -46,7 +46,9 @@ and already has a default (`<data root>/calibration`, where `<data root>` is `EG
 resolved value — so the backend does read `EGOCAP_DATA_DIR` for this, just not for the output
 root) — `EGOCAP_CALIBRATION_DIR` only needs setting when calibration lives somewhere else.
 Calibration copying is best-effort either way: a file simply absent at that location is skipped
-with a warning, recording still proceeds.
+with a warning, recording still proceeds. Calibration files are optional unless the deployment
+requires them: the web backend holds a station in use from recording over a missing file only while
+its operator setting `require_calibration` is on (see [`backend/README.md`](../backend/README.md)).
 
 `video_sources`/`numeric_sources` declare the *recorded dataset*, not how to open a device — no
 device handle, index, or launcher path belongs in them. See
@@ -98,6 +100,9 @@ store.
   time tracker: `toggle`/`set_state` persist to `<log_dir>/<date>.json`,
   `compute_totals`/`save_daily_log` produce the operator-facing daily activity JSON
   (`<station>_<date>_activity.json`).
+- `day_report.py`'s `build_day_report()` lists a day's takes by session from the recording service's episode
+  manifests, each with its disposition (kept, flagged, rejected, discarded, pending, recording) and duration, and totals
+  them, optionally for a set of station names. It is what the backend's end-of-day report serves. Read-only.
 - `count_daily_trajectories.py`'s `count_trajectories()`/`compute_station_data_breakdown()` walk
   `<data_dir>/<Studio>/<timestamp>/episode_*`, grouping by session and attributing each episode
   to the day it was actually recorded (not the session folder's own date, which can predate a
@@ -106,8 +111,9 @@ store.
 
 ## EOD session tooling — `egocap/eod/`, `egocap/data_processing/`
 
-Standalone library functions for offline session/episode metadata maintenance — the backend and
-recording service do not call them:
+Library functions for session/episode metadata maintenance after the fact. The recording service calls
+none of them; the backend's end-of-day correction (`POST /api/day-report/correct`) calls
+`update_episode_task_description()` with a task only, and the rest is for offline callers:
 
 - `eod_studio_session_move.py`'s `relocate_session_to_canonical_studio()` moves a session folder
   from `_unmatched/` (or a mis-filed studio) to its canonical `<eod>/<Studio>/<timestamp>/`
@@ -115,8 +121,11 @@ recording service do not call them:
   `refresh_session_egocap_zarr_aggregates()` recomputes `num_episodes`/`episode_lengths`/
   `total_data_time_hours` from the session's finalized episodes.
 - `update_episode_task_description.py`'s `update_episode_task_description()` updates
-  `task_description`/`task_name`/`studio` on a range of episodes (dataset- and episode-level
-  Zarr attrs, plus `config.yaml`'s `meta`), optionally relocating the session first.
+  `task_description`/`task_name`/`studio` on a range of episodes, optionally relocating the session
+  first. An episode's `instruction_language` follows its `task_description`. The dataset-level task
+  (Zarr attrs and `config.yaml`'s `meta`) changes only when the range covers every finalized episode,
+  so correcting some takes does not relabel the rest; `config.yaml` is replaced atomically. A range covers
+  at most 10,000 episodes; a longer one is refused before anything is read.
 
 ## Data layout and format
 
@@ -127,9 +136,9 @@ What the recording service writes into each routed group:
 ├── <Studio>/
 │   └── <YYYY-MM-DD-HH-MM-SS>/
 │       ├── zarr.json              # dataset-level attrs
-│       ├── config.yaml             # {"meta": {"egocap_station_name": ...}} -- station identity
-│       │                           # only, NOT the fuller video_sources/numeric_sources/recording
-│       │                           # schema `core/config_io.py`'s default config illustrates
+│       ├── config.yaml             # meta.egocap_station_name plus the source declarations time
+│       │                           # alignment reads (video_sources/numeric_sources names and frame
+│       │                           # types, recording defaults)
 │       ├── head_camera_intrinsics.json, head_camera_extrinsics.json
 │       ├── left_wrist_camera_intrinsics.json, right_wrist_camera_intrinsics.json
 │       ├── wrist_calibration_offsets.json
@@ -143,10 +152,10 @@ Calibration files appear only when present at `EGOCAP_CALIBRATION_DIR` (which al
 resolved value, see above -- absence there is a skip, not a configuration requirement); the
 service does not write a separate `data_check_config.yaml`.
 
-A data-loading pipeline's source-config reader requires `video_sources`/`numeric_sources`,
-source names, frame types/defaults, and latency to run its alignment step; the per-group
-`config.yaml` above does not carry those fields, so this reader needs that configuration
-supplied separately, not read from the recorded output. A Zarr-to-LeRobot converter reads fixed,
+The per-group `config.yaml` carries the source declarations time alignment reads (the
+`video_sources`/`numeric_sources` names, frame types and recording defaults); a data-loading
+pipeline's source-config reader that also needs per-source latency or other settings must have
+them supplied separately, not read from the recorded output. A Zarr-to-LeRobot converter reads fixed,
 hardcoded group paths instead: `pico_controller/{left,right,head}_pose_interp` and
 `manus_glove/{left,right}_hand_pose_interp`. Renaming a wire stream is harmless as long as the
 backend still maps it to the established recorded source name; renaming the recorded group

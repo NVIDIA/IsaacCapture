@@ -28,16 +28,29 @@ CaptureServer, serves the browser, and writes recorded sessions to local storage
 
 ### Operator workflow and station setup
 
-A station belongs to one operator working at a time. A deployment's station file supplies that
-station's label, its initial task instruction, the default operator name, the recording output
-location, and the cameras it uses. At startup, the backend reads the station's camera names and
+A station belongs to one operator working at a time. A site usually has several, so the stations
+are kept by the backend and chosen from the page: each has a name, a camera type, the camera that
+fills each role (the operator's view and each wrist), and the capture host address last given to
+its headset. The station in use names every recording and its activity log. A deployment's station
+file still supplies the initial task instruction, the default operator name, the recording output
+location, the cameras requested from CaptureServer, and the station label used while no station has
+been set up. At startup, the backend reads the station's camera names and
 types from the file and requests those streams from CaptureServer. An unconfigured deployment uses
 a fixed development default that requests no cameras; a configured-but-invalid station file blocks
 new recording until it is fixed.
 
-Before recording, the operator identifies the station and confirms its camera and tracking
-assignment, selects or enters the task being demonstrated, and confirms the live preview — camera
-video and tracked pose — looks correct. Starting an episode requires every required source to be
+The day follows a fixed order, shown as a progress rail: station, devices, record, wrap-up. The
+operator puts their station in use and the page shows a live checklist of what that station needs:
+every tracking device and camera, the calibration files of its cameras, and room on the recording
+disk. Nothing is run; the checklist is judged continuously. With a station in use a take is refused,
+with the reason, while any item fails; a device or check the station does not use is skipped. An
+item fails for what would stop a take anyway (capture not running, no tracking data, a camera with
+no frames) and for a full disk. What goes beyond that only warns: a device reporting another state
+than connected, and missing calibration files, which are optional unless the deployment requires
+them (an operator setting, off by default). With no stations set up the checklist only advises.
+
+Before recording, the operator also selects or enters the task being demonstrated, and confirms the
+live preview — camera video and tracked pose — looks correct. Starting an episode requires every required source to be
 producing a current sample, not merely configured, so a camera or tracking source that has gone
 stale blocks a new take rather than starting one against outdated data.
 
@@ -47,16 +60,26 @@ interrupting the session, and can rotate to a fresh batch of episodes when movin
 block of work. A kept take is checked automatically once it finishes writing, and any problem
 found is reported to the operator.
 
-Offline analysis library functions give day's-end oversight, run as ad-hoc scripts rather than a
-live page or CLI: a per-station activity log tracks active/inactive time through the day, and a
-dataset-reporting function counts each station's valid versus excluded episodes and their recorded
-duration from the saved session metadata, attributing each episode to the day it was actually
-recorded rather than the session folder's own date.
+The station's time is observed, not entered. The backend logs through the day whether the station
+could record or was down, and why, and counts active and down time between the first and last take
+of the day, so a station left powered on outside working hours adds to neither. Each down period is
+kept as a blocker with its reason, in a daily log written on the station. A take that was interrupted
+and waits to be recovered or discarded counts as down, as does time the backend could not observe.
 
-Maintenance library functions, likewise ad-hoc scripts rather than a live page or CLI, correct a
-misfiled task or studio label and relocate a session saved in the wrong place: one relocates a
-session to its correct studio location, another updates task and studio labels across a range of
-episodes. Both update a session's bookkeeping; its recorded video and tracking stay as captured.
+At the end of the day a report lists every take of the day by session with what became of it: kept,
+flagged, rejected, discarded, or still pending after an interruption. It is read from the recording
+service's own record of each take, so a take that was not kept is counted rather than left out, and
+each take belongs to the day it was actually recorded rather than the day its session was opened.
+The report shows the station's active and down time with its blockers and the operator's notes, and
+can be saved on the station. A dataset-reporting library function also counts each station's valid
+versus excluded episodes from the saved session metadata, for offline use.
+
+A misfiled task can be corrected from the report for one take or a range of a session's takes. Only
+labels change; recorded video and tracking stay as captured, and a session is never moved from the
+page. A correction is refused for the session still open for recording, while a take of that session
+is being time-aligned or another correction of it is being written, and for anything that is not a
+recorded session inside the recording output. A library function, for offline use, relocates an
+older session saved under the wrong studio.
 
 ### Timing and calibration requirements
 
@@ -114,8 +137,9 @@ intrinsics and extrinsics, and the wrist cameras' intrinsics and calibration off
 preserved with the recording session alongside its episodes, so a take stays tied to the
 calibration active when it was captured rather than whatever calibration is live on the station
 later. Camera latency and glove calibration remain station-setup requirements this copying does
-not archive; a station missing an optional calibration file can still record, just without that
-sidecar present. Keeping a take commits all of this to the local record; discarding one removes
+not archive. Calibration files are optional unless the deployment requires them: a station missing
+one can still record, just without that sidecar present, and is held from recording only while the
+operator setting that requires them is on. Keeping a take commits all of this to the local record; discarding one removes
 its recorded media, so a discarded take's video and tracking never appear in the saved session.
 
 ### Downstream dataset use
@@ -273,9 +297,9 @@ to every connected viewer, with the specific reason behind any failure.
 ### Recordings browser (PoC demo, not part of the final design)
 
 A separate, optional browser page lists and downloads the files a station has already recorded,
-reading directly from the recording output root. It is off by default; enabling it serves every
-file under that root to anyone who can reach the backend, with no login, token, or origin check of
-its own, so a deployment turns it on only where that exposure is acceptable. It is independent of
+reading directly from the recording output root. It is off by default. Enabled, its listing and
+every file need the control token, which the page exchanges once for a same-site cookie, and a
+request a browser marks as coming from another site is refused. It is independent of
 the recording page: it never reconnects to CaptureServer and never affects a live session.
 
 ## 4. Assumptions and scope

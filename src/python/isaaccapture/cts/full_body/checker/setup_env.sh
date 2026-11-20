@@ -34,10 +34,14 @@ toolchain/flatc --version
 if [[ ! -x .venv/bin/python ]]; then
   uv venv --python 3.12 .venv
 fi
-uv pip install --python .venv/bin/python -r requirements.txt -r requirements-dev.txt
+# --no-config: the repo's [tool.uv] is the product's resolver policy, which drops viser's
+# websockets requirement for CloudXR. This venv imports no isaaccapture.
+uv pip install --no-config --python .venv/bin/python -r requirements.txt -r requirements-dev.txt
 if [[ "$WITH_PANEL" == 1 ]]; then
-  uv pip install --python .venv/bin/python -r requirements-panel.txt
+  uv pip install --no-config --python .venv/bin/python -r requirements-panel.txt
 fi
+# Fails if any installed package is missing a dependency it declares.
+uv pip check --no-config --python .venv/bin/python
 
 # The packages are read from src/ rather than installed.
 SITE_PACKAGES=$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')

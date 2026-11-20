@@ -18,10 +18,15 @@ so this feature never touches the main capture-preview app's toolchain.
 renders a breadcrumb/grid view; clicking a file hits
 `GET /recordings/files/<path>` to download it.
 
-Once `EGOCAP_RECORDINGS_ENABLED=1` is set, this page serves every file under
-the recording root, unauthenticated, to anyone who can reach the backend --
-there is no login, token, or Origin check of its own. Only enable it on a
-deployment where that's an acceptable exposure.
+Once `EGOCAP_RECORDINGS_ENABLED=1` is set, the listing and every file need
+the run's control token, the one the backend prints at startup. The page
+shows a sign-in form until it has it: `POST /recordings/api/session` with the
+token in `X-Control-Token` answers with a same-site, HTTP-only cookie scoped
+to `/recordings`, which the listing calls and the plain download links then
+carry. The page does not keep the token. A backend restart issues a new
+token, so the form comes back. A request a browser marks as coming from
+another site is refused whatever it carries. The page's own static files
+are served without the token: they hold no recording.
 
 ## Setup
 

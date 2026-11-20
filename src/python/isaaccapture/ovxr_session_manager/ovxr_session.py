@@ -327,6 +327,16 @@ class OvxrSession:
             raise wake_error
 
     @property
+    def eye_render_product_paths(self) -> tuple[str, str] | None:
+        """Return the active (left, right) eye product paths, or None.
+
+        None until the first renderable bind, after close, and while the
+        latest bound frame lacks both eye products. Safe to read from any
+        thread.
+        """
+        return self._pump.eye_render_product_paths
+
+    @property
     def owns_environment(self) -> bool:
         """Whether the worker accepted host-environment teardown ownership."""
         return self._worker is not None

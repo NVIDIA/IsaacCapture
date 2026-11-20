@@ -216,6 +216,92 @@ def test_teleop_session_step_is_deterministic_for_a_fixed_clock():
     np.testing.assert_array_equal(a["head"][HeadInputIndex.POSITION], b["head"][HeadInputIndex.POSITION])
 
 
+class _SettableClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+def _step_at(elapsed: float, **delays):
+    clock = _SettableClock()
+    with mic.TeleopSession(_full_config(), scenario="demo", seed=2, clock=clock, **delays) as session:
+        clock.now = elapsed
+        return session.step()
+
+
+def _controller_position(result):
+    return result["controller_left"][ControllerInputIndex.GRIP_POSITION]
+
+
+def _hand_positions(result):
+    return result["hand_left"][HandInputIndex.JOINT_POSITIONS]
+
+
+def _head_position(result):
+    return result["head"][HeadInputIndex.POSITION]
+
+
+def _equal(a, b):
+    np.testing.assert_allclose(a, b, atol=1e-12)
+
+
+def test_zero_delay_output_matches_the_session_built_without_delay_options():
+    plain, zero = _step_at(5.0), _step_at(5.0, controller_delay_s=0.0, glove_delay_s=0.0, delay_jitter_s=0.0)
+    for read in (_head_position, _controller_position, _hand_positions):
+        _equal(read(plain), read(zero))
+    for index in ControllerInputIndex:
+        _equal(plain["controller_right"][index], zero["controller_right"][index])
+
+
+def test_a_delayed_controller_shows_the_pose_from_the_delay_earlier_and_the_head_is_unchanged():
+    delayed, earlier, now = _step_at(5.0, controller_delay_s=0.3), _step_at(4.7), _step_at(5.0)
+    _equal(_controller_position(delayed), _controller_position(earlier))
+    assert not np.allclose(_controller_position(delayed), _controller_position(now))
+    _equal(_head_position(delayed), _head_position(now))
+
+
+def test_the_glove_and_controller_delays_are_independent():
+    glove_only = _step_at(5.0, glove_delay_s=0.3)
+    controller_only = _step_at(5.0, controller_delay_s=0.3)
+    now, earlier = _step_at(5.0), _step_at(4.7)
+    _equal(_hand_positions(glove_only), _hand_positions(earlier))
+    _equal(_controller_position(glove_only), _controller_position(now))
+    _equal(_controller_position(controller_only), _controller_position(earlier))
+    _equal(_hand_positions(controller_only), _hand_positions(now))
+
+
+def _entered_session(**delays):
+    session = mic.TeleopSession(_full_config(), scenario="demo", seed=7, clock=_SettableClock(), **delays)
+    return session.__enter__()
+
+
+def test_jitter_is_deterministic_for_a_seed_and_bounded_by_the_jitter():
+    kwargs = {"controller_delay_s": 0.2, "delay_jitter_s": 0.05}
+    session_a, session_b = _entered_session(**kwargs), _entered_session(**kwargs)
+    a = [session_a._delayed(10.0, "controller") for _ in range(50)]
+    b = [session_b._delayed(10.0, "controller") for _ in range(50)]
+    assert a == b
+    assert len(set(a)) > 1
+    assert all(10.0 - 0.25 - 1e-9 <= value <= 10.0 - 0.15 + 1e-9 for value in a)
+
+
+def test_a_delay_never_reaches_before_the_start_of_the_session():
+    session = _entered_session(controller_delay_s=0.01, glove_delay_s=5.0, delay_jitter_s=0.5)
+    assert all(session._delayed(0.1, "controller") >= 0.0 for _ in range(50))
+    assert session._delayed(1.0, "glove") == 0.0
+
+
+def test_a_source_without_a_delay_reads_the_current_instant_exactly():
+    assert _entered_session(controller_delay_s=0.2)._delayed(3.0, "glove") == 3.0
+
+
+def test_jitter_never_moves_a_source_that_has_no_delay():
+    session = _entered_session(controller_delay_s=0.2, delay_jitter_s=0.5)
+    assert all(session._delayed(3.0, "glove") == 3.0 for _ in range(50))
+
+
 def test_startup_error_fault_raises_on_enter():
     session = mic.TeleopSession(_full_config(), scenario="demo", seed=0, faults={"startup_error"})
     with pytest.raises(RuntimeError, match="startup_error"):

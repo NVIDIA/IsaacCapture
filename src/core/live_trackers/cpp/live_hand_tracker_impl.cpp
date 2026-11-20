@@ -73,7 +73,8 @@ std::unique_ptr<HandMcapChannels> LiveHandTrackerImpl::create_mcap_channels(mcap
 
 LiveHandTrackerImpl::LiveHandTrackerImpl(const OpenXRSessionHandles& handles,
                                          std::unique_ptr<HandMcapChannels> mcap_channels)
-    : time_converter_(handles),
+    : handles_(handles),
+      time_converter_(handles),
       session_(handles.session),
       base_space_(handles.space),
       xdev_list_(XR_NULL_HANDLE),
@@ -175,6 +176,12 @@ void LiveHandTrackerImpl::update(int64_t monotonic_time_ns)
     left_tracked_.reset();
     right_tracked_.reset();
     last_update_time_ = monotonic_time_ns;
+    // A stopped session must not refresh XDev bindings or locate joints.
+    if (!handles_.is_running())
+    {
+        return;
+    }
+
     if (last_xdev_refresh_time_ == 0 || monotonic_time_ns - last_xdev_refresh_time_ >= kXDevRefreshIntervalNs)
     {
         refresh_xdev_hand_trackers();

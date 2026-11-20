@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -193,6 +193,7 @@ public:
 
     struct CaptureSessionState
     {
+        size_t index = 0;
         std::vector<size_t> cameraIndices;
         Argus::UniqueObj<Argus::CaptureSession> session;
         Argus::ICaptureSession* iSession = NULL;
@@ -415,6 +416,7 @@ public:
             for (size_t sessionIndex = 0; sessionIndex < sessionCameraGroups.size(); ++sessionIndex)
             {
                 std::unique_ptr<CaptureSessionState> captureSession(new CaptureSessionState());
+                captureSession->index = sessionIndex;
                 captureSession->cameraIndices = sessionCameraGroups[sessionIndex];
                 std::vector<Argus::CameraDevice*> devices;
                 for (size_t member = 0; member < captureSession->cameraIndices.size(); ++member)
@@ -1405,9 +1407,10 @@ private:
         for (size_t sessionIndex = 0; sessionIndex < domain.sessions.size(); ++sessionIndex)
         {
             CaptureSessionState& session = *domain.sessions[sessionIndex];
-            if (session.iSession->repeat(session.request.get()) != Argus::STATUS_OK)
+            const Argus::Status status = session.iSession->repeat(session.request.get());
+            if (status != Argus::STATUS_OK)
             {
-                return failDomain(&domain, "failed to start repeating capture");
+                return failSession(&domain, &session, "failed to start repeating capture", status);
             }
             session.repeating = true;
         }
@@ -1422,13 +1425,58 @@ private:
 
     bool failDomain(DomainState* domain, const char* message, Argus::Status status = Argus::STATUS_OK)
     {
+        return failCapture(domain, std::string(), message, status);
+    }
+
+    std::string describeSession(const CaptureSessionState* session) const
+    {
+        std::ostringstream description;
+        description << "session " << session->index << " cameras=[";
+        for (size_t member = 0; member < session->cameraIndices.size(); ++member)
+        {
+            if (member != 0)
+                description << ",";
+            const CameraState& camera = *m_cameras[session->cameraIndices[member]];
+            description << camera.label << "(device=" << camera.config.device << ")";
+        }
+        description << "]";
+        return description.str();
+    }
+
+    std::string describeCamera(const CameraState* camera) const
+    {
+        std::ostringstream description;
+        description << "camera " << camera->label << "(device=" << camera->config.device << ")";
+        return description.str();
+    }
+
+    bool failSession(DomainState* domain,
+                     const CaptureSessionState* session,
+                     const char* message,
+                     Argus::Status status = Argus::STATUS_OK)
+    {
+        return failCapture(domain, describeSession(session), message, status);
+    }
+
+    bool failCamera(DomainState* domain,
+                    const CameraState* camera,
+                    const char* message,
+                    Argus::Status status = Argus::STATUS_OK)
+    {
+        return failCapture(domain, describeCamera(camera), message, status);
+    }
+
+    bool failCapture(DomainState* domain, const std::string& scope, const char* message, Argus::Status status)
+    {
         if (status == Argus::STATUS_OK)
         {
-            std::fprintf(stderr, "capture domain %zu: %s\n", domain->index, message);
+            std::fprintf(stderr, "capture domain %zu%s%s: %s\n", domain->index, scope.empty() ? "" : " ", scope.c_str(),
+                         message);
         }
         else
         {
-            std::fprintf(stderr, "capture domain %zu: %s (status %d)\n", domain->index, message, status);
+            std::fprintf(stderr, "capture domain %zu%s%s: %s (status %d)\n", domain->index, scope.empty() ? "" : " ",
+                         scope.c_str(), message, status);
         }
         {
             std::lock_guard<std::mutex> lock(domain->mutex);
@@ -1459,7 +1507,7 @@ private:
             {
                 if (expectedStop && expectedStop->load())
                     return false;
-                return failDomain(domain, "failed waiting for capture event", status);
+                return failSession(domain, session, "failed waiting for capture event", status);
             }
             uint64_t completeCount = 0;
             const Argus::Event* event = NULL;
@@ -1483,13 +1531,19 @@ private:
                 const bool correctable = eventName && std::strstr(eventName, "CORR") && !std::strstr(eventName, "UNCORR");
                 if (correctable)
                 {
+                    const std::string sessionDescription = describeSession(session);
                     std::fprintf(
                         stderr,
-                        "Warning: capture domain %zu received correctable Argus event %s (status %d); continuing\n",
-                        domain->index, eventName, iError->getStatus());
+                        "Warning: capture domain %zu %s received correctable Argus event %s capture_id=%u (status %d); continuing\n",
+                        domain->index, sessionDescription.c_str(), eventName, iEvent->getCaptureId(),
+                        iError->getStatus());
                     continue;
                 }
-                return failDomain(domain, "received Argus capture error", iError->getStatus());
+                std::ostringstream message;
+                message << "received Argus capture error event=" << (eventName ? eventName : "unknown")
+                        << " capture_id=" << iEvent->getCaptureId();
+                const std::string eventMessage = message.str();
+                return failSession(domain, session, eventMessage.c_str(), iError->getStatus());
             }
             if (completeCount > 0)
             {
@@ -1554,7 +1608,7 @@ private:
                     if (!dmaBuffer || !dmaBuffer->markArgusAcquired(argusBuffer))
                     {
                         camera.iBufferStream->releaseBuffer(argusBuffer);
-                        failDomain(domain, "failed to resolve acquired direct DMABUF");
+                        failCamera(domain, &camera, "failed to resolve acquired direct DMABUF");
                         return std::unique_ptr<PendingFrame>();
                     }
                     sample->dmaBuffer.reset(dmaBuffer);
@@ -1574,7 +1628,7 @@ private:
                     std::fprintf(stderr, "Priority camera %s produced no frame for %.1f s (%s)\n", camera.label.c_str(),
                                  static_cast<double>(limitNs) / 1e9,
                                  camera.hasLastFrameNumber ? "steady-state drought" : "startup timeout");
-                    failDomain(domain, "priority camera frame drought");
+                    failCamera(domain, &camera, "priority camera frame drought");
                     return std::unique_ptr<PendingFrame>();
                 }
                 continue;
@@ -1587,8 +1641,8 @@ private:
             {
                 return std::unique_ptr<PendingFrame>();
             }
-            failDomain(domain, camera.iBufferStream ? "failed to acquire direct buffer" : "failed to acquire EGL frame",
-                       status);
+            failCamera(domain, &camera,
+                       camera.iBufferStream ? "failed to acquire direct buffer" : "failed to acquire EGL frame", status);
             return std::unique_ptr<PendingFrame>();
         }
         const uint64_t acquiredNs = steadyNowNs();
@@ -1598,7 +1652,7 @@ private:
                 readFrameTiming(sample->frame.get(), camera.label.c_str(), &sample->timing);
         if (!timingRead)
         {
-            failDomain(domain, "failed to read frame metadata");
+            failCamera(domain, &camera, "failed to read frame metadata");
             return std::unique_ptr<PendingFrame>();
         }
         sample->timing.acquiredSteadyNs = acquiredNs;
@@ -1633,7 +1687,7 @@ private:
                         stderr, "Priority camera %s produced no new frame for %.1f s (repeated frame number %llu)\n",
                         m_cameras[flatIndex]->label.c_str(), static_cast<double>(progress.droughtLimitNs()) / 1e9,
                         static_cast<unsigned long long>(frameNumber));
-                    failDomain(domain, "priority camera new-frame drought");
+                    failCamera(domain, m_cameras[flatIndex].get(), "priority camera new-frame drought");
                     break;
                 }
                 std::this_thread::sleep_for(std::chrono::microseconds(100));

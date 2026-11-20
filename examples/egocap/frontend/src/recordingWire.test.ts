@@ -15,7 +15,15 @@ import { batchTargetPayload, episodeTargetPayload, setTaskPayload } from "./reco
 describe("recordingWire", () => {
   it("setTaskPayload is a flat batch_id and task string, not a nested target/task_context", () => {
     const payload = setTaskPayload({ batchId: "b1" }, "Pour water into the cup.");
-    expect(payload).toEqual({ batch_id: "b1", task: "Pour water into the cup." });
+    expect(payload).toEqual({ batch_id: "b1", task: "Pour water into the cup.", details: "" });
+  });
+
+  it("setTaskPayload carries the optional details beside the task", () => {
+    expect(setTaskPayload({ batchId: "b1" }, "Pour water.", "Left hand, blue cup.")).toEqual({
+      batch_id: "b1",
+      task: "Pour water.",
+      details: "Left hand, blue cup.",
+    });
   });
 
   it("batchTargetPayload is a flat batch_id, not a nested target", () => {

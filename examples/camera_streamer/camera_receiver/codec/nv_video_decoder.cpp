@@ -8,7 +8,6 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
-#include <mutex>
 #include <sstream>
 #include <stdexcept>
 
@@ -55,7 +54,6 @@ struct NvVideoDecoder::Impl
     CUcontext cu_context = nullptr;
     cudaStream_t stream = nullptr;
     std::unique_ptr<NvDecoder> decoder;
-    std::mutex decoder_mutex;
     bool warned_size_mismatch = false;
 
     Impl(const DecoderConfig& c) : cfg(c)
@@ -121,7 +119,6 @@ struct NvVideoDecoder::Impl
     bool decode_one(
         const uint8_t* packet, std::size_t packet_size, uintptr_t rgba_out, std::size_t rgba_row_bytes, int rotation)
     {
-        std::lock_guard<std::mutex> lock(decoder_mutex);
         if (!decoder)
         {
             throw std::runtime_error("NvVideoDecoder: decoder unavailable");
@@ -135,7 +132,8 @@ struct NvVideoDecoder::Impl
         int n_frames = 0;
         try
         {
-            n_frames = decoder->Decode(packet, static_cast<int>(packet_size));
+            // AVS1 samples are complete access units; do not wait for the next sample.
+            n_frames = decoder->Decode(packet, static_cast<int>(packet_size), CUVID_PKT_ENDOFPICTURE);
         }
         catch (...)
         {
@@ -211,7 +209,6 @@ struct NvVideoDecoder::Impl
     bool decode_one_nv12(
         const uint8_t* packet, std::size_t packet_size, uintptr_t nv12_out, std::size_t nv12_row_bytes, int rotation)
     {
-        std::lock_guard<std::mutex> lock(decoder_mutex);
         if (!decoder)
         {
             throw std::runtime_error("NvVideoDecoder: decoder unavailable");
@@ -229,7 +226,7 @@ struct NvVideoDecoder::Impl
         int n_frames = 0;
         try
         {
-            n_frames = decoder->Decode(packet, static_cast<int>(packet_size));
+            n_frames = decoder->Decode(packet, static_cast<int>(packet_size), CUVID_PKT_ENDOFPICTURE);
         }
         catch (...)
         {
@@ -314,7 +311,8 @@ struct NvVideoDecoder::Impl
 
     void reset_decoder()
     {
-        std::lock_guard<std::mutex> lock(decoder_mutex);
+        if (!decoder)
+            return;
         check_cu(cuCtxPushCurrent(cu_context), "cuCtxPushCurrent");
         decoder.reset();
         try
@@ -337,16 +335,6 @@ NvVideoDecoder::NvVideoDecoder(const DecoderConfig& cfg) : impl_(std::make_uniqu
 }
 
 NvVideoDecoder::~NvVideoDecoder() = default;
-
-uint32_t NvVideoDecoder::width() const
-{
-    return impl_->cfg.width;
-}
-
-uint32_t NvVideoDecoder::height() const
-{
-    return impl_->cfg.height;
-}
 
 bool NvVideoDecoder::decode(const uint8_t* packet,
                             std::size_t packet_size,

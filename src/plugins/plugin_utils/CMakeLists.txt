@@ -7,6 +7,10 @@ add_library(teleop_plugin_utils STATIC
     inc/plugin_utils/hand_injector.hpp
     plugin_device_status_publisher.cpp
     inc/plugin_utils/plugin_device_status_publisher.hpp
+    openxr_hand_tracking_push_channel.cpp
+    openxr_hand_tracking_push_channel.hpp
+    openxr_plugin_session.cpp
+    inc/plugin_utils/openxr_plugin_session.hpp
     wrist_pose_source.cpp
     wrist_source_config.cpp
     inc/plugin_utils/wrist_source_config.hpp
@@ -28,6 +32,8 @@ target_link_libraries(teleop_plugin_utils
     Teleop::openxr_extensions
     OpenXR::openxr_loader
     log_bridge::log_bridge_core
+    PRIVATE
+    oxr::oxr_core
 )
 
 # Include directories

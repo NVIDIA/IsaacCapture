@@ -588,6 +588,9 @@ class TeleopSession:
         directly so the behavioral core stays in one place.
         """
         try:
+            if self._oxr_session is not None:
+                # Apply STOPPING/READY before querying input on the shared handles.
+                self._oxr_session.get_provider_snapshot()
             self.deviceio_session.update()
         except BaseException as error:
             self._status_monitor.mark_runtime_failed(error)

@@ -14,22 +14,37 @@ is mounting `router`; everything the recordings feature needs lives here.
 
 Off by default: set EGOCAP_RECORDINGS_ENABLED=1 to turn it on. Unlike
 EGOCAP_VISER_ENABLED (opt-out, on by default), this feature is opt-in --
-unset, `router` has no routes at all -- every file under the recording
-root is otherwise reachable by anyone who can reach the backend, which is
-not something a deployment should get without asking for it.
+unset, `router` has no routes at all.
+
+Turned on, the listing and every file need the run's control token, the
+same credential that admits recording commands. A caller presents it in
+``X-Control-Token``; the page signs in once with it and is given a
+same-site, HTTP-only cookie, since a download link cannot carry a header.
+A request a browser marks as coming from another site is refused whatever
+it carries. The page's own static files stay public: they hold no
+recording, and they are what shows the sign-in.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
+import secrets
 import stat as stat_module
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from .preview_routes import configured_allowed_origins, trusted_hostnames
+from .recording_command import control_token_valid
+
 router = APIRouter()
+
+#: The cookie the page is given once it has presented the control token.
+SESSION_COOKIE = "egocap_recordings"
 
 _FRONTEND_DIST = Path(__file__).resolve().parents[2] / "recordings_frontend" / "dist"
 
@@ -46,7 +61,7 @@ def _hidden(name: str) -> bool:
     return name.startswith(".") or name.endswith(".pending")
 
 
-def _enabled() -> bool:
+def enabled() -> bool:
     """Whether the whole feature is turned on -- see the module docstring's
     off-by-default rationale."""
     return os.environ.get("EGOCAP_RECORDINGS_ENABLED", "").lower() in ("1", "true", "yes")
@@ -98,7 +113,68 @@ def _hidden_path(base: Path, target: Path) -> bool:
 _NO_STORE_HEADERS = {"Cache-Control": "no-store"}
 
 
-if _enabled():
+def _session_value(control_token: str) -> str:
+    """The cookie value that proves the control token was presented, without being the token: a cookie is
+    stored by the browser, and the token itself must not be readable from there."""
+    return hmac.new(control_token.encode(), b"egocap recordings browser", hashlib.sha256).hexdigest()
+
+
+def _same_site(request: Request) -> bool:
+    """Whether a request comes from this backend's own page, a configured origin, or no page at all.
+
+    A browser states where a request comes from; one that says another site sent it is refused. A request
+    with neither header is a navigation or a non-browser client, which the credential alone decides.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None and site not in ("same-origin", "none"):
+        return False
+    origin = request.headers.get("origin")
+    if origin is None or origin in configured_allowed_origins():
+        return True
+    # The same rule the live session socket applies: the backend's own origin, and only for a trusted host.
+    trusted = trusted_hostnames()
+    if trusted is not None and (request.url.hostname or "") not in trusted:
+        return False
+    return origin == f"{request.url.scheme}://{request.headers.get('host', '')}"
+
+
+def _refusal(request: Request, *, cookie_accepted: bool = True) -> JSONResponse | None:
+    """Why a request may not read recordings, as the reply to send; None when it may."""
+    context = getattr(request.app.state, "recording_context", None)
+    token = getattr(context, "control_token", None)
+    if token is None:
+        return JSONResponse({"detail": "recordings are not available yet"}, 503, headers=_NO_STORE_HEADERS)
+    if not _same_site(request):
+        return JSONResponse({"detail": "origin not allowed"}, 403, headers=_NO_STORE_HEADERS)
+    if control_token_valid(request.headers.get("x-control-token"), token):
+        return None
+    cookie = request.cookies.get(SESSION_COOKIE)
+    # compare_digest refuses non-ASCII text outright, so that is ruled out first.
+    signed_in = cookie is not None and cookie.isascii() and secrets.compare_digest(cookie, _session_value(token))
+    if cookie_accepted and signed_in:
+        return None
+    return JSONResponse({"detail": "enter the control token to browse recordings"}, 401, headers=_NO_STORE_HEADERS)
+
+
+if enabled():
+
+    @router.post("/recordings/api/session", response_model=None)
+    def sign_in(request: Request) -> Response:
+        """Exchange the control token, sent in ``X-Control-Token``, for the cookie the page's listing calls
+        and download links carry. The cookie is HTTP-only and same-site, and is scoped to these routes."""
+        refused = _refusal(request, cookie_accepted=False)
+        if refused is not None:
+            return refused
+        response = Response(status_code=204, headers=_NO_STORE_HEADERS)
+        response.set_cookie(
+            SESSION_COOKIE,
+            _session_value(request.app.state.recording_context.control_token),
+            path="/recordings",
+            httponly=True,
+            samesite="strict",
+            secure=request.url.scheme == "https",
+        )
+        return response
 
     @router.get("/recordings/api/list", response_model=None)
     @router.get("/recordings/api/list/{path:path}", response_model=None)
@@ -109,6 +185,9 @@ if _enabled():
         mtime per entry. A plain (not async) def: FastAPI runs it in its
         threadpool, since the filesystem work below is synchronous and
         would otherwise block the event loop every other route shares."""
+        refused = _refusal(request)
+        if refused is not None:
+            return refused
         base = _recording_output_root(request).resolve()
         target = _resolve(base, path)
         if target is None or _hidden_path(base, target):
@@ -168,11 +247,15 @@ if _enabled():
         download go out as an attachment (Content-Disposition), so a
         stray ``.html``/``.svg`` recorded alongside a take can't execute
         as script on this origin if opened directly."""
+        refused = _refusal(request)
+        if refused is not None:
+            return refused
         base = _recording_output_root(request).resolve()
         target = _resolve(base, path)
         if target is None or not target.is_file() or _hidden_path(base, target):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
-        return FileResponse(target, filename=target.name)
+        # The download is admitted by a credential; a cache that kept it could hand it to a request without one.
+        return FileResponse(target, filename=target.name, headers=_NO_STORE_HEADERS)
 
     # Mounted under router so app.py can register everything this module
     # needs with one `app.include_router(recordings.router)` call. Only

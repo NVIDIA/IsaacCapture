@@ -44,7 +44,7 @@ from avs_wire import (
 from cuda_ipc import CudaIpcFramePublisher
 from nv_video_decode import NvVideoDecoder
 
-logger = logging.getLogger("isaaccapture.camera_streamer.camera_receiver")
+logger = logging.getLogger("isaaccapture.camera_streamer.receiver")
 
 _SOCK_TIMEOUT_S = 0.5
 # If no bytes arrive for this long the link is treated as dead and torn down so
@@ -399,7 +399,6 @@ class _StreamRuntime:
             max_workers=1,
             thread_name_prefix=f"camera_receiver_stream_{config.name}",
         )
-        self.inflight = threading.BoundedSemaphore(config.ring_depth)
         self.block = (16, 16, 1)
         self.grid = (
             (config.width + 15) // 16,
@@ -453,23 +452,6 @@ class _StreamRuntime:
                     )
                 self.decoders[index] = None
 
-    def submit(self, stop: threading.Event, fn, *args) -> bool:
-        """Bound decode and reset work while allowing shutdown to interrupt waiting."""
-        while not stop.is_set():
-            if not self.inflight.acquire(timeout=0.1):
-                continue
-            if stop.is_set():
-                self.inflight.release()
-                return False
-            try:
-                future = self.executor.submit(fn, *args)
-            except BaseException:
-                self.inflight.release()
-                raise
-            future.add_done_callback(lambda _future: self.inflight.release())
-            return True
-        return False
-
     def shutdown(self) -> None:
         self.executor.shutdown(wait=True)
         self.reset_decoders()
@@ -495,7 +477,7 @@ class Avs1TcpReceiver:
             import cupy as cp
         except ImportError as e:
             raise RuntimeError(
-                "camera_receiver requires CuPy. Install the receiver extra as described in examples/camera_streamer/README.md."
+                "camera_receiver requires CuPy. Run ./setup.sh from camera_receiver."
             ) from e
         if not streams:
             raise ValueError("camera_receiver requires at least one AVS stream")
@@ -589,8 +571,10 @@ class Avs1TcpReceiver:
         if self._conn is not None:
             try:
                 self._conn.close()
-            except OSError:
-                logger.debug("Failed to close receiver socket", exc_info=True)
+            except Exception:
+                logger.debug(
+                    "failed to close AVS1 connection during shutdown", exc_info=True
+                )
         if self._thread is not None:
             self._thread.join(timeout=5.0)
             if self._thread.is_alive():
@@ -636,14 +620,17 @@ class Avs1TcpReceiver:
                 finally:
                     try:
                         conn.close()
-                    except OSError:
-                        logger.debug("Failed to close sender connection", exc_info=True)
+                    except Exception:
+                        logger.debug(
+                            "failed to close AVS1 connection after receive loop",
+                            exc_info=True,
+                        )
                     self._conn = None
                     if self._receive_fps_monitor is not None:
                         self._receive_fps_monitor.stop()
                     self._session_id = None
                     for runtime in self._runtimes.values():
-                        runtime.submit(self._stop, runtime.reset_decoders)
+                        runtime.executor.submit(runtime.reset_decoders)
 
     def _connect(self) -> Optional[socket.socket]:
         next_wait_log_at = 0.0
@@ -727,7 +714,7 @@ class Avs1TcpReceiver:
                     bundle.session_id,
                 )
                 for runtime in self._runtimes.values():
-                    runtime.submit(self._stop, runtime.reset_decoders)
+                    runtime.executor.submit(runtime.reset_decoders)
             self._session_id = bundle.session_id
 
         dispatch_items: list[tuple[Avs1Stream, _StreamRuntime]] = []
@@ -741,8 +728,7 @@ class Avs1TcpReceiver:
                 runtime.config.name for _, runtime in dispatch_items
             )
         for stream, runtime in dispatch_items:
-            runtime.submit(
-                self._stop,
+            runtime.executor.submit(
                 self._process_stream_safe,
                 received,
                 bundle,
@@ -774,6 +760,8 @@ class Avs1TcpReceiver:
         stream: Avs1Stream,
         runtime: _StreamRuntime,
     ) -> None:
+        import cupy as cp
+
         self._validate_stream_descriptor(stream, runtime.config)
         slot = runtime.write_index
         t0 = time.monotonic()
@@ -786,13 +774,17 @@ class Avs1TcpReceiver:
             )
             for sample in stream.samples
         ]
-        # Keep the slot and decoders owned until both eyes finish, even on failure.
+        # Finish every eye before a failure can allow slot reuse or decoder reset.
         wait(futures)
-        results = [future.result() for future in futures]
-        if not all(results):
+        if not all(future.result() for future in futures):
             return
         receiver_process_done_mono_ns = time.monotonic_ns()
         receiver_process_done_ns, _ = _read_wall_clock_ns()
+
+        # The native decoder is synchronous. Raw NV12 copies / conversion kernels
+        # run on CuPy's current stream, so sync before announcing IPC visibility.
+        with cp.cuda.Device(self._gpu_device_id):
+            cp.cuda.get_current_stream().synchronize()
 
         timestamp_ns = time.monotonic_ns()
         receiver_ipc_publish_mono_ns = timestamp_ns
@@ -843,20 +835,7 @@ class Avs1TcpReceiver:
                 latencies,
             )
 
-    def _process_sample(self, runtime, stream, sample, slot) -> bool:
-        import cupy as cp
-
-        name = runtime.config.ipc_names[sample.camera_index]
-        with self._ipc_publisher.write_slot(name, slot, self._stop):
-            with cp.cuda.Device(self._gpu_device_id):
-                try:
-                    return self._decode_sample(runtime, stream, sample, slot)
-                finally:
-                    # CuPy's per-thread default stream belongs to this worker.
-                    # Complete reads/writes even on failure before releasing the slot.
-                    cp.cuda.get_current_stream().synchronize()
-
-    def _decode_sample(
+    def _process_sample(
         self,
         runtime: _StreamRuntime,
         stream: Avs1Stream,
@@ -1065,7 +1044,7 @@ class Avs1TcpReceiver:
             # None when the sender TSC anchor is absent or the SOF->ready lag is
             # out of range.
             "sensor_sof_ns": sample_sof_ns,
-            # Same value under the key the CUDA-IPC consumer tools and TeleViz
+            # Same value under the key the CUDA IPC consumer tools and other viewers
             # already read for their "sof_to_consumer_ms" column.
             "sof_wall_clock_ns": sample_sof_ns,
             "sensor_sof_lag_ms": (
@@ -1345,42 +1324,11 @@ def _load_config(path: Path) -> dict:
         cfg = yaml.safe_load(f)
     if not isinstance(cfg, dict):
         raise ValueError(f"config must be a YAML mapping: {path}")
-    if "network" in cfg:
-        # AVS1 stream indices follow sender list order; geometry and port are shared.
-        receiver = dict(cfg.get("receiver", {}))
-        if "port" in receiver:
-            raise ValueError("shared config uses network.port, not receiver.port")
-        receiver["port"] = cfg["network"].get("port", 5000)
-        streams = []
-        for index, stream in enumerate(cfg.get("streams", [])):
-            settings = dict(stream.get("receiver", {}))
-            if set(settings) & {"index", "name", "type", "width", "height"}:
-                raise ValueError(
-                    "shared stream identity and geometry belong in id/type/output"
-                )
-            output = stream["output"]
-            if int(output.get("width", 0)) <= 0 or int(output.get("height", 0)) <= 0:
-                raise ValueError(
-                    "shared config requires explicit positive output width and height"
-                )
-            streams.append(
-                dict(
-                    settings,
-                    index=index,
-                    name=stream["id"],
-                    type=stream["type"],
-                    width=output["width"],
-                    height=output["height"],
-                )
-            )
-        cfg = dict(cfg, receiver=receiver, streams=streams)
     return cfg
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    default_config = (
-        Path(__file__).resolve().parents[1] / "configs" / "s56-stereo-2560x1984-30.yaml"
-    )
+    default_config = Path(__file__).resolve().parent / "configs" / "receiver.yaml"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(default_config))
     parser.add_argument("--host", help="override receiver.host or CAMERA_RECEIVER_HOST")

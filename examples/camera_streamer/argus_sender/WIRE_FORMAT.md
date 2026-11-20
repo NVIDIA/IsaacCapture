@@ -189,8 +189,8 @@ overlap, gaps, unknown flags, unsupported versions, or inconsistent presence.
 
 ## Minimal Python framing
 
-The standalone parser is
-`camera_receiver/avs_wire.py` relative to the example root. This fragment shows the outer framing
+The IsaacCapture implementation is
+`examples/camera_viz/sources/avs_tcp.py`. This fragment shows the outer framing
 and fixed descriptor structs:
 
 ```python
@@ -213,10 +213,8 @@ def recv_exact(sock, size):
     return bytes(data)
 
 
-def recv_record(sock, max_record_bytes=256 * 1024 * 1024):
+def recv_record(sock):
     (record_length,) = struct.unpack("!I", recv_exact(sock, 4))
-    if not 0 < record_length <= max_record_bytes:
-        raise ValueError(f"invalid AVS1 record length: {record_length}")
     record = recv_exact(sock, record_length)
     header = HEADER.unpack_from(record)
     if header[0] != b"AVS1" or header[1] != 1 or header[3] != HEADER.size:

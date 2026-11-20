@@ -48,6 +48,8 @@ recording:
         task_description=None,
         data_dir=tmp_path / "recordings",
         cameras=(),
+        latency={},
+        alignment_index=None,
     )
 
 
@@ -256,3 +258,82 @@ def test_the_shipped_template_resolves_a_real_station_label():
     assert resolved.station_id == "station_01"
     assert resolved.station_label == "Station 01"
     assert resolved.auto_fill_operator_name is False
+
+
+def _latency_yaml(**seconds):
+    return "alignment:\n  tracking_latency_s:\n" + "".join(
+        f"    {name}: {value}\n" for name, value in seconds.items()
+    )
+
+
+def test_tracking_source_latencies_are_resolved_in_seconds(tmp_path):
+    path = _write(tmp_path, _latency_yaml(pico_controller=0.05, manus_glove=1))
+    assert load_station_config(path).latency == {"pico_controller": 0.05, "manus_glove": 1.0}
+
+
+def test_numeric_sources_latency_is_ignored(tmp_path):
+    path = _write(
+        tmp_path,
+        "numeric_sources:\n  - name: pico_controller\n    latency: 0.1\n  - name: manus_glove\n  - just_a_string\n",  # noqa: E501
+    )
+    assert load_station_config(path).latency == {}
+
+
+def test_absent_or_empty_tracking_latency_resolves_to_no_latency(tmp_path):
+    assert load_station_config(_write(tmp_path, "alignment:\n  tracking_latency_s:\n")).latency == {}
+    assert load_station_config(_write(tmp_path, "alignment: {}\n")).latency == {}
+
+
+@pytest.mark.parametrize("value", ["true", "'0.1'", "-0.1", ".inf", ".nan", "[1]"])
+def test_an_invalid_tracking_latency_is_a_station_config_error(tmp_path, value):
+    path = _write(tmp_path, _latency_yaml(pico_controller=value))
+    with pytest.raises(StationConfigError, match="tracking_latency_s.pico_controller must be"):
+        load_station_config(path)
+
+
+def test_a_tracking_latency_for_an_unknown_source_is_a_station_config_error(tmp_path):
+    with pytest.raises(StationConfigError, match="unknown source 'head'"):
+        load_station_config(_write(tmp_path, _latency_yaml(head=0.1)))
+
+
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        ("alignment: [1]\n", "'alignment' must be a mapping"),
+        ("alignment: []\n", "'alignment' must be a mapping"),
+        ("alignment: 0\n", "'alignment' must be a mapping"),
+        ("alignment:\n  tracking_latency_s: 0\n", "tracking_latency_s must be a mapping"),
+        ("alignment:\n  tracking_latency_s: []\n", "tracking_latency_s must be a mapping"),
+        ("alignment:\n  tracking_latency_s: [0.1]\n", "tracking_latency_s must be a mapping"),
+    ],
+)
+def test_a_non_mapping_alignment_or_tracking_latency_is_a_station_config_error(tmp_path, text, match):
+    with pytest.raises(StationConfigError, match=match):
+        load_station_config(_write(tmp_path, text))
+
+
+_CAMERAS = "video_sources:\n  - type: oak_camera\n    name: head\n  - type: oak_camera\n    name: wrist\n"
+
+
+def test_alignment_is_off_without_an_index_source_even_with_cameras(tmp_path):
+    assert load_station_config(_write(tmp_path, _CAMERAS)).alignment_index is None
+
+
+def test_alignment_index_source_can_be_named(tmp_path):
+    path = _write(tmp_path, _CAMERAS + "alignment:\n  index_source: wrist\n")
+    assert load_station_config(path).alignment_index == "wrist"
+
+
+def test_alignment_can_be_disabled(tmp_path):
+    path = _write(tmp_path, _CAMERAS + "alignment:\n  enabled: false\n  index_source: head\n")
+    assert load_station_config(path).alignment_index is None
+
+
+def test_alignment_is_off_without_an_alignment_section(tmp_path):
+    assert load_station_config(_write(tmp_path, "meta: {}\n")).alignment_index is None
+
+
+@pytest.mark.parametrize("section", ["[a, b]", "yes", "3"])
+def test_a_non_mapping_alignment_section_is_a_station_config_error(tmp_path, section):
+    with pytest.raises(StationConfigError, match="alignment"):
+        load_station_config(_write(tmp_path, _CAMERAS + f"alignment: {section}\n"))

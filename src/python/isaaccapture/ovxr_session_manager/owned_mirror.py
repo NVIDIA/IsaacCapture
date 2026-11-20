@@ -46,7 +46,8 @@ class OwnedDesktopMirror(OvxrFrameConsumer):
         camera_products: tuple[MirrorProduct, ...] = (),
     ) -> None:
         self._config = config
-        self._camera_products = tuple(camera_products)
+        self._camera_products = _checked_products(camera_products)
+        self._eye_paths: tuple[str, str] | None = None
         self._mailbox = OwnedMirrorMailbox(
             config.max_fps, gpu_mapper=OwnedCudaImagePool()
         )
@@ -65,16 +66,6 @@ class OwnedDesktopMirror(OvxrFrameConsumer):
         config: OvxrSessionConfig,
         request_shutdown: Callable[[], None],
     ) -> None:
-        eye_paths = config.render_products or (
-            "/OVXR/Render/Products/Left",
-            "/OVXR/Render/Products/Right",
-        )
-        products = (
-            MirrorProduct(eye_paths[0], "Left eye"),
-            MirrorProduct(eye_paths[1], "Right eye"),
-            *self._camera_products,
-        )
-        self._mailbox.set_products(products)
         self._worker = OwnedDesktopMirrorWorker(
             self._mailbox.snapshot,
             self._config,
@@ -83,6 +74,21 @@ class OwnedDesktopMirror(OvxrFrameConsumer):
         )
 
     def on_outputs(self, frame: FrameOutputs) -> None:
+        eye_paths = frame.eye_render_product_paths
+        if eye_paths is not None and eye_paths != self._eye_paths:
+            # Decide once per pair: a rejected menu is not retried every frame.
+            self._eye_paths = eye_paths
+            try:
+                self._mailbox.set_products(
+                    (
+                        MirrorProduct(eye_paths[0], "Left eye"),
+                        MirrorProduct(eye_paths[1], "Right eye"),
+                        *self._camera_products,
+                    )
+                )
+            except ValueError as error:
+                self._mailbox.report_error(error)
+                raise
         # The UI owns its GPU copies independently of render-thread consumers.
         self._mailbox.on_outputs(frame)
 
@@ -141,6 +147,15 @@ class MirrorProduct:
     generation: int = 0
 
 
+def _checked_products(products) -> tuple[MirrorProduct, ...]:
+    products = tuple(products)
+    if len({p.path for p in products}) != len(products) or any(
+        not p.path.startswith("/") or not p.label for p in products
+    ):
+        raise ValueError("mirror products need unique absolute paths and labels")
+    return products
+
+
 @dataclass(frozen=True)
 class OwnedMirrorFrame:
     sequence: int
@@ -181,11 +196,7 @@ class OwnedMirrorMailbox:
 
     def set_products(self, products: tuple[MirrorProduct, ...]) -> None:
         """Called only when application production selection/resources change."""
-        products = tuple(products)
-        if len({p.path for p in products}) != len(products) or any(
-            not p.path.startswith("/") or not p.label for p in products
-        ):
-            raise ValueError("mirror products need unique absolute paths and labels")
+        products = _checked_products(products)
         with self._lock:
             if products == self._products:
                 return

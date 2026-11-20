@@ -31,6 +31,25 @@ const cadence = (snapshots: ReturnType<MetricsAccumulator['takeSnapshot']>, name
   snapshots.find(s => s.cadence === name);
 
 describe('MetricsAccumulator', () => {
+  it('preserves observation time while cached metrics are polled', () => {
+    const clock = jest.spyOn(performance, 'now');
+    try {
+      clock.mockReturnValue(100);
+      const acc = new MetricsAccumulator();
+      acc.recordRender({ framerate: 72 });
+      clock.mockReturnValue(6100);
+      acc.recordRender({ framerate: undefined });
+      expect(cadence(acc.takeSnapshot(), 'render')).toMatchObject({ observedAt: 100 });
+
+      acc.recordRender({ framerate: 72 });
+      expect(cadence(acc.takeSnapshot(), 'render')).toMatchObject({ observedAt: 6100 });
+      acc.reset();
+      expect(acc.takeSnapshot()).toEqual([]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('reports nothing before any metric arrives', () => {
     expect(new MetricsAccumulator().takeSnapshot()).toEqual([]);
   });

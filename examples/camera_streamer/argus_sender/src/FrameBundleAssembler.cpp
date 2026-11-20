@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -20,10 +20,6 @@
 
 namespace argus_sender
 {
-
-#ifdef ARGUS_SENDER_TEST_SUBMISSION_HOOK
-void observeSubmissionLock(std::mutex& mutex, uint64_t bundleSequence);
-#endif
 
 namespace
 {
@@ -215,8 +211,8 @@ public:
             pending.timing.acquireSpreadNs = latestAcquiredSteadyNs - earliestAcquiredSteadyNs;
         }
 
-        std::vector<ReadyBundle> ready;
         std::lock_guard<std::mutex> sendLock(m_sendMutex);
+        std::vector<ReadyBundle> ready;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             if (m_pending.count(bundleSequence) != 0)
@@ -332,11 +328,8 @@ private:
         if (payload.empty())
             return setError("empty AVS1 sample payload");
         const uint64_t payloadDoneSteadyNs = steadyNowNs();
-        std::vector<ReadyBundle> ready;
-#ifdef ARGUS_SENDER_TEST_SUBMISSION_HOOK
-        observeSubmissionLock(m_sendMutex, bundleSequence);
-#endif
         std::lock_guard<std::mutex> sendLock(m_sendMutex);
+        std::vector<ReadyBundle> ready;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             std::map<uint64_t, PendingBundle>::iterator it = m_pending.find(bundleSequence);

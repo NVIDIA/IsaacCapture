@@ -260,9 +260,11 @@ pre-commit install --hook-type commit-msg
   SKIP=check-copyright-year pre-commit run --all-files
   ```
 
-- Finish a rebase before the full hook run. While rebase metadata exists,
+- Finish a merge or rebase before the full hook run. While merge or rebase metadata exists,
   `check-merge-conflict` can mistake an RST heading underline (`=======`) for
-  an unresolved conflict.
+  an unresolved conflict. Before bypassing that false positive for a merge commit,
+  verify there are no unmerged paths or actual conflict markers. Rerun the full
+  hook set after the merge commit and before pushing.
 - **`--all-files` means all *tracked* files.** pre-commit enumerates through
   `git ls-files`, so a file you have created but not yet `git add`ed is skipped
   and the run passes for the wrong reason — REUSE and `ruff format` alike.

@@ -71,7 +71,7 @@ next to its `plugin.yaml`.
 Once per machine. Everything else needs its environment.
 
 ```bash
-python -m isaaccapture.cloudxr.service start
+python -m isaaccapture.cloudxr.service start --accept-eula
 ```
 
 ### Step 2 — Load the CloudXR environment

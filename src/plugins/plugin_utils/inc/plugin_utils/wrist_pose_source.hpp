@@ -20,13 +20,7 @@
 namespace plugin_utils
 {
 
-/** @brief One wrist query result, in the session base space. */
-struct WristSample
-{
-    XrPosef pose{ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-    bool valid = false; //!< Pose usable (may be the cached last good pose).
-    bool tracked = false; //!< Source actively tracked this frame.
-};
+using WristSample = core::WristTrackingSample;
 
 /**
  * @brief Selects an optical or controller-derived wrist pose.

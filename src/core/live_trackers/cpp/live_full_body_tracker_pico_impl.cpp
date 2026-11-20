@@ -30,7 +30,8 @@ std::unique_ptr<FullBodyMcapChannels> LiveFullBodyTrackerPicoImpl::create_mcap_c
 
 LiveFullBodyTrackerPicoImpl::LiveFullBodyTrackerPicoImpl(const OpenXRSessionHandles& handles,
                                                          std::unique_ptr<FullBodyMcapChannels> mcap_channels)
-    : time_converter_(handles),
+    : handles_(handles),
+      time_converter_(handles),
       base_space_(handles.space),
       body_tracker_(XR_NULL_HANDLE),
       pfn_create_body_tracker_(nullptr),
@@ -107,6 +108,11 @@ void LiveFullBodyTrackerPicoImpl::update(int64_t monotonic_time_ns)
     if (body_tracker_ == XR_NULL_HANDLE)
     {
         // Policy: limp mode (feature unsupported/unavailable) is non-fatal.
+        return;
+    }
+
+    if (!handles_.is_running())
+    {
         return;
     }
 

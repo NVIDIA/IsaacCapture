@@ -56,3 +56,61 @@ describe('device profile refresh settings', () => {
     expect(ui.getConfiguration().autoRefreshMode).toBe(mode);
   });
 });
+
+describe('Connect capability readiness', () => {
+  let ui: CloudXR2DUI;
+  let button: HTMLButtonElement;
+
+  beforeEach(() => {
+    document.documentElement.innerHTML = readFileSync(join(__dirname, 'index.html'), 'utf8');
+    ui = new CloudXR2DUI();
+    ui.initialize();
+    button = document.getElementById('startButton') as HTMLButtonElement;
+  });
+
+  afterEach(() => {
+    ui.cleanup();
+    localStorage.clear();
+    jest.restoreAllMocks();
+  });
+
+  it('blocks form updates, session notifications and clicks until capabilities pass', async () => {
+    const onConnect = jest.fn().mockResolvedValue(undefined);
+    const onError = jest.fn();
+    ui.setupConnectButtonHandler(onConnect, onError);
+    expect(button.disabled).toBe(true);
+
+    ui.setStartButtonState(false, 'CONNECT');
+    const width = document.getElementById('perEyeWidth') as HTMLInputElement;
+    width.dispatchEvent(new Event('blur', { bubbles: true }));
+    expect(button.disabled).toBe(true);
+    button.dispatchEvent(new MouseEvent('click'));
+    expect(onConnect).not.toHaveBeenCalled();
+
+    ui.setCapabilitiesReady(true);
+    expect(button.disabled).toBe(false);
+    button.click();
+    await Promise.resolve();
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('keeps failed capability checks disabled after returning to idle', () => {
+    ui.setCapabilitiesReady(true);
+    ui.setCapabilitiesReady(false);
+    ui.setStartButtonState(false, 'CONNECT');
+    ui.updateConnectButtonState();
+    expect(button.disabled).toBe(true);
+  });
+
+  it('preserves resolution validation after capabilities pass', () => {
+    const width = document.getElementById('perEyeWidth') as HTMLInputElement;
+    width.value = '1';
+    width.dispatchEvent(new Event('blur', { bubbles: true }));
+    ui.setCapabilitiesReady(true);
+    expect(button.disabled).toBe(true);
+    width.value = '2048';
+    width.dispatchEvent(new Event('blur', { bubbles: true }));
+    expect(button.disabled).toBe(false);
+  });
+});

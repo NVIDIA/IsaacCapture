@@ -428,6 +428,13 @@ def test_build_head_output_keeps_pose_and_tf_consistent() -> None:
     assert transform.transform.rotation.w == 1.0
 
 
+def test_build_head_output_returns_none_when_head_is_untracked() -> None:
+    head = _active_head()
+    head[HeadInputIndex.IS_TRACKED] = False
+
+    assert build_head_output(head, Time(), "world", "head") is None
+
+
 def test_build_head_output_returns_none_when_head_is_absent() -> None:
     assert (
         build_head_output(

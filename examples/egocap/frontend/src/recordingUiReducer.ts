@@ -60,6 +60,8 @@ export interface RecordingUiState {
   uncertainCommandPhase: CommandPhase | null;
   /** The staged, not-yet-committed task text -- only meaningful while phase is editingTask/savingTask. */
   taskDraft: string;
+  /** The staged, not-yet-committed task details -- edited and saved together with the task text. */
+  detailsDraft: string;
   /** The batch id live when editing began -- lets the component show a
    * "batch changed since you started editing" indication if a New batch
    * command (from this viewer or another) rotates the batch while the
@@ -81,8 +83,9 @@ export type RecordingUiAction =
    * have actually applied it. Lands on "uncertain" until an actual
    * observed snapshot resolves it (see SNAPSHOT_OBSERVED). */
   | { type: "COMMAND_UNKNOWN"; feedback: string }
-  | { type: "BEGIN_TASK_EDIT"; currentText: string; currentBatchId: string | null }
+  | { type: "BEGIN_TASK_EDIT"; currentText: string; currentDetails: string; currentBatchId: string | null }
   | { type: "UPDATE_TASK_DRAFT"; value: string }
+  | { type: "UPDATE_DETAILS_DRAFT"; value: string }
   | { type: "CANCEL_TASK_EDIT"; recording: boolean }
   /** One observed fact from the backend's own snapshot -- reconciles
    * `phase` with another viewer's command, or confirms this viewer's own.
@@ -90,9 +93,10 @@ export type RecordingUiAction =
    * never clobber that command's own pending COMMAND_SUCCEEDED/REJECTED
    * -- EXCEPT while "uncertain", which has no pending command of its own
    * left to clobber and exists precisely to be resolved by this.
-   * `taskText` is the resolved snapshot's own committed task text, used
-   * only to tell whether an uncertain savingTask actually took effect. */
-  | { type: "SNAPSHOT_OBSERVED"; recording: boolean; taskText: string | null };
+   * `taskText` and `taskDetails` are the resolved snapshot's own committed
+   * task text and details, used only to tell whether an uncertain savingTask
+   * actually took effect (both must match the draft; the backend trims details). */
+  | { type: "SNAPSHOT_OBSERVED"; recording: boolean; taskText: string | null; taskDetails: string };
 
 /** The stable phase a known `recording` fact maps to. */
 function stablePhaseFor(recording: boolean): StablePhase {
@@ -104,6 +108,7 @@ export const INITIAL_RECORDING_UI_STATE: RecordingUiState = {
   previousPhase: null,
   uncertainCommandPhase: null,
   taskDraft: "",
+  detailsDraft: "",
   taskEditBatchId: null,
   feedback: null,
 };
@@ -148,11 +153,21 @@ export function recordingUiReducer(state: RecordingUiState, action: RecordingUiA
 
     case "BEGIN_TASK_EDIT":
       return state.phase === "idle"
-        ? { ...state, phase: "editingTask", taskDraft: action.currentText, taskEditBatchId: action.currentBatchId, feedback: null }
+        ? {
+            ...state,
+            phase: "editingTask",
+            taskDraft: action.currentText,
+            detailsDraft: action.currentDetails,
+            taskEditBatchId: action.currentBatchId,
+            feedback: null,
+          }
         : state;
 
     case "UPDATE_TASK_DRAFT":
       return state.phase === "editingTask" ? { ...state, taskDraft: action.value } : state;
+
+    case "UPDATE_DETAILS_DRAFT":
+      return state.phase === "editingTask" ? { ...state, detailsDraft: action.value } : state;
 
     case "CANCEL_TASK_EDIT": {
       if (state.phase !== "editingTask") return state;
@@ -170,7 +185,7 @@ export function recordingUiReducer(state: RecordingUiState, action: RecordingUiA
         // (including a still-unset task) as "didn't take effect" and
         // hand the user back their draft to retry, rather than silently
         // discarding it.
-        if (action.taskText === state.taskDraft) {
+        if (action.taskText === state.taskDraft && action.taskDetails === state.detailsDraft.trim()) {
           return { ...state, phase: stablePhaseFor(action.recording), uncertainCommandPhase: null, taskEditBatchId: null };
         }
         return {

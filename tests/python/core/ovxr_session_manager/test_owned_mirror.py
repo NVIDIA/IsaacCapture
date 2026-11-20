@@ -40,10 +40,11 @@ def _prepared_mirror(*, render_products=(), auxiliary_products=()):
     [(), ("/Render/CustomLeft", "/Render/CustomRight")],
 )
 def test_mirror_menu_includes_eyes_and_camera_labels(monkeypatch, eye_paths):
-    captured = []
+    menus = []
 
     def create_worker(_acquire, _config, _on_close, *, products):
-        captured.extend(products.view()[0])
+        # The worker builds its menu from this view of the mirror's products.
+        menus.append(products)
         return SimpleNamespace(status=DesktopMirrorStatus(), close=lambda: None)
 
     monkeypatch.setattr(mirror, "OwnedDesktopMirrorWorker", create_worker)
@@ -52,16 +53,36 @@ def test_mirror_menu_includes_eyes_and_camera_labels(monkeypatch, eye_paths):
         auxiliary_products=(("/Camera/Head", "Head camera"), ("/Camera/Wrist", None)),
     )
     try:
-        expected_eyes = eye_paths or (
-            "/OVXR/Render/Products/Left",
-            "/OVXR/Render/Products/Right",
-        )
-        assert [(product.path, product.label) for product in captured] == [
-            (expected_eyes[0], "Left eye"),
-            (expected_eyes[1], "Right eye"),
+        (menu,) = menus
+        assert menu.view()[0] == ()
+        active_eyes = eye_paths or ("/Runtime/SelectedLeft", "/Runtime/SelectedRight")
+        frame = Mock(spec=FrameOutputs)
+        frame.eye_render_product_paths = active_eyes
+        frame.latest_color.return_value = None
+        owner.on_outputs(frame)
+        frame.latest_color.assert_called_once_with(active_eyes[0])
+        assert [(p.path, p.label) for p in menu.view()[0]] == [
+            (active_eyes[0], "Left eye"),
+            (active_eyes[1], "Right eye"),
             ("/Camera/Head", "Head camera"),
             ("/Camera/Wrist", "Wrist"),
         ]
+    finally:
+        owner.close()
+
+
+def test_invalid_camera_products_fail_at_construction_and_eye_clash_once():
+    with pytest.raises(ValueError, match="unique absolute paths and labels"):
+        _prepared_mirror(auxiliary_products=(("Camera/Relative", "Head"),))
+    owner = _prepared_mirror(auxiliary_products=(("/Eye/Left", "Head camera"),))
+    try:
+        frame = Mock(spec=FrameOutputs)
+        frame.eye_render_product_paths = ("/Eye/Left", "/Eye/Right")
+        frame.latest_color.return_value = None
+        with pytest.raises(ValueError, match="unique absolute paths and labels"):
+            owner.on_outputs(frame)
+        # The clash is reported once, not on every later frame.
+        owner.on_outputs(frame)
     finally:
         owner.close()
 

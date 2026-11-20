@@ -10,7 +10,7 @@
  * just finished) show up without a manual refresh.
  */
 
-import { fetchRecordingListing, recordingFileUrl, RecordingsApiError, type RecordingEntry } from "./api";
+import { fetchRecordingListing, recordingFileUrl, RecordingsApiError, SIGN_IN_REQUIRED, signIn, type RecordingEntry } from "./api";
 
 const POLL_INTERVAL_MS = 4000;
 
@@ -146,14 +146,59 @@ async function refresh(): Promise<void> {
       setPath(pathSegments(path).slice(0, -1).join("/"));
       return;
     }
+    if (caught instanceof RecordingsApiError && caught.status === SIGN_IN_REQUIRED) {
+      // Not an error to report: the page has not signed in yet, or the backend restarted and issued a new token.
+      errorEl.hidden = true;
+      showSignIn(true);
+      return;
+    }
     errorEl.hidden = false;
     errorEl.textContent = caught instanceof RecordingsApiError ? caught.message : String(caught);
     return;
   }
   if (generation !== requestGeneration) return; // superseded; a newer refresh already owns the view
   errorEl.hidden = true;
+  showSignIn(false);
   renderEntries(path, listing.entries);
 }
+
+/** Shows or hides the control-token form; the listing is hidden behind it, since there is nothing to list. */
+function showSignIn(needed: boolean): void {
+  const form = requireElement<HTMLFormElement>("sign-in");
+  const appearing = needed && form.hidden;
+  form.hidden = !needed;
+  requireElement<HTMLElement>("breadcrumbs").hidden = needed;
+  // Only as the form appears: every poll calls this, and taking focus each time would pull it from the button.
+  if (appearing) requireElement<HTMLInputElement>("sign-in-token").focus();
+}
+
+/** Signs in with the typed token, then lists; a refused token is reported in the form and can be retyped. */
+async function submitSignIn(event: Event): Promise<void> {
+  event.preventDefault();
+  const input = requireElement<HTMLInputElement>("sign-in-token");
+  const message = requireElement<HTMLElement>("sign-in-error");
+  const submit = requireElement<HTMLButtonElement>("sign-in-submit");
+  const token = input.value.trim();
+  // A second submit while the first is still being answered would sign in twice.
+  if (token === "" || submit.getAttribute("aria-disabled") === "true") return;
+  // Marked, not disabled: disabling the button that has focus would drop focus to the page.
+  submit.setAttribute("aria-disabled", "true");
+  try {
+    await signIn(token);
+  } catch (caught) {
+    message.hidden = false;
+    message.textContent = caught instanceof RecordingsApiError ? caught.message : String(caught);
+    return;
+  } finally {
+    submit.removeAttribute("aria-disabled");
+  }
+  // The token is not kept by the page: the cookie the backend set is what the listing and links use from here.
+  input.value = "";
+  message.hidden = true;
+  await refresh();
+}
+
+requireElement<HTMLFormElement>("sign-in").addEventListener("submit", (event) => void submitSignIn(event));
 
 // Serial poll loop (not setInterval): each tick waits for the previous
 // refresh to finish before scheduling the next, so a slow/hung request

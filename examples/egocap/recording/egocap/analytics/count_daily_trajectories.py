@@ -161,10 +161,10 @@ def compute_station_data_breakdown(
         for session_dir in sorted(studio_dir.iterdir()):
             if not session_dir.is_dir():
                 continue
-            # Skip sibling ``<timestamp>_aligned`` folders the background aligner
+            # Skip sibling ``<timestamp>_aligned`` folders the background aligner (and its hidden staging folders)
             # writes — they are processed copies of the raw session, not
             # separately collected data (else each aligned episode double-counts).
-            if session_dir.name.endswith("_aligned"):
+            if session_dir.name.endswith("_aligned") or session_dir.name.startswith("."):
                 continue
             if _read_session_station_name(session_dir) != station:
                 continue
@@ -223,10 +223,10 @@ def count_trajectories(
         for session_dir in sorted(studio_dir.iterdir()):
             if not session_dir.is_dir():
                 continue
-            # Skip sibling ``<timestamp>_aligned`` folders the background aligner
+            # Skip sibling ``<timestamp>_aligned`` folders the background aligner (and its hidden staging folders)
             # writes — they are processed copies of the raw session, not new
             # trajectories (else each aligned episode double-counts the raw one).
-            if session_dir.name.endswith("_aligned"):
+            if session_dir.name.endswith("_aligned") or session_dir.name.startswith("."):
                 continue
 
             session_attrs = _read_zarr_json(session_dir / "zarr.json")

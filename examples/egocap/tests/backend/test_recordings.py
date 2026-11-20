@@ -8,9 +8,9 @@ listing/download behavior, and the real app's page-serving mount."""
 from __future__ import annotations
 
 import importlib
-import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -19,10 +19,12 @@ from fastapi.testclient import TestClient
 from egocap_web import app as app_module
 from egocap_web import recordings as recordings_module
 
+TOKEN = "t" * 43
+
 
 def _reload(monkeypatch, *, enabled: bool) -> object:
     """Re-imports recordings.py with the given env so its module-level
-    ``if _enabled():`` route registration (and ``_FRONTEND_DIST`` mount) is
+    ``if enabled():`` route registration (and ``_FRONTEND_DIST`` mount) is
     re-evaluated -- the routes only exist on the module at import time, so a
     live env var change alone wouldn't affect an already-imported module."""
     monkeypatch.setenv("EGOCAP_RECORDINGS_ENABLED", "1" if enabled else "0")
@@ -40,7 +42,9 @@ def _client(monkeypatch, *, enabled: bool, root: Path | None = None) -> TestClie
     small.include_router(module.router)
     if root is not None:
         small.state.recording_output_root = root
-    return TestClient(small)
+    small.state.recording_context = SimpleNamespace(control_token=TOKEN)
+    # Every request of these tests presents the control token unless a test builds its own client.
+    return TestClient(small, headers={"X-Control-Token": TOKEN})
 
 
 @pytest.fixture(autouse=True)
@@ -95,8 +99,14 @@ def test_listing_shape_dirs_first_ordering_and_no_store_header(monkeypatch, tmp_
 
 def test_a_file_with_a_name_that_is_not_valid_utf8_does_not_break_the_listing(monkeypatch, tmp_path):
     (tmp_path / "ok.mp4").write_bytes(b"x")
-    with open(os.path.join(os.fsencode(tmp_path), b"bad\xff.mp4"), "wb") as handle:
-        handle.write(b"x")
+    original_iterdir = Path.iterdir
+
+    # macOS refuses these filenames on disk; the directory entry still exercises the filter.
+    def entries(path):
+        found = list(original_iterdir(path))
+        return iter([*found, path / "bad\udcff.mp4"] if path == tmp_path else found)
+
+    monkeypatch.setattr(Path, "iterdir", entries)
     client = _client(monkeypatch, enabled=True, root=tmp_path)
     response = client.get("/recordings/api/list")
     assert response.status_code == 200
@@ -172,6 +182,8 @@ def test_a_successful_download(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert response.content == b"video-bytes"
     assert "attachment" in response.headers["content-disposition"]
+    # Admitted by a credential, so no cache may keep it for a request that has none.
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_recording_output_root_uses_app_state_when_set(monkeypatch, tmp_path):
@@ -231,3 +243,114 @@ def test_the_real_application_serves_the_recordings_page_despite_the_router_moun
         monkeypatch.delenv("EGOCAP_RECORDINGS_ENABLED", raising=False)
         importlib.reload(recordings_module)
         importlib.reload(app_module)
+
+
+def test_default_settings_and_imported_catalogs_are_hidden_from_the_recordings_browser(monkeypatch, tmp_path):
+    from egocap_web.operator_settings import OperatorSettings, OperatorSettingsStore, operator_settings_path
+    from egocap_web.task_files import import_task_file
+
+    monkeypatch.delenv("EGOCAP_OPERATOR_SETTINGS_FILE", raising=False)
+    store = OperatorSettingsStore(operator_settings_path(tmp_path))
+    store.save(OperatorSettings(camera_type="oak_d"))
+    import_task_file(store.path.parent / "taskfiles", "Tasks.csv", b"Task Name,Task Description\nfold,Fold\n")
+    client = _client(monkeypatch, enabled=True, root=tmp_path)
+    assert client.get("/recordings/api/list").json()["entries"] == []
+    assert client.get("/recordings/api/list", params={"path": ".egocap"}).status_code == 404
+    for path in (".egocap/operator_settings.json", ".egocap/taskfiles/Tasks.csv"):
+        assert client.get(f"/recordings/files/{path}").status_code == 404
+
+
+# --- authentication and origin --------------------------------------------------------------------------------
+
+
+def _anonymous(monkeypatch, root: Path) -> TestClient:
+    """A client that presents nothing by default, as a browser that has not signed in."""
+    client = _client(monkeypatch, enabled=True, root=root)
+    return TestClient(client.app)
+
+
+def test_nothing_is_listed_or_downloaded_without_the_control_token(monkeypatch, tmp_path):
+    (tmp_path / "take.mp4").write_bytes(b"video")
+    client = _anonymous(monkeypatch, tmp_path)
+    for path in ("/recordings/api/list", "/recordings/files/take.mp4"):
+        refused = client.get(path)
+        assert (refused.status_code, refused.json()["detail"]) == (
+            401,
+            "enter the control token to browse recordings",
+        )
+        assert refused.headers["cache-control"] == "no-store"
+        assert client.get(path, headers={"X-Control-Token": "wrong"}).status_code == 401
+        assert client.get(path, headers={"X-Control-Token": TOKEN}).status_code == 200
+
+
+def test_signing_in_gives_a_same_site_cookie_that_download_links_carry(monkeypatch, tmp_path):
+    (tmp_path / "take.mp4").write_bytes(b"video")
+    client = _anonymous(monkeypatch, tmp_path)
+    assert client.post("/recordings/api/session").status_code == 401
+    assert client.post("/recordings/api/session", headers={"X-Control-Token": "wrong"}).status_code == 401
+    signed_in = client.post("/recordings/api/session", headers={"X-Control-Token": TOKEN})
+    assert signed_in.status_code == 204
+    cookie = signed_in.headers["set-cookie"]
+    assert "HttpOnly" in cookie and "SameSite=strict" in cookie and "Path=/recordings" in cookie
+    assert "Secure" not in cookie  # this test speaks plain HTTP; over HTTPS the cookie is marked secure
+    assert TOKEN not in cookie  # the cookie proves the token was presented without being it
+    assert client.get("/recordings/api/list").status_code == 200
+    assert client.get("/recordings/files/take.mp4").content == b"video"
+
+
+def test_the_cookie_is_marked_secure_over_https(monkeypatch, tmp_path):
+    client = TestClient(_client(monkeypatch, enabled=True, root=tmp_path).app, base_url="https://station.example")
+    cookie = client.post("/recordings/api/session", headers={"X-Control-Token": TOKEN}).headers["set-cookie"]
+    assert "Secure" in cookie
+
+
+@pytest.mark.parametrize("cookie", [b"forged", b"\xe9", b""])
+def test_a_cookie_that_was_not_issued_by_this_run_is_refused(monkeypatch, tmp_path, cookie):
+    client = _anonymous(monkeypatch, tmp_path)
+    # Sent as raw bytes: a browser can be made to send a cookie that is not even ASCII.
+    headers = {"Cookie": b"egocap_recordings=" + cookie}
+    assert client.get("/recordings/api/list", headers=headers).status_code == 401
+    # A cookie is never enough to sign in again: that takes the token itself.
+    assert client.post("/recordings/api/session", headers=headers).status_code == 401
+
+
+def test_a_request_from_another_site_is_refused_even_with_the_token(monkeypatch, tmp_path):
+    client = _client(monkeypatch, enabled=True, root=tmp_path)
+    for headers in (
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+        {"Origin": "https://elsewhere.example"},
+        {"Origin": "null"},
+    ):
+        refused = client.get("/recordings/api/list", headers=headers)
+        assert (refused.status_code, refused.json()["detail"]) == (403, "origin not allowed"), headers
+    for headers in (
+        {"Sec-Fetch-Site": "same-origin", "Origin": "http://testserver"},
+        {"Sec-Fetch-Site": "none"},
+        {},
+    ):
+        assert client.get("/recordings/api/list", headers=headers).status_code == 200, headers
+
+
+def test_the_origin_rule_follows_the_configured_origins_and_trusted_hosts(monkeypatch, tmp_path):
+    client = _client(monkeypatch, enabled=True, root=tmp_path)
+    monkeypatch.setenv("EGOCAP_ALLOWED_ORIGINS", "https://console.example")
+    assert client.get("/recordings/api/list", headers={"Origin": "https://console.example"}).status_code == 200
+    # With trusted hostnames pinned, the backend's own origin counts only when it was reached by one of them.
+    monkeypatch.setenv("EGOCAP_TRUSTED_HOSTNAMES", "station.local")
+    assert client.get("/recordings/api/list", headers={"Origin": "http://testserver"}).status_code == 403
+    monkeypatch.setenv("EGOCAP_TRUSTED_HOSTNAMES", "testserver")
+    assert client.get("/recordings/api/list", headers={"Origin": "http://testserver"}).status_code == 200
+
+
+def test_the_routes_refuse_everything_until_the_application_has_a_token(monkeypatch, tmp_path):
+    module = _reload(monkeypatch, enabled=True)
+    bare = FastAPI()
+    bare.include_router(module.router)
+    client = TestClient(bare, headers={"X-Control-Token": TOKEN})
+    for response in (
+        client.get("/recordings/api/list"),
+        client.get("/recordings/files/take.mp4"),
+        client.post("/recordings/api/session"),
+    ):
+        assert (response.status_code, response.json()["detail"]) == (503, "recordings are not available yet")
