@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: camera_synthetic
+description: "Synthetic cameras, frames with known content, served to readers in other processes"
+command: "./camera_synthetic_plugin"
+version: "0.1.0"
+devices:
+  - path: "/camera"
+    type: "camera"
+    description: "Synthetic camera frames"

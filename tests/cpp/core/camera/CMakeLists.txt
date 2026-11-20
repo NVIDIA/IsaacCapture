@@ -6,6 +6,9 @@ cmake_minimum_required(VERSION 3.20)
 find_package(Threads REQUIRED)
 
 add_executable(camera_tests
+    test_camera_config.cpp
+    test_camera_host.cpp
+    test_camera_plugin.cpp
     test_camera_reader.cpp
     test_codec.cpp
     test_cross_process.cpp
