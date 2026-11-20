@@ -29,9 +29,7 @@ from isaaccapture.teleop_session_manager import TeleopSession, TeleopSessionConf
 from .common import (
     add_hand_arguments,
     validate_hand_arguments,
-    build_selected_hand_pipeline,
-    create_hand_visualizers,
-    update_hand_visualizers,
+    build_hand_view,
     setup_scene,
 )
 
@@ -49,14 +47,14 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
     validate_hand_arguments(parser, args)
 
-    pipeline = build_selected_hand_pipeline(args)
+    view = build_hand_view(args)
 
     server = viser.ViserServer(host=args.host, port=args.port)
     setup_scene(server)
 
     config = TeleopSessionConfig(
         app_name="LiveHandExample",
-        pipeline=pipeline,
+        pipeline=view.pipeline,
     )
 
     with CloudXRLauncher.launch_context(args) as launcher:
@@ -65,7 +63,7 @@ def main(argv: list[str]) -> int:
         print("[live] waiting for headset connection… (Ctrl+C to stop)")
 
         with TeleopSession(config) as session:
-            visualizers = create_hand_visualizers(args, server)
+            visualizers = view.create_visualizer(server)
             print(
                 f"[live] viser listening on {args.host}:{args.port} "
                 f"(http://localhost:{args.port})"
@@ -79,7 +77,7 @@ def main(argv: list[str]) -> int:
                     _last_step_t = now
 
                     result = session.step()
-                    left, right = update_hand_visualizers(args, result, visualizers)
+                    left, right = view.update_visualizer(result, visualizers)
 
                     if session.frame_count % 60 == 0:
                         print(

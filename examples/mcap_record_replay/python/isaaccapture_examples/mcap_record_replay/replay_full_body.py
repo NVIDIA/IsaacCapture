@@ -44,9 +44,7 @@ from .common import (
     setup_scene,
     add_body_arguments,
     validate_body_arguments,
-    build_body_pipeline,
-    create_body_visualizer,
-    update_body_visualizer,
+    build_body_view,
     resolve_recording,
     replay_once,
 )
@@ -94,6 +92,7 @@ def run_once(
     include_controllers: bool = True,
 ) -> int:
     """Play the file once for ``duration_s`` wall-clock seconds. Returns frame count."""
+    # Each replay pass owns a fresh source graph.
     config = TeleopSessionConfig(
         app_name="McapFullBodyReplayExample",
         pipeline=build_full_body_pipeline(include_controllers),
@@ -169,7 +168,7 @@ def main(argv: list[str]) -> int:
         except (FileNotFoundError, ValueError) as error:
             parser.error(str(error))
         rate = capture_rate if args.rate is None else args.rate
-        pipeline = build_body_pipeline(args)
+        view = build_body_view(args)
         print(f"[replay] reading {mcap_path}: {count} samples at {rate:.1f} Hz")
     else:
         mcap_path = resolve_mcap(args.mcap)
@@ -178,7 +177,11 @@ def main(argv: list[str]) -> int:
 
     server = viser.ViserServer(host=args.host, port=args.port)
     ground = setup_scene(server)
-    viz = create_body_visualizer(args, server, ground)
+    viz = (
+        view.create_visualizer(server, ground)
+        if args.body_schema == "soma"
+        else FullBodyViz(server, ground)
+    )
 
     print(
         f"[replay] viser listening on {args.host}:{args.port} "
@@ -190,9 +193,9 @@ def main(argv: list[str]) -> int:
             if args.body_schema == "soma":
                 replay_once(
                     mcap_path,
-                    pipeline,
+                    view.pipeline,
                     count,
-                    lambda result: update_body_visualizer(args, result, viz),
+                    lambda result: view.update_visualizer(result, viz),
                     rate,
                 )
             else:

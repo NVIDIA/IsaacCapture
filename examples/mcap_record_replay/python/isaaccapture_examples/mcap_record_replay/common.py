@@ -14,7 +14,9 @@ Rendering helpers: ``HandJoints``, ``HAND_BONES``, ``BODY_BONES``.
 
 import argparse
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import viser
@@ -114,38 +116,43 @@ def validate_hand_arguments(parser, args):
             parser.error(str(error))
 
 
-def build_body_pipeline(args):
+@dataclass(frozen=True)
+class ViewPipeline:
+    pipeline: BaseRetargeter
+    create_visualizer: Callable
+    update_visualizer: Callable
+
+
+def build_body_view(args):
     # Select the body independently; fingers in SOMA do not enable another hand source.
     if args.body_schema == "soma":
-        from .soma_body_common import build_pipeline
+        from .soma_body_common import SomaBodyViz, build_pipeline
 
         pipeline = build_pipeline(
             args.soma_body_collection_id, args.soma_body_representation
         )
         if args.controllers:
             controllers = ControllersSource(name="controllers")
-            return OutputCombiner(
+            pipeline = OutputCombiner(
                 {
                     "soma_body": pipeline.output("soma_body"),
                     "controller_left": controllers.output(ControllersSource.LEFT),
                     "controller_right": controllers.output(ControllersSource.RIGHT),
                 }
             )
-        return pipeline
-    return build_full_body_pipeline(args.controllers)
+        return ViewPipeline(pipeline, SomaBodyViz, update_soma_body_visualizer)
+    return ViewPipeline(
+        build_full_body_pipeline(args.controllers),
+        FullBodyViz,
+        update_full_body_visualizer,
+    )
 
 
-def create_body_visualizer(args, server, ground=None):
-    if args.body_schema == "soma":
-        from .soma_body_common import SomaBodyViz
-
-        return SomaBodyViz(server, ground)
-    return FullBodyViz(server, ground)
+def update_soma_body_visualizer(result, viz):
+    return viz.update(result["soma_body"])
 
 
-def update_body_visualizer(args, result, viz):
-    if args.body_schema == "soma":
-        return viz.update(result["soma_body"])
+def update_full_body_visualizer(result, viz):
     body = result["full_body"]
     if body.is_none:
         viz.update(None, None)
@@ -155,40 +162,49 @@ def update_body_visualizer(args, result, viz):
     return int(np.count_nonzero(valid))
 
 
-def build_selected_hand_pipeline(args):
+def build_hand_view(args):
     if args.hand_schema == "soma":
-        from .soma_hand_common import build_pipeline, collections
+        from .soma_hand_common import build_pipeline, collections, create_visualizers
 
-        return build_pipeline(
-            collections(
-                args.soma_left_hand_collection_id, args.soma_right_hand_collection_id
+        return ViewPipeline(
+            build_pipeline(
+                collections(
+                    args.soma_left_hand_collection_id,
+                    args.soma_right_hand_collection_id,
+                ),
+                args.soma_hand_representation,
             ),
-            args.soma_hand_representation,
+            create_visualizers,
+            update_soma_hand_visualizers,
         )
-    return build_hand_pipeline()
+    return ViewPipeline(
+        build_hand_pipeline(),
+        create_openxr_hand_visualizers,
+        update_openxr_hand_visualizers,
+    )
 
 
-def create_hand_visualizers(args, server):
-    if args.hand_schema == "soma":
-        from .soma_hand_common import create_visualizers
-
-        return create_visualizers(server)
+def create_openxr_hand_visualizers(server):
     return {
         "hand_left": HandViz(server, "hand_left", LEFT_COLOR),
         "hand_right": HandViz(server, "hand_right", RIGHT_COLOR),
     }
 
 
-def update_hand_visualizers(args, result, visualizers):
+def update_soma_hand_visualizers(result, visualizers):
+    return [
+        bool(visualizers[f"hand_{side}"].update(result[f"hand_{side}"]))
+        for side in ("left", "right")
+    ]
+
+
+def update_openxr_hand_visualizers(result, visualizers):
     valid = []
     for side in ("left", "right"):
         viz = visualizers[f"hand_{side}"]
-        if args.hand_schema == "soma":
-            valid.append(bool(viz.update(result[f"hand_{side}"])))
-        else:
-            available = bool(result[f"{side}_valid"][0])
-            viz.update(np.asarray(result[f"{side}_positions"][0]), available)
-            valid.append(available)
+        available = bool(result[f"{side}_valid"][0])
+        viz.update(np.asarray(result[f"{side}_positions"][0]), available)
+        valid.append(available)
     return valid
 
 

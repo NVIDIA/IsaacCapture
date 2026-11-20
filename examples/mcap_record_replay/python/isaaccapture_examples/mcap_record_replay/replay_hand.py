@@ -42,9 +42,8 @@ from .common import (
     setup_scene,
     add_hand_arguments,
     validate_hand_arguments,
-    build_selected_hand_pipeline,
-    create_hand_visualizers,
-    update_hand_visualizers,
+    build_hand_view,
+    create_openxr_hand_visualizers,
     resolve_recording,
     replay_once,
 )
@@ -92,6 +91,7 @@ def run_once(
     viz_right: HandViz,
 ) -> int:
     """Play the file once for ``duration_s`` wall-clock seconds. Returns frame count."""
+    # Each replay pass owns a fresh source graph.
     config = TeleopSessionConfig(
         app_name="McapHandReplayExample",
         pipeline=build_hand_pipeline(),
@@ -165,7 +165,7 @@ def main(argv: list[str]) -> int:
         except (FileNotFoundError, ValueError) as error:
             parser.error(str(error))
         rate = capture_rate if args.rate is None else args.rate
-        pipeline = build_selected_hand_pipeline(args)
+        view = build_hand_view(args)
         print(
             f"[replay] reading {mcap_path}: left={counts['hand_left']} right={counts['hand_right']} at {rate:.1f} Hz"
         )
@@ -176,7 +176,11 @@ def main(argv: list[str]) -> int:
 
     server = viser.ViserServer(host=args.host, port=args.port)
     setup_scene(server)
-    visualizers = create_hand_visualizers(args, server)
+    visualizers = (
+        view.create_visualizer(server)
+        if args.hand_schema == "soma"
+        else create_openxr_hand_visualizers(server)
+    )
 
     print(
         f"[replay] viser listening on {args.host}:{args.port} "
@@ -189,9 +193,9 @@ def main(argv: list[str]) -> int:
                 # Each tracker advances independently; exhausted hands become absent.
                 replay_once(
                     mcap_path,
-                    pipeline,
+                    view.pipeline,
                     max(counts.values()),
-                    lambda result: update_hand_visualizers(args, result, visualizers),
+                    lambda result: view.update_visualizer(result, visualizers),
                     rate,
                 )
             else:

@@ -37,7 +37,7 @@ from .common import (
     BODY_JOINT_NAMES,
     add_body_arguments,
     validate_body_arguments,
-    build_body_pipeline,
+    build_full_body_pipeline,
     record_trackers,
 )
 
@@ -87,7 +87,7 @@ def main(argv: list[str]) -> int:
 
     config = TeleopSessionConfig(
         app_name="McapFullBodyRecordExample",
-        pipeline=build_body_pipeline(args),
+        pipeline=build_full_body_pipeline(args.controllers),
         mcap_config=McapRecordingConfig(str(mcap_path)),
     )
 
