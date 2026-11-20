@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "avatar_stream_health.hpp"
+
 #include <avatar_sdk/AvatarSDK.h>
 #include <deviceio_session/deviceio_session.hpp>
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
@@ -98,6 +100,7 @@ struct GloveState
     std::vector<::avatar::Pose> landmarks;
     ::avatar::AvatarDataFrame raw_frame;
     ::avatar::AvatarDataFrame robot_frame;
+    std::array<DatasetFreshness, 3> datasets;
     // Empty until start() or a successful fetch; drives the data-timeout window.
     std::optional<std::chrono::steady_clock::time_point> last_successful_fetch;
     // The first stamp is a baseline; only a later stamp proves the glove is streaming.
@@ -117,6 +120,7 @@ private:
 
     void initialize_openxr();
     void try_connect_missing_gloves();
+    void log_waiting_gloves();
     void start_glove_if_present(GloveState& glove, ::avatar::DeviceSide side);
     void refresh_data();
     void inject_hand_data();
@@ -152,7 +156,7 @@ private:
     std::array<bool, 2> m_haptic_stopped{ { true, true } };
     std::array<bool, 2> m_haptic_error_logged{ { false, false } };
     std::optional<std::chrono::steady_clock::time_point> m_last_glove_retry;
-    bool m_glove_wait_logged = false;
+    std::array<GloveWaitReminder, 2> m_glove_wait_reminders;
 };
 
 } // namespace avatar

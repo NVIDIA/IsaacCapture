@@ -5,6 +5,7 @@ add_library(avatar_plugin_core STATIC
   avatar_glove_collection.hpp
   avatar_hand_tracking_plugin.cpp
   inc/avatar/avatar_hand_tracking_plugin.hpp
+  inc/avatar/avatar_stream_health.hpp
 )
 
 add_library(isaac::avatar_plugin ALIAS avatar_plugin_core)

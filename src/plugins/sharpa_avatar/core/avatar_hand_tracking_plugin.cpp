@@ -36,8 +36,8 @@ namespace
 {
 
 constexpr size_t kJointFlatbufferSize = 4096;
-constexpr auto kAvatarDataTimeout = std::chrono::seconds(3);
 constexpr auto kGloveRetryInterval = std::chrono::seconds(2);
+constexpr auto kGloveWaitReminderInterval = std::chrono::minutes(1);
 constexpr auto kHapticCommandTimeout = std::chrono::milliseconds(200);
 
 const std::shared_ptr<spdlog::logger>& logger()
@@ -82,6 +82,11 @@ size_t joint_category_index(::avatar::DeviceDataCategory category)
         break;
     }
     throw std::invalid_argument("HUMAN data is not a joint stream");
+}
+
+size_t data_category_index(::avatar::DeviceDataCategory category)
+{
+    return category == ::avatar::DeviceDataCategory::HUMAN ? 0 : joint_category_index(category) + 1;
 }
 
 const char* collection_id(::avatar::DeviceSide side, ::avatar::DeviceDataCategory category)
@@ -260,6 +265,7 @@ void GloveState::reset() noexcept
     landmarks.clear();
     raw_frame = {};
     robot_frame = {};
+    datasets = {};
     device.reset();
     last_successful_fetch.reset();
     last_sample_stamp.reset();
@@ -410,13 +416,18 @@ void AvatarTracker::try_connect_missing_gloves()
     {
         start_glove_if_present(glove(side), side);
     }
-    // Log once per stretch with no glove; a glove connecting re-arms the message.
-    const bool waiting = std::none_of(m_gloves.begin(), m_gloves.end(), has_device);
-    if (waiting && !m_glove_wait_logged)
+}
+
+void AvatarTracker::log_waiting_gloves()
+{
+    const auto now = std::chrono::steady_clock::now();
+    for (const ::avatar::DeviceSide side : kDeviceSides)
     {
-        logger()->info("Waiting for an online glove...");
+        if (m_glove_wait_reminders[side_index(side)].observe(glove(side).streaming, now, kGloveWaitReminderInterval))
+        {
+            logger()->info("Waiting for {} glove to connect and stream.", to_string(side));
+        }
     }
-    m_glove_wait_logged = waiting;
 }
 
 void AvatarTracker::refresh_data()
@@ -436,8 +447,11 @@ void AvatarTracker::refresh_data()
         // fetch_data() keeps returning a silent glove's last sample, so only a newer
         // sample stamp counts as data for the timeout below.
         bool fetched_any = false;
-        const auto note_stamp = [&state, &fetched_any](const ::avatar::Stamp& stamp)
+        const auto note_stamp = [&state, &fetched_any](::avatar::DeviceDataCategory category, const ::avatar::Stamp& stamp)
         {
+            // Dataset clocks are independent: an active stream cannot keep another stream's cached output alive.
+            state.datasets[data_category_index(category)].observe(
+                stamp.sec, stamp.nanosec, std::chrono::steady_clock::now());
             if (!state.last_sample_stamp)
             {
                 state.last_sample_stamp = stamp;
@@ -456,7 +470,7 @@ void AvatarTracker::refresh_data()
                 state.device->fetch_data(frame, ::avatar::DeviceDataCategory::HUMAN) == ::avatar::ErrorCode::SUCCESS;
             if (fetched)
             {
-                note_stamp(frame.skeleton.header.stamp);
+                note_stamp(::avatar::DeviceDataCategory::HUMAN, frame.skeleton.header.stamp);
                 state.landmarks = std::move(frame.skeleton.landmark);
             }
             else
@@ -475,7 +489,7 @@ void AvatarTracker::refresh_data()
             ::avatar::AvatarDataFrame& cached = cached_joint_frame(state, category);
             if (fetched)
             {
-                note_stamp(hand_payload(frame, category).header.stamp);
+                note_stamp(category, hand_payload(frame, category).header.stamp);
                 cached = std::move(frame);
             }
             else
@@ -517,6 +531,7 @@ void AvatarTracker::update()
     try_connect_missing_gloves();
     m_deviceio_session->update();
     refresh_data();
+    log_waiting_gloves();
     if (m_haptic_reader)
     {
         const auto now = std::chrono::steady_clock::now();
@@ -593,6 +608,10 @@ void AvatarTracker::push_joint_frame(const GloveState& glove,
                                      ::avatar::DeviceDataCategory category,
                                      core::SchemaPusher& pusher)
 {
+    if (!glove.datasets[data_category_index(category)].fresh(std::chrono::steady_clock::now()))
+    {
+        return;
+    }
     const ::avatar::AvatarDataFrame& frame = cached_joint_frame(glove, category);
     if (frame.payload_case() != payload_case(category))
     {
@@ -703,7 +722,13 @@ void AvatarTracker::inject_hand_data()
 
     const auto process_hand = [this, time](::avatar::DeviceSide side)
     {
-        const std::vector<::avatar::Pose>& landmarks = glove(side).landmarks;
+        const GloveState& state = glove(side);
+        if (!state.datasets[data_category_index(::avatar::DeviceDataCategory::HUMAN)].fresh(
+                std::chrono::steady_clock::now()))
+        {
+            return;
+        }
+        const std::vector<::avatar::Pose>& landmarks = state.landmarks;
         if (landmarks.empty())
         {
             return;
