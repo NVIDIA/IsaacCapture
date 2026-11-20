@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# ZED per-eye dimensions must match the sender output profile.
+version: 1
+receiver:
+  host: 127.0.0.1
+  port: 5000
+  gpu_id: 0
+  max_record_bytes: 268435456
+  stats_log_interval_s: 0
+  receive_fps_warning_threshold: 28.0
+  receive_fps_warning_interval_s: 10.0
+ipc:
+  socket_path: /tmp/camera_receiver_avs1_cuda_ipc.sock
+  owner_name: camera_receiver_avs1
+  queue_size: 1024
+streams:
+- index: 0
+  name: head
+  type: stereo
+  width: 640
+  height: 360
+  output_format: nv12
+  ring_depth: 6
+  ipc:
+    left: head.left
+    right: head.right

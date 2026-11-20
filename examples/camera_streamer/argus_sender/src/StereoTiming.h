@@ -7,6 +7,8 @@
 #ifndef ARGUS_SENDER_STEREO_TIMING_H
 #define ARGUS_SENDER_STEREO_TIMING_H
 
+#include "Clock.h"
+
 #include <Argus/Argus.h>
 #include <EGLStream/EGLStream.h>
 
@@ -15,12 +17,6 @@
 namespace argus_sender
 {
 
-enum SenderClockDomain
-{
-    SENDER_CLOCK_UNKNOWN = 0,
-    SENDER_CLOCK_TAI = 1,
-    SENDER_CLOCK_REALTIME = 2
-};
 
 struct FrameTiming
 {
@@ -80,8 +76,6 @@ private:
 };
 
 int64_t signedDeltaNs(uint64_t rightNs, uint64_t leftNs);
-uint64_t readSenderClockNs(uint32_t* clockDomain = 0);
-uint64_t readTscNowNs();
 bool readFrameTiming(EGLStream::Frame* frame, const char* label, FrameTiming* timing);
 bool readFrameTiming(Argus::Buffer* buffer, const char* label, FrameTiming* timing);
 

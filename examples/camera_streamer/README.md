@@ -161,3 +161,7 @@ NVENC/NVDEC, and CUDA IPC still require the target NVIDIA hardware and driver.
 Project code uses Apache-2.0. The imported Argus sample helpers `Error.h` and
 `EGLGlobal.h` retain their BSD-3-Clause notices. Jetson Multimedia API and Video
 Codec SDK dependencies retain their own licenses and are supplied separately.
+
+## ZED USB camera
+
+For the attached ZED Mini on Thor, use [zed_sender](zed_sender/README.md). It keeps the existing AVS1 receiver and `head.left,head.right` preview names, with matching ZED receiver profiles.

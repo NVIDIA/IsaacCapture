@@ -145,6 +145,7 @@ add_executable(argus_sender
     src/TcpTransport.cpp
     src/HevcEncoder.cpp
     src/StereoTiming.cpp
+    src/Clock.cpp
     src/EGLGlobal.cpp
     src/NvBufSurfaceLite.cpp
     ${MMAPI_CLASS_SOURCES}

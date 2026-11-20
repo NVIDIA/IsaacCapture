@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+version: 1
+network:
+  bind: 0.0.0.0
+  port: 5000
+runtime:
+  frames: 0
+  log_interval_s: 5
+capture:
+  device: auto
+  width: 1280
+  height: 720
+  fps: 30
+output:
+  width: 640
+  height: 360
+  fps: 30
+  bitrate_mbps: 6
+  gop: 30
+  rotation: 0

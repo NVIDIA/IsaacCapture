@@ -48,6 +48,7 @@ argus_sender_add_cpp_test(argus_sender_test_nv_remap nv_remap)
 add_executable(argus_sender_test_rate_limiter
     tests/test_rate_limiter.cpp
     src/StereoTiming.cpp
+    src/Clock.cpp
     src/MixedRateScheduler.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_rate_limiter rate_limiter)
@@ -56,6 +57,7 @@ add_executable(argus_sender_test_alignment_policy
     tests/test_alignment_policy.cpp
     src/StereoAlignmentPolicy.cpp
     src/StereoTiming.cpp
+    src/Clock.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_alignment_policy alignment_policy)
 
@@ -93,6 +95,7 @@ add_executable(argus_sender_test_bundle_assembler
     src/FrameBundleAssembler.cpp
     src/Avs1Wire.cpp
     src/StereoTiming.cpp
+    src/Clock.cpp
     src/Runtime.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_bundle_assembler bundle_assembler)
@@ -101,6 +104,7 @@ add_executable(argus_sender_test_tcp_transport
     tests/test_tcp_transport.cpp
     src/TcpTransport.cpp
     src/StereoTiming.cpp
+    src/Clock.cpp
     src/Runtime.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_tcp_transport tcp_transport)

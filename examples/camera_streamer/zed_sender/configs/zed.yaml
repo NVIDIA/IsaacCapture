@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+version: 1
+network:
+  bind: 0.0.0.0
+  port: 5000
+  reconnect_ms: 1000
+  dump_wire: ""
+runtime:
+  frames: 0
+  log_interval_s: 5
+capture:
+  device: auto
+  # All widths here are per eye; USB capture contains both eyes side by side.
+  width: 1280
+  height: 720
+  fps: 60
+  timeout_ms: 2000
+output:
+  width: 1280
+  height: 720
+  fps: 60
+  # Same per-eye CBR target as cameras_thor.yaml; lower this to save bandwidth.
+  bitrate_mbps: 50
+  gop: 60
+  rotation: 0

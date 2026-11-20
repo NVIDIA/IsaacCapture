@@ -1032,7 +1032,7 @@ class Avs1TcpReceiver:
             "height": stream.height,
             "source_pixel_format": "nv12",
             "ipc_pixel_format": runtime.config.output_format,
-            "sender_clock": "tegra_tsc_ns",
+            "sender_clock": "tegra_tsc_ns" if sample.sof_tsc_ns is not None else None,
             "sender_wall_clock": bundle.sender_clock_domain,
             "sof_tsc_ns": sample.sof_tsc_ns,
             "sof_tsc_valid": sample.sof_tsc_ns is not None,
