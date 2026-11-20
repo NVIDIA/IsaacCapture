@@ -3,7 +3,7 @@
 > Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
 
 
-2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 18, 2026
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 20, 2026
 
 ## Pages in this subsection
 

@@ -55,6 +55,7 @@ headset setup, and your first session. Existing users can consult
   * [Bring your own task logic](teleop/synthetic_xr.md#bring-your-own-task-logic)
 * [OVXR installation](getting_started/ovxr.md)
   * [Install XR support](getting_started/ovxr.md#install-xr-support)
+  * [Upgrading from OVXR 0.1](getting_started/ovxr.md#upgrading-from-ovxr-0-1)
   * [Optional packages and licenses](getting_started/ovxr.md#optional-packages-and-licenses)
   * [Optional camera panels](getting_started/ovxr.md#optional-camera-panels)
   * [Optional desktop mirror](getting_started/ovxr.md#optional-desktop-mirror)

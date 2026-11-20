@@ -21,9 +21,9 @@ count currently is, and changes every time a row is added or removed. -->
 
 <a id="supported-devices"></a>
 
-<a id="supported-devices-14"></a>
+<a id="supported-devices-15"></a>
 
-## Supported Devices 14
+## Supported Devices 15
 
 A standardized device interface removes custom integrations and their maintenance. Input
 modes determine which retargeters and control schemes are available.
@@ -44,6 +44,7 @@ modes determine which retargeters and control schemes are available.
 * [OGLO Tactile Glove](https://www.opengraphlabs.com/): Tactile contact sensing (80 taxels), 6-axis IMU. Set up: [OGLO Tactile Glove Plugin](https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/oglo_tactile); [OGLO Tactile Glove docs](../device/tactile/oglo.md)
 * [WUJI Glove](https://wuji.tech/en/glove): High-fidelity hand tracking. Set up: [WUJI Glove docs](../device/hand_tracking/wuji_glove.md); [WUJI Glove Plugin](https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/wuji_glove); [WUJI Hand retargeting](../references/retargeting/wuji.md)
 * [Noitom Robotics Motion Capture](https://www.noitomrobotics.com): Full-body motion capture. Set up: [Noitom Mocap Plugin](https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/noitom_mocap)
+* [j-mex AgileMaster](https://jmex.com.tw/agilemaster/): Full-body motion capture. Set up: [j-mex AgileMaster Plugin](https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/jmex)
 * [Logitech Rudder Pedals](https://www.logitechg.com/en-us/products/flight/flight-simulator-rudder-pedals.html): 3-axis foot pedal. Set up: [Generic 3-axis Pedal Plugin](https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/generic_3axis_pedal)
 * [3Dconnexion SpaceMouse](https://3dconnexion.com/product/spacemouse-compact/): 6-DoF end effector, base velocity. Set up: [SpaceMouse Plugin](https://github.com/NVIDIA/IsaacTeleop/tree/main/src/plugins/spacemouse); [SpaceMouse docs](../device/spatial_controllers/spacemouse.md)
 * [Gamepads](https://github.com/mdqinc/SDL_GameControllerDB): 6-DoF end effector, base velocity. Set up: [Gamepad Plugin](https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/gamepad); [Gamepad docs](../device/gamepad.md)

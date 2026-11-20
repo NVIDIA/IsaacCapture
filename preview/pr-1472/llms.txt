@@ -3,7 +3,7 @@
 > Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) and egocentric data (Ego Pipeline): device plugins, retargeters, and data utilities for recording, replaying, and converting human and robot demonstration data.
 
 
-2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 18, 2026
+2025-2026, NVIDIA CORPORATION & AFFILIATES, last updated on November 20, 2026
 
 ## Pages
 
@@ -13,7 +13,7 @@
 - [Ecosystem](overview/ecosystem.md): The Isaac Capture ecosystem brings together the input devices, data services, and cloud
 - [Quick Start](teleop/quick_start.md): This guide walks through running a teleoperation session with an XR headset using CloudXR. By the
 - [Synthetic XR Teleoperation](teleop/synthetic_xr.md): &#42;&#42;Build and automate teleoperation from your desktop, without an XR headset.&#42;&#42;
-- [OVXR installation](getting_started/ovxr.md): OVXR provides optional XR presentation for applications that use Isaac Capture
+- [OVXR installation](getting_started/ovxr.md): Any application that supplies an OVRTX renderer and an OVStage can use Isaac
 - [Teleop Session](teleop/teleop_session.md): TeleopSessionManager provides a declarative, configuration-based API for
 - [Teleop Control State Machine](teleop/control_state_machine.md): This page describes the default teleop control state machine used by
 - [EgoHand](ego_post_processing/egohand.md): EgoHand reconstructs SOMA hand poses, 3D joints, and meshes from egocentric
