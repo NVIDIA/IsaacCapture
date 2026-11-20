@@ -121,7 +121,7 @@ you opt out). Run it from the repository root, in a venv set up as in
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/sharpa_avatar
+   uv pip install -e ./examples/sharpa_avatar --no-sources
    python -m isaaccapture_examples.sharpa_avatar
 
 Gloves reconnect from ``update()`` if they drop offline. Only one process

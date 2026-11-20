@@ -548,7 +548,7 @@ fi
 # pillow renders the XR controls HUD (isaaccapture_examples/camera_viz/controls/hud.py).
 PKGS=("pyyaml>=6.0" "$target_cupy" "numpy>=1.23" "scipy>=1.15" "pillow>=10.0")
 [[ "$MODE" == full ]] && PKGS=("$ISAACCAPTURE_PKG" "${PKGS[@]}")
-$WITH_V4L2 && PKGS+=("opencv-python>=4.5")
+$WITH_V4L2 && PKGS+=("opencv-python>=4.5,<5")
 $WITH_OAKD && PKGS+=("depthai>=3.0")
 $WITH_RTP  && PKGS+=("pybind11>=2.11" "PyGObject>=3.42,<3.52")
 
@@ -578,6 +578,17 @@ if (( ${#EXTRA_UV[@]} > 0 )); then
 else
     uv pip install --python "$PY" --upgrade "${PKGS[@]}"
 fi
+
+# isaaccapture[cloudxr] depends on cupy-cuda12x, so on a CUDA 13 host the install
+# above brings that variant back next to the target. Remove it again; the variants
+# share the cupy/ directory, so reinstall the target afterwards.
+for v in cupy-cuda11x cupy-cuda12x cupy-cuda13x; do
+    if [[ "$v" != "$target_cupy" ]] && uv pip show --python "$PY" "$v" >/dev/null 2>&1; then
+        step "removing $v pulled in by dependencies (target is $target_cupy)"
+        uv pip uninstall --python "$PY" "$v" >/dev/null
+        uv pip install --python "$PY" --reinstall-package "$target_cupy" "$target_cupy"
+    fi
+done
 
 # The example itself, so `python -m isaaccapture_examples.camera_viz` resolves
 # without the source directory on sys.path. Editable, so edits need no
@@ -623,6 +634,12 @@ if $WITH_RTP; then
         fi
         deactivate
     fi
+fi
+
+if $WITH_V4L2; then
+    step "verifying OpenCV V4L2 backend"
+    "$PY" "$CAMERA_VIZ_DIR/python/isaaccapture_examples/camera_viz/sources/_v4l2_backend.py" \
+        || die "V4L2 capture is unavailable — see the diagnostics above"
 fi
 
 # Native Argus camera source. Jetson-only and opt-in; failures are non-fatal

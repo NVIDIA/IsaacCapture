@@ -123,7 +123,10 @@ public:
 
         for (const auto& config : streams)
         {
-            std::string channel_name = std::string("oak_metadata/") + core::EnumNameStreamType(config.camera);
+            // "<base>/oak_tracked" is the topic McapReplayConfig reads for FrameMetadataTrackerOak, so
+            // this file replays with base name "oak_metadata/<Stream>".
+            std::string channel_name =
+                std::string("oak_metadata/") + core::EnumNameStreamType(config.camera) + "/oak_tracked";
             mcap::Channel channel(channel_name, "flatbuffer", schema.id);
             m_writer.addChannel(channel);
             m_channel_ids[config.camera] = channel.id;

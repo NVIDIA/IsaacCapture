@@ -300,7 +300,7 @@ started first; the Python modules start it themselves):
    ./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
 
    # Python
-   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/mcap_record_replay --no-sources
    python -m isaaccapture_examples.mcap_record_replay.live_full_body --accept-eula
    python -m isaaccapture_examples.mcap_record_replay.record_full_body --accept-eula
    python -m isaaccapture_examples.mcap_record_replay.replay_full_body
