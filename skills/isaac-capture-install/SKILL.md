@@ -68,8 +68,11 @@ headset.
 The latest stable 1.x release:
 
 ```bash
-uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
+uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0' --upgrade-package isaaccapture
 ```
+
+uv keeps an installed version that already satisfies the specifier, so
+`--upgrade-package isaaccapture` is what replaces an older install in the environment.
 
 Pre-releases are published on the NVIDIA index. The `a0` in the specifier opts in
 `isaaccapture` alone; do not add `--prerelease=allow`, which also takes pre-releases
@@ -77,7 +80,7 @@ of every dependency:
 
 ```bash
 uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0a0' \
-      --extra-index-url https://pypi.nvidia.com
+      --extra-index-url https://pypi.nvidia.com --upgrade-package isaaccapture
 ```
 
 To match one version of the documentation exactly, use the pin its Quick Start shows.

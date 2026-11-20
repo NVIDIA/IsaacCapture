@@ -63,7 +63,7 @@ Install the latest stable release from PyPI:
 
 .. code-block:: bash
 
-   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0'
+   uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0' --upgrade-package isaaccapture
 
 Pre-release builds are published between stable releases. Picking one up takes the NVIDIA index
 and a version specifier that names a pre-release, which opts in ``isaaccapture`` alone rather
@@ -72,9 +72,10 @@ than every dependency:
 .. code-block:: bash
 
    uv pip install 'isaaccapture[cloudxr,retargeters]~=1.0a0' \
-         --extra-index-url https://pypi.nvidia.com
+         --extra-index-url https://pypi.nvidia.com --upgrade-package isaaccapture
 
-The two commands above track the newest 1.x release. To follow this version of the documentation
+The two commands above track the newest 1.x release; ``--upgrade-package`` makes them replace an
+older install, which uv otherwise keeps. To follow this version of the documentation
 (|version|) exactly, pin to the series it describes instead:
 
 .. parsed-literal::
