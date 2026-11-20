@@ -17,11 +17,12 @@ Reading status
 --------------
 
 The getters return cached immutable values and perform no device, process, or
-OpenXR I/O:
+OpenXR I/O. ``config`` is a ``TeleopSessionConfig`` as built in
+:doc:`/teleop/teleop_session`:
 
 .. code-block:: python
 
-   from isaaccapture.teleop_session_manager import DeviceState
+   from isaaccapture.teleop_session_manager import DeviceState, TeleopSession
 
    with TeleopSession(config) as session:
        while True:

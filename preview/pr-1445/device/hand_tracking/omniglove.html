@@ -519,8 +519,7 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build
 cmake<span class="w"> </span>--install<span class="w"> </span>build<span class="w"> </span>--component<span class="w"> </span>omniglove
 </pre></div>
 </div>
-<p>Existing build directories using <code class="docutils literal notranslate"><span class="pre">OMNIGLOVE_SDK_ROOT</span></code> or <code class="docutils literal notranslate"><span class="pre">OMNIGLOVE_SDK_REF</span></code>
-should remove those cache entries. Local SDK checkouts use CMake’s standard
+<p>Local SDK checkouts use CMake’s standard
 <code class="docutils literal notranslate"><span class="pre">-DFETCHCONTENT_SOURCE_DIR_OMNIGLOVE_SDK=/path/to/agilink_omniglove_sdk</span></code> override.</p>
 </section>
 <section id="running">
@@ -578,9 +577,11 @@ wrist is still published with the tracking bits cleared.</p></li>
 <li><p>Positions are metres and orientations are unit <code class="docutils literal notranslate"><span class="pre">(x,</span> <span class="pre">y,</span> <span class="pre">z,</span> <span class="pre">w)</span></code>
 quaternions, in the base space passed to <code class="docutils literal notranslate"><span class="pre">HandInjector</span></code>.</p></li>
 <li><p>OpenXR joint <code class="docutils literal notranslate"><span class="pre">+Z</span></code> points away from the fingertip and <code class="docutils literal notranslate"><span class="pre">+Y</span></code> toward the
-back of the hand. SDK finger orientations receive a local Y half-turn;
-the right wrist basis is converted separately. Wrist and finger poses are
-composed with the same world-space wrist transform.</p></li>
+back of each digit. SDK digit orientations receive a local Y half-turn,
+followed for the thumb by a local Z rotation of -90 degrees on the left
+and +90 degrees on the right to align the flexion hinge with local +X.
+The right wrist basis is converted separately. Wrist and finger poses
+are composed with the same world-space wrist transform.</p></li>
 <li><p>SDK monotonic sample times are converted into runtime <code class="docutils literal notranslate"><span class="pre">XrTime</span></code> through
 <code class="docutils literal notranslate"><span class="pre">XrTimeConverter</span></code>; the wrist is queried at that same time.</p></li>
 <li><p>Unmapped, unconverged IK, invalid bone data, non-finite poses, zero
@@ -772,7 +773,7 @@ only the SDK runtime library is copied into this plugin’s install tree.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 16, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 20, 2026.
       <br/>
     
   </p>
