@@ -1,0 +1,132 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#include "inc/remote_plugin_session/protocol_frame.hpp"
+
+#include "protocol_io.hpp"
+
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+namespace remote_plugin_protocol
+{
+
+using detail::build_frame;
+using detail::load_le;
+using detail::store_le;
+using detail::Writer;
+
+namespace
+{
+
+bool is_frame_type(uint8_t value)
+{
+    switch (static_cast<FrameType>(value))
+    {
+    case FrameType::Hello:
+    case FrameType::HelloAck:
+    case FrameType::OpenHand:
+    case FrameType::OpenSchema:
+    case FrameType::OpenPull:
+    case FrameType::Close:
+    case FrameType::HandSample:
+    case FrameType::SchemaSample:
+    case FrameType::WristSample:
+    case FrameType::Heartbeat:
+    case FrameType::Error:
+    case FrameType::Ping:
+    case FrameType::Pong:
+        return true;
+    }
+    return false;
+}
+
+} // namespace
+
+namespace detail
+{
+
+void encode_header(const FrameHeader& header, uint8_t* out)
+{
+    store_le(out, kMagic);
+    out[kTypeOffset] = static_cast<uint8_t>(header.type);
+    out[kVersionOffset] = kProtocolVersion;
+    store_le(out + kChannelOffset, header.channel_id);
+    store_le(out + kSeqOffset, header.seq);
+    store_le(out + kPayloadSizeOffset, header.payload_size);
+    store_le(out + kSendTimeOffset, header.t_send_monotonic_ns);
+}
+
+} // namespace detail
+
+void stamp_header(std::vector<uint8_t>& frame, uint32_t seq, int64_t t_send_monotonic_ns)
+{
+    if (frame.size() < kHeaderSize)
+    {
+        throw std::invalid_argument("protocol: frame shorter than a header");
+    }
+    store_le(frame.data() + kSeqOffset, seq);
+    store_le(frame.data() + kSendTimeOffset, t_send_monotonic_ns);
+}
+
+Frame split_frame(std::vector<uint8_t> message)
+{
+    Frame frame;
+    frame.header = decode_header(message);
+    if (message.size() != kHeaderSize + frame.header.payload_size)
+    {
+        throw DecodeError("protocol: message length does not match payload_size");
+    }
+    message.erase(message.begin(), message.begin() + static_cast<std::ptrdiff_t>(kHeaderSize));
+    frame.payload = std::move(message);
+    return frame;
+}
+
+std::vector<uint8_t> encode_frame(FrameType type, uint16_t channel_id, std::span<const uint8_t> payload)
+{
+    return build_frame(type, channel_id, payload.size(), [payload](Writer& writer) { writer.bytes(payload); });
+}
+
+uint32_t frame_payload_size(std::span<const uint8_t> in)
+{
+    if (in.size() < kHeaderSize)
+    {
+        throw DecodeError("protocol: header: truncated");
+    }
+    if (load_le<uint32_t>(in.data()) != kMagic)
+    {
+        throw DecodeError("protocol: bad frame magic");
+    }
+    const auto payload_size = load_le<uint32_t>(in.data() + kPayloadSizeOffset);
+    if (payload_size > kMaxPayloadSize)
+    {
+        throw DecodeError("protocol: payload size " + std::to_string(payload_size) + " exceeds limit");
+    }
+    return payload_size;
+}
+
+FrameHeader decode_header(std::span<const uint8_t> in)
+{
+    FrameHeader header;
+    header.payload_size = frame_payload_size(in); // length, magic and payload limit
+    // Version before type: another version may number its frame types differently.
+    if (const uint8_t version = in[kVersionOffset]; version != kProtocolVersion)
+    {
+        throw DecodeError("protocol: peer speaks protocol version " + std::to_string(version) +
+                          ", this build speaks version " + std::to_string(kProtocolVersion) +
+                          "; rebuild the sender and the bridge from the same source");
+    }
+    const uint8_t type = in[kTypeOffset];
+    if (!is_frame_type(type))
+    {
+        throw DecodeError("protocol: unknown frame type " + std::to_string(type));
+    }
+    header.type = static_cast<FrameType>(type);
+    header.channel_id = load_le<uint16_t>(in.data() + kChannelOffset);
+    header.seq = load_le<uint32_t>(in.data() + kSeqOffset);
+    header.t_send_monotonic_ns = load_le<int64_t>(in.data() + kSendTimeOffset);
+    return header;
+}
+
+} // namespace remote_plugin_protocol
