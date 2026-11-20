@@ -180,14 +180,6 @@ class CloudXRService:
                 "host preflight: checking web client assets",
                 level=logging.DEBUG,
             )
-        if self._usb_local or self._host_client:
-            from ..oob_teleop_env import require_web_client_static_dir  # noqa: PLC0415
-
-            require_web_client_static_dir(
-                require_health_probe=setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY"),
-                require_fragment_token=setup_oob,
-            )
-
         self._runtime_proc: subprocess.Popen | None = None
         self._wss_thread: threading.Thread | None = None
         self._wss_loop: asyncio.AbstractEventLoop | None = None
@@ -277,6 +269,16 @@ class CloudXRService:
             self._env_config,
             launcher_defaults={"NV_DEVICE_PROFILE": self._device_profile},
         )
+        if self._usb_local or self._host_client:
+            # After EnvConfig: an env file may override TELEOP_WEB_CLIENT_STATIC_DIR,
+            # and the bundle that is validated must be the one that is served.
+            from ..oob_teleop_env import require_web_client_static_dir  # noqa: PLC0415
+
+            require_web_client_static_dir(
+                require_health_probe=self._setup_oob
+                and not os.getenv("TELEOP_OOB_HUB_ONLY"),
+                require_fragment_token=self._setup_oob,
+            )
         try:
             check_eula(accept_eula=self._accept_eula or None)
         except SystemExit as exc:

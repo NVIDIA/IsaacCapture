@@ -29,6 +29,7 @@ from cloudxr_py_test_ns.oob_teleop_env import (
     versioned_web_client_url,
     print_hosted_client_line,
     print_oob_hub_startup_banner,
+    redact_control_token,
     require_web_client_static_dir,
     resolve_lan_host_for_oob,
     usb_backend_port,
@@ -234,6 +235,28 @@ def test_build_headset_bookmark_url_token_follows_route(
     route, _, params = fragment.partition("?")
     assert route == "/real/dexmate"
     assert parse_qs(params)["controlToken"] == ["a&b=c?d#e"]
+
+
+def test_build_headset_bookmark_url_token_joins_route_query_with_ampersand(
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A route that already has a query gets the token appended with '&', not a second '?'."""
+    monkeypatch.setenv("TELEOP_CLIENT_ROUTE", "/sim/isaaclab/?x=1")
+    u = build_headset_bookmark_url(
+        web_client_base="https://h.test/",
+        stream_config={"serverIP": "10.0.0.1", "port": 48322},
+        control_token="secret123",
+    )
+    fragment = urlparse(u).fragment
+    assert fragment == "/sim/isaaclab/?x=1&controlToken=secret123"
+    assert fragment.count("?") == 1
+    assert parse_qs(fragment.partition("?")[2]) == {
+        "x": ["1"],
+        "controlToken": ["secret123"],
+    }
+    redacted = redact_control_token(u)
+    assert "secret123" not in redacted
+    assert "x=1&controlToken=<REDACTED>" in redacted
 
 
 def test_build_headset_bookmark_url_no_token_when_oob_disabled(

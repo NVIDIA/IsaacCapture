@@ -66,7 +66,7 @@ function loadToken(key: string): string | null {
  * with none supplied the stored token for this endpoint is kept.
  */
 export function captureOobControlToken(): void {
-  const { pathname, search, hash } = window.location;
+  const { search, hash } = window.location;
   const searchParams = new URLSearchParams(search);
 
   // Fragment layout: `#<route>?<params>`; split at the first '?'.
@@ -88,11 +88,16 @@ export function captureOobControlToken(): void {
     route || newFragmentParams
       ? `#${route}${newFragmentParams ? `?${newFragmentParams}` : ''}`
       : '';
-  window.history.replaceState(
-    window.history.state,
-    '',
-    `${pathname}${newSearch ? `?${newSearch}` : ''}${newHash}`
-  );
+  try {
+    // Full same-origin URL: a bare path starting with `//` parses as another origin.
+    const url = new URL(window.location.href);
+    url.search = newSearch;
+    url.hash = newHash;
+    window.history.replaceState(window.history.state, '', url.href);
+  } catch {
+    // The token is already stored; a failed cleanup must not block startup.
+    console.warn('Could not remove the control token from the address bar.');
+  }
 }
 
 /** Control token for the hub named by the current `serverIP`/`port` query, if any. */

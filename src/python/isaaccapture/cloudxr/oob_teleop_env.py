@@ -607,7 +607,8 @@ def build_headset_bookmark_url(
     fragment = route
     if oob_enable and control_token:
         # Fragment, not query: it is never sent in a request target or Referer.
-        fragment += "?" + urlencode({"controlToken": control_token})
+        joiner = "&" if "?" in fragment else "?"
+        fragment += joiner + urlencode({"controlToken": control_token})
     return f"{url}#{fragment}" if fragment else url
 
 

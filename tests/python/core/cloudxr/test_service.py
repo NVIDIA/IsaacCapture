@@ -36,6 +36,17 @@ _windows_skip = pytest.mark.skipif(
 )
 
 
+@contextlib.contextmanager
+def _usb_host_preflight_patches():
+    """Stub the adb/coturn/port preflights that run before the web client check."""
+    with (
+        patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+        patch("isaaccapture.cloudxr.oob_teleop_adb.require_coturn_available"),
+        patch("isaaccapture.cloudxr.oob_teleop_adb.require_turn_port_free"),
+    ):
+        yield
+
+
 # ============================================================================
 # TestServiceConstruction
 # ============================================================================
@@ -100,6 +111,9 @@ class TestServiceConstruction:
                 "isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir",
                 side_effect=RuntimeError("lacks the OOB healthProbe"),
             ) as require_static,
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_coturn_available"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_turn_port_free"),
         ):
             with pytest.raises(RuntimeError, match="lacks the OOB healthProbe"):
                 CloudXRService(
@@ -109,6 +123,60 @@ class TestServiceConstruction:
                 require_health_probe=True, require_fragment_token=True
             )
             mocks["popen"].assert_not_called()
+
+    def test_web_client_static_dir_validated_after_env_file_is_applied(
+        self, tmp_path, monkeypatch
+    ):
+        """The bundle validated is the env file's TELEOP_WEB_CLIENT_STATIC_DIR."""
+        monkeypatch.delenv("TELEOP_WEB_CLIENT_STATIC_DIR", raising=False)
+        env_file_dir = str(tmp_path / "from-env-file")
+        calls = []
+        seen = {}
+
+        def apply_env_file(*_args, **_kwargs):
+            calls.append("from_args")
+            monkeypatch.setenv("TELEOP_WEB_CLIENT_STATIC_DIR", env_file_dir)
+            return mocks["env_cfg"]
+
+        def observe(**_kwargs):
+            calls.append("require_static")
+            seen["dir"] = os.environ.get("TELEOP_WEB_CLIENT_STATIC_DIR")
+
+        with mock_service_deps(tmp_path, ready=True) as mocks:
+            mocks["from_args"].side_effect = apply_env_file
+            mocks["static_client"].side_effect = observe
+            with _usb_host_preflight_patches():
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+        assert seen["dir"] == env_file_dir
+        assert calls.index("from_args") < calls.index("require_static")
+
+    def test_unsupported_bundle_from_env_file_refused_before_runtime_spawn(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("TELEOP_WEB_CLIENT_STATIC_DIR", raising=False)
+
+        def apply_env_file(*_args, **_kwargs):
+            monkeypatch.setenv("TELEOP_WEB_CLIENT_STATIC_DIR", str(tmp_path / "old"))
+            return mocks["env_cfg"]
+
+        def refuse(**_kwargs):
+            assert os.environ["TELEOP_WEB_CLIENT_STATIC_DIR"] == str(tmp_path / "old")
+            raise RuntimeError("lacks the OOB fragment token")
+
+        with mock_service_deps(tmp_path, ready=True) as mocks:
+            mocks["from_args"].side_effect = apply_env_file
+            mocks["static_client"].side_effect = refuse
+            with (
+                _usb_host_preflight_patches(),
+                pytest.raises(RuntimeError, match="fragment token"),
+            ):
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+            mocks["popen"].assert_not_called()
+            mocks["check_eula"].assert_not_called()
 
     def test_construction_stores_parameters(self, tmp_path):
         """Constructor stores install_dir, env_config, device_profile, and accept_eula."""

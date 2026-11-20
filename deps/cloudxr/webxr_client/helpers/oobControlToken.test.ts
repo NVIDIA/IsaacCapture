@@ -133,4 +133,34 @@ describe('captureOobControlToken', () => {
     spy.mockRestore();
     warn.mockRestore();
   });
+
+  // jsdom refuses to put a `//`-prefixed pathname into location at all (its own replaceState
+  // throws a SecurityError), so the page-side input cannot be reproduced; assert instead that
+  // the cleanup is written as an absolute same-origin URL, which a bare `//host/...` path is not.
+  it('rewrites the address bar with an absolute same-origin URL', () => {
+    visit(`/client//x/?${HUB}#/real?controlToken=dbl`);
+    const replace = jest.spyOn(window.history, 'replaceState');
+    expect(() => captureOobControlToken()).not.toThrow();
+    const target = String(replace.mock.calls[0][2]);
+    expect(new URL(target).origin).toBe(window.location.origin);
+    expect(target.startsWith(window.location.origin)).toBe(true);
+    expect(target).not.toContain('controlToken');
+    expect(window.location.pathname).toBe('/client//x/');
+    expect(getOobControlToken(hubQuery())).toBe('dbl');
+    replace.mockRestore();
+  });
+
+  it('keeps the token and does not log it when history.replaceState throws', () => {
+    visit(`/client/?${HUB}#/real?controlToken=secret-tok`);
+    const replace = jest.spyOn(window.history, 'replaceState').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(() => captureOobControlToken()).not.toThrow();
+    expect(getOobControlToken(hubQuery())).toBe('secret-tok');
+    const logged = JSON.stringify(warn.mock.calls);
+    expect(logged).not.toContain('secret-tok');
+    replace.mockRestore();
+    warn.mockRestore();
+  });
 });
