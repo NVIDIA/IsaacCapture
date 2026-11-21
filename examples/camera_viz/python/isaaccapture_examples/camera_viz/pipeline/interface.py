@@ -65,6 +65,14 @@ def _check_lens_model(model: str) -> None:
         )
 
 
+def _freeze(*arrays: Any) -> None:
+    """A source hands the same record to every caller, so its arrays are
+    made read-only."""
+    for array in arrays:
+        if hasattr(array, "setflags"):
+            array.setflags(write=False)
+
+
 @dataclass(frozen=True)
 class PictureCalibration:
     """The lens of the sensor behind ``Frame.picture`` and how it sits.
@@ -86,7 +94,7 @@ class PictureCalibration:
         _check_lens_model(self.distortion_model)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class StereoCalibration:
     """The lenses of a stereo camera and how its two eyes sit.
 
@@ -120,6 +128,15 @@ class StereoCalibration:
 
     def __post_init__(self) -> None:
         _check_lens_model(self.distortion_model)
+        _freeze(
+            self.left_K,
+            self.left_D,
+            self.right_K,
+            self.right_D,
+            self.R,
+            self.T,
+            self.R_left_from_imu,
+        )
 
 
 @dataclass(frozen=True)

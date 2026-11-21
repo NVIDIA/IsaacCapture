@@ -399,4 +399,4 @@ def build_stereo_camera(spec: dict, *, imu: bool = False) -> FrameSource:
     if kind == "oakd":
         return OakdStereoSource(name=name, imu=imu, **arguments)
     # video: a side-by-side file already emits both eyes in one frame.
-    return VideoFileSource(name=name, stereo=True, **arguments)
+    return VideoFileSource(name=name, stereo=True, hold=True, **arguments)

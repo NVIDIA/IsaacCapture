@@ -145,6 +145,13 @@ class CaptureMailbox:
             self._published = (index, int(timestamp_ns))
             self._count += 1
 
+    def reset(self) -> None:
+        """Forget the published capture, when a source starts again. The
+        buffer the reader holds stays its own."""
+        with self._lock:
+            self._published = None
+            self._count = self._taken = 0
+
     def take(self) -> Optional[tuple]:
         """``(buffer index, timestamp_ns)`` of the newest capture not taken
         yet, or None."""
@@ -247,6 +254,10 @@ class PolledSource(FrameSource):
         self._publish_idx = -1
         self._consumed_idx = -2
         self._publish_lock = threading.Lock()
+        # Set by a source whose reader keeps a frame while newer ones
+        # arrive: it then picks the buffer to write, so the frame the
+        # reader holds is not written.
+        self._mailbox: Optional[CaptureMailbox] = None
 
         # Thread + reconnect state.
         self._stop = threading.Event()
@@ -304,11 +315,17 @@ class PolledSource(FrameSource):
             self._connected = False
 
     def latest(self) -> Optional[Frame]:
-        with self._publish_lock:
-            if self._publish_idx < 0 or self._publish_idx == self._consumed_idx:
+        if self._mailbox is not None:
+            taken = self._mailbox.take()
+            if taken is None:
                 return None
-            idx = self._publish_idx
-            self._consumed_idx = idx
+            idx = self._consumed_idx = taken[0]
+        else:
+            with self._publish_lock:
+                if self._publish_idx < 0 or self._publish_idx == self._consumed_idx:
+                    return None
+                idx = self._publish_idx
+                self._consumed_idx = idx
         # stream=0: producer already synchronized its stream before publishing,
         # so the GPU buffer is safe to read from any consumer stream.
         return Frame(
@@ -392,6 +409,8 @@ class PolledSource(FrameSource):
                 self._stop.wait(timeout=0.001)
                 continue
 
+            if self._mailbox is not None:
+                self._write_idx = self._mailbox.write_index()
             buf = self._gpu_buffers[self._write_idx]
             try:
                 self._upload_and_convert(buf)
@@ -405,9 +424,12 @@ class PolledSource(FrameSource):
                 first_frame_seen = True
                 notify(self._kind, "streaming")
 
-            with self._publish_lock:
-                self._publish_idx = self._write_idx
-            self._write_idx = (self._write_idx + 1) % len(self._gpu_buffers)
+            if self._mailbox is not None:
+                self._mailbox.publish(self._write_idx, time.monotonic_ns())
+            else:
+                with self._publish_lock:
+                    self._publish_idx = self._write_idx
+                self._write_idx = (self._write_idx + 1) % len(self._gpu_buffers)
             self._frame_count += 1
 
     def _mark_disconnected(self) -> None:
