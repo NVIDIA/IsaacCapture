@@ -364,8 +364,9 @@ class RobotConnection:
 
     ``extensions`` are the OpenXR session's (None with ``placeholder``). ``ended`` turns true when
     the connection is over; the server then calls :meth:`close`. ``robot_state`` is the server's
-    ``RobotStateStore``: a robot app that offers robot state is answered that it is taken, its
-    robot-state link messages go into the store, and ``on_robot_state`` is called.
+    ``RobotStateStore``: for a robot app that offers robot state ``on_robot_state`` is called
+    first, and a :class:`HelloError` it raises refuses the robot app; otherwise the robot app is
+    answered that robot state is taken and its robot-state link messages go into the store.
     """
 
     def __init__(
@@ -451,6 +452,10 @@ class RobotConnection:
             request = parse_hello(
                 hello, placeholder=self._placeholder, extensions=self._extensions
             )
+            takes_robot_state = request.robot_state and self._robot_state is not None
+            if takes_robot_state and self._on_robot_state is not None:
+                # Before the store is attached: a robot app refused here leaves nothing in it.
+                self._on_robot_state()
         except HelloError as error:
             self._refuse(str(error))
             return
@@ -465,7 +470,6 @@ class RobotConnection:
             "session_id": uuid.uuid4().hex,
             "server_version": isaaccapture.__version__,
         }
-        takes_robot_state = request.robot_state and self._robot_state is not None
         if takes_robot_state:
             # Before HELLO_ACK: the robot app sends robot state as soon as it reads the answer.
             self.host.attach_robot_state(self._robot_state)
@@ -483,8 +487,6 @@ class RobotConnection:
             logger.info(
                 "Robot app %r at %s sends robot state", request.app_name, self.peer
             )
-            if self._on_robot_state is not None:
-                self._on_robot_state()
 
     def _start(self, handles: Any) -> None:
         """Start the trackers once the OpenXR session exists."""
