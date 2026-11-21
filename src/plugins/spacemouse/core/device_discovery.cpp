@@ -4,6 +4,7 @@
 #include "inc/spacemouse/device_discovery.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -26,11 +27,10 @@ struct KnownDevice
 
 // Matched as substrings of HID_NAME, which is usually "<manufacturer> <product>".
 // "SpaceNavigator" also matches "SpaceNavigator for Notebooks".
+// Match Wireless BT before Wireless: only the BT model uses combined reports.
 constexpr KnownDevice kKnownDevices[] = {
-    { "SpaceMouse Compact", false },
-    { "SpaceMouse Wireless", false },
-    { "SpaceNavigator", false },
-    { "3Dconnexion Universal Receiver", true },
+    { "SpaceMouse Compact", false }, { "SpaceMouse Wireless BT", true },         { "SpaceMouse Wireless", false },
+    { "SpaceNavigator", false },     { "3Dconnexion Universal Receiver", true },
 };
 
 std::optional<std::string> read_hid_name(const std::filesystem::path& uevent_path)
@@ -44,6 +44,59 @@ std::optional<std::string> read_hid_name(const std::filesystem::path& uevent_pat
             return line.substr(kPrefix.size());
     }
     return std::nullopt;
+}
+
+bool has_motion_axes(const std::filesystem::path& descriptor_path)
+{
+    std::ifstream file(descriptor_path, std::ios::binary);
+    uint32_t usage_page = 0;
+    uint32_t usage_min = 0;
+    unsigned usages = 0;
+    unsigned input_axes = 0;
+    // HID short items encode their payload size in the low two bits (3 means 4 bytes).
+    for (int prefix; (prefix = file.get()) != EOF;)
+    {
+        if (prefix == 0xfe) // Long items are not used by the supported motion descriptors.
+            return false;
+        const int size = (prefix & 3) == 3 ? 4 : prefix & 3;
+        uint32_t value = 0;
+        for (int i = 0; i < size; ++i)
+        {
+            const int byte = file.get();
+            if (byte == EOF)
+                return false;
+            value |= static_cast<uint32_t>(byte) << (8 * i);
+        }
+        switch (prefix & 0xfc)
+        {
+        case 0x04: // Usage Page
+            usage_page = value;
+            break;
+        case 0x08: // Usage: Generic Desktop X/Y/Z/Rx/Ry/Rz are 0x30..0x35.
+            if ((size == 4 ? value >> 16 : usage_page) == 1 && (value & 0xffff) >= 0x30 && (value & 0xffff) <= 0x35)
+                usages |= 1U << ((value & 0xffff) - 0x30);
+            break;
+        case 0x18: // Usage Minimum
+            usage_min = value;
+            break;
+        case 0x28: // Usage Maximum
+            if (usage_page == 1 && usage_min <= 0x30 && value >= 0x35)
+                usages |= 0x3f;
+            break;
+        case 0x80: // Input (ignore constant padding)
+            if (!(value & 1))
+                input_axes |= usages;
+            if (input_axes == 0x3f)
+                return true;
+            break;
+        }
+        if ((prefix & 0x0c) == 0) // Local usages expire at every Main item.
+        {
+            usages = 0;
+            usage_min = 0;
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -66,7 +119,13 @@ std::optional<DeviceLocation> find_device(const std::filesystem::path& hidraw_cl
         for (const auto& known : kKnownDevices)
         {
             if (hid_name->find(known.product_name) != std::string::npos)
+            {
+                // Receiver interfaces share HID_NAME; only the motion interface has these axes.
+                if (known.product_name == "3Dconnexion Universal Receiver" &&
+                    !has_motion_axes(hidraw_class_dir / name / "device" / "report_descriptor"))
+                    continue;
                 return DeviceLocation{ dev_dir / name, known.combined_report };
+            }
         }
     }
     return std::nullopt;

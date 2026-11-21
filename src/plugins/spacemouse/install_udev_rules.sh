@@ -50,9 +50,10 @@ echo "Checking SpaceMouse hidraw permissions..."
 found=0
 for node in /dev/hidraw*; do
     [[ -e "$node" ]] || continue
-    vendor="$(udevadm info -q property -n "$node" 2>/dev/null | sed -n 's/^ID_VENDOR_ID=//p')"
-    model="$(udevadm info -q property -n "$node" 2>/dev/null | sed -n 's/^ID_MODEL_ID=//p')"
-    if [[ "$vendor" == "256f" || ( "$vendor" == "046d" && ( "$model" == "c626" || "$model" == "c628" ) ) ]]; then
+    # USB ID properties belong to the parent, but HID_ID is present on the HID device.
+    hid_id="$(sed -n 's/^HID_ID=//p' "/sys/class/hidraw/${node##*/}/device/uevent" 2>/dev/null)" || continue
+    IFS=: read -r bus vendor model <<< "${hid_id^^}"
+    if [[ "$vendor" == "0000256F" || ( "$vendor" == "0000046D" && ( "$model" == "0000C626" || "$model" == "0000C628" ) ) ]]; then
         found=1
         if [[ -r "$node" ]]; then
             echo "  OK: $node is readable."
