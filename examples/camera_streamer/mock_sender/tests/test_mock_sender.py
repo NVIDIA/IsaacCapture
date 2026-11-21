@@ -257,12 +257,15 @@ class SensorUncertaintyArgTest(unittest.TestCase):
             unittest.mock.patch.object(ms.logging, "basicConfig"),
             unittest.mock.patch("sys.stderr"),
         ):
+            raised = None
             try:
                 ms.main(argv)
             except (SystemExit, RuntimeError) as exc:
-                server.assert_not_called()
-                return exc, sources.called
-        self.fail("main returned")
+                raised = exc
+            server.assert_not_called()
+            reached_sources = sources.called
+        self.assertIsNotNone(raised, "main returned")
+        return raised, reached_sources
 
     def test_out_of_range_uncertainty_is_a_usage_error(self):
         for value in ("5000000", "nan", "inf", "-1"):
