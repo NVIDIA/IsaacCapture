@@ -91,6 +91,25 @@ from ._schema import (
     PluginDeviceStatus,
     PluginDeviceStatusSnapshot,
     PluginDeviceStatusSnapshotRecord,
+    # Robot status types (named readings and faults of a robot).
+    RobotReadingKind,
+    RobotStatusReading,
+    RobotFaultSeverity,
+    RobotFault,
+    RobotStatus,
+    RobotStatusRecord,
+    # Robot description types (a robot's data series, joints and grippers).
+    RobotJointKind,
+    RobotJointDescription,
+    RobotGripperDescription,
+    RobotValueKind,
+    RobotValueDescription,
+    RobotTextPair,
+    RobotSeriesShape,
+    RobotSeriesDescription,
+    RobotDescription,
+    RobotDescriptionRecord,
+    robot_state_record_schema,
     # Haptic command types (vendor-neutral cross-process device output).
     HapticCommand,
     # Camera-related types.
@@ -235,6 +254,25 @@ __all__ = [
     "PluginDeviceStatus",
     "PluginDeviceStatusSnapshot",
     "PluginDeviceStatusSnapshotRecord",
+    # Robot status types.
+    "RobotReadingKind",
+    "RobotStatusReading",
+    "RobotFaultSeverity",
+    "RobotFault",
+    "RobotStatus",
+    "RobotStatusRecord",
+    # Robot description types.
+    "RobotJointKind",
+    "RobotJointDescription",
+    "RobotGripperDescription",
+    "RobotValueKind",
+    "RobotValueDescription",
+    "RobotTextPair",
+    "RobotSeriesShape",
+    "RobotSeriesDescription",
+    "RobotDescription",
+    "RobotDescriptionRecord",
+    "robot_state_record_schema",
     # Haptic command types.
     "HapticCommand",
     # Camera types.

@@ -82,7 +82,7 @@ add_custom_target(python_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-retargeters-lite.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-grounding.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/requirements-wuji.txt" "${CMAKE_BINARY_DIR}/python_package/$<CONFIG>/"
-    DEPENDS deviceio_trackers_py deviceio_session_py oxr_py plugin_manager_py remote_link_py schema_py isaacteleop_python cloudxr_python stage_generated_tracker_exports
+    DEPENDS deviceio_trackers_py deviceio_session_py oxr_py plugin_manager_py remote_link_py robot_state_store_py schema_py isaacteleop_python cloudxr_python stage_generated_tracker_exports
     COMMENT "Preparing Python package structure"
 )
 
@@ -111,6 +111,7 @@ set(STUBGEN_MODULES
     isaaccapture.oxr._oxr
     isaaccapture.plugin_manager._plugin_manager
     isaaccapture.remote_link._remote_link
+    isaaccapture.robot_state._robot_state
     isaaccapture.schema._schema
 )
 
@@ -162,6 +163,7 @@ add_custom_command(
             $<TARGET_FILE:oxr_py>
             $<TARGET_FILE:plugin_manager_py>
             $<TARGET_FILE:remote_link_py>
+            $<TARGET_FILE:robot_state_store_py>
             $<TARGET_FILE:schema_py>
             # viz_py's .pyd file as a file-level dependency when BUILD_VIZ=ON
             # — keeps the wheel build from racing the link. Empty otherwise.

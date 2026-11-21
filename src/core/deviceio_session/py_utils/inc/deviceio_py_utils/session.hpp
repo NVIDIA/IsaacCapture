@@ -11,6 +11,8 @@
 #include <mcap/sample_stream.hpp>
 #include <pybind11/pybind11.h>
 #include <remote_link/tcp_transport.hpp>
+#include <robot_state_publisher/robot_state_publisher.hpp>
+#include <robot_state_store/robot_state_store.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -19,8 +21,10 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -206,7 +210,8 @@ private:
  * start(), connect(), wait_hello_ack(), wait_ready(), close() and the destructor release the GIL for their blocking
  * part; the waits run Python's signal handlers every kSignalCheckPeriod, a TCP connect after each kConnectAttempt.
  * Members change only while the GIL is held, and a released call keeps its own reference to the client, so close()
- * on another thread cannot free it. A wait that throws PeerClosedError leaves the session unconnected.
+ * on another thread cannot free it. A wait that throws PeerClosedError leaves the session unconnected. The
+ * robot-state calls keep the GIL: they queue and return.
  */
 class PyRemoteSession : public ITrackerSession
 {
@@ -266,6 +271,48 @@ public:
         }
         connecting_ = false;
         client_ = std::move(client);
+        if (robot_series_)
+        {
+            client_->set_robot_state(*robot_series_);
+        }
+    }
+
+    //! Kept here and given to every client start() makes: start() runs again after a PeerClosedError.
+    void set_robot_state(std::vector<RobotSeriesDeclaration> series)
+    {
+        check_open();
+        // Checked here as the client checks them, so a refused series is reported by this call.
+        RobotStatePublisher check;
+        for (const RobotSeriesDeclaration& declaration : series)
+        {
+            check.declare_series(declaration);
+        }
+        if (client_)
+        {
+            client_->set_robot_state(series);
+        }
+        robot_series_ = std::move(series);
+    }
+
+    void start_robot_state()
+    {
+        connected_client()->start_robot_state();
+    }
+
+    bool robot_state_active() const
+    {
+        return client_ && client_->robot_state_active();
+    }
+
+    bool publish_robot_record(const std::string& series, const py::bytes& data, int64_t sample_time_ns)
+    {
+        if (!client_)
+        {
+            return false;
+        }
+        const std::string_view view = data;
+        return client_->publish_robot_record(
+            series, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(view.data()), view.size()), sample_time_ns);
     }
 
     bool wait_hello_ack(int64_t timeout_ms)
@@ -509,6 +556,8 @@ private:
     std::unique_ptr<RemoteSession> session_;
     std::shared_ptr<RemoteSessionClient> client_;
     bool connecting_ = false;
+    //! The series of set_robot_state(); nullopt until it is called.
+    std::optional<std::vector<RobotSeriesDeclaration>> robot_series_;
 };
 
 /**
@@ -516,7 +565,8 @@ private:
  *
  * wait_hello(), start_session(), tick(), close() and the destructor release the GIL. A mutex keeps start_session(),
  * tick() and close() from overlapping, as RemoteSessionHost requires; it is only ever waited for without the GIL or
- * held without waiting for the GIL, so the two cannot deadlock.
+ * held without waiting for the GIL, so the two cannot deadlock. attach_robot_state() does not take it: a close() on
+ * another thread holds it while it lingers.
  */
 class PyRemoteSessionHost
 {
@@ -559,6 +609,11 @@ public:
     void send_error(std::string text)
     {
         host_->send_error(std::move(text));
+    }
+
+    void attach_robot_state(std::shared_ptr<RobotStateStore> store)
+    {
+        host_->attach_robot_state(std::move(store));
     }
 
     void start_session(const PyRemoteSession::TrackerNames& trackers,

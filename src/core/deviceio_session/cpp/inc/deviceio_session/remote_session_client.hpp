@@ -5,14 +5,19 @@
 
 #include <remote_link/link.hpp>
 #include <remote_link/transport.hpp>
+#include <robot_state_publisher/robot_state_publisher.hpp>
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace core
 {
@@ -39,7 +44,8 @@ public:
  * SETUP and SAMPLES link messages go into `stream`, which a RemoteSession reads; tick times are mapped onto this
  * machine's clock. Every method is thread-safe. Once the server's ERROR text arrived, every failure reports it,
  * even after the link died for another reason. The link's peer timeout applies from the server's first message, so
- * a server that accepted the connection but has not taken it up yet is waited for.
+ * a server that accepted the connection but has not taken it up yet is waited for. Robot state goes the other way,
+ * in link messages of its own, from start_robot_state() on.
  */
 class RemoteSessionClient
 {
@@ -106,6 +112,27 @@ public:
     //! False once the link is down (close() included).
     bool alive() const;
     ClockEstimate clock() const;
+
+    //! The data series this client may send as robot state, replacing any given before. Call before
+    //! start_robot_state(); std::logic_error after it. Throws as RobotStatePublisher::declare_series, keeping the
+    //! series it had.
+    void set_robot_state(std::vector<RobotSeriesDeclaration> series);
+    //! Sends ROBOT_STATE_SETUP for the declared series. Call once HELLO_ACK agreed robot state: a server that did
+    //! not agree is sent no robot-state link message. Idempotent.
+    void start_robot_state();
+    //! True from start_robot_state() until close().
+    bool robot_state_active() const;
+    /*!
+     * @brief Sends one record of `series` at once: in ROBOT_STATE_RECORDS for an in-order series, else in
+     *        ROBOT_STATE_SAMPLES, where an unsent record of the series is replaced. The link's clock estimate
+     *        travels with it.
+     * @param sample_time_ns Time of the reading, this machine's CLOCK_MONOTONIC.
+     * @return False, sending nothing, before start_robot_state() or once the link is down.
+     * @throws std::invalid_argument as RobotStatePublisher::publish, and as Link::send_latest for a merged payload
+     *         above the link's limit.
+     */
+    bool publish_robot_record(std::string_view series, std::span<const uint8_t> data, int64_t sample_time_ns);
+
     //! Idempotent; the stream receives nothing after it returns.
     void close();
 

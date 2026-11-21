@@ -1,0 +1,55 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// What a status reading holds.
+enum RobotReadingKind : byte {
+  NUMBER = 0,
+  FLAG = 1,
+  TEXT = 2
+}
+
+// One named reading of a robot, e.g. "motors_on", "battery". `kind` says which value field holds it.
+table RobotStatusReading {
+  name: string (id: 0);
+  kind: RobotReadingKind = NUMBER (id: 1);
+  number: double (id: 2);
+  flag: bool (id: 3);
+  text: string (id: 4);
+  // False when the robot could not read it; the value fields then hold nothing.
+  valid: bool = true (id: 5);
+}
+
+enum RobotFaultSeverity : byte {
+  WARNING = 0,
+  ERROR = 1,
+  FATAL = 2
+}
+
+// One fault the robot reports now. A fault that ended is absent from the next record.
+table RobotFault {
+  // Short stable word a program can match, e.g. "overtemperature".
+  code: string (id: 0);
+  // Text for a person.
+  text: string (id: 1);
+  // The joint or part it belongs to; empty for the whole robot.
+  source: string (id: 2);
+  severity: RobotFaultSeverity = ERROR (id: 3);
+}
+
+// Status of a robot at one moment: its readings, in the order its description lists them, and its faults.
+table RobotStatus {
+  readings: [RobotStatusReading] (id: 0);
+  faults: [RobotFault] (id: 1);
+}
+
+// Record wrapper for RobotStatus. Its timestamp is on the robot machine's monotonic clock.
+table RobotStatusRecord {
+  data: RobotStatus (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type RobotStatusRecord;

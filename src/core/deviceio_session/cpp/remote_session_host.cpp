@@ -13,11 +13,13 @@
 #include <oxr_utils/os_time.hpp>
 #include <remote_link/messages.hpp>
 #include <remote_link/websocket_transport.hpp>
+#include <robot_state_store/robot_state_store.hpp>
 #include <schema/full_body_generated.h>
 #include <schema/timestamp_generated.h>
 
 #include <algorithm>
 #include <condition_variable>
+#include <exception>
 #include <iterator>
 #include <mutex>
 #include <span>
@@ -99,6 +101,13 @@ struct RemoteSessionHost::State
     mutable std::mutex mutex;
     std::condition_variable cv;
     std::optional<std::string> hello;
+
+    //! Guards the members below and is held while the store takes a payload or a session change, so nothing
+    //! reaches a store once it is detached.
+    std::mutex robot_mutex;
+    std::shared_ptr<RobotStateStore> robot_store;
+    bool robot_error_logged = false; //!< for the attached store
+    bool robot_closed = false; //!< close() ran
 };
 
 RemoteSessionHost::RemoteSessionHost(std::unique_ptr<ITransport> transport, LinkOptions link_options)
@@ -130,6 +139,16 @@ std::unique_ptr<RemoteSessionHost> RemoteSessionHost::adopt(std::unique_ptr<ITra
 
 void RemoteSessionHost::handle(ReceivedLinkMessage&& message)
 {
+    switch (message.type)
+    {
+    case LinkMessageType::RobotStateSetup:
+    case LinkMessageType::RobotStateSamples:
+    case LinkMessageType::RobotStateRecords:
+        handle_robot_state(message);
+        return;
+    default:
+        break;
+    }
     if (message.type != LinkMessageType::Hello)
     {
         return;
@@ -142,6 +161,58 @@ void RemoteSessionHost::handle(ReceivedLinkMessage&& message)
         }
     }
     state_->cv.notify_all();
+}
+
+void RemoteSessionHost::handle_robot_state(const ReceivedLinkMessage& message)
+{
+    std::lock_guard<std::mutex> lock(state_->robot_mutex);
+    if (!state_->robot_store)
+    {
+        return;
+    }
+    // An exception that leaves the handler ends the link; a payload the store refuses ends nothing.
+    try
+    {
+        if (message.type == LinkMessageType::RobotStateSetup)
+        {
+            state_->robot_store->add_setup(message.payload);
+        }
+        else
+        {
+            state_->robot_store->add_samples(message.payload, message.local_receive_ns);
+        }
+    }
+    catch (const std::exception& error)
+    {
+        if (!state_->robot_error_logged)
+        {
+            state_->robot_error_logged = true;
+            isaaccapture::Logger::get("isaaccapture.core.RemoteSessionHost")
+                ->error(
+                    "RemoteSessionHost: dropped a {} link message the robot-state store refused: {} (logged once "
+                    "per robot app)",
+                    to_string(message.type), error.what());
+        }
+    }
+}
+
+void RemoteSessionHost::attach_robot_state(std::shared_ptr<RobotStateStore> store)
+{
+    std::lock_guard<std::mutex> lock(state_->robot_mutex);
+    if (state_->robot_closed)
+    {
+        return;
+    }
+    if (state_->robot_store)
+    {
+        state_->robot_store->end_session();
+    }
+    state_->robot_store = std::move(store);
+    state_->robot_error_logged = false;
+    if (state_->robot_store)
+    {
+        state_->robot_store->begin_session();
+    }
 }
 
 std::optional<std::string> RemoteSessionHost::wait_hello(std::chrono::milliseconds timeout)
@@ -283,6 +354,16 @@ std::string RemoteSessionHost::close_reason() const
 
 void RemoteSessionHost::close()
 {
+    {
+        // Taken out first, so a later close(), the destructor and the handler find no store.
+        std::lock_guard<std::mutex> lock(state_->robot_mutex);
+        state_->robot_closed = true;
+        if (state_->robot_store)
+        {
+            state_->robot_store->end_session();
+            state_->robot_store.reset();
+        }
+    }
     watched_.clear();
     // The session writes the end of its recording into the writer, so it goes first.
     session_.reset();

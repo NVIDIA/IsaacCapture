@@ -27,7 +27,9 @@ from isaaccapture import oxr
 from isaaccapture.cloudxr import CloudXRLauncher
 from isaaccapture.deviceio_session import RemoteSessionHost, RemoteSessionListener
 from isaaccapture.logging_config._native_api import capture_native_output
+from isaaccapture.robot_state import RobotStateStore
 
+from . import _session
 from ._common import (
     BUSY_MESSAGE,
     DEFAULT_TCP_PORT,
@@ -37,6 +39,7 @@ from ._common import (
 )
 from ._session import (
     UNTRACKED_HEADSET,
+    HelloError,
     RobotConnection,
     headset_status,
     served_extensions,
@@ -59,6 +62,13 @@ PLACEHOLDER_HANDLES = (1, 1, 1, 1)
 _STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 # The one xrGetSystem failure that means "no headset yet"; OpenXRSession's own wait retries only it.
 _NO_HEADSET_ERROR = "Failed to get OpenXR system: XR_ERROR_FORM_FACTOR_UNAVAILABLE"
+# One robot per reader socket path: the ERROR for a robot app that offers robot state while
+# another program serves the path.
+ROBOT_STATE_TAKEN_MESSAGE = (
+    "Another program on the Teleop Session Server's machine already serves a robot's state "
+    "at {path}. One robot per machine is served; stop that program, or connect this robot "
+    "app without a robot description."
+)
 
 
 def _address_type(scheme: str, default_port: int) -> Callable[[str], tuple[str, int]]:
@@ -121,6 +131,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "(default: off); robot apps connect to it with ws://HOST:PORT. They cannot "
             "connect with wss:// yet; to encrypt the link, tunnel it between the two "
             "machines (VPN, SSH or stunnel)."
+        ),
+    )
+    parser.add_argument(
+        "--robot-state-socket",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Local socket on which reader programs on this machine (isaaccapture.robot_state) "
+            "get the robot state a robot app sends; created when the first robot app sends "
+            "some (default: robot_state.sock in this user's isaaccapture runtime directory). "
+            "Its directory must belong to this user and be closed to group and others."
         ),
     )
     parser.add_argument("--verbose", action="store_true", help="Log debug output.")
@@ -206,11 +227,22 @@ class _Server:
         stop: _StopRequest,
         *,
         placeholder: bool = False,
+        robot_state_socket: str | None = None,
     ) -> None:
         self._listening = list(listening)
         self._launcher = launcher
         self._stop = stop
         self._placeholder = placeholder
+        # Robot state of the robot app served, kept across robot apps for the server's life.
+        self._robot_state = RobotStateStore()
+        _session.set_hosted_robot_state(self._robot_state)
+        # None: the default path. The service exists from the first robot app that sends robot state.
+        self._robot_state_socket = robot_state_socket
+        self._robot_state_service: Any = None
+        # True from the first robot app that agreed robot state: the socket is then kept open.
+        self._robot_state_wanted = False
+        # The error text of the last warning; None after the socket was opened.
+        self._robot_state_error: str | None = None
         self._extensions = None if placeholder else served_extensions()
         self._openxr: Any = None
         # The OpenXR session's, once it exists.
@@ -246,7 +278,8 @@ class _Server:
         return code
 
     def _check_health(self) -> None:
-        """Every HEALTH_CHECK_PERIOD_S: CloudXR, and the OpenXR session between ticks."""
+        """Every HEALTH_CHECK_PERIOD_S: CloudXR, the OpenXR session between ticks, and the
+        reader socket while it could not be opened."""
         now = time.monotonic()
         if now < self._next_health_check:
             return
@@ -258,6 +291,8 @@ class _Server:
         if self._openxr is not None:
             # Also takes in the runtime's events while no robot app ticks.
             self._headset()
+        if self._robot_state_wanted:
+            self._serve_robot_state(retry=True)
 
     def _open_openxr(self) -> None:
         """Open the OpenXR session, retried every OPENXR_RETRY_S while no headset is connected."""
@@ -377,9 +412,59 @@ class _Server:
     def _serve(self, listening: _Listening, fd: int, peer: str) -> None:
         host = RemoteSessionHost.adopt(fd, listening.websocket)
         self._robot = RobotConnection(
-            host, peer, placeholder=self._placeholder, extensions=self._extensions
+            host,
+            peer,
+            placeholder=self._placeholder,
+            extensions=self._extensions,
+            robot_state=self._robot_state,
+            on_robot_state=self._serve_robot_state,
         )
         logger.info("Robot app connected from %s on %s", peer, listening.url)
+
+    def _serve_robot_state(self, retry: bool = False) -> None:
+        """Open the local socket for reader programs, for a robot app whose HELLO offers robot
+        state.
+
+        HelloError when another program serves robot state at the socket's path. With ``retry``
+        (the health check, while the socket is not served) that is a warning like any other
+        failure.
+        """
+        service = self._robot_state_service
+        if service is not None:
+            if service.serving:
+                return
+            self._robot_state_service = None
+            service.close()
+        from isaaccapture.robot_state import RobotStateLocalService
+        from isaaccapture.robot_state._local import ReaderSocketTaken
+
+        service = RobotStateLocalService(self._robot_state, self._robot_state_socket)
+        try:
+            service.start()
+        except (OSError, RuntimeError) as error:
+            if isinstance(error, ReaderSocketTaken) and not retry:
+                raise HelloError(
+                    ROBOT_STATE_TAKEN_MESSAGE.format(path=service.path)
+                ) from error
+            # One warning per reason, however often the socket is tried.
+            if str(error) != self._robot_state_error:
+                self._robot_state_error = str(error)
+                logger.warning(
+                    "Reader programs cannot get robot state from this Teleop Session Server: %s",
+                    error,
+                )
+        else:
+            self._robot_state_error = None
+            self._robot_state_service = service
+        # Not refused: the socket is served, or tried again by the health check, from here on.
+        self._robot_state_wanted = True
+
+    def _close_robot_state(self) -> None:
+        service, self._robot_state_service = self._robot_state_service, None
+        if service is not None:
+            service.close()
+        if _session._hosted_robot_state is self._robot_state:
+            _session.set_hosted_robot_state(None)
 
     def _refuse(self, listening: _Listening, fd: int, peer: str, text: str) -> None:
         """Refuse a connection with ``text`` beside the loop, which keeps ticking meanwhile."""
@@ -416,6 +501,8 @@ class _Server:
         with ExitStack() as stack:
             stack.callback(self._join_refusals)
             stack.callback(self._close_openxr)
+            # After the robot app's connection, which ends its robot state.
+            stack.callback(self._close_robot_state)
             robot, self._robot = self._robot, None
             if robot is not None:
                 # The trackers read through the OpenXR session, so they close first.
@@ -467,7 +554,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with launcher:
             server = _Server(
-                listening, launcher, stop, placeholder=args.placeholder_openxr
+                listening,
+                launcher,
+                stop,
+                placeholder=args.placeholder_openxr,
+                robot_state_socket=args.robot_state_socket,
             )
             for item in listening:
                 print(f"Teleop Session Server listening on {item.url}", flush=True)

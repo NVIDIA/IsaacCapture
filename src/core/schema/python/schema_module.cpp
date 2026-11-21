@@ -21,6 +21,8 @@
 #include "pedals_bindings.h"
 #include "plugin_device_status_bindings.h"
 #include "pose_bindings.h"
+#include "robot_description_bindings.h"
+#include "robot_status_bindings.h"
 #include "se3_tracker_bindings.h"
 #include "soma_body_joint_poses_bindings.h"
 #include "soma_body_joint_rotations_bindings.h"
@@ -95,6 +97,11 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind plugin device monitoring types.
     core::bind_plugin_device_status(m);
+
+    // Bind robot-state types: RobotStatus (named readings, faults) and RobotDescription (series, joints,
+    // grippers). The description binding returns the status record's schema, so status comes first.
+    core::bind_robot_status(m);
+    core::bind_robot_description(m);
 
     // Bind vendor-neutral HapticCommand table.
     core::bind_haptic_command(m);

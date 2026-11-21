@@ -5,6 +5,7 @@
 
 #include <log_bridge/logger.hpp>
 #include <mcap/sample_stream.hpp>
+#include <oxr_utils/os_time.hpp>
 #include <remote_link/messages.hpp>
 #include <remote_link/tcp_transport.hpp>
 #include <remote_link/websocket_transport.hpp>
@@ -58,6 +59,14 @@ struct RemoteSessionClient::State
     std::optional<std::string> error;
     bool ready = false;
     bool closed = false; //!< close() ran
+
+    //! Guards the members below and is held across publish, take and send, so the records of one series leave in
+    //! publish order. Never taken on the link's threads.
+    mutable std::mutex robot_mutex;
+    RobotStatePublisher robot_publisher;
+    bool robot_active = false; //!< start_robot_state() ran, close() did not
+    uint64_t robot_samples_seq = 0; //!< ROBOT_STATE_SAMPLES payloads made
+    uint64_t robot_records_seq = 0; //!< ROBOT_STATE_RECORDS payloads made
 };
 
 RemoteSessionClient::RemoteSessionClient(std::unique_ptr<ITransport> transport,
@@ -347,6 +356,83 @@ ClockEstimate RemoteSessionClient::clock() const
     return link_->clock();
 }
 
+void RemoteSessionClient::set_robot_state(std::vector<RobotSeriesDeclaration> series)
+{
+    // Declared into a publisher of its own first, so a refused series leaves the declared ones as they are.
+    RobotStatePublisher publisher;
+    for (RobotSeriesDeclaration& declaration : series)
+    {
+        publisher.declare_series(std::move(declaration));
+    }
+    std::lock_guard<std::mutex> lock(state_->robot_mutex);
+    if (state_->robot_active)
+    {
+        throw std::logic_error("RemoteSessionClient: set_robot_state() after start_robot_state()");
+    }
+    state_->robot_publisher = std::move(publisher);
+}
+
+void RemoteSessionClient::start_robot_state()
+{
+    std::lock_guard<std::mutex> lock(state_->robot_mutex);
+    if (state_->robot_active)
+    {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> state_lock(state_->mutex);
+        if (state_->closed)
+        {
+            return;
+        }
+    }
+    std::vector<uint8_t> setup = state_->robot_publisher.take_setup();
+    if (!setup.empty())
+    {
+        link_->send_reliable(LinkMessageType::RobotStateSetup, std::move(setup));
+    }
+    state_->robot_active = true;
+}
+
+bool RemoteSessionClient::robot_state_active() const
+{
+    std::lock_guard<std::mutex> lock(state_->robot_mutex);
+    return state_->robot_active;
+}
+
+bool RemoteSessionClient::publish_robot_record(std::string_view series,
+                                               std::span<const uint8_t> data,
+                                               int64_t sample_time_ns)
+{
+    std::lock_guard<std::mutex> lock(state_->robot_mutex);
+    if (!state_->robot_active || !link_->alive())
+    {
+        return false;
+    }
+    const int64_t now_ns = os_monotonic_now_ns();
+    state_->robot_publisher.publish(series, data, sample_time_ns, now_ns);
+    const ClockEstimate clock = link_->clock();
+    RobotSamplesPrefix prefix;
+    prefix.robot_send_time_ns = now_ns;
+    prefix.robot_minus_server_ns = clock.offset_ns;
+    prefix.clock_valid = clock.valid;
+    prefix.clock_two_way = clock.two_way;
+    if (state_->robot_publisher.in_order(series))
+    {
+        prefix.publish_seq = ++state_->robot_records_seq;
+        link_->send_reliable(LinkMessageType::RobotStateRecords,
+                             encode_robot_samples_payload(prefix, state_->robot_publisher.take_in_order_records()));
+    }
+    else
+    {
+        prefix.publish_seq = ++state_->robot_samples_seq;
+        link_->send_latest(LinkMessageType::RobotStateSamples,
+                           encode_robot_samples_payload(prefix, state_->robot_publisher.take_latest_records()),
+                           merge_robot_samples_payloads);
+    }
+    return true;
+}
+
 void RemoteSessionClient::close()
 {
     {
@@ -354,6 +440,11 @@ void RemoteSessionClient::close()
         state_->closed = true;
     }
     state_->cv.notify_all();
+    {
+        // After `closed`, which keeps a start_robot_state() from turning it on again.
+        std::lock_guard<std::mutex> lock(state_->robot_mutex);
+        state_->robot_active = false;
+    }
     link_->close();
 }
 

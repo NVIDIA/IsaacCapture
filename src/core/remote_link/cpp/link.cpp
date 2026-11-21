@@ -66,6 +66,9 @@ bool is_known(uint8_t type)
     case LinkMessageType::Setup:
     case LinkMessageType::Samples:
     case LinkMessageType::Ready:
+    case LinkMessageType::RobotStateSetup:
+    case LinkMessageType::RobotStateSamples:
+    case LinkMessageType::RobotStateRecords:
         return true;
     }
     return false;

@@ -24,6 +24,9 @@ enum class LinkMessageType : uint8_t
     Setup = 33, //!< server -> robot, MCAP Schema and Channel records
     Samples = 34, //!< server -> robot, SamplesPrefix then MCAP Message records; latest-wins
     Ready = 35, //!< server -> robot, JSON
+    RobotStateSetup = 40, //!< robot -> server, MCAP Schema and Channel records of the robot's data series
+    RobotStateSamples = 41, //!< robot -> server, robot samples prefix then MCAP Message records; latest-wins
+    RobotStateRecords = 42, //!< robot -> server, robot samples prefix then MCAP Message records; in order
 };
 
 //! Name for logs; "UNKNOWN" for values outside the enum.

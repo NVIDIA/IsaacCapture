@@ -10,6 +10,7 @@ These classes provide a clean, declarative way to configure teleop sessions.
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
         McapReplayConfig,
     )
     from isaaccapture.oxr import OpenXRSessionHandles
+    from isaaccapture.robot_state.description import RobotDescription
 
     # Under TYPE_CHECKING only: isaaccapture.viz is not shipped by a BUILD_VIZ=OFF
     # build, and importing it here would make this module unimportable there.
@@ -440,8 +442,26 @@ class TeleopSessionConfig:
         remote_max_tick_age_s: Samples whose tick age (time since the server read
             them) exceeds this count as missing: trackers report no data.
         remote_connect_timeout_s: How long entering the session waits for the server to
-            answer and report READY, retrying while it is not up yet; ``None`` waits
-            without limit.
+            answer and, with ``wait_for_headset``, to report READY, retrying while it is
+            not up yet; ``None`` waits without limit.
+        robot_description: What the robot is, for robot state: the path of a robot
+            description file, or a loaded ``isaaccapture.robot_state.RobotDescription``.
+            With it ``publish_robot_state()`` sends readings to the readers on the machine
+            that runs the headset runtime: through the Teleop Session Server in REMOTE
+            mode, from this program in LIVE and REPLAY mode. One robot per machine is
+            served: entering the session raises ``RuntimeError`` while another program
+            there serves a robot's state.
+        wait_for_headset: Whether entering the session waits for a headset. True
+            (default): REMOTE waits for the server's READY (a headset tracked for about a
+            second), LIVE until a headset has reached the OpenXR runtime. False: entering
+            does not wait. REMOTE returns once the server has answered; until a headset is
+            tracked every tracker reports no data and ``step()`` still runs the pipeline
+            (in ``ExecutionState.RUNNING`` without a ``teleop_control_pipeline``): the
+            session holds no output back, so move the robot only on a deliberate operator
+            input. LIVE returns when a headset has reached the OpenXR runtime since it
+            started and raises ``RuntimeError`` when none has. No effect in REPLAY mode and
+            with ``oxr_handles``, ``oxr_session_factory`` or ``joint_publisher`` (the twin
+            waits ``twin_render.system_wait_seconds``).
 
     Example (auto-discovery):
         # Source creates its own tracker automatically!
@@ -514,6 +534,8 @@ class TeleopSessionConfig:
     remote_tick_rate_hz: float = 90.0
     remote_max_tick_age_s: float = 0.25
     remote_connect_timeout_s: Optional[float] = 60.0
+    robot_description: Optional[Union[str, os.PathLike, RobotDescription]] = None
+    wait_for_headset: bool = True
 
     def __post_init__(self) -> None:
         """Validate configuration consistency."""
@@ -632,6 +654,10 @@ class TeleopSessionConfig:
             _require_positive(name, getattr(self, name))
         if self.remote_connect_timeout_s is not None:
             _require_positive("remote_connect_timeout_s", self.remote_connect_timeout_s)
+        if not isinstance(self.wait_for_headset, bool):
+            raise ValueError(
+                f"wait_for_headset must be True or False, got {self.wait_for_headset!r}"
+            )
 
     def _validate_sinks(self) -> None:
         """Ensure every ``sinks`` entry resolves to an ``IDeviceIOSink``.

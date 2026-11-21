@@ -105,6 +105,8 @@ The main configuration object:
        remote_tick_rate_hz: float = 90.0        # Server ticks (tracker reads) per second
        remote_max_tick_age_s: float = 0.25      # Older samples count as missing
        remote_connect_timeout_s: Optional[float] = 60.0  # Wait for READY; None: no limit
+       robot_description: Optional[...] = None  # Robot description, for robot state
+       wait_for_headset: bool = True            # False: entering does not wait for a headset
 
 When ``mode`` is ``SessionMode.REPLAY``, ``TeleopSession`` skips OpenXR
 session creation and reads tracking data from the MCAP file specified in
@@ -113,6 +115,38 @@ replay mode — omitting it raises ``ValueError``.  In the default ``LIVE``
 mode, ``mcap_config`` is optional; passing an ``McapRecordingConfig`` enables
 recording to disk.  See :doc:`/references/mcap_record_replay` for full
 details.
+
+``wait_for_headset`` says whether entering the session waits for a headset.
+With the default, a ``LIVE`` session waits until a headset has reached the
+OpenXR runtime, and a ``REMOTE`` session until the server reports a tracked
+headset (see :ref:`remote-sessions`, **Startup**). With ``False`` entering
+does not wait:
+
+- ``REMOTE``: it returns once the Teleop Session Server has answered; until a
+  headset is tracked every tracker reports no data.
+- ``LIVE``: it returns when a headset has reached the OpenXR runtime since
+  that runtime started, and raises ``RuntimeError`` at once when none has.
+  Starting a ``LIVE`` session with no headset at the runtime is not built; a
+  Teleop Session Server on the same machine and ``SessionMode.REMOTE`` to
+  ``127.0.0.1`` is the way that works.
+- No effect in ``REPLAY`` and with ``oxr_handles``, ``oxr_session_factory`` or
+  ``joint_publisher``.
+
+The pipeline then runs with no tracker data from the first ``step()``, and
+most retargeters write an output all the same, for example
+``Se3AbsRetargeter`` the pose at the origin and ``GripperRetargeter`` an open
+gripper: move the robot only on a deliberate operator input.
+:ref:`robot-state-no-tracker-data` lists what each retargeter writes then and
+shows how to test for tracker data in a step. See :doc:`robot_state`, **With
+Nobody in the Headset**, for what a robot app sees and for what has not been
+run on real hardware.
+
+``robot_description`` names a robot description file; with it the robot app
+publishes data about its robot with ``session.publish_robot_state()``, in
+every mode. One robot's state is served on a machine: with
+``robot_description``, entering the session raises ``RuntimeError`` while
+another program there already serves a robot's state. See :doc:`robot_state`,
+**One Robot per Machine**.
 
 When ``oxr_handles`` is provided (live mode), ``TeleopSession`` uses the
 supplied handles instead of creating its own OpenXR session. The caller is
@@ -227,6 +261,19 @@ Then point the robot app at it:
   - Ctrl-C raises ``KeyboardInterrupt`` within about 0.1 s, or at the end of the
     TCP connect attempt in progress (at most 2 s, plus any host name lookup), and
     closes the connection.
+  - With ``wait_for_headset=False`` entering returns once the server has
+    answered, without waiting for READY, and logs ``Teleop Session Server at
+    <endpoint> answered; not waiting for a tracked headset``.
+    ``remote_connect_timeout_s`` then bounds connecting, the retries and the
+    server's answer, and ``TimeoutError`` names ``server did not answer``.
+    The server sends no samples until a headset has connected to CloudXR:
+    every tracker reports no data and ``remote_tick_age_s`` is ``None``.
+    ``step()`` logs ``Teleop Session Server at <endpoint> is ready`` once,
+    when the server reports READY. A refused request is still raised by
+    entering; a tracker the server cannot start once a headset has arrived
+    (``RuntimeError("The Teleop Session Server could not start the trackers:
+    ...")``, which ends the connection) and an incompatible schema are raised
+    by ``step()``.
 
 - **Ticks.** The server ticks ``remote_tick_rate_hz`` times per second (90 by
   default; it clamps to 1-240): each tick reads every tracker once and sends
@@ -257,10 +304,20 @@ Then point the robot app at it:
   headset taken off but still awake, for example on a desk or a charger, stays
   ``CONNECTED`` until it sleeps. With a controller input source,
   ``openxr/controller/left`` and ``openxr/controller/right`` follow the
-  controller data, as in live mode. Plugins do not appear in it. Neither READY
-  nor these states show that an operator is present: move the robot only on a
-  deliberate operator input, such as a held grip or the
-  ``DefaultTeleopStateManager`` buttons (see :doc:`control_state_machine`).
+  controller data, as in live mode. Plugins do not appear in it. With
+  ``wait_for_headset=False``, before the server's OpenXR session exists
+  ``openxr/runtime`` is ``AVAILABLE`` and ``openxr/headset`` is
+  ``DISCONNECTED``, with the server's stage in its error text: ``Teleop
+  Session Server: connecting_openxr (waiting for the headset to connect to
+  CloudXR)``. ``openxr/headset`` is for display: it shows what the server
+  reported last. Neither READY nor these states show that an operator is
+  present: move the robot only on tracker data present in this step together
+  with a deliberate operator input, such as a held grip or the
+  ``DefaultTeleopStateManager`` buttons (see :doc:`control_state_machine`),
+  also at the start of a session. Tracker data is present in a step when the
+  output of its source node is not absent (``is_none``);
+  :ref:`robot-state-no-tracker-data` shows the test and lists the retargeters
+  that write a pose or a command without tracker data.
 - **Not available:** keyboard and message-channel sources, ``TactileSource``,
   MCAP recording (``mcap_config``), ``oxr_handles``, ``oxr_session_factory``,
   ``joint_publisher`` and ``session.oxr_session``. ``sinks`` run every step but
@@ -272,10 +329,23 @@ Then point the robot app at it:
   Tracker metadata is not forwarded yet, so creating the ``TeleopSession``
   with a tracker that has metadata, such as ``TactileTracker``, raises
   ``ValueError``.
+- **Robot state.** With ``robot_description`` set to a robot description file,
+  the robot app can send data about its robot (joints, a gripper, status,
+  faults) to the server machine with ``session.publish_robot_state()``, where
+  a reader such as an agent's harness reads it. See :doc:`robot_state`.
+  Without ``robot_description`` no robot state is sent. The same calls work
+  in a local session, where the robot app serves the readers itself. One
+  robot's state is served on the server machine: while another program there
+  serves a robot's state at the server's reader socket path, the server
+  answers a robot app that sets ``robot_description`` with an error, and
+  entering the session raises it as ``RuntimeError`` (see `Teleop Session
+  Server`_, **One robot per machine**). It is not retried.
 - **Security.** The link has no authentication and no encryption. Any peer that
   reaches the server's port can receive tracker data. Run the server on a
   trusted network or a VPN, and open TCP 47600 (and 47601 for WebSocket) only
-  toward the robot machine.
+  toward the robot machine. Such a peer can also send robot state that readers
+  on the server machine take as the robot's (see :doc:`robot_state`,
+  **Security**).
 
 Teleop Session Server
 """""""""""""""""""""
@@ -298,6 +368,13 @@ a time:
   ``--cloudxr-device-profile``, ``--host-client`` / ``--no-host-client``, and
   ``--no-launch-cloudxr-runtime`` to use an OpenXR runtime that is already
   configured instead of attaching to or starting CloudXR.
+- ``--robot-state-socket``: path of the local socket on which reader programs
+  get robot state (default ``$XDG_RUNTIME_DIR/isaaccapture/robot_state.sock``).
+  Its directory must belong to the user that runs the server and be closed to
+  group and others. The server opens the socket for the first robot app that
+  sends robot state and keeps it until it stops. A second server on one
+  machine needs another path here, and its readers the same path (see **One
+  robot per machine** below). See :doc:`robot_state`.
 - ``--verbose``: debug logging.
 
 It prints ``Teleop Session Server listening on <address>`` for each address
@@ -323,6 +400,26 @@ by hand or with a script.
   network, counts as connected until the server notices, which takes about
   3 s: less than the 4 s a newcomer is held, so the robot app is served when
   it reconnects.
+- **One robot per machine.** Reader programs on the server machine get robot
+  state at the server's reader socket (``--robot-state-socket``), and one
+  program serves that path. A robot app that sets ``robot_description``
+  connects while another running program on the server machine serves the
+  path, for example a robot app in a local session or a second server: the
+  server answers it with the error ``Another program on the Teleop Session
+  Server's machine already serves a robot's state at <path>. One robot per
+  machine is served; stop that program, or connect this robot app without a
+  robot description.`` and ends that connection. It logs ``Refused the robot
+  app at <address>:`` with that text and goes on serving. Entering the robot
+  app's session raises the text as ``RuntimeError``; the robot app does not
+  connect again by itself. A robot app without ``robot_description`` is
+  served, whichever program serves the path. The server keeps its reader
+  socket from the first robot app that sends robot state until it stops, also
+  while no robot app is connected: a robot app with ``robot_description`` in a
+  local session on the server machine is refused for that long. While the
+  server cannot open the socket for another reason, for example a directory
+  that is open to group or others, it serves the robot app, logs one warning
+  and tries again once a second. See :doc:`robot_state`, **One Robot per
+  Machine**.
 - **Refusals.** A refusal is the ``busy`` or ``shutting down`` error sent to
   a robot app the server does not serve. The server sends each one beside its
   loop, which keeps ticking; one takes up to about 3 s. While 8 refusals are in
@@ -349,7 +446,8 @@ by hand or with a script.
   supervisor, a program that restarts it when it exits, such as a systemd
   service or a shell script. When starting or reading a robot app's trackers
   fails, the server ends that robot app's connection with the error and keeps
-  serving.
+  serving. While the server is not running, no robot state reaches the server
+  machine (see :doc:`robot_state`).
 
 Tracker vendor selection
 """"""""""""""""""""""""
@@ -622,6 +720,14 @@ Methods
 - ``get_device_status(device_id) -> DeviceStatus | None`` -- Return one cached
   device record.
 - ``get_elapsed_time() -> float`` -- Get elapsed time since session started.
+- ``publish_robot_state(series, values, *, velocities=None, efforts=None,
+  valid=None, faults=None, time_ns=None) -> bool`` -- Send one reading of a
+  series of the robot description to the readers (any mode, with
+  ``robot_description``). Returns ``False`` while robot state is not active
+  (see ``robot_state_active``) or the link is down. See :doc:`robot_state`.
+- ``publish_robot_record(series, record, *, time_ns=None) -> bool`` -- The
+  same for a series in a shape the robot defines; ``record`` maps field names
+  to values.
 
 Example (explicit GraphTime + ExecutionEvents override):
 
@@ -656,6 +762,11 @@ Properties
   most recent returned output
 - ``last_step_info: RetargetingStepInfo`` -- Age and timing metadata for
   the most recent returned output
+- ``robot_state_active: bool`` -- ``True`` while the session is entered and
+  the Teleop Session Server has agreed to take its robot state (``REMOTE``;
+  also after the link is lost), or this program serves it to reader programs
+  (``LIVE``, ``REPLAY``); ``False`` without ``robot_description`` and outside
+  the session
 
 Helper Functions
 ^^^^^^^^^^^^^^^^

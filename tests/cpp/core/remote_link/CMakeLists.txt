@@ -13,6 +13,7 @@ add_executable(remote_link_tests
     test_link.cpp
     test_message_header.cpp
     test_reject.cpp
+    test_robot_state_messages.cpp
     test_tcp_transport.cpp
     test_websocket_transport.cpp
 )

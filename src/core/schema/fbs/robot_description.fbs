@@ -1,0 +1,100 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+enum RobotJointKind : byte {
+  REVOLUTE = 0,    // position in rad, limited
+  PRISMATIC = 1,   // position in m, limited
+  CONTINUOUS = 2,  // position in rad, no limits
+  GRIPPER = 3      // a gripper's opening, in the unit the joint states
+}
+
+// One joint of a joints series.
+table RobotJointDescription {
+  name: string (id: 0);
+  kind: RobotJointKind = REVOLUTE (id: 1);
+  // Position limits; meaningful only when has_limits.
+  has_limits: bool (id: 2);
+  min_position: double (id: 3);
+  max_position: double (id: 4);
+  // Largest speed and effort; 0 when the robot states none.
+  max_velocity: double (id: 5);
+  max_effort: double (id: 6);
+  // Unit of the position; empty means the kind's own (rad or m).
+  unit: string (id: 7);
+}
+
+// A gripper: named joints of one joints series. The first joint measures the opening.
+table RobotGripperDescription {
+  name: string (id: 0);
+  series: string (id: 1);
+  joints: [string] (id: 2);
+  // Position of the first joint when fully open and when fully closed.
+  open_position: double (id: 3);
+  closed_position: double (id: 4);
+}
+
+enum RobotValueKind : byte {
+  ANY = 0,
+  NUMBER = 1,
+  FLAG = 2,
+  TEXT = 3,
+  NUMBERS = 4
+}
+
+// One reading of a status series, or one field of a shape the robot defines.
+table RobotValueDescription {
+  name: string (id: 0);
+  kind: RobotValueKind = ANY (id: 1);
+  unit: string (id: 2);
+}
+
+table RobotTextPair {
+  key: string (id: 0);
+  value: string (id: 1);
+}
+
+enum RobotSeriesShape : byte {
+  JOINTS = 0,  // records are JointStateOutputRecord
+  STATUS = 1,  // records are RobotStatusRecord
+  CUSTOM = 2   // records are in a shape the robot defines
+}
+
+// One data series the robot sends.
+table RobotSeriesDescription {
+  // The topic its records travel on.
+  name: string (id: 0);
+  shape: RobotSeriesShape = JOINTS (id: 1);
+  // "joints", "status", or the robot's own name for a CUSTOM shape.
+  shape_name: string (id: 2);
+  // Nominal records per second; 0 when not stated.
+  rate_hz: double (id: 3);
+  // A record older than this is not fresh; 0 means it never goes stale.
+  stale_after_s: double (id: 4);
+  // JOINTS: the joints, in the order of a record.
+  joints: [RobotJointDescription] (id: 5);
+  has_velocity: bool (id: 6);
+  has_effort: bool (id: 7);
+  // STATUS: the readings. CUSTOM: the fields. In the order of a record.
+  values: [RobotValueDescription] (id: 8);
+  attributes: [RobotTextPair] (id: 9);
+}
+
+// What a robot is: its data series and grippers.
+table RobotDescription {
+  robot: string (id: 0);
+  series: [RobotSeriesDescription] (id: 1);
+  grippers: [RobotGripperDescription] (id: 2);
+  attributes: [RobotTextPair] (id: 3);
+}
+
+// Record wrapper for RobotDescription. Its timestamp is on the robot machine's monotonic clock.
+table RobotDescriptionRecord {
+  data: RobotDescription (id: 0);
+  timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type RobotDescriptionRecord;
