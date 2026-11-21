@@ -65,7 +65,7 @@ handover between an agent and a person, and camera pictures stay in the applicat
 | entry, early entry | Entry: `TeleopSession.__enter__`. Early entry: a remote entry that returns once the server has answered HELLO, without waiting for READY (`TeleopSessionConfig.wait_for_headset=False`). |
 | no-data step | A `step()` in which every tracker reports no data. After an early entry every step is one until the server ticks; in a LIVE session that waits for a headset, until the hand-over. |
 | OpenXR runtime; reached the runtime | The program that serves headsets, here CloudXR. A headset has reached the runtime once the runtime reports a headset system (`xrGetSystem` succeeds): it has connected since the runtime started. It need not be tracked, and CloudXR goes on reporting it after it disconnects. |
-| attempt, no-data session, hand-over | For a LIVE session entered with `wait_for_headset=False` while no headset has reached the runtime (section 12). Attempt: one `oxr.OpenXRSession(app_name, extensions, wait_for_system=False)`. No-data session: a `deviceio.RemoteSession` that is created and never connected, which is what an early entry steps before the server ticks. Hand-over: the `step()` that starts the trackers and plugins on the OpenXR session a background thread opened. |
+| attempt, no-data session, hand-over | For a LIVE session entered with `wait_for_headset=False` while no headset has reached the runtime (section 12). Attempt: one `oxr.OpenXRSession(app_name, extensions, wait_for_system=False)`. No-data session: a `deviceio.NoDataSession`, which holds a tracker of every kind and has no data for any of them. Hand-over: the `step()` that starts the trackers and plugins on the OpenXR session a background thread opened. |
 | ROBOT_STATE_SETUP, ROBOT_STATE_SAMPLES, ROBOT_STATE_RECORDS | The link messages of robot state, all from the robot app to the server (section 6). ROBOT_STATE_SETUP declares the series; ROBOT_STATE_SAMPLES carries records of series of which only the newest record matters; ROBOT_STATE_RECORDS carries records that must all arrive, in order (the description). |
 | reading time, reading age, fresh | Reading time: the robot machine's monotonic clock when the robot app took the reading. Reading age: now minus the reading time, both on the server machine's clock. A record is fresh while its age is at most its series' `stale_after_s` (0: it never goes stale). These belong to robot state; tick time and tick age belong to SAMPLES. |
 
@@ -621,7 +621,6 @@ or on a deliberate operator input.
 | Early entry: the server cannot start the trackers when a headset arrives, or a topic's schema is incompatible | `RuntimeError` from a later `step()`, not from entering; after the tracker failure the link is closed and publish calls return False |
 | LIVE with `wait_for_headset=False` and an OpenXR session of its own, while no headset has reached the OpenXR runtime | No exception: entry returns, every `step()` is a no-data step, and the first `step()` after a headset has reached the runtime is the hand-over (section 12) |
 | The same, while the OpenXR runtime is not running, or the first attempt fails in any other way | The attempt's error, as with the default, e.g. `RuntimeError`: `Failed to create OpenXR instance: -51`, or `Environment variable NV_CXR_RUNTIME_DIR is not set` from a terminal that has not loaded the CloudXR environment (`source ~/.cloudxr/run/cloudxr.env`); entry does not wait for the runtime |
-| The same, with a `MessageChannelTracker` or a tracker with metadata (`TactileTracker`) | `RuntimeError` at once: `No headset has reached the OpenXR runtime since it started, and this session cannot start without one (wait_for_headset=False): <reason>. Wake a headset once, or set wait_for_headset=True to wait for one.`; `<reason>` is the text of the no-data session's `ValueError`, e.g. `MessageChannelTracker is not supported over a remote session`, and that error is the cause; entry is rolled back and no thread is started |
 | The same, with a required plugin (`PluginConfig.required`) that cannot be found, or an `mcap_config` whose folder is missing or cannot be written | `RuntimeError` at once: the plugin's error as with the default (`Required plugin '<name>' ...`); `The folder of the recording file does not exist or cannot be written: <folder>` |
 | LIVE waiting for a headset: a later attempt fails with anything but the no-headset error, e.g. the runtime stopped | A new `RuntimeError` from every `step()`: `The OpenXR session could not be opened while waiting for a headset: <error>`, with the attempt's error as its cause; no further attempt; robot state stays served |
 | LIVE at the hand-over: the trackers or a plugin cannot start | A new `RuntimeError` from that `step()` and every later one: `A headset reached the OpenXR runtime, but the trackers could not be started: <error>` or `A headset reached the OpenXR runtime, but a plugin could not be started: <error>`, with the error as its cause; what the step started is stopped again; no second try; robot state stays served |
@@ -722,6 +721,8 @@ a server and a robot app on one machine with nobody in the headset, are checks s
 - The runtime stopped before the robot app starts: the text entry raises (the user page gives `-51`).
 - Ctrl-C at the moment a headset connects, with a plugin configured: exit without a hang and with no thread left.
 - A plugin and a recording: both start at the hand-over, and the recording file appears then.
+- A session with a message channel and a tactile tracker: `DISCONNECTED` and no data while it waits; after the
+  hand-over the channel connects, the messages that waited go out, and the tactile metadata arrives.
 - The same in pipelined mode; and on Orin, a robot app that runs the CloudXR service in its own process
   (`src/core/AGENTS.md`).
 - The same robot app in a remote session against a real Teleop Session Server, through the same moments.
@@ -767,7 +768,7 @@ OpenXR session they read through, even when refusing the others fails. It waits 
 about 3 s) and exits with code 0 (1 after a failure). A killed server sends nothing; the robot app sees the link close.
 
 **Sinks are not flushed.** Flushing a sink writes through a tracker to a device; a `RemoteSession` has no such tracker,
-so flushing would fail and could make `step()` raise.
+and neither has the `NoDataSession` of a LIVE session that waits, so flushing would fail and could make `step()` raise.
 
 **Version check.** A different protocol number in HELLO is refused; a different Isaac Capture version only logs a
 warning, since the per-topic schema check already rejects unreadable data. A different link header version is not
@@ -834,11 +835,18 @@ state page lists what every retargeter writes for absent input and shows that te
 stepping thread does the hand-over.** With `wait_for_headset=False` a LIVE session makes one attempt on the entering
 thread. A session: it starts as with the default, with no thread. Any error but the runtime's no-headset error is
 raised as with the default, so the runtime must be up. The no-headset error makes entry enter a no-data session with
-the session's trackers, check what needs no headset (a tracker the no-data session cannot hold, a required plugin
-that is missing, the recording folder), start a daemon thread named `isaaccapture-headset-wait` and return
+the session's trackers, check what needs no headset (a required plugin that is missing, the recording folder),
+start a daemon thread named `isaaccapture-headset-wait` and return
 (`teleop_session_manager/_headset_wait.py`). The thread repeats the attempt once a second, the server's period. It
 touches the OpenXR constructor, two slots under one lock (the open session, a failure) and a stop event, and nothing
 else: it opens the session, keeps it, and closes it when the session exits.
+
+The no-data session is a class of its own, `NoDataSession`, and not a `RemoteSession` that is never connected. A
+`RemoteSession` refuses a `MessageChannelTracker` and a tracker with metadata, and a REMOTE session must go on
+refusing them. `NoDataSession` gives every other tracker its replay impl on a stream that nothing feeds, which is
+what a never-connected `RemoteSession` gives. A message channel gets an impl that reports `DISCONNECTED` and an
+empty batch and raises on `send_message`, as the live impl does while it holds no channel. A tracker with
+metadata gets its replay impl with no metadata, which publishes no data.
 
 Each `step()` first asks the thread for an open session. While there is none the step is a no-data step: no
 `update()`, every source polled against the no-data session, the pipeline run, the sinks run and not flushed. Once
@@ -867,8 +875,9 @@ do and a REMOTE session does once its link is closed.
 
 Ctrl-C in the hand-over is rolled back and not kept. At exit the stop event ends the thread; exit joins it
 for at most 5 s and then logs a warning, and the thread is a daemon, so a runtime that does not answer cannot keep a
-robot app from exiting. The no-data session stays open until exit: a reference kept from entry gives no data and
-raises nothing. The thread opens no capture scope: `capture_native_output()` rebinds the process's standard output
+robot app from exiting. The no-data session stays open until exit: a reference kept from entry gives no data;
+only `send_message` on it raises. The thread opens no capture scope: `capture_native_output()` rebinds the
+process's standard output
 and error, which the robot app's own threads write to while the thread runs. So what the runtime writes during an
 attempt reaches the terminal. While the session waits, `openxr/runtime` and `openxr/headset` read as after an early
 entry (AVAILABLE, DISCONNECTED), with the text `No headset has reached the OpenXR runtime yet; waiting for one`;
@@ -936,8 +945,7 @@ Robot state:
 
 - Keeping the Teleop Session Server alive through a CloudXR crash. Whether its exit is intended is undecided
   (section 7); until it is decided, robot state stops reaching the server machine with it.
-- LIVE with no headset at the OpenXR runtime (section 12): a session with a `MessageChannelTracker` or a tracker
-  with metadata still raises at entry, because the no-data session cannot hold them; entry does not wait for a runtime
+- LIVE with no headset at the OpenXR runtime (section 12): entry does not wait for a runtime
   that is not running; a failure after entry is not tried again; plugins, the keyboard and recording start only at the
   hand-over; the hand-over step is late and not shown in `last_step_info`. A shorter pause needs the GIL released
   around `DeviceIOSession.run` and the plugin start in their C++ bindings. None of it has run on a real runtime

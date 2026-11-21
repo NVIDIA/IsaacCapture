@@ -136,9 +136,12 @@ With ``False`` entering does not wait:
   plugin), and every Python thread of the robot app waits until it does.
   Until then ``session.oxr_session`` is ``None`` and
   ``session.deviceio_session`` is another object than afterwards: read both
-  from the session in each step instead of keeping them. A session with a
-  message channel or a tracker with metadata (``TactileTracker``) still
-  raises ``RuntimeError`` at entry while no headset has reached the runtime.
+  from the session in each step instead of keeping them. Until then a message
+  channel reports ``DISCONNECTED`` and no messages, and a tracker with
+  metadata (``TactileTracker``) no data and no metadata. A message given to
+  ``MessageChannelSink`` waits and is sent once the channel is connected
+  (the newest ``outbound_queue_capacity`` batches, 256 by default; older ones
+  are dropped); ``send_message()`` raises ``RuntimeError``.
   When the runtime stops while the session waits, or the trackers or a
   plugin cannot start once a headset arrives, that ``step()`` and every later
   one raise ``RuntimeError``.

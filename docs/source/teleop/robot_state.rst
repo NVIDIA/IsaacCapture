@@ -490,15 +490,6 @@ example to an agent's harness, sets ``wait_for_headset=False``:
      - Returns at once, also while no headset has reached the OpenXR runtime
        of the machine. Publishing works at once. The OpenXR runtime must be
        running.
-   * - Local, ``SessionMode.LIVE``, with a message channel or a tracker with
-       metadata (``TactileTracker``)
-     - While no headset has reached the OpenXR runtime, entering raises
-       ``RuntimeError``: ``No headset has reached the OpenXR runtime since it
-       started, and this session cannot start without one
-       (wait_for_headset=False): <reason>. Wake a headset once, or set
-       wait_for_headset=True to wait for one.`` Its robot state is not served
-       then. Once a headset has reached the runtime it enters as the row
-       above says.
    * - Local, ``SessionMode.REPLAY``; ``LIVE`` with ``oxr_handles``,
        ``oxr_session_factory`` or ``joint_publisher``
      - No effect. A replay session and a session on the caller's own OpenXR
@@ -569,23 +560,23 @@ In a local session entered this way (``SessionMode.LIVE`` without
   ~/.cloudxr/run/cloudxr.env``, see
   :ref:`load-cloudxr-environment-variables`); without it entering raises
   ``RuntimeError("Environment variable NV_CXR_RUNTIME_DIR is not set")``.
-- **What entering still refuses while no headset is there.** A session with a
-  message channel or a tracker with metadata raises the ``RuntimeError`` of
-  the table above. Its ``<reason>`` names the tracker, for example
-  ``MessageChannelTracker is not supported over a remote session`` or
-  ``TactileTracker is not supported over a remote session: its metadata is
-  read before any sample arrives``; it says "remote session" because a
-  session that waits holds its trackers the way a remote session does. A
-  plugin with ``required=True`` that cannot be found raises as it does by
+- **What entering still refuses while no headset is there.** A plugin with
+  ``required=True`` that cannot be found raises as it does by
   default (``Required plugin '<name>' ...``). With ``mcap_config``, a folder
   that is missing or cannot be written raises ``RuntimeError``: ``The folder
-  of the recording file does not exist or cannot be written: <folder>``. All
-  three are raised by entering, so they do not come up in a later ``step()``,
+  of the recording file does not exist or cannot be written: <folder>``. Both
+  are raised by entering, so they do not come up in a later ``step()``,
   and nothing of the session stays running.
 - **Until a headset has reached the runtime, nothing gives data.** ``step()``
   runs the pipeline with every tracker input absent: head, hands and
   controllers, and also the keyboard and plugin devices such as a gamepad or
-  a SpaceMouse. No plugin is started and nothing is recorded: the recording
+  a SpaceMouse. A message channel reports ``DISCONNECTED`` and no messages; a
+  message given to ``MessageChannelSink`` waits and is sent once the channel
+  is connected. Only the newest ``outbound_queue_capacity`` batches wait (256
+  by default; a batch is what the sink gets in one step): older ones are
+  dropped with no log line, and those that waited are all sent in one
+  ``step()``. A tactile tracker has no forces and no layout.
+  No plugin is started and nothing is recorded: the recording
   file of ``mcap_config`` is made when a headset arrives. ``sinks`` run every
   step, but their data, for example haptics, is dropped. Meanwhile a
   background thread named ``isaaccapture-headset-wait`` asks the runtime for
@@ -624,8 +615,8 @@ In a local session entered this way (``SessionMode.LIVE`` without
   ``session.oxr_session`` is ``None`` and ``session.deviceio_session`` is a
   session whose trackers report no data. Afterwards they are the OpenXR
   session and the DeviceIO session of any ``LIVE`` session. Read both from
-  the session in each step; a ``deviceio_session`` kept from before goes on
-  giving no data and raises nothing.
+  the session in each step. A ``deviceio_session`` kept from before goes on
+  giving no data; only ``send_message()`` on it raises.
 - **Status.** While the session waits, ``get_status()`` shows
   ``openxr/runtime`` as ``AVAILABLE`` and ``openxr/headset`` as
   ``DISCONNECTED`` with the reason ``NO_CURRENT_DATA`` and the text ``No
@@ -1266,11 +1257,10 @@ Robot state is what the robot reports. These stay in the application: an
 agent's commands and their answers, who controls the robot, stop, the handover
 between an agent and a person, and camera pictures.
 
-Not available yet: starting a ``LIVE`` session with a message channel or a
-tracker with metadata while no headset has reached the OpenXR runtime;
-starting a ``LIVE`` session before the OpenXR runtime runs; a second try
-after the OpenXR session, the trackers or a plugin could not be started in a
-``LIVE`` session; robot state that outlives a tracker failure on the server;
+Not available yet: starting a ``LIVE`` session before the OpenXR runtime runs;
+a second try after the OpenXR session, the trackers or a plugin could not be
+started in a ``LIVE`` session; robot state that outlives a tracker failure on
+the server;
 a reader on the robot machine in a remote session; robot state from the server
 to the robot app; a history of readings (the newest of each series is kept); a
 gripper's position in space; more than one robot app at a time; more than one
