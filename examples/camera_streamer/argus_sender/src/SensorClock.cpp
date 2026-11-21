@@ -162,6 +162,8 @@ void SensorClockMap::reset()
     m_haveCutoff = false;
     m_cutoffSource = 0;
     m_counterWentBackwards = false;
+    m_haveRealtimeHold = false;
+    m_realtimeHoldUntilNs = 0;
 }
 
 bool SensorClockMap::refresh(int64_t nowMonotonicNs, std::string* reason)
@@ -206,6 +208,12 @@ bool SensorClockMap::refresh(int64_t nowMonotonicNs, std::string* reason)
             realtimeStep = moved > bounds;
         }
         m_stepped = !representable || disagreement > allowed || realtimeStep;
+        if (realtimeStep)
+        {
+            m_haveRealtimeHold = true;
+            m_realtimeHoldUntilNs = static_cast<int64_t>(
+                std::min<Int128>(static_cast<Int128>(nowMonotonicNs) + m_config.realtimeStepHoldNs, kInt64Max));
+        }
         if (m_stepped)
         {
             // The step happened somewhere between the previous anchor and this one, so an event up to this anchor may
@@ -313,9 +321,13 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
     }
     result.valid = true;
     result.captureMonotonicNs = capture;
+    // During the hold after a wall-clock step only the realtime reading is withheld; the sensor-to-monotonic mapping
+    // is unaffected by the step and stays valid.
+    const bool realtimeHeld = m_haveRealtimeHold && nowMonotonicNs < m_realtimeHoldUntilNs;
     int64_t realtimeOffset = 0;
     int64_t captureRealtime = 0;
-    if (m_anchor.hasRealtime && !__builtin_sub_overflow(m_anchor.realtimeNs, m_anchor.monotonicNs, &realtimeOffset) &&
+    if (!realtimeHeld && m_anchor.hasRealtime &&
+        !__builtin_sub_overflow(m_anchor.realtimeNs, m_anchor.monotonicNs, &realtimeOffset) &&
         !__builtin_add_overflow(capture, realtimeOffset, &captureRealtime))
     {
         result.hasRealtime = true;

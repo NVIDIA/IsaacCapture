@@ -56,10 +56,18 @@ endif()
 find_package(LiveKit CONFIG REQUIRED PATHS "${LIVEKIT_SDK_DIR}" NO_DEFAULT_PATH)
 message(STATUS "LiveKit SDK=${LIVEKIT_SDK_DIR}")
 
+# The time-sync library comes from the product tree; a build inside it already has the target.
+if(NOT TARGET timesync::timesync)
+    cmake_path(GET CMAKE_CURRENT_SOURCE_DIR PARENT_PATH _examples_dir)
+    cmake_path(GET _examples_dir PARENT_PATH _repo_dir)
+    add_subdirectory(${_repo_dir}/src/core/timesync ${CMAKE_BINARY_DIR}/timesync)
+endif()
+
 add_subdirectory(video_types)
 add_subdirectory(ipc_client)
 add_subdirectory(gpu_ops)
 add_subdirectory(nvenc)
+add_subdirectory(chrony_clock)
 add_subdirectory(livekit_publisher)
 add_subdirectory(probe)
 add_subdirectory(bridge)
