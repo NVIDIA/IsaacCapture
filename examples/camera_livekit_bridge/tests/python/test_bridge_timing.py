@@ -42,7 +42,7 @@ from test_bridge_pipeline import (
     _cuda_present,
     _Proc,
     free_port,
-    API_KEY,
+    LIVEKIT_ISSUER,
     SIGNING_KEY,
     _b64,
     make_token,
@@ -164,7 +164,7 @@ def make_receiver_token(room: str, identity: str) -> str:
     header = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
     now = int(time.time())
     claims = {
-        "iss": API_KEY, "sub": identity, "nbf": now, "exp": now + 3600, "name": identity,
+        "iss": LIVEKIT_ISSUER, "sub": identity, "nbf": now, "exp": now + 3600, "name": identity,
         "video": {
             "room": room, "roomJoin": True, "canPublish": False,
             "canSubscribe": True, "canPublishData": True,
@@ -297,7 +297,7 @@ class BridgeTimingTest(unittest.TestCase):
         server = cls._spawn(
             "livekit",
             [
-                str(SERVER_BIN), "--dev", "--keys", f"{API_KEY}: {SIGNING_KEY}", "--bind", "127.0.0.1", "--node-ip", "127.0.0.1",
+                str(SERVER_BIN), "--dev", "--keys", f"{LIVEKIT_ISSUER}: {SIGNING_KEY}", "--bind", "127.0.0.1", "--node-ip", "127.0.0.1",
                 "--port", str(lk_port), "--rtc.tcp_port", str(lk_tcp), "--udp-port", str(lk_udp),
             ],
         )  # fmt: skip

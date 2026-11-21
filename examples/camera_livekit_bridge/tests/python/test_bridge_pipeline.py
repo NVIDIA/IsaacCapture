@@ -50,7 +50,7 @@ RECEIVER_PY = RECEIVER_DIR / ".venv" / "bin" / "python"
 SUBSCRIBER_PY = Path(os.environ.get("LIVEKIT_PYTHON", sys.executable))
 
 # A fresh signing key per run: the server is started with it and the tests sign their JWTs with it.
-API_KEY = "test-key"
+LIVEKIT_ISSUER = "test-issuer"
 SIGNING_KEY = secrets.token_hex(32)
 SOURCE_FPS = 30
 # name, source width, source height, track name, bridge divisor
@@ -121,7 +121,7 @@ def make_token(room: str, identity: str, publish: bool) -> str:
     header = _b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
     now = int(time.time())
     claims = {
-        "iss": API_KEY,
+        "iss": LIVEKIT_ISSUER,
         "sub": identity,
         "nbf": now,
         "exp": now + 3600,
@@ -284,7 +284,7 @@ class BridgePipelineTest(unittest.TestCase):
                 str(SERVER_BIN),
                 "--dev",
                 "--keys",
-                f"{API_KEY}: {SIGNING_KEY}",
+                f"{LIVEKIT_ISSUER}: {SIGNING_KEY}",
                 "--bind",
                 "127.0.0.1",
                 "--node-ip",
