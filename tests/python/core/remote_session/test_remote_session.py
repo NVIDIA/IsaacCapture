@@ -274,6 +274,75 @@ def test_host_refuses_work_after_close():
         host.close()  # idempotent
 
 
+def test_stop_session_keeps_the_connection_and_start_session_streams_again():
+    listener = RemoteSessionListener("127.0.0.1", 0)
+    keyboard, session = _robot()
+    server_keyboard = KeyboardTracker()
+    provider = server_keyboard.create_provider()
+    provider.key_down(KEY_W)
+    with session:
+        session.start(_endpoint(listener, False), _hello(session), WAIT_MS)
+        fd, _ = listener.accept(WAIT_MS)
+        with RemoteSessionHost.adopt(fd, False) as host:
+            topics = json.loads(host.wait_hello(WAIT_MS))["topics"]
+            host.send_hello_ack(json.dumps(HELLO_ACK))
+            assert session.wait_hello_ack(WAIT_MS)
+
+            def start():
+                host.start_session(
+                    [(server_keyboard, "0")],
+                    oxr.OpenXRSessionHandles(1, 1, 1, 1),
+                    VendorConfig(),
+                    topics,
+                )
+
+            def robot_reads_w_after_a_tick():
+                host.tick()
+                return _holds_w(keyboard, session) and session.is_fresh
+
+            def robot_is_stale():
+                session.update()
+                return not session.is_fresh
+
+            host.stop_session()  # no session yet
+            start()
+            assert _wait_for(robot_reads_w_after_a_tick)
+
+            host.stop_session()
+            host.stop_session()
+            with pytest.raises(RuntimeError, match="start_session"):
+                host.tick()
+            # Without SAMPLES the stream goes stale; the connection stays.
+            assert _wait_for(robot_is_stale)
+            assert session.tick_age_ns is None
+            assert keyboard.get_keyboard_data(session) is None
+            assert host.alive
+            assert host.close_reason == ""
+
+            start()
+            assert _wait_for(robot_reads_w_after_a_tick)
+            assert host.alive
+
+
+def test_stop_session_after_close_does_nothing():
+    listener = RemoteSessionListener("127.0.0.1", 0)
+    with socket.create_connection(("127.0.0.1", listener.port)) as robot:
+        fd, _ = listener.accept(WAIT_MS)
+        host = RemoteSessionHost.adopt(fd, False)
+        host.start_session(
+            [(KeyboardTracker(), "0")],
+            oxr.OpenXRSessionHandles(1, 1, 1, 1),
+            VendorConfig(),
+            [],
+        )
+        robot.close()  # lets close() skip its linger
+        host.close()
+        host.stop_session()
+        host.stop_session()
+        with pytest.raises(RuntimeError, match="closed"):
+            host.tick()
+
+
 def _runs_alongside(call):
     """True when this thread keeps running while `call` blocks for about 1.5 s on another thread."""
 

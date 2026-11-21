@@ -321,7 +321,7 @@ PYBIND11_MODULE(_deviceio_session, m)
     py::class_<core::PyRemoteSessionHost, std::unique_ptr<core::PyRemoteSessionHost>>(
         m, "RemoteSessionHost",
         "Server end of a remote session: records a DeviceIOSession and streams it to one robot app. "
-        "Call start_session(), tick() and close() from one thread at a time.")
+        "Call start_session(), tick(), stop_session() and close() from one thread at a time.")
         .def_static("adopt", &core::PyRemoteSessionHost::adopt, py::arg("fd"), py::arg("websocket"),
                     "Take ownership of an accepted socket descriptor and start the link.")
         .def("wait_hello", &core::PyRemoteSessionHost::wait_hello, py::arg("timeout_ms"),
@@ -357,6 +357,9 @@ PYBIND11_MODULE(_deviceio_session, m)
             "(empty: all). Releases the GIL.")
         .def("tick", &core::PyRemoteSessionHost::tick,
              "Update the DeviceIOSession once and send the result as one SAMPLES link message. Releases the GIL.")
+        .def("stop_session", &core::PyRemoteSessionHost::stop_session,
+             "End the DeviceIOSession and keep the connection; start_session() may be called again. A plugin-fed "
+             "tracker that had data is first reported without data. Releases the GIL.")
         .def_property_readonly("alive", &core::PyRemoteSessionHost::alive, "False once the link is down.")
         .def_property_readonly(
             "close_reason", &core::PyRemoteSessionHost::close_reason, "Why the link went down ('' while alive).")
