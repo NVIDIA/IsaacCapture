@@ -74,7 +74,7 @@ HostNv12 reference_downscale(const HostNv12& src, uint32_t d)
             uint32_t sum = 0;
             for (uint32_t j = 0; j < d; ++j)
                 for (uint32_t i = 0; i < d; ++i)
-                    sum += src.y[static_cast<size_t>(r * d + j) * src.width + c * d + i];
+                    sum += src.y[(static_cast<size_t>(r) * d + j) * src.width + static_cast<size_t>(c) * d + i];
             out.y[static_cast<size_t>(r) * out.width + c] = static_cast<uint8_t>((sum + n / 2) / n);
         }
     for (uint32_t r = 0; r < out.height / 2; ++r)
@@ -84,7 +84,8 @@ HostNv12 reference_downscale(const HostNv12& src, uint32_t d)
                 uint32_t sum = 0;
                 for (uint32_t j = 0; j < d; ++j)
                     for (uint32_t i = 0; i < d; ++i)
-                        sum += src.uv[static_cast<size_t>(r * d + j) * src.width + (c * d + i) * 2 + comp];
+                        sum +=
+                            src.uv[(static_cast<size_t>(r) * d + j) * src.width + (static_cast<size_t>(c) * d + i) * 2 + comp];
                 out.uv[static_cast<size_t>(r) * out.width + c * 2 + comp] = static_cast<uint8_t>((sum + n / 2) / n);
             }
     return out;

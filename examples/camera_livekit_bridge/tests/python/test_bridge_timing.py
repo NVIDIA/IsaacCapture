@@ -18,7 +18,6 @@ dependencies and the livekit SDK). Skipped, never faked, when one is missing.
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
 import os
@@ -44,7 +43,7 @@ from test_bridge_pipeline import (
     _Proc,
     free_port,
     API_KEY,
-    API_SECRET,
+    DEV_SIGNING_KEY,
     _b64,
     make_token,
 )
@@ -172,8 +171,8 @@ def make_receiver_token(room: str, identity: str) -> str:
         },
     }  # fmt: skip
     body = _b64(json.dumps(claims).encode())
-    sig = hmac.new(API_SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256)
-    return f"{header}.{body}.{_b64(sig.digest())}"
+    sig = hmac.digest(DEV_SIGNING_KEY.encode(), f"{header}.{body}".encode(), "sha256")
+    return f"{header}.{body}.{_b64(sig)}"
 
 
 def _egocap_env() -> dict[str, str]:

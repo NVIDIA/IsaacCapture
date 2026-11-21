@@ -13,7 +13,6 @@ subscriber). The test is skipped, never faked, when a prerequisite is missing.
 from __future__ import annotations
 
 import base64
-import hashlib
 import hmac
 import json
 import os
@@ -49,7 +48,8 @@ BRIDGE_BIN = Path(
 RECEIVER_PY = RECEIVER_DIR / ".venv" / "bin" / "python"
 SUBSCRIBER_PY = Path(os.environ.get("LIVEKIT_PYTHON", sys.executable))
 
-API_KEY, API_SECRET = "devkey", "secret"
+# livekit-server --dev accepts exactly this key pair; the tests sign their own JWTs with it.
+API_KEY, DEV_SIGNING_KEY = "devkey", "secret"
 SOURCE_FPS = 30
 # name, source width, source height, track name, bridge divisor
 STREAMS = [
@@ -133,8 +133,8 @@ def make_token(room: str, identity: str, publish: bool) -> str:
         },
     }
     body = _b64(json.dumps(claims).encode())
-    sig = hmac.new(API_SECRET.encode(), f"{header}.{body}".encode(), hashlib.sha256)
-    return f"{header}.{body}.{_b64(sig.digest())}"
+    sig = hmac.digest(DEV_SIGNING_KEY.encode(), f"{header}.{body}".encode(), "sha256")
+    return f"{header}.{body}.{_b64(sig)}"
 
 
 def free_port(kind: int) -> int:
