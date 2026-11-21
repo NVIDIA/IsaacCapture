@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# End-to-end test of examples/robot_state: a Teleop Session Server subprocess in its test
-# mode, the stand-in robot and a reader, over loopback. No robot, headset or display.
+# End-to-end test of examples/robot_state: a Teleop Session Server subprocess started with
+# --no-headset, the stand-in robot and a reader, over loopback. No robot, headset or display.
 
 file(GLOB TEST_FILES
     RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"

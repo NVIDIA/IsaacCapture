@@ -3,9 +3,9 @@
 
 """Robot state on one machine: a Teleop Session Server, a stand-in robot and a stand-in harness.
 
-The server runs in its test mode (no CloudXR, no headset) on a loopback port the system
-picks, with its reader socket in a temporary folder, so it disturbs nothing else that runs
-on this machine.
+The server runs without a headset (--no-headset: no CloudXR, no OpenXR) on a loopback port
+the system picks, with its reader socket in a temporary folder, so it disturbs nothing else
+that runs on this machine.
 """
 
 import argparse
@@ -45,8 +45,7 @@ def _start_server(stack: ExitStack, folder: Path, socket_path: Path) -> str:
         sys.executable,
         "-m",
         "isaaccapture.teleop_session_server",
-        "--no-launch-cloudxr-runtime",
-        "--placeholder-openxr",
+        "--no-headset",
         "--listen",
         "tcp://127.0.0.1:0",
         "--robot-state-socket",
@@ -84,8 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m isaaccapture_examples.robot_state",
         description=(
-            "Start a Teleop Session Server in its test mode and a stand-in robot that "
-            "publishes robot state to it, and print what a stand-in harness reads."
+            "Start a Teleop Session Server without a headset (--no-headset) and a stand-in "
+            "robot that publishes robot state to it, and print what a stand-in harness reads."
         ),
     )
     parser.add_argument(
