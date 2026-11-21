@@ -39,9 +39,10 @@ stub generation.
 
 ## Private directory creation
 
-- Validate each opened parent before creating children; a separate pathname
-  validation pass can race with replacement. Keep sticky shared ancestors
-  distinct from the final user-owned directory, which must forbid other writers.
+- Prevent symlink attacks and time-of-check/time-of-use races by validating
+  each opened parent before creating children. Create directories privately from
+  the start to prevent temporary permission exposure; sticky shared ancestors do
+  not make a writable final directory safe.
 
 ## Leader and forwarding children
 
