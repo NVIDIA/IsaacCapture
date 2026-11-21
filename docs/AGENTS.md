@@ -27,8 +27,8 @@ sphinx-multiversion builds every whitelisted ref with `-c` pointing at the check
 invoked it, so `app.confdir` is that checkout while `app.srcdir` is the ref being built.
 Resolve paths from one of those two, never from the working directory or the repo root.
 
-Keep badge versions explicit in `_VERSION_ICON_MAP` for supported release branches;
-verify CloudXR entries against each branch's `deps/cloudxr/.env.default` when updating them.
+Keep badge versions explicit in `_VERSION_ICON_MAP` for supported release branches.
+The single CloudXR badge shows the major version, `6`.
 
 The config is therefore a site-wide input, not a per-version one: the deploy job takes
 `docs/` from `main` before building, or a release or tag push renders main's pages with an
@@ -136,3 +136,12 @@ folder placement alone does not create sidebar nesting.
 The sidebar's top layer is a root toctree `:caption:` in `index.rst`; pages and
 their own toctrees nest below it. When a request names a sidebar layer, change
 that layer: do not add a landing page where a caption was asked for.
+
+## Synthetic XR preview narrative
+
+Lead with the automated robot task and show where human and generated input
+join the same native path. Keep the phase-one guide to one main page; defer
+manual controller and recording walkthroughs rather than adding reference pages.
+
+Keep input-reuse explanations under “Bring your own task logic” brief. Put
+adapter contracts in the source example, retaining stacking as the main tutorial.

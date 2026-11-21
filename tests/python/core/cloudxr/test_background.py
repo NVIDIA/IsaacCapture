@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -33,14 +34,20 @@ def stand_in_service(tmp_path, monkeypatch):
     monkeypatch.setattr(background, "_MODULE", "stand_in_service")
 
 
-def _poll_read_pid(run_dir: str) -> int | None:
-    """read_pid(), polled: a new child's cmdline can be empty when Popen() returns."""
-    deadline = time.monotonic() + 2.0
-    pid = background.read_pid(run_dir)
-    while pid is None and time.monotonic() < deadline:
-        time.sleep(0.05)
-        pid = background.read_pid(run_dir)
-    return pid
+def _await_exec(pid: int) -> None:
+    """Wait for *pid*'s own cmdline: Popen() can return mid-exec.
+
+    Until exec finishes it reads empty or, on the posix_spawn path, briefly
+    this process's argv. Neither names the service, so a check made then fails
+    a positive test and passes a negative one without testing anything.
+    """
+    cmdline = Path(f"/proc/{pid}/cmdline")
+    ours = Path("/proc/self/cmdline").read_bytes()
+    deadline = time.monotonic() + 5.0
+    while cmdline.read_bytes() in (b"", ours):
+        if time.monotonic() > deadline:
+            pytest.fail(f"{cmdline} is still empty 5s after the spawn")
+        time.sleep(0.01)
 
 
 @_posix_only
@@ -65,6 +72,7 @@ class TestReadPid:
         """Pid reuse: the recorded pid is alive, but is not our service."""
         other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:
+            _await_exec(other.pid)
             background.pid_path(str(tmp_path)).write_text(f"{other.pid}\n")
             assert background.read_pid(str(tmp_path)) is None
         finally:
@@ -81,8 +89,9 @@ class TestReadPid:
             [sys.executable, "-c", "import time; time.sleep(30)", module, "run"]
         )
         try:
+            _await_exec(proc.pid)
             background.pid_path(str(tmp_path)).write_text(f"{proc.pid}\n")
-            assert _poll_read_pid(str(tmp_path)) == proc.pid
+            assert background.read_pid(str(tmp_path)) == proc.pid
         finally:
             proc.kill()
             proc.wait()
@@ -99,6 +108,7 @@ class TestReadPid:
             ]
         )
         try:
+            _await_exec(proc.pid)
             background.pid_path(str(tmp_path)).write_text(f"{proc.pid}\n")
             assert background.read_pid(str(tmp_path)) is None
         finally:
@@ -192,6 +202,7 @@ class TestReadRunFlags:
             ]
         )
         try:
+            _await_exec(proc.pid)
             background.pid_path(str(tmp_path)).write_text(f"{proc.pid}\n")
             flags = background.read_run_flags(str(tmp_path))
             assert flags == ["--host-client"]
@@ -219,7 +230,8 @@ class TestTerminate:
 
         pid, _ = background.spawn(["30"], run_dir, logs_dir)
         try:
-            assert _poll_read_pid(run_dir) == pid
+            _await_exec(pid)
+            assert background.read_pid(run_dir) == pid
 
             assert background.terminate(run_dir, timeout_sec=10) is True
             assert not background.pid_path(run_dir).exists()

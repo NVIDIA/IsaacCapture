@@ -332,6 +332,8 @@ When ``BUILD_TESTING`` is ``ON``, CTest is enabled at the top level. Run all tes
 
 The CI uses ``ctest`` (see :code-file:`build-ubuntu.yml <.github/workflows/build-ubuntu.yml>`).
 
+.. _build-from-source-install-package:
+
 4. Install the ``isaaccapture`` pip package
 -------------------------------------------
 
@@ -347,6 +349,9 @@ From the repository root:
    # Replace 3.11 with your ISAAC_TELEOP_PYTHON_VERSION. --seed adds pip for the pip command below.
    uv venv --python 3.11 --seed .venv
    source .venv/bin/activate
+
+If ``.venv`` already exists on the build's Python, activate it and skip ``uv venv``. To switch it
+to another Python, rerun ``uv venv`` with ``--clear``, which deletes everything installed in it.
 
 Install it by version. A local build is always ``X.Y+local``, where ``X.Y`` is the first two
 numbers of the repository's ``VERSION`` file; they also appear in the wheel's file name. The pin
@@ -364,6 +369,25 @@ differently:
 
    # --reinstall-package replaces an already-installed isaaccapture, e.g. after a rebuild.
    uv pip install "isaaccapture[retargeters,cloudxr,ui]==X.Y+local" --find-links=./install/wheels/ --reinstall-package isaaccapture
+
+.. _build-from-source-editable-examples:
+
+Install an example into this venv with ``--no-sources``:
+
+.. code-block:: bash
+
+   uv pip install -e ./examples/<name> --no-sources
+
+On aarch64 this command fails for ``deviceio_live_view``, because SOMA-X pulls in ``cholespy``,
+which has no aarch64 wheel. Use the aarch64 install in
+:code-file:`examples/deviceio_live_view/README.md` instead.
+
+Without ``--no-sources``, an example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout
+replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
+an example that starts CloudXR stops with ``The CloudXR service exited during startup`` and the
+service log reads ``CloudXR SDK missing native/libcloudxr.so``. After a rebuild, run
+``cmake --install build`` so ``./install/wheels/`` holds the new wheel, then rerun the wheel install
+above; the example does not need reinstalling.
 
 The wheel carries the ``isaacteleop`` compatibility alias, which will be removed
 in 1.9, so
@@ -384,6 +408,12 @@ the released wheels) is unchanged, so the two coexist.
 
    pip install .            # build + install the compiled wheel from source
    pip install -e .         # editable / developer install
+
+.. warning::
+
+   Neither install carries the CloudXR runtime (``isaaccapture/cloudxr/native/``), so
+   ``python -m isaaccapture.cloudxr.service`` and every example that starts CloudXR fail under
+   this path. Use the wheel from step 4 for those.
 
 .. note::
 

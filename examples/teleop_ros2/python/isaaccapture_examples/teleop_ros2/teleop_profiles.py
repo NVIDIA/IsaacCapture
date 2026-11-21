@@ -5,7 +5,7 @@
 """Resolved runtime profiles for teleoperation session results and publishing."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TypedDict, cast
 
 from .constants import (
@@ -34,7 +34,6 @@ class TeleopProfile(StrEnum):
     CONTROLLER_TELEOP_WITH_HAND_CONTROLLER_EE = (
         "controller_teleop_with_hand_controller_ee"
     )
-    CONTROLLER_TELEOP_WITH_HAND_MANUS_EE = "controller_teleop_with_hand_manus_ee"
     CONTROLLER_TELEOP_WITH_HAND_WRIST_EE = "controller_teleop_with_hand_wrist_ee"
     HAND_TELEOP = "hand_teleop"
     CONTROLLER_RAW = "controller_raw"
@@ -60,7 +59,6 @@ class TeleopProfileSpec:
     mode: TeleopMode
     required_result_keys: frozenset[str]
     publish_types: frozenset[PublishType]
-    apply_manus_controller_mount_offset: bool = False
 
 
 _CONTROLLER_TELEOP_WITH_HAND_CONTROLLER_EE_SPEC = TeleopProfileSpec(
@@ -115,10 +113,6 @@ TELEOP_PROFILE_SPECS = {
     ),
     TeleopProfile.CONTROLLER_TELEOP_WITH_HAND_CONTROLLER_EE: (
         _CONTROLLER_TELEOP_WITH_HAND_CONTROLLER_EE_SPEC
-    ),
-    TeleopProfile.CONTROLLER_TELEOP_WITH_HAND_MANUS_EE: replace(
-        _CONTROLLER_TELEOP_WITH_HAND_CONTROLLER_EE_SPEC,
-        apply_manus_controller_mount_offset=True,
     ),
     TeleopProfile.CONTROLLER_TELEOP_WITH_HAND_WRIST_EE: TeleopProfileSpec(
         mode=TeleopMode.CONTROLLER_TELEOP,
@@ -197,9 +191,10 @@ def resolve_teleop_profile_spec(
         mode == TeleopMode.CONTROLLER_TELEOP
         and resolved_hand_retargeter in TRACKED_HAND_RETARGETERS
     ):
-        if hand_tracking_provider == HandTrackingProvider.MANUS:
-            profile = TeleopProfile.CONTROLLER_TELEOP_WITH_HAND_MANUS_EE
-        elif hand_tracking_provider == HandTrackingProvider.WUJI:
+        if hand_tracking_provider in (
+            HandTrackingProvider.MANUS,
+            HandTrackingProvider.WUJI,
+        ):
             profile = TeleopProfile.CONTROLLER_TELEOP_WITH_HAND_WRIST_EE
         else:
             profile = TeleopProfile.CONTROLLER_TELEOP_WITH_HAND_CONTROLLER_EE

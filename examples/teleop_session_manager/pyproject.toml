@@ -21,6 +21,8 @@ dependencies = [
 # must stay without an __init__.py. `only-include` + `sources`, not `packages`:
 # the latter keeps only the last path component and would root the wheel at a
 # bare top-level `teleop_session_manager/`.
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/teleop_session_manager"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]

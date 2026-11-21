@@ -1334,7 +1334,7 @@ async def test_preserved_browser_reconnect_refreshes_link_without_active_transfe
     assert payload["decision"]["transferRetestDeferred"] is True
     assert payload["decision"]["overallOutcome"] == decision
     assert payload["linkProbe"]["probeSucceeded"] is (reconnected_speed is not None)
-    awake.assert_called_once_with(timeout=10.0)
+    awake.assert_called_once_with(timeout=10.0, require_awake=True)
     assert lifecycle.snapshot["usbLinkOutcome"] == (
         "unknown"
         if reconnected_speed is None

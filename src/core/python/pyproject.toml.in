@@ -31,6 +31,8 @@ dynamic = ["dependencies", "optional-dependencies"]
 dependencies = {file = ["requirements.txt"]}
 optional-dependencies.dev = {file = ["requirements-dev.txt"]}
 optional-dependencies.ui = {file = ["requirements-ui.txt"]}
+optional-dependencies.desktop-mirror = {file = ["requirements-desktop-mirror.txt"]}
+optional-dependencies.ovxr = {file = ["requirements-ovxr.txt"]}
 optional-dependencies.retargeters = {file = ["requirements-retargeters.txt"]}
 optional-dependencies.retargeters-lite = {file = ["requirements-retargeters-lite.txt"]}
 optional-dependencies.grounding = {file = ["requirements-grounding.txt"]}
@@ -101,6 +103,7 @@ robotic_grounding = [
     "assets/xmls/sharpawave/NOTICE",
     "assets/xmls/sharpawave/README.md",
 ]
+@OVXR_CAMERA_PACKAGE_DATA_BLOCK@
 
 [tool.uv]
 # Only use managed Python installations (not system Python)

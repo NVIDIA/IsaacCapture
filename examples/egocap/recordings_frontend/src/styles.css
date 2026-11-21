@@ -1,0 +1,205 @@
+/* SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+:root {
+  --canvas: #0b1018;
+  --surface: #121a26;
+  --surface-raised: #182333;
+  --border: #2a384c;
+  --text-main: #f1f5f9;
+  --text-secondary: #b4c0d2;
+  --accent: #60a5fa;
+  --critical: #f87171;
+  --radius-card: 10px;
+  --radius-chip: 6px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--text-main);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+header.app-header {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-8);
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 16px;
+}
+
+main.app-main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--space-4) var(--space-8) var(--space-8);
+}
+
+nav.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-6);
+}
+
+nav.breadcrumbs button {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-chip);
+  font: inherit;
+}
+
+nav.breadcrumbs button:hover,
+nav.breadcrumbs button:focus-visible {
+  color: var(--text-main);
+  background: var(--surface-raised);
+}
+
+nav.breadcrumbs .sep {
+  color: var(--text-secondary);
+  margin: 0 var(--space-1);
+}
+
+#error {
+  color: var(--critical);
+  margin-bottom: var(--space-4);
+}
+
+#empty {
+  color: var(--text-secondary);
+}
+
+ul.grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card a,
+.card button.folder {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-main);
+  text-decoration: none;
+  background: none;
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.card a:hover,
+.card button.folder:hover {
+  color: var(--accent);
+}
+
+.icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.name {
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* The control-token form, shown until the page has signed in. */
+form.sign-in {
+  max-width: 480px;
+  margin: var(--space-8) auto;
+  padding: var(--space-6);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+/* `hidden` must win over the display rules below. */
+form.sign-in[hidden],
+nav.breadcrumbs[hidden] {
+  display: none;
+}
+
+form.sign-in label {
+  font-weight: 700;
+}
+
+.sign-in-help {
+  margin: var(--space-1) 0 var(--space-3);
+  color: var(--text-secondary);
+}
+
+.sign-in-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.sign-in-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+}
+
+.sign-in-row button {
+  height: 34px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--canvas);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sign-in-row input:focus-visible,
+.sign-in-row button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.sign-in-error {
+  margin: var(--space-3) 0 0;
+  color: var(--critical);
+}

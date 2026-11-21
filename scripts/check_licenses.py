@@ -20,7 +20,7 @@ COPYRIGHT_HOLDER = "NVIDIA CORPORATION & AFFILIATES. All rights reserved."
 # Same rule as check-copyright-year's `files:`.
 SOURCE_FILES = re.compile(
     r"\.(py|pyi|js|ts|cpp|cc|c|h|hpp|cxx|hxx|inc|cu|cuh|frag|vert|cmake|md|yaml|yml"
-    r"|sh|fbs|toml|html)$"
+    r"|sh|fbs|toml|html|tsx|css|template)$"
     r"|CMakeLists\.txt$|Dockerfile(\.[A-Za-z0-9_-]+)?$"
 )
 # Media files and .gitignore carry no header; like elsewhere in the repo they are not checked.

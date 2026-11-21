@@ -15,8 +15,10 @@ dependencies = [
     "numpy>=1.23.0",
 ]
 
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/tactile"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]
 
 [tool.uv.sources]
