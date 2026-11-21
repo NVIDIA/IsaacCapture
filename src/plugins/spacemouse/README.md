@@ -12,7 +12,7 @@ or any reader using the same `collection_id`. Linux only.
 The plugin is also bundled in the `isaaccapture` package: a `TeleopSession` starts it with
 `PluginConfig(plugin_name="spacemouse", plugin_root_id="spacemouse", search_paths=[BUNDLED_PLUGINS_DIR])`.
 
-Validated devices: SpaceMouse Compact, SpaceMouse Wireless, SpaceNavigator, SpaceNavigator for
+Validated devices: SpaceMouse Compact, SpaceMouse Wireless, SpaceMouse Wireless BT, SpaceNavigator, SpaceNavigator for
 Notebooks, 3Dconnexion Universal Receiver.
 
 ## Device access
@@ -34,9 +34,10 @@ membership is needed.
 ```
 
 - **--device**: HID node to read. By default the first validated model is discovered under
-  `/sys/class/hidraw`, and rediscovered after it is unplugged.
+  `/sys/class/hidraw`, and rediscovered after it is unplugged. Universal Receiver interfaces are
+  filtered by their HID motion axes so auxiliary interfaces are skipped.
 - **--combined-report**: With `--device`, the device sends translation and rotation in one report
-  (3Dconnexion Universal Receiver). Discovery sets this automatically.
+  (SpaceMouse Wireless BT and 3Dconnexion Universal Receiver). Discovery sets this automatically.
 - **--collection-id**: Default `spacemouse`. Match this when creating `SpaceMouseTracker`.
 - **--plugin-root-id**: Set by the plugin launcher; enables device status reporting.
 

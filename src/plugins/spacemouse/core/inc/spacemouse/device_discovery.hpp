@@ -15,7 +15,7 @@ namespace spacemouse
 struct DeviceLocation
 {
     std::filesystem::path path; //!< e.g. `/dev/hidraw3`
-    //! The device packs translation and rotation into one report (3Dconnexion Universal Receiver).
+    //! The device packs translation and rotation into one report.
     bool combined_report = false;
 };
 
@@ -23,7 +23,7 @@ struct DeviceLocation
  * @brief The first SpaceMouse of a validated model, matched on each hidraw device's `HID_NAME`.
  *
  * Scans `<hidraw_class_dir>/hidrawN/device/uevent` in name order and returns `<dev_dir>/hidrawN`
- * for the first match, or nullopt when none is connected.
+ * for the first match, or nullopt when none is connected. Receiver interfaces must also declare motion axes.
  */
 std::optional<DeviceLocation> find_device(const std::filesystem::path& hidraw_class_dir = "/sys/class/hidraw",
                                           const std::filesystem::path& dev_dir = "/dev");
