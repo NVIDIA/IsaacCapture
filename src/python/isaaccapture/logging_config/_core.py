@@ -108,57 +108,42 @@ def log_dir() -> Path:
     return directory
 
 
-def _validate_directory_chain(directory: Path, *, require_owner: bool) -> None:
-    current = directory
-    target = True
-    while True:
-        info = current.lstat()
-        mode = info.st_mode
-        if not stat.S_ISDIR(mode):
-            raise NotADirectoryError(current)
-        if target and require_owner and info.st_uid != os.getuid():
-            raise PermissionError(
-                f"refusing log directory not owned by this user: {current}"
-            )
-        publicly_writable = mode & (stat.S_IWGRP | stat.S_IWOTH)
-        if publicly_writable and (target or not mode & stat.S_ISVTX):
-            raise PermissionError(f"refusing replaceable log directory path: {current}")
-        if current == current.parent:
-            break
-        current = current.parent
-        target = False
-
-
 def ensure_private_dir(directory: Path) -> Path:
-    """Create *directory* owner-only and reject replaceable POSIX paths."""
+    """Create owner-only directories without following replaceable POSIX paths."""
     if not _POSIX:
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
-    missing: list[Path] = []
-    probe = directory
-    while True:
-        try:
-            probe.lstat()
-            break
-        except FileNotFoundError:
-            missing.append(probe)
-            if probe == probe.parent:
-                raise
-            probe = probe.parent
+    parts = directory.absolute().parts[1:]
+    if not parts or ".." in parts:
+        raise PermissionError(f"refusing ambiguous log directory path: {directory}")
 
-    # Validate the existing prefix before creating through it; otherwise a
-    # symlinked parent could redirect even an owner-only child mkdir.
-    _validate_directory_chain(probe, require_owner=False)
-    for component in reversed(missing):
-        try:
-            # mkdir applies the restrictive mode atomically; chmod after a
-            # recursive mkdir would leave a world-writable race window.
-            component.mkdir(mode=0o700)
-        except FileExistsError:
-            pass
+    # Keep each parent open so a pathname swap cannot redirect the next mkdir.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    parent = os.open("/", flags)
+    try:
+        for index, name in enumerate(parts):
+            try:
+                os.mkdir(name, mode=0o700, dir_fd=parent)
+            except FileExistsError:
+                pass
+            child = os.open(name, flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
 
-    _validate_directory_chain(directory, require_owner=True)
+            info = os.fstat(parent)
+            target = index == len(parts) - 1
+            # Sticky shared ancestors (such as /tmp) are safe to traverse, but
+            # the final directory must belong to us and forbid other writers.
+            if info.st_uid not in (0, os.getuid()) or (
+                target and info.st_uid != os.getuid()
+            ):
+                raise PermissionError(f"refusing foreign-owned log path: {directory}")
+            writable = info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            if writable and (target or not info.st_mode & stat.S_ISVTX):
+                raise PermissionError(f"refusing replaceable log path: {directory}")
+    finally:
+        os.close(parent)
     return directory
 
 

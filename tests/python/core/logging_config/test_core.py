@@ -169,6 +169,31 @@ class TestEnsurePrivateDir:
         with pytest.raises(PermissionError, match="replaceable"):
             _core.ensure_private_dir(shared / "logs")
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_sticky_ancestor_is_allowed_but_sticky_target_is_not(self, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        shared.chmod(0o1777)
+        assert _core.ensure_private_dir(shared / "logs") == shared / "logs"
+        with pytest.raises(PermissionError, match="replaceable"):
+            _core.ensure_private_dir(shared)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_rejects_parent_traversal_before_creating_anything(self, tmp_path):
+        with pytest.raises(PermissionError, match="ambiguous"):
+            _core.ensure_private_dir(tmp_path / "new" / ".." / "logs")
+        assert not (tmp_path / "new").exists()
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_creation_is_private_even_with_a_permissive_umask(self, tmp_path):
+        previous = os.umask(0)
+        try:
+            leaf = _core.ensure_private_dir(tmp_path / "runtime" / "logs")
+        finally:
+            os.umask(previous)
+        assert stat.S_IMODE(leaf.stat().st_mode) == 0o700
+        assert stat.S_IMODE(leaf.parent.stat().st_mode) == 0o700
+
     @not_root
     def test_raises_rather_than_returning_an_unusable_directory(self, tmp_path):
         locked = tmp_path / "locked"
