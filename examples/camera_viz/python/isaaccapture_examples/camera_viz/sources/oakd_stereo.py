@@ -95,6 +95,13 @@ def _lens_model(calib, socket) -> str:
     return _LENS_MODELS[name]
 
 
+def _coefficients(calib, socket, model: str) -> np.ndarray:
+    """A lens's distortion coefficients. The device pads every model to
+    one length; OpenCV's fisheye model takes the first four."""
+    values = np.asarray(calib.getDistortionCoefficients(socket), dtype=np.float64)
+    return values[:4] if model == "fisheye" else values
+
+
 def imu_rotation(calib, left):
     """The rotation that takes a vector from the IMU's frame into the left
     eye's, from the device's calibration."""
@@ -123,15 +130,16 @@ def stereo_calibration(calib, sockets, size, picture_size=None) -> StereoCalibra
         left_from_color = np.asarray(
             calib.getCameraExtrinsics(color, left), dtype=np.float64
         )
+        picture_model = _lens_model(calib, color)
         picture = PictureCalibration(
             width=picture_size[0],
             height=picture_size[1],
             K=np.asarray(
                 calib.getCameraIntrinsics(color, *picture_size), dtype=np.float64
             ),
-            D=np.asarray(calib.getDistortionCoefficients(color), dtype=np.float64),
+            D=_coefficients(calib, color, picture_model),
             R_left_from_picture=left_from_color[:3, :3],
-            distortion_model=_lens_model(calib, color),
+            distortion_model=picture_model,
         )
     return StereoCalibration(
         width=width,
@@ -139,11 +147,11 @@ def stereo_calibration(calib, sockets, size, picture_size=None) -> StereoCalibra
         left_K=np.asarray(
             calib.getCameraIntrinsics(left, width, height), dtype=np.float64
         ),
-        left_D=np.asarray(calib.getDistortionCoefficients(left), dtype=np.float64),
+        left_D=_coefficients(calib, left, model),
         right_K=np.asarray(
             calib.getCameraIntrinsics(right, width, height), dtype=np.float64
         ),
-        right_D=np.asarray(calib.getDistortionCoefficients(right), dtype=np.float64),
+        right_D=_coefficients(calib, right, model),
         R=right_from_left[:3, :3],
         T=right_from_left[:3, 3] / 100.0,
         rectified=False,
@@ -317,8 +325,12 @@ class OakdStereoSource(FrameSource):
         if self._thread is not None:
             return
         self._stop.clear()
+        # Nothing of the last session is handed out in this one.
+        self._captures.reset()
         with self._lock:
             self._error = None
+            self._imu_samples.clear()
+        self._calibration = None
         self._delivered = False
         self._thread = threading.Thread(
             target=self._produce_loop,
@@ -541,6 +553,9 @@ class OakdStereoSource(FrameSource):
                     "clock its frames are stamped with"
                 ) from e
             _notify(f"frame error ({e}); reopening", logging.ERROR)
+            # The reopened device's clock starts again.
+            with self._lock:
+                self._imu_samples.clear()
             return
         if time.monotonic() - self._last_match_s > NO_MATCH_TIMEOUT_S:
             self._close_device()

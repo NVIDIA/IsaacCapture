@@ -362,7 +362,7 @@ class StereoCameraTraits:
 
     calibrated: bool
     rectified: bool
-    picture: bool
+    picture: bool = False
 
 
 def describe_stereo_camera(spec: dict) -> StereoCameraTraits:

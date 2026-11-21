@@ -73,7 +73,7 @@ def _freeze(*arrays: Any) -> None:
             array.setflags(write=False)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class PictureCalibration:
     """The lens of the sensor behind ``Frame.picture`` and how it sits.
 
@@ -92,6 +92,7 @@ class PictureCalibration:
 
     def __post_init__(self) -> None:
         _check_lens_model(self.distortion_model)
+        _freeze(self.K, self.D, self.R_left_from_picture)
 
 
 @dataclass(frozen=True, eq=False)

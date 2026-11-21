@@ -196,6 +196,9 @@ def test_the_lens_model_the_device_names_is_passed_on_or_refused(monkeypatch):
     )
     assert calibration.distortion_model == "fisheye"
     assert calibration.picture.distortion_model == "brown_conrady"
+    # OpenCV's fisheye model takes four coefficients; the other, all.
+    assert calibration.left_D.shape == calibration.right_D.shape == (4,)
+    assert calibration.picture.D.shape == (14,)
 
     monkeypatch.setattr(Calibration, "models", {"CAM_B": "Fisheye"})
     with pytest.raises(oakd.Refused, match=r"two eyes with different lens models"):
@@ -629,6 +632,27 @@ def test_a_held_frame_stays_intact_while_new_captures_arrive(depthai):
         assert (later.image.get() != before[0]).any()
     finally:
         source.stop()
+
+
+@requires_gpu
+def test_a_restarted_source_hands_out_nothing_of_its_last_session(depthai):
+    source = build_stereo_camera(PAIR, imu=True)
+    source.start()
+    try:
+        _wait(source, 6)
+        time.sleep(0.08)  # captures and samples arrive and stay unread
+    finally:
+        source.stop()
+    source.start()
+    try:
+        stamps = [frame.timestamp_ns for frame in _read(source, 3)]
+        samples = source.imu()
+    finally:
+        source.stop()
+    # The reopened device's clock starts again, so anything of the last
+    # session would be stamped later than what follows it.
+    assert stamps == sorted(stamps)
+    assert (np.diff(samples.timestamps_ns) > 0).all()
 
 
 def _error(source, timeout_s=5.0):
