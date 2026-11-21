@@ -6,6 +6,7 @@
 
 #include "SensorClock.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <ctime>
 #include <limits>
@@ -15,6 +16,31 @@ namespace argus_sender
 {
 namespace
 {
+
+using Int128 = __int128;
+
+constexpr int64_t kInt64Max = std::numeric_limits<int64_t>::max();
+constexpr int64_t kInt64Min = std::numeric_limits<int64_t>::min();
+
+bool fitsInt64(Int128 value)
+{
+    return value >= kInt64Min && value <= kInt64Max;
+}
+
+// |value|, false for INT64_MIN, whose magnitude does not fit (llabs is undefined there).
+bool absChecked(int64_t value, int64_t* out)
+{
+    if (value == kInt64Min)
+        return false;
+    *out = value < 0 ? -value : value;
+    return true;
+}
+
+// `magnitude * ppm / 1e6`, widened so extreme inputs cannot wrap.
+Int128 scaledByPpm(int64_t magnitude, int64_t ppm)
+{
+    return static_cast<Int128>(magnitude) * ppm / 1000000;
+}
 
 #if defined(__aarch64__)
 // False when the clock cannot be read; the value is then meaningless.
@@ -97,12 +123,23 @@ int64_t readCounterHz()
 #endif
 }
 
+bool counterTicksToNsChecked(int64_t ticks, int64_t hz, int64_t* ns)
+{
+    if (hz <= 0)
+        return false;
+    const Int128 value = static_cast<Int128>(ticks) * 1000000000LL / hz;
+    if (!fitsInt64(value))
+        return false;
+    *ns = static_cast<int64_t>(value);
+    return true;
+}
+
 int64_t counterTicksToNs(int64_t ticks, int64_t hz)
 {
-    // Whole seconds and a remainder, so the product cannot overflow 64 bits.
-    const int64_t seconds = ticks / hz;
-    const int64_t remainder = ticks % hz;
-    return seconds * 1000000000LL + remainder * 1000000000LL / hz;
+    int64_t ns = 0;
+    if (counterTicksToNsChecked(ticks, hz, &ns))
+        return ns;
+    return ticks < 0 ? kInt64Min : kInt64Max;
 }
 
 int64_t monotonicNowNs()
@@ -122,6 +159,9 @@ void SensorClockMap::reset()
 {
     m_haveAnchor = false;
     m_stepped = false;
+    m_haveCutoff = false;
+    m_cutoffSource = 0;
+    m_counterWentBackwards = false;
 }
 
 bool SensorClockMap::refresh(int64_t nowMonotonicNs, std::string* reason)
@@ -134,24 +174,46 @@ bool SensorClockMap::refresh(int64_t nowMonotonicNs, std::string* reason)
     }
     if (m_haveAnchor)
     {
-        // The two anchors must agree on how far the counter and CLOCK_MONOTONIC moved between them.
-        const int64_t counterNs = counterTicksToNs(next.source - m_anchor.source, m_config.counterHz);
-        const int64_t monotonicDeltaNs = next.monotonicNs - m_anchor.monotonicNs;
-        const int64_t disagreement = std::llabs(counterNs - monotonicDeltaNs);
-        // A slew within slewPpm moves the two clocks apart by up to that fraction of the spacing, which is not a step.
-        const int64_t spacingNs = std::llabs(next.monotonicNs - m_anchor.monotonicNs);
-        const int64_t allowed =
-            m_config.stepThresholdNs + m_anchor.bracketNs + next.bracketNs + spacingNs * m_config.slewPpm / 1000000;
+        // The two anchors must agree on how far the counter and CLOCK_MONOTONIC moved between them. A value that
+        // cannot be represented is not evidence of agreement: it counts as a step.
+        int64_t sourceDelta = 0;
+        int64_t counterNs = 0;
+        int64_t counterSpacingNs = 0;
+        int64_t monotonicDeltaNs = 0;
+        const bool deltaOk = !__builtin_sub_overflow(next.source, m_anchor.source, &sourceDelta);
+        const bool representable = deltaOk && counterTicksToNsChecked(sourceDelta, m_config.counterHz, &counterNs) &&
+                                   absChecked(counterNs, &counterSpacingNs) &&
+                                   !__builtin_sub_overflow(next.monotonicNs, m_anchor.monotonicNs, &monotonicDeltaNs);
+        // Event order across a backwards counter cannot be trusted at all: refuse until reset().
+        if (deltaOk && sourceDelta < 0)
+            m_counterWentBackwards = true;
+        const Int128 disagreement =
+            representable ? (counterNs > monotonicDeltaNs ? static_cast<Int128>(counterNs) - monotonicDeltaNs :
+                                                            static_cast<Int128>(monotonicDeltaNs) - counterNs) :
+                            0;
+        // A slew within slewPpm moves the two clocks apart by up to that fraction of the counter's own spacing, which
+        // is not a step.
+        const Int128 bounds = static_cast<Int128>(m_config.stepThresholdNs) + m_anchor.bracketNs + next.bracketNs;
+        const Int128 allowed = bounds + scaledByPpm(counterSpacingNs, m_config.slewPpm);
         // CLOCK_REALTIME and CLOCK_MONOTONIC share frequency adjustment, so their difference moves only on a wall-clock
-        // step; the same allowance covers both checks.
+        // step. No slew term applies, or a step smaller than the slew allowance over long anchor spacing would pass.
         bool realtimeStep = false;
         if (m_anchor.hasRealtime && next.hasRealtime)
         {
-            const int64_t previousOffset = m_anchor.realtimeNs - m_anchor.monotonicNs;
-            const int64_t nextOffset = next.realtimeNs - next.monotonicNs;
-            realtimeStep = std::llabs(nextOffset - previousOffset) > allowed;
+            const Int128 previousOffset = static_cast<Int128>(m_anchor.realtimeNs) - m_anchor.monotonicNs;
+            const Int128 nextOffset = static_cast<Int128>(next.realtimeNs) - next.monotonicNs;
+            const Int128 moved = nextOffset > previousOffset ? nextOffset - previousOffset : previousOffset - nextOffset;
+            realtimeStep = moved > bounds;
         }
-        m_stepped = disagreement > allowed || realtimeStep;
+        m_stepped = !representable || disagreement > allowed || realtimeStep;
+        if (m_stepped)
+        {
+            // The step happened somewhere between the previous anchor and this one, so an event up to this anchor may
+            // lie on either side of it. Events up to the first anchor read after the discontinuity stay invalid even
+            // once later anchors agree again.
+            m_cutoffSource = m_haveCutoff ? std::max(m_cutoffSource, next.source) : next.source;
+            m_haveCutoff = true;
+        }
     }
     m_anchor = next;
     m_anchorTakenNs = nowMonotonicNs;
@@ -167,35 +229,69 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
         result.reason = "the sensor counter frequency is not known";
         return result;
     }
-    if (!m_haveAnchor || nowMonotonicNs - m_anchorTakenNs >= m_config.refreshNs)
+    // Widened: caller-supplied times can be arbitrarily far apart.
+    const Int128 sinceAnchorNs = static_cast<Int128>(nowMonotonicNs) - m_anchorTakenNs;
+    if (!m_haveAnchor || sinceAnchorNs >= m_config.refreshNs)
     {
         if (!refresh(nowMonotonicNs, &result.reason))
             return result;
     }
-    result.anchorAgeNs = nowMonotonicNs - m_anchorTakenNs;
+    {
+        // The refresh above may have moved the anchor, so measure the age again, saturating.
+        const Int128 age = static_cast<Int128>(nowMonotonicNs) - m_anchorTakenNs;
+        result.anchorAgeNs = static_cast<int64_t>(std::max<Int128>(kInt64Min, std::min<Int128>(age, kInt64Max)));
+    }
     if (m_stepped)
     {
         result.reason = "the sensor counter and CLOCK_MONOTONIC disagree between anchors: a clock step";
         return result;
     }
+    if (m_counterWentBackwards)
+    {
+        result.reason = "the sensor counter went backwards between anchors: event order is lost until reset";
+        return result;
+    }
+    if (sensorTicks > static_cast<uint64_t>(kInt64Max))
+    {
+        result.reason = "the sensor timestamp is out of range";
+        return result;
+    }
+    const int64_t sensorNs = static_cast<int64_t>(sensorTicks);
+    if (m_haveCutoff && sensorNs <= m_cutoffSource)
+    {
+        result.reason = "the sensor event is not after a detected clock step: its capture time is ambiguous";
+        return result;
+    }
     // The mapping extrapolates from the anchor to the sensor event, in either direction, so the slew error accrues over
     // that distance and not over how old the anchor is by the time the frame is handled.
-    const int64_t anchorToEventNs =
-        counterTicksToNs(static_cast<int64_t>(sensorTicks) - m_anchor.source, m_config.counterHz);
-    const int64_t capture = m_anchor.monotonicNs + anchorToEventNs;
-    result.uncertaintyNs = m_anchor.bracketNs + std::llabs(anchorToEventNs) * m_config.slewPpm / 1000000;
-    if (result.uncertaintyNs > m_config.maxUncertaintyNs)
+    int64_t sourceDelta = 0;
+    int64_t anchorToEventNs = 0;
+    int64_t distanceNs = 0;
+    int64_t capture = 0;
+    if (__builtin_sub_overflow(sensorNs, m_anchor.source, &sourceDelta) ||
+        !counterTicksToNsChecked(sourceDelta, m_config.counterHz, &anchorToEventNs) ||
+        !absChecked(anchorToEventNs, &distanceNs) ||
+        __builtin_add_overflow(m_anchor.monotonicNs, anchorToEventNs, &capture))
+    {
+        result.reason = "the sensor event is too far from the anchor to be placed";
+        return result;
+    }
+    const Int128 uncertainty = static_cast<Int128>(m_anchor.bracketNs) + scaledByPpm(distanceNs, m_config.slewPpm);
+    // A refused mapping still reports the bound it computed over the distance.
+    result.uncertaintyNs = static_cast<int64_t>(std::min<Int128>(uncertainty, kInt64Max));
+    if (uncertainty > m_config.maxUncertaintyNs)
     {
         result.reason =
             "the sensor event is too far from the anchor for the mapping's uncertainty to stay within the limit";
         return result;
     }
+    result.uncertaintyNs = static_cast<int64_t>(uncertainty);
     if (capture > readyMonotonicNs)
     {
         result.reason = "the sensor timestamp is after the frame was ready: the assumed counter or rate is wrong";
         return result;
     }
-    if (readyMonotonicNs - capture > m_config.maxAgeNs)
+    if (static_cast<Int128>(readyMonotonicNs) - capture > m_config.maxAgeNs)
     {
         result.reason =
             "the sensor timestamp is implausibly long before the frame was ready: the assumed counter or "
@@ -204,10 +300,13 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
     }
     result.valid = true;
     result.captureMonotonicNs = capture;
-    if (m_anchor.hasRealtime)
+    int64_t realtimeOffset = 0;
+    int64_t captureRealtime = 0;
+    if (m_anchor.hasRealtime && !__builtin_sub_overflow(m_anchor.realtimeNs, m_anchor.monotonicNs, &realtimeOffset) &&
+        !__builtin_add_overflow(capture, realtimeOffset, &captureRealtime))
     {
         result.hasRealtime = true;
-        result.captureRealtimeNs = capture + (m_anchor.realtimeNs - m_anchor.monotonicNs);
+        result.captureRealtimeNs = captureRealtime;
     }
     return result;
 }
@@ -229,8 +328,12 @@ SensorClockMap::PairReader nanosecondReader(int64_t counterHz, SensorClockMap::P
     {
         if (counterHz <= 0 || !reader || !reader(pair))
             return false;
-        // Only the counter value changes units; the monotonic, realtime and bracket fields are already in ns.
-        pair->source = counterTicksToNs(pair->source, counterHz);
+        // Only the counter value changes units; the monotonic, realtime and bracket fields are already in ns. A value
+        // that does not fit is an unreadable anchor, never a wrapped one.
+        int64_t ns = 0;
+        if (!counterTicksToNsChecked(pair->source, counterHz, &ns))
+            return false;
+        pair->source = ns;
         return true;
     };
 }
@@ -262,14 +365,20 @@ SensorTimeMapping SensorTimeMapper::map(uint64_t timestamp,
         refused.reason = "the sensor timestamp is out of range";
         return refused;
     }
-    const int64_t ns = unit == SensorTimestampUnit::CounterTicks ?
-                           counterTicksToNs(static_cast<int64_t>(timestamp), m_counterHz) :
-                           static_cast<int64_t>(timestamp);
+    int64_t ns = static_cast<int64_t>(timestamp);
+    if (unit == SensorTimestampUnit::CounterTicks && !counterTicksToNsChecked(ns, m_counterHz, &ns))
+    {
+        SensorTimeMapping refused;
+        refused.reason = "the sensor timestamp is out of range";
+        return refused;
+    }
     SensorTimeMapping result = m_map.map(static_cast<uint64_t>(ns), readyMonotonicNs, nowMonotonicNs);
     if (result.valid)
     {
         // One counter tick is the resolution of the timestamp and of the anchor read.
-        result.uncertaintyNs += (1000000000LL + m_counterHz - 1) / m_counterHz;
+        // One tick on top of the map's bound, saturating rather than wrapping.
+        const int64_t tickNs = (1000000000LL + m_counterHz - 1) / m_counterHz;
+        result.uncertaintyNs = result.uncertaintyNs > kInt64Max - tickNs ? kInt64Max : result.uncertaintyNs + tickNs;
     }
     return result;
 }

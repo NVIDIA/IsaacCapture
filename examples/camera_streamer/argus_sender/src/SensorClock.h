@@ -41,7 +41,11 @@ bool readCounterPair(ClockPair* pair);
 // The generic counter's frequency in Hz; 0 where it is not readable.
 int64_t readCounterHz();
 
-// Counter ticks to nanoseconds without overflowing 64 bits; `hz` must be positive.
+// Counter ticks to nanoseconds, exact to truncation. False when `hz` is not positive or the result does not fit in
+// int64; `*ns` is then untouched.
+bool counterTicksToNsChecked(int64_t ticks, int64_t hz, int64_t* ns);
+// The same conversion saturating at the int64 limits where the result does not fit; `hz` must be positive. Callers
+// that act on the value use the checked form.
 int64_t counterTicksToNs(int64_t ticks, int64_t hz);
 // CLOCK_MONOTONIC in ns; 0 if it cannot be read. This is the clock every mapping result is expressed on.
 int64_t monotonicNowNs();
@@ -116,6 +120,11 @@ private:
     int64_t m_anchorTakenNs = 0;
     bool m_haveAnchor = false;
     bool m_stepped = false;
+    // Events at or before this source-clock value stay invalid after a detected step, even once later anchors agree.
+    bool m_haveCutoff = false;
+    int64_t m_cutoffSource = 0;
+    // The counter ran backwards between anchors: event order is lost until reset().
+    bool m_counterWentBackwards = false;
 };
 
 // What a backend's sensor timestamp counts: raw ticks of the platform counter (SIPL's start-of-frame), or that counter

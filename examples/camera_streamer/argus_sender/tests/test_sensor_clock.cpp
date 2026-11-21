@@ -116,6 +116,40 @@ SensorClockMap::Config tickConfig()
     return config;
 }
 
+ClockPair pairOf(int64_t source, int64_t monotonicNs, bool hasRealtime = false, int64_t realtimeNs = 0)
+{
+    ClockPair pair;
+    pair.source = source;
+    pair.monotonicNs = monotonicNs;
+    pair.bracketNs = 2000;
+    pair.hasRealtime = hasRealtime;
+    pair.realtimeNs = realtimeNs;
+    return pair;
+}
+
+// Reads `first`, then `second` one refresh interval later, and maps an event at the second anchor's own source value
+// that was ready at its monotonic time. The call times are ordinary values whatever the anchors hold.
+SensorTimeMapping mapSecondAnchor(const SensorClockMap::Config& config, const ClockPair& first, const ClockPair& second)
+{
+    ClockPair anchor = first;
+    SensorClockMap map = makeAnchorMap(config, &anchor);
+    const int64_t now = 10000 * kMs;
+    map.map(static_cast<uint64_t>(first.source), first.monotonicNs, now);
+    anchor = second;
+    return map.map(static_cast<uint64_t>(second.source), second.monotonicNs, now + config.refreshNs);
+}
+
+bool isClockStep(const SensorTimeMapping& mapping)
+{
+    return !mapping.valid && mapping.reason.find("clock step") != std::string::npos;
+}
+
+// The largest tick count whose truncated nanosecond conversion still fits in int64.
+int64_t largestTicks(int64_t hz)
+{
+    return static_cast<int64_t>(((static_cast<__int128>(INT64_MAX) + 1) * hz - 1) / 1000000000LL);
+}
+
 } // namespace
 
 int main()
@@ -647,6 +681,245 @@ int main()
         TEST_CHECK_EQ(test, clockA.reads, 2);
         TEST_CHECK_EQ(test, clockB.reads, 1);
         TEST_CHECK_EQ(test, a3.anchorAgeNs, static_cast<int64_t>(0));
+    }
+
+    // Overflow: the checked conversion refuses what does not fit, and the saturating form never wraps.
+    {
+        int64_t ns = 12345;
+        TEST_CHECK(test, !counterTicksToNsChecked(INT64_MAX, kHz, &ns));
+        TEST_CHECK(test, !counterTicksToNsChecked(INT64_MIN, kHz, &ns));
+        TEST_CHECK(test, !counterTicksToNsChecked(1, 0, &ns));
+        TEST_CHECK(test, !counterTicksToNsChecked(1, -kHz, &ns));
+        TEST_CHECK_EQ(test, ns, static_cast<int64_t>(12345));
+        for (const int64_t hz : { static_cast<int64_t>(kHz), static_cast<int64_t>(19200000),
+                                  static_cast<int64_t>(1000000000), static_cast<int64_t>(1000), static_cast<int64_t>(1) })
+        {
+            const int64_t largest = largestTicks(hz);
+            TEST_CHECK(test, counterTicksToNsChecked(largest, hz, &ns));
+            TEST_CHECK(test, static_cast<__int128>(ns) == static_cast<__int128>(largest) * 1000000000LL / hz);
+            TEST_CHECK_EQ(test, counterTicksToNs(largest, hz), ns);
+            if (largest < INT64_MAX)
+            {
+                TEST_CHECK(test, !counterTicksToNsChecked(largest + 1, hz, &ns));
+                TEST_CHECK_EQ(test, counterTicksToNs(largest + 1, hz), static_cast<int64_t>(INT64_MAX));
+            }
+            if (-largest > INT64_MIN)
+                TEST_CHECK(test, counterTicksToNsChecked(-largest, hz, &ns));
+        }
+        TEST_CHECK_EQ(test, largestTicks(kHz), static_cast<int64_t>(288230376151711743LL));
+        TEST_CHECK_EQ(test, counterTicksToNs(INT64_MAX, kHz), static_cast<int64_t>(INT64_MAX));
+        TEST_CHECK_EQ(test, counterTicksToNs(INT64_MIN, kHz), static_cast<int64_t>(INT64_MIN));
+    }
+
+    // Overflow: a timestamp whose nanosecond value cannot be represented is refused, and so is an unrepresentable
+    // anchor value.
+    {
+        int64_t now = 10000 * kMs;
+        TickClock clock;
+        clock.hz = kHz;
+        clock.nowNs = &now;
+        SensorTimeMapper mapper(kHz, tickConfig(), clock.reader());
+        for (const uint64_t ticks : { static_cast<uint64_t>(INT64_MAX), static_cast<uint64_t>(UINT64_MAX),
+                                      static_cast<uint64_t>(largestTicks(kHz)) + 1 })
+        {
+            const SensorTimeMapping refused = mapper.map(ticks, SensorTimestampUnit::CounterTicks, now, now);
+            TEST_CHECK(test, !refused.valid);
+            TEST_CHECK(test, refused.reason.find("out of range") != std::string::npos);
+        }
+        int64_t ticksNow = INT64_MAX;
+        SensorTimeMapper hugeAnchor(kHz, tickConfig(),
+                                    [&ticksNow, &now](ClockPair* pair)
+                                    {
+                                        *pair = pairOf(ticksNow, now);
+                                        return true;
+                                    });
+        TEST_CHECK(test, !hugeAnchor.map(0, SensorTimestampUnit::CounterTicks, now, now).valid);
+    }
+
+    // Overflow: anchors holding extreme values are a step, never wrapped arithmetic.
+    {
+        const SensorClockMap::Config config = gigahertzConfig();
+        TEST_CHECK(
+            test, isClockStep(mapSecondAnchor(config, pairOf(INT64_MIN, INT64_MIN), pairOf(INT64_MAX, INT64_MAX))));
+        TEST_CHECK(test, isClockStep(mapSecondAnchor(config, pairOf(0, INT64_MIN), pairOf(1, INT64_MAX))));
+        TEST_CHECK(test, isClockStep(mapSecondAnchor(config, pairOf(0, 0), pairOf(INT64_MIN, 0))));
+        TEST_CHECK(test, isClockStep(mapSecondAnchor(config, pairOf(INT64_MAX, 0), pairOf(INT64_MIN, 0))));
+        TEST_CHECK(test, isClockStep(mapSecondAnchor(config, pairOf(10000 * kMs, 10000 * kMs, true, INT64_MIN),
+                                                     pairOf(10100 * kMs, 10100 * kMs, true, INT64_MAX))));
+        TEST_CHECK(test, isClockStep(mapSecondAnchor(config, pairOf(10000 * kMs, INT64_MIN, true, INT64_MAX),
+                                                     pairOf(10100 * kMs, INT64_MAX, true, INT64_MIN))));
+    }
+
+    // Overflow: an event whose distance from the anchor, or its conversion, does not fit is "too far from the anchor".
+    {
+        const int64_t now = 10000 * kMs;
+        struct Case
+        {
+            int64_t hz;
+            ClockPair anchor;
+            uint64_t ticks;
+        };
+        const Case cases[] = {
+            { 1000000000, pairOf(INT64_MIN, now), static_cast<uint64_t>(INT64_MAX) }, // tick difference
+            { 1000, pairOf(0, now), 10000000000000ULL }, // nanosecond conversion
+            { 1000000000, pairOf(0, INT64_MAX - 5), 10 }, // anchor plus distance
+            { 1000000000, pairOf(0, INT64_MIN + 5), 0 }, // minimum distance, kept
+        };
+        for (const Case& c : cases)
+        {
+            SensorClockMap::Config config = gigahertzConfig();
+            config.counterHz = c.hz;
+            ClockPair anchor = c.anchor;
+            SensorClockMap map = makeAnchorMap(config, &anchor);
+            const SensorTimeMapping mapping = map.map(c.ticks, now, now);
+            TEST_CHECK(test, !mapping.valid);
+            TEST_CHECK(test, !mapping.reason.empty());
+            if (&c != &cases[3])
+                TEST_CHECK(test, mapping.reason.find("too far from the anchor") != std::string::npos);
+        }
+    }
+
+    // The agreement allowance scales with the counter's own spacing: at 1 s of counter time and the default slew, a
+    // monotonic clock 83.334 ms ahead or behind is not a step; past the allowance plus threshold and brackets it is.
+    {
+        const SensorClockMap::Config config = gigahertzConfig();
+        const ClockPair first = pairOf(10000 * kMs, 10000 * kMs);
+        for (const int64_t sign : { 1LL, -1LL })
+        {
+            for (const int64_t disagreement : { 83334000LL, 85300000LL })
+            {
+                const ClockPair second = pairOf(11000 * kMs, 11000 * kMs + sign * disagreement);
+                TEST_CHECK(test, mapSecondAnchor(config, first, second).valid);
+            }
+            const ClockPair stepped = pairOf(11000 * kMs, 11000 * kMs + sign * 85400000LL);
+            TEST_CHECK(test, isClockStep(mapSecondAnchor(config, first, stepped)));
+        }
+    }
+
+    // A wall-clock step is judged against the threshold and brackets alone, so a step smaller than the slew allowance
+    // over the anchor spacing is still found.
+    {
+        SensorClockMap::Config config = gigahertzConfig();
+        config.refreshNs = 100 * kMs;
+        const int64_t rt = 1700000000LL * 1000000000LL;
+        const ClockPair first = pairOf(10000 * kMs, 10000 * kMs, true, 10000 * kMs + rt);
+        auto second = [&](int64_t monotonicExtra, int64_t realtimeStep)
+        {
+            const int64_t mono = 10100 * kMs + monotonicExtra;
+            return pairOf(10100 * kMs, mono, true, mono + rt + realtimeStep);
+        };
+        TEST_CHECK(test, isClockStep(mapSecondAnchor(config, first, second(0, 5 * kMs))));
+        TEST_CHECK(test, isClockStep(mapSecondAnchor(config, first, second(0, -5 * kMs))));
+        TEST_CHECK(test, isClockStep(mapSecondAnchor(config, first, second(0, 2100000))));
+        TEST_CHECK(test, mapSecondAnchor(config, first, second(0, 1 * kMs)).valid);
+        TEST_CHECK(test, mapSecondAnchor(config, first, second(0, -1 * kMs)).valid);
+        TEST_CHECK(test, mapSecondAnchor(config, first, second(0, 2000000)).valid);
+        // A permitted monotonic slew (8.3 ms over 100 ms) with a stationary realtime offset is not a step.
+        TEST_CHECK(test, mapSecondAnchor(config, first, second(8300000, 0)).valid);
+        TEST_CHECK(test, mapSecondAnchor(config, first, second(-8300000, 0)).valid);
+
+        // Without a realtime reading on either anchor no wall-clock step is claimed.
+        const ClockPair bare = pairOf(10000 * kMs, 10000 * kMs);
+        ClockPair jumped = second(0, 5 * kMs);
+        TEST_CHECK(test, mapSecondAnchor(config, bare, jumped).valid);
+        jumped.hasRealtime = false;
+        const SensorTimeMapping unjudged = mapSecondAnchor(config, first, jumped);
+        TEST_CHECK(test, unjudged.valid);
+        TEST_CHECK(test, !unjudged.hasRealtime);
+    }
+
+    // Events from before a detected step stay invalid after later anchors agree again.
+    {
+        SensorClockMap::Config config = gigahertzConfig();
+        config.refreshNs = 100 * kMs;
+        const int64_t rt = 1700000000LL * 1000000000LL;
+        ClockPair anchor;
+        auto setAnchor = [&anchor, rt](int64_t t, int64_t realtimeStep)
+        { anchor = pairOf(t, t, true, t + rt + realtimeStep); };
+        SensorClockMap map = makeAnchorMap(config, &anchor);
+        auto mapAt = [&map](int64_t eventNs, int64_t now) { return map.map(static_cast<uint64_t>(eventNs), now, now); };
+        auto notAfterStep = [](const SensorTimeMapping& mapping)
+        { return !mapping.valid && mapping.reason.find("not after a detected clock step") != std::string::npos; };
+
+        setAnchor(10000 * kMs, 0); // A0
+        TEST_CHECK(test, mapAt(10000 * kMs, 10000 * kMs).valid);
+        setAnchor(10100 * kMs, 50 * kMs); // A1: the wall clock stepped at 10.05 s
+        TEST_CHECK(test, isClockStep(mapAt(10090 * kMs, 10100 * kMs)));
+        FrameTiming timing;
+        applyMappingToTiming(mapAt(10000 * kMs, 10100 * kMs), &timing);
+        TEST_CHECK(test, !timing.hasCaptureMonotonic);
+        setAnchor(10200 * kMs, 50 * kMs); // A2 agrees with A1
+        TEST_CHECK(test, notAfterStep(mapAt(10040 * kMs, 10200 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(10070 * kMs, 10200 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(10100 * kMs, 10200 * kMs)));
+        TEST_CHECK(test, mapAt(10100 * kMs + 1, 10200 * kMs).valid);
+        TEST_CHECK(test, mapAt(10150 * kMs, 10200 * kMs).valid);
+        TEST_CHECK(test, mapAt(10199 * kMs, 10200 * kMs).valid);
+        const SensorTimeMapping fresh = mapAt(10200 * kMs, 10200 * kMs);
+        TEST_CHECK(test, fresh.valid);
+        applyMappingToTiming(fresh, &timing);
+        TEST_CHECK(test, timing.hasCaptureMonotonic);
+        applyMappingToTiming(mapAt(10040 * kMs, 10200 * kMs), &timing);
+        TEST_CHECK(test, !timing.hasCaptureMonotonic);
+        TEST_CHECK_EQ(test, timing.captureMonotonicNs, static_cast<int64_t>(0));
+        TEST_CHECK_EQ(test, timing.captureRealtimeNs, static_cast<int64_t>(0));
+
+        // A second step moves the cutoff forward: what was valid before it is now ambiguous.
+        setAnchor(10300 * kMs, 100 * kMs);
+        TEST_CHECK(test, isClockStep(mapAt(10290 * kMs, 10300 * kMs)));
+        setAnchor(10400 * kMs, 100 * kMs);
+        TEST_CHECK(test, notAfterStep(mapAt(10150 * kMs, 10400 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(10250 * kMs, 10400 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(10300 * kMs, 10400 * kMs)));
+        TEST_CHECK(test, mapAt(10350 * kMs, 10400 * kMs).valid);
+
+        // reset() clears the cutoff: an event at an old source time maps again from a fresh anchor.
+        map.reset();
+        setAnchor(10450 * kMs, 100 * kMs);
+        TEST_CHECK(test, mapAt(10250 * kMs, 10450 * kMs).valid);
+    }
+
+    // A counter that runs backwards between anchors loses event order: every mapping is refused until reset().
+    {
+        SensorClockMap::Config config = gigahertzConfig();
+        config.refreshNs = 100 * kMs;
+        ClockPair anchor = pairOf(10000 * kMs, 10000 * kMs);
+        SensorClockMap map = makeAnchorMap(config, &anchor);
+        auto mapAt = [&map](int64_t eventNs, int64_t now) { return map.map(static_cast<uint64_t>(eventNs), now, now); };
+        TEST_CHECK(test, mapAt(10000 * kMs, 10000 * kMs).valid);
+        anchor = pairOf(9900 * kMs, 10100 * kMs);
+        TEST_CHECK(test, isClockStep(mapAt(9890 * kMs, 10100 * kMs)));
+        anchor = pairOf(10000 * kMs, 10200 * kMs); // agrees with the previous anchor
+        for (const int64_t event : { 9990LL * kMs, 10000LL * kMs, 10190LL * kMs, 10200LL * kMs })
+        {
+            const SensorTimeMapping refused = mapAt(event, 10200 * kMs);
+            TEST_CHECK(test, !refused.valid);
+            TEST_CHECK(test, refused.reason.find("went backwards") != std::string::npos);
+        }
+        map.reset();
+        anchor = pairOf(10250 * kMs, 10250 * kMs);
+        TEST_CHECK(test, mapAt(10240 * kMs, 10250 * kMs).valid);
+    }
+
+    // Overflow: caller times at the int64 limits, and an uncertainty already at the limit, must not wrap.
+    {
+        ClockPair anchor = pairOf(0, 10000 * kMs);
+        SensorClockMap map = makeAnchorMap(gigahertzConfig(), &anchor);
+        map.map(0, 10000 * kMs, INT64_MIN + 1);
+        map.map(0, 10000 * kMs, INT64_MAX);
+
+        ClockPair wide = pairOf(0, 10000 * kMs);
+        wide.bracketNs = INT64_MAX;
+        SensorClockMap::Config config = tickConfig();
+        config.maxUncertaintyNs = INT64_MAX;
+        SensorTimeMapper mapper(1000000000, config,
+                                [&wide](ClockPair* pair)
+                                {
+                                    *pair = wide;
+                                    return true;
+                                });
+        const SensorTimeMapping mapping = mapper.map(0, SensorTimestampUnit::Nanoseconds, 10000 * kMs, 10000 * kMs);
+        TEST_CHECK(test, !mapping.valid || mapping.uncertaintyNs > 0);
     }
 
     TEST_CHECK(test, monotonicNowNs() > 0);
