@@ -73,8 +73,8 @@ def load_egohand_model(checkpoint_path: str | Path, soma_hand_data_folder: str |
         model: EgoHand instance in eval mode on CPU.
         target: The ``_target_`` string from the checkpoint cfg (for logging).
     """
-    # This path consumes tensors and primitive configuration only. Restricted
-    # loading prevents checkpoint pickle globals from executing during inference.
+    # Store cfg as primitive metadata; do not allowlist arbitrary training objects
+    # or retry with unrestricted pickle when an incompatible checkpoint is supplied.
     ckpt = torch.load(str(checkpoint_path), map_location="cpu", weights_only=True)
     cfg = OmegaConf.create(ckpt["hyper_parameters"]["cfg"])
     target = str(cfg.get("_target_", ""))

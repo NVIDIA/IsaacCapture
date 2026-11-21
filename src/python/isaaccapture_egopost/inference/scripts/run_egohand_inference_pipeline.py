@@ -43,7 +43,6 @@ an explicit warning when ``--intrinsics_json`` is omitted.
 """
 
 # ruff: noqa: E402
-import functools
 import json
 import os
 import sys
@@ -56,8 +55,6 @@ os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 import cv2
 import numpy as np
 import torch
-
-torch.load = functools.partial(torch.load, weights_only=False)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 for _p in [str(PROJECT_ROOT), str(PROJECT_ROOT / "scripts")]:
