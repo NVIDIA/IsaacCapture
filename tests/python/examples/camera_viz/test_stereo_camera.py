@@ -86,16 +86,6 @@ def test_a_stereo_camera_passes_the_check(entry):
             {"name": "head", "type": "argus", "stereo": True, "sync_session": True},
             r"not offered as a stereo camera yet",
         ),
-        (
-            {
-                "name": "oak",
-                "type": "oakd",
-                "stereo": True,
-                "width": 640,
-                "height": 400,
-            },
-            r"an oakd camera is not offered as a stereo camera yet",
-        ),
     ],
 )
 def test_an_entry_that_is_not_a_stereo_camera_is_refused_with_the_reason(entry, reason):
@@ -131,13 +121,13 @@ def test_a_malformed_entry_is_refused(entry, message):
 
 def test_a_stereo_camera_is_described_before_it_is_opened():
     clip = {"name": "clip", "type": "video", "stereo": True, "path": "clip.mp4"}
-    # (stores its calibration, hands out rectified images)
+    # (stores its calibration, hands out rectified images, has a picture)
     for entry, traits in (
-        (ZED, (True, True)),
-        (clip, (False, False)),
+        (ZED, (True, True, False)),
+        (clip, (False, False, False)),
     ):
         described = describe_stereo_camera(entry)
-        assert (described.calibrated, described.rectified) == traits
+        assert (described.calibrated, described.rectified, described.picture) == traits
     with pytest.raises(ValueError, match=r"is not a stereo camera"):
         describe_stereo_camera({"name": "cam", "type": "v4l2"})
 
@@ -145,6 +135,7 @@ def test_a_stereo_camera_is_described_before_it_is_opened():
 def test_a_calibration_names_a_lens_model_that_is_known():
     from isaaccapture_examples.camera_viz.pipeline import (
         DISTORTION_MODELS,
+        PictureCalibration,
         StereoCalibration,
     )
 
@@ -155,6 +146,8 @@ def test_a_calibration_names_a_lens_model_that_is_known():
         StereoCalibration(
             8, 8, eye, none, eye, none, eye, none, distortion_model="equidistant"
         )
+    with pytest.raises(ValueError, match=r"unknown distortion_model 'pinhole'"):
+        PictureCalibration(8, 8, eye, none, eye, distortion_model="pinhole")
 
 
 def test_zed_settings_take_a_number_in_range_or_auto_where_the_camera_has_it():

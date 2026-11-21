@@ -38,6 +38,10 @@ class Frame:
 
     Stereo: ``image`` is the left eye; ``image_right`` carries the
     right eye when paired (both from the same capture instant).
+
+    ``picture`` is the image of a further sensor exposed at that same
+    instant, from a stereo camera whose pair is not what one wants to look
+    at: mono sensors beside a colour one. It has a size of its own.
     """
 
     image: Any
@@ -45,6 +49,7 @@ class Frame:
     source_id: str
     stream: int = 0
     image_right: Optional[Any] = None
+    picture: Optional[Any] = None
 
 
 #: The lens models a calibration can name. ``brown_conrady`` is OpenCV's
@@ -58,6 +63,27 @@ def _check_lens_model(model: str) -> None:
         raise ValueError(
             f"unknown distortion_model {model!r} (known: {', '.join(DISTORTION_MODELS)})"
         )
+
+
+@dataclass(frozen=True)
+class PictureCalibration:
+    """The lens of the sensor behind ``Frame.picture`` and how it sits.
+
+    ``K`` is its 3x3 pinhole matrix for ``width`` x ``height`` images, ``D``
+    its distortion coefficients in ``distortion_model``, and
+    ``R_left_from_picture`` rotates a vector from its frame into the left
+    eye's.
+    """
+
+    width: int
+    height: int
+    K: Any
+    D: Any
+    R_left_from_picture: Any
+    distortion_model: str = "brown_conrady"
+
+    def __post_init__(self) -> None:
+        _check_lens_model(self.distortion_model)
 
 
 @dataclass(frozen=True)
@@ -75,7 +101,8 @@ class StereoCalibration:
     ``T`` is ``(-baseline, 0, 0)``.
 
     ``R_left_from_imu`` rotates a vector from the IMU's frame into the left
-    eye's; None when the camera has no IMU.
+    eye's; None when the camera has no IMU. ``picture`` describes the
+    sensor behind ``Frame.picture``; None when the camera has none.
     """
 
     width: int
@@ -89,6 +116,7 @@ class StereoCalibration:
     rectified: bool = False
     R_left_from_imu: Optional[Any] = None
     distortion_model: str = "brown_conrady"
+    picture: Optional[PictureCalibration] = None
 
     def __post_init__(self) -> None:
         _check_lens_model(self.distortion_model)
