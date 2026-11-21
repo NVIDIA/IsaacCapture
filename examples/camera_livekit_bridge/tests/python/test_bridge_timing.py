@@ -43,7 +43,7 @@ from test_bridge_pipeline import (
     _Proc,
     free_port,
     API_KEY,
-    DEV_SIGNING_KEY,
+    SIGNING_KEY,
     _b64,
     make_token,
 )
@@ -171,7 +171,7 @@ def make_receiver_token(room: str, identity: str) -> str:
         },
     }  # fmt: skip
     body = _b64(json.dumps(claims).encode())
-    sig = hmac.digest(DEV_SIGNING_KEY.encode(), f"{header}.{body}".encode(), "sha256")
+    sig = hmac.digest(SIGNING_KEY.encode(), f"{header}.{body}".encode(), "sha256")
     return f"{header}.{body}.{_b64(sig)}"
 
 
@@ -297,7 +297,7 @@ class BridgeTimingTest(unittest.TestCase):
         server = cls._spawn(
             "livekit",
             [
-                str(SERVER_BIN), "--dev", "--bind", "127.0.0.1", "--node-ip", "127.0.0.1",
+                str(SERVER_BIN), "--dev", "--keys", f"{API_KEY}: {SIGNING_KEY}", "--bind", "127.0.0.1", "--node-ip", "127.0.0.1",
                 "--port", str(lk_port), "--rtc.tcp_port", str(lk_tcp), "--udp-port", str(lk_udp),
             ],
         )  # fmt: skip

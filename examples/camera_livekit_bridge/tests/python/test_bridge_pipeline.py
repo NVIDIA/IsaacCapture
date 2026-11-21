@@ -16,6 +16,7 @@ import base64
 import hmac
 import json
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -48,8 +49,9 @@ BRIDGE_BIN = Path(
 RECEIVER_PY = RECEIVER_DIR / ".venv" / "bin" / "python"
 SUBSCRIBER_PY = Path(os.environ.get("LIVEKIT_PYTHON", sys.executable))
 
-# livekit-server --dev accepts exactly this key pair; the tests sign their own JWTs with it.
-API_KEY, DEV_SIGNING_KEY = "devkey", "secret"
+# A fresh signing key per run: the server is started with it and the tests sign their JWTs with it.
+API_KEY = "test-key"
+SIGNING_KEY = secrets.token_hex(32)
 SOURCE_FPS = 30
 # name, source width, source height, track name, bridge divisor
 STREAMS = [
@@ -133,7 +135,7 @@ def make_token(room: str, identity: str, publish: bool) -> str:
         },
     }
     body = _b64(json.dumps(claims).encode())
-    sig = hmac.digest(DEV_SIGNING_KEY.encode(), f"{header}.{body}".encode(), "sha256")
+    sig = hmac.digest(SIGNING_KEY.encode(), f"{header}.{body}".encode(), "sha256")
     return f"{header}.{body}.{_b64(sig)}"
 
 
@@ -281,6 +283,8 @@ class BridgePipelineTest(unittest.TestCase):
             [
                 str(SERVER_BIN),
                 "--dev",
+                "--keys",
+                f"{API_KEY}: {SIGNING_KEY}",
                 "--bind",
                 "127.0.0.1",
                 "--node-ip",

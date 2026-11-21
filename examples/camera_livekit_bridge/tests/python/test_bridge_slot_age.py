@@ -39,6 +39,8 @@ from test_bridge_pipeline import (
     _Proc,
     _python_has,
     free_port,
+    API_KEY,
+    SIGNING_KEY,
     make_token,
 )
 
@@ -153,6 +155,8 @@ class BridgeSlotAgeTest(unittest.TestCase):
             [
                 str(SERVER_BIN),
                 "--dev",
+                "--keys",
+                f"{API_KEY}: {SIGNING_KEY}",
                 "--bind",
                 "127.0.0.1",
                 "--node-ip",
