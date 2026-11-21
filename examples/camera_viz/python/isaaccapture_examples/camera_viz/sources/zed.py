@@ -310,6 +310,11 @@ class _ZedCamera:
             self._refcount += 1
             if self._refcount > 1:
                 return
+            # Nothing of the last session is handed out in this one.
+            self._captures.reset()
+            with self._imu_lock:
+                self._imu_samples.clear()
+            self._calibration = None
             self._stop.clear()
             self._thread = threading.Thread(
                 target=self._produce_loop,
@@ -532,17 +537,20 @@ class _ZedCamera:
         this alongside grab()."""
         data = sl.SensorsData()
         last_ns = 0
-        while not stop.is_set():
-            status = camera.get_sensors_data(data, sl.TIME_REFERENCE.CURRENT)
-            if status == sl.ERROR_CODE.SUCCESS:
-                imu = data.get_imu_data()
-                stamp_ns = int(imu.timestamp.get_nanoseconds())
-                if stamp_ns != last_ns:
-                    last_ns = stamp_ns
-                    a = imu.get_linear_acceleration()
-                    with self._imu_lock:
-                        self._imu_samples.append((stamp_ns, a[0], a[1], a[2]))
-            stop.wait(0.001)
+        try:
+            while not stop.is_set():
+                status = camera.get_sensors_data(data, sl.TIME_REFERENCE.CURRENT)
+                if status == sl.ERROR_CODE.SUCCESS:
+                    imu = data.get_imu_data()
+                    stamp_ns = int(imu.timestamp.get_nanoseconds())
+                    if stamp_ns != last_ns:
+                        last_ns = stamp_ns
+                        a = imu.get_linear_acceleration()
+                        with self._imu_lock:
+                            self._imu_samples.append((stamp_ns, a[0], a[1], a[2]))
+                stop.wait(0.001)
+        except Exception as e:
+            _notify(f"the IMU is no longer read ({e})", logging.ERROR)
 
     def _choose_buffers(self) -> None:
         """Point both eyes' next write at a buffer the reader of pairs
