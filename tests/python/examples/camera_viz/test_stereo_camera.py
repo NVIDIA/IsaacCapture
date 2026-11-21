@@ -131,6 +131,7 @@ def test_an_entry_that_is_not_a_stereo_camera_is_refused_with_the_reason(entry, 
         ({**ZED, "bus_type": "pcie"}, r"bus_type is usb or gmsl, got 'pcie'"),
         ({**ROOM, "scene": "forest"}, r"unknown scene 'forest' \(scenes: room\)"),
         ({**ROOM, "fps": "fast"}, r"'room': width, height and fps are numbers"),
+        ({**ROOM, "fps": 0}, r"'room': fps must be above 0"),
         (
             {"name": "clip", "type": "video", "stereo": True, "path": "c", "fps": "x"},
             r"'clip': width, height and fps are numbers",
@@ -770,6 +771,7 @@ def test_the_picture_moves_as_the_drawn_camera_turns():
     source = scene.SyntheticSceneSource("room", 1280, 720, fps=120.0, still_s=0.0)
     source.start()
     try:
+        _read_any(source)  # the first drawing waits for the kernel to compile
         first = _read_any(source)
         early, early_ns = first.image.get(), first.timestamp_ns
         time.sleep(0.08)
@@ -810,6 +812,23 @@ def test_a_drawn_frame_stays_intact_while_the_reader_holds_it():
         assert later.timestamp_ns > held.timestamp_ns
         assert (later.image.get() != before[0]).any()
         assert source.dropped_captures > 0
+    finally:
+        source.stop()
+
+
+@requires_gpu
+def test_a_restarted_drawn_camera_hands_out_nothing_of_its_last_session():
+    source = scene.SyntheticSceneSource("room", 320, 180, fps=120.0)
+    source.start()
+    try:
+        _read_any(source)
+        time.sleep(0.05)  # drawings arrive and stay unread
+    finally:
+        source.stop()
+    restarted_ns = time.monotonic_ns()
+    source.start()
+    try:
+        assert _read_any(source).timestamp_ns >= restarted_ns
     finally:
         source.stop()
 

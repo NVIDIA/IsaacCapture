@@ -37,7 +37,7 @@ FOCAL_PER_WIDTH = 0.625
 ROOM_MIN_M = (-2.5, -1.4, -3.0)
 ROOM_MAX_M = (2.5, 1.2, 5.0)
 #: What stands on the floor: centre, half extents and colour of each box.
-#: The last two are pillars that reach the ceiling.
+#: The tall, thin ones are pillars that reach the ceiling.
 _OBJECTS = (
     ((-1.1, 0.85, 2.4), (0.35, 0.35, 0.35), (204, 66, 54)),
     ((1.0, 0.95, 3.1), (0.5, 0.25, 0.35), (232, 190, 64)),
@@ -328,6 +328,9 @@ class SyntheticSceneSource(FrameSource):
         self._right = [cp.zeros((height, width, 4), dtype=cp.uint8) for _ in range(3)]
         self._captures = CaptureMailbox(len(self._left))
         self._kernel = cp.RawKernel(_DRAW_ROOM_KERNEL_SRC, "draw_room")
+        # A stream of its own, so drawing does not wait for the reader's
+        # work on the default stream.
+        self._stream = cp.cuda.Stream(non_blocking=True)
         self._lock = threading.Lock()
         self._error: Optional[BaseException] = None
         self._stop = threading.Event()
@@ -369,6 +372,8 @@ class SyntheticSceneSource(FrameSource):
         self._stop.clear()
         with self._lock:
             self._error = None
+        # Nothing drawn for the last session is handed out in this one.
+        self._captures.reset()
         self._t0_ns = time.monotonic_ns()
         self._thread = threading.Thread(
             target=self._produce_loop, name=f"scene_{self._spec.name}", daemon=False
@@ -378,7 +383,9 @@ class SyntheticSceneSource(FrameSource):
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
-            self._thread.join()
+            self._thread.join(timeout=5.0)
+            if self._thread.is_alive():
+                return  # still compiling or drawing; it ends on its own
             self._thread = None
 
     def latest(self) -> Optional[Frame]:
@@ -427,31 +434,33 @@ class SyntheticSceneSource(FrameSource):
                 timestamp_ns = time.monotonic_ns()
                 rotation = self.rotation_at(timestamp_ns)
                 index = self._captures.write_index()
-                for buffers, side in ((self._left, -0.5), (self._right, 0.5)):
-                    position = rotation @ np.array([side * BASELINE_M, 0.0, 0.0])
-                    eye = cp.asarray(
-                        np.concatenate([rotation.ravel(), position]), dtype=cp.float32
-                    )
-                    self._kernel(
-                        grid,
-                        block,
-                        (
-                            eye,
-                            room,
-                            objects,
-                            np.int32(len(_OBJECTS)),
-                            lamp,
-                            fx,
-                            fy,
-                            cx,
-                            cy,
-                            np.int32(width),
-                            np.int32(height),
-                            buffers[index],
-                        ),
-                    )
+                with self._stream:
+                    for buffers, side in ((self._left, -0.5), (self._right, 0.5)):
+                        position = rotation @ np.array([side * BASELINE_M, 0.0, 0.0])
+                        eye = cp.asarray(
+                            np.concatenate([rotation.ravel(), position]),
+                            dtype=cp.float32,
+                        )
+                        self._kernel(
+                            grid,
+                            block,
+                            (
+                                eye,
+                                room,
+                                objects,
+                                np.int32(len(_OBJECTS)),
+                                lamp,
+                                fx,
+                                fy,
+                                cx,
+                                cy,
+                                np.int32(width),
+                                np.int32(height),
+                                buffers[index],
+                            ),
+                        )
                 # The reader's copy runs on another stream.
-                cp.cuda.Stream.null.synchronize()
+                self._stream.synchronize()
                 self._captures.publish(index, timestamp_ns)
                 if self._interval_s > 0.0:
                     remaining = self._interval_s - (time.monotonic() - drawn_at)

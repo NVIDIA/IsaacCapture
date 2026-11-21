@@ -266,7 +266,7 @@ def _synthetic_scene_arguments(spec: dict, name: str) -> dict:
             f"camera {name!r}: unknown scene {scene!r} (scenes: {', '.join(_SCENES)})"
         )
     try:
-        return {
+        arguments = {
             "width": int(spec["width"]),
             "height": int(spec["height"]),
             "fps": float(spec.get("fps", 30.0)),
@@ -275,6 +275,9 @@ def _synthetic_scene_arguments(spec: dict, name: str) -> dict:
         raise ValueError(
             f"camera {name!r}: width, height and fps are numbers ({exc})"
         ) from exc
+    if not arguments["fps"] > 0.0:
+        raise ValueError(f"camera {name!r}: fps must be above 0")
+    return arguments
 
 
 def _stereo_arguments(spec: dict) -> tuple:
