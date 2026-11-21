@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cuda_runtime_api.h>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,7 @@ int main(int argc, char** argv)
     std::string socket_path = "/tmp/camera_receiver_avs1_cuda_ipc.sock";
     std::vector<std::string> streams;
     int frames = 60;
+    std::optional<uid_t> trusted_uid;
     for (int i = 1; i < argc; ++i)
     {
         const std::string arg = argv[i];
@@ -41,11 +43,14 @@ int main(int argc, char** argv)
             socket_path = argv[++i];
         else if (arg == "--stream" && i + 1 < argc)
             streams.emplace_back(argv[++i]);
+        else if (arg == "--trusted-peer-uid" && i + 1 < argc)
+            trusted_uid = static_cast<uid_t>(std::strtoul(argv[++i], nullptr, 10));
         else if (arg == "--frames" && i + 1 < argc)
             frames = std::atoi(argv[++i]);
         else
         {
-            std::cerr << "usage: camera_ipc_probe [--socket PATH] [--stream NAME]... [--frames N]\n";
+            std::cerr
+                << "usage: camera_ipc_probe [--socket PATH] [--stream NAME]... [--frames N] [--trusted-peer-uid UID]\n";
             return 2;
         }
     }
@@ -53,6 +58,8 @@ int main(int argc, char** argv)
     try
     {
         camera_bridge::CudaIpcClient client(socket_path, streams);
+        if (trusted_uid)
+            client.set_trusted_peer_uid(*trusted_uid);
         client.connect();
         for (const auto& stream : client.streams())
         {

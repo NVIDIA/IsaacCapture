@@ -4,6 +4,7 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include <sys/types.h>
 
 #include <chrono>
 #include <cstddef>
@@ -62,6 +63,14 @@ public:
     CudaIpcClient(const CudaIpcClient&) = delete;
     CudaIpcClient& operator=(const CudaIpcClient&) = delete;
 
+    /// The only user whose socket is trusted: the publisher's effective UID must match, or `connect()` refuses before
+    /// reading anything it sends. Defaults to this process's effective UID; call before `connect()` to trust another.
+    void set_trusted_peer_uid(uid_t uid)
+    {
+        m_trusted_peer_uid = uid;
+        m_have_trusted_peer_uid = true;
+    }
+
     /// Connects, subscribes and opens every slot. Throws std::runtime_error with the reason on failure.
     void connect();
 
@@ -85,6 +94,8 @@ private:
     std::string m_socket_path;
     std::vector<std::string> m_requested;
     int m_fd = -1;
+    uid_t m_trusted_peer_uid = 0;
+    bool m_have_trusted_peer_uid = false;
     std::string m_buffer;
     std::vector<IpcStream> m_streams;
 };

@@ -255,6 +255,17 @@ class IpcClientProbeTest(unittest.TestCase):
         self.assertIn("nonexistent", result.stderr)
         self.assertNotRegex(result.stdout, _FRAME_RE.pattern)
 
+    def test_untrusted_peer_is_refused_before_importing_handles(self) -> None:
+        # The publisher runs as this user; trusting a different uid must refuse it and print no stream or frame.
+        result = self.run_probe("--trusted-peer-uid", str(os.getuid() + 1))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refusing the IPC socket", result.stderr)
+        self.assertEqual(result.stdout, "")
+
+    def test_trusted_peer_uid_matching_this_user_is_accepted(self) -> None:
+        result = self.run_probe("--trusted-peer-uid", str(os.getuid()), frames=3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_missing_socket_fails_clearly(self) -> None:
         missing = os.path.join(self._tmp.name, "no_such.sock")
         result = self.run_probe(socket_path=missing)

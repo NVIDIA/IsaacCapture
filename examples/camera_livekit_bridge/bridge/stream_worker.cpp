@@ -194,6 +194,20 @@ struct StreamWorker::Impl
         // NVENC copies the source's levels; the stream must say which range they are in or players rescale them.
         encoder_config.full_range = config.source_full_range;
         NvencEncoder encoder(context, encoder_config);
+        // Declared after the encoder so it runs first on every exit, including a throw: the encoder's teardown frees
+        // the surfaces a queued copy may still be writing, and destroying a stream does not wait for its work.
+        struct CopyDrain
+        {
+            cudaStream_t stream;
+            ~CopyDrain()
+            {
+                const cudaError_t status = cudaStreamSynchronize(stream);
+                if (status != cudaSuccess)
+                    std::cerr
+                        << "[error] the GPU copy stream did not drain before teardown: " << cudaGetErrorString(status)
+                        << "\n";
+            }
+        } copy_drain{ copy_stream };
 
         const IpcStream& stream = client.streams().front();
         bool need_idr = true;
@@ -217,11 +231,13 @@ struct StreamWorker::Impl
             // Encode the newest picture: anything queued behind it is older, and a late frame is worse than a skipped
             // one.
             FrameNotice newer;
-            while (client.next_frame(newer, std::chrono::milliseconds(0)))
+            while (running && client.next_frame(newer, std::chrono::milliseconds(0)))
             {
                 notice = std::move(newer);
                 ++stats.skipped;
             }
+            if (!running)
+                break;
 
             const IpcSlot& slot = client.slot(notice);
             const auto* base = static_cast<const uint8_t*>(slot.device_ptr);
@@ -250,6 +266,8 @@ struct StreamWorker::Impl
             }();
             if (copy_status != cudaSuccess)
             {
+                // The first plane may already be queued; the surface goes back only after the stream has drained.
+                cudaStreamSynchronize(copy_stream);
                 encoder.release(surface);
                 throw std::runtime_error(std::string("GPU copy from the IPC slot failed: ") +
                                          cudaGetErrorString(copy_status));
@@ -263,22 +281,29 @@ struct StreamWorker::Impl
                 encoder.release(surface);
                 throw std::runtime_error("GPU copy from the IPC slot did not complete");
             }
+            // The copy is done: measure its age now, before the notice drain below adds its own time.
+            const int64_t copy_done_ns = monotonic_ns();
             {
                 bool overwritten = false;
                 std::size_t newer_count = 0;
                 FrameNotice newer;
-                while (client.next_frame(newer, std::chrono::milliseconds(0)))
+                while (running && client.next_frame(newer, std::chrono::milliseconds(0)))
                 {
                     ++newer_count;
                     if (newer.slot == notice.slot && newer.slot_generation > notice.slot_generation)
                         overwritten = true;
                     pending = std::move(newer);
                 }
+                if (!running)
+                {
+                    // Stopping: the copy has completed, so the surface can go back and the worker can leave.
+                    encoder.release(surface);
+                    break;
+                }
                 if (stream.slots.size() > 1 && newer_count + 1 >= stream.slots.size())
                     overwritten = true;
-                // The copy is done. If it finished later than the publisher needs to wrap its ring, the slot may have
-                // been overwritten during it, whether or not the replacement notice has arrived yet.
-                const int64_t copy_done_ns = monotonic_ns();
+                // If the copy finished later than the publisher needs to wrap its ring, the slot may have been
+                // overwritten during it, whether or not the replacement notice has arrived yet.
                 const SlotAge age = classify_slot_age(notice.timestamp_ns, copy_done_ns, deadline_ns);
                 if (age == SlotAge::Unknown && deadline_ns > 0)
                     ++stats.unchecked_slot_reads;

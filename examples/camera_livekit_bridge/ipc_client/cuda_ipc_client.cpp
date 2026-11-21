@@ -162,6 +162,17 @@ void CudaIpcClient::connect()
     if (::connect(m_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
         fail("cannot connect to the IPC socket " + m_socket_path + ": " + std::strerror(errno));
 
+    // Another local user can bind the path first and hand over CUDA IPC handles. Check who answered before reading
+    // anything it sends or importing any handle; any failure to find out is a refusal.
+    ucred peer{};
+    socklen_t peer_size = sizeof(peer);
+    if (::getsockopt(m_fd, SOL_SOCKET, SO_PEERCRED, &peer, &peer_size) != 0 || peer_size != sizeof(peer))
+        fail("cannot read the credentials of the IPC publisher on " + m_socket_path + ": " + std::strerror(errno));
+    const uid_t trusted = m_have_trusted_peer_uid ? m_trusted_peer_uid : ::geteuid();
+    if (peer.uid != trusted)
+        fail("refusing the IPC socket " + m_socket_path + ": it is served by uid " + std::to_string(peer.uid) +
+             ", not the trusted uid " + std::to_string(trusted));
+
     bool timed_out = false;
     const auto hello = read_message(std::chrono::seconds(5), timed_out);
     if (timed_out || hello.value("type", "") != "hello")
