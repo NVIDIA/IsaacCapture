@@ -751,6 +751,61 @@ def test_old_snapshots_remain_immutable_and_unknown_ids_return_none():
     assert monitor.get_device_status("missing") is None
 
 
+def test_a_plugin_that_is_not_started_stays_initializing():
+    """A plugin without a process context is not polled; once it has one it reads as any other."""
+    now_ns = 10_000_000_000
+    bound, bound_tracker = make_monitor(now_ns=now_ns)
+    bound.refresh(object(), now_ns=now_ns)
+
+    spec = PluginProviderSpec(
+        plugin_root_id="/provider",
+        name="provider",
+        devices=(
+            SimpleNamespace(path="/left", type="hand", description="Left"),
+            SimpleNamespace(path="/right", type="hand", description="Right"),
+        ),
+        tracker=FakeTracker(
+            RuntimeError("read the tracker of a plugin that is not started")
+        ),
+    )
+    monitor = StatusMonitor()
+    monitor.rebuild(
+        (spec,), include_openxr=False, external_openxr=False, now_ns=now_ns - 1
+    )
+    for _ in range(3):
+        monitor.refresh(object(), now_ns=now_ns)
+        monitor.refresh_plugin_processes(now_ns=now_ns)
+        provider = monitor.get_provider_status(spec.provider_id)
+        assert (provider.status, provider.reason, provider.error) == (
+            ProviderState.INITIALIZING,
+            StatusReason.PROVIDER_INITIALIZING,
+            "",
+        )
+        assert {
+            (device.status, device.reason) for device in monitor.get_status().devices
+        } == {(DeviceState.INITIALIZING, StatusReason.PROVIDER_INITIALIZING)}
+
+    spec.tracker.report = bound_tracker.report
+    monitor.bind_plugin_context(spec.provider_id, FakeContext())
+    monitor.mark_available(now_ns=now_ns - 1)
+    monitor.refresh(object(), now_ns=now_ns)
+    assert monitor.get_status() == bound.get_status()
+    assert monitor.get_provider_status(spec.provider_id).status == (
+        ProviderState.AVAILABLE
+    )
+    monitor.refresh_plugin_processes(now_ns=now_ns)
+    assert monitor.get_status().providers == bound.get_status().providers
+
+    # Unbound again, as after a start that is rolled back: it keeps what it last read.
+    monitor.bind_plugin_context(spec.provider_id, None)
+    last = monitor.get_status()
+    spec.tracker.report = RuntimeError("read the tracker of a stopped plugin")
+    monitor.refresh(object(), now_ns=now_ns)
+    monitor.refresh_plugin_processes(now_ns=now_ns)
+    assert monitor.get_status().providers == last.providers
+    assert monitor.get_status().devices == last.devices
+
+
 def test_runtime_failure_wins_over_an_in_flight_process_refresh():
     refresh_entered = threading.Event()
     release_refresh = threading.Event()

@@ -170,6 +170,8 @@ class AsyncRetargetRunner:
         self._exception: BaseException | None = None
         self._exception_reported = False
         self._thread: threading.Thread | None = None
+        # Set by the worker when its loop has ended.
+        self._ended = threading.Event()
 
     @property
     def dropped_submissions(self) -> int:
@@ -197,7 +199,7 @@ class AsyncRetargetRunner:
             self._exception = None
             self._exception_reported = False
             self._thread = threading.Thread(
-                target=self._run,
+                target=self._run_worker,
                 name="IsaacTeleopAsyncRetarget",
                 daemon=True,
             )
@@ -228,6 +230,12 @@ class AsyncRetargetRunner:
 
         if thread is not None:
             thread.join(timeout=timeout_s)
+            if timeout_s is None:
+                # Before Python 3.13 a join() that Ctrl-C interrupted leaves the running
+                # thread marked as ended, and a later join() returns at once. A thread that
+                # threading does not list has ended; a forked child lists no worker.
+                while thread in threading.enumerate() and not self._ended.wait(0.05):
+                    pass
 
         with self._cond:
             stopped = thread is None or not thread.is_alive()
@@ -325,6 +333,13 @@ class AsyncRetargetRunner:
                     if wait_s <= 0:
                         return None
                     self._cond.wait(timeout=wait_s)
+
+    def _run_worker(self) -> None:
+        """Thread target: run the worker loop, then tell ``stop()`` that it has ended."""
+        try:
+            self._run()
+        finally:
+            self._ended.set()
 
     def _run(self) -> None:
         """Worker loop: execute one ready request at a time and publish results.

@@ -267,12 +267,8 @@ class RemoteOpenXRSession:
 
         status = self._status.latest()
         if self._no_headset_before_openxr and _before_openxr(status):
-            return SimpleNamespace(
-                state=oxr.OpenXRProviderState.AVAILABLE,
-                headset_state=oxr.OpenXRHeadsetState.DISCONNECTED,
-                reason=oxr.OpenXRProviderReason.TRACKING_UNAVAILABLE,
-                result_code=None,
-                error=f"Teleop Session Server: {describe_stage(status)}",
+            return no_headset_snapshot(
+                f"Teleop Session Server: {describe_stage(status)}"
             )
         entry = (status or {}).get("headset")
         try:
@@ -299,6 +295,19 @@ class RemoteOpenXRSession:
                 f"{headset_state.name} ({reason.name})"
             ),
         )
+
+
+def no_headset_snapshot(error: str) -> SimpleNamespace:
+    """The provider snapshot of an OpenXR runtime that is up with no headset connected."""
+    from isaaccapture import oxr
+
+    return SimpleNamespace(
+        state=oxr.OpenXRProviderState.AVAILABLE,
+        headset_state=oxr.OpenXRHeadsetState.DISCONNECTED,
+        reason=oxr.OpenXRProviderReason.TRACKING_UNAVAILABLE,
+        result_code=None,
+        error=error,
+    )
 
 
 def _before_openxr(status: dict | None) -> bool:

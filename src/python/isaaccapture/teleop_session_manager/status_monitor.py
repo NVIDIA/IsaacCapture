@@ -654,6 +654,9 @@ class StatusMonitor:
         }
 
         for runtime in self._plugin_runtimes:
+            if runtime.context is None:
+                # Not started yet (LIVE before a headset has reached the runtime).
+                continue
             provider_id = runtime.spec.provider_id
             provider = _poll_process(providers_by_id[provider_id], runtime)
             providers_by_id[provider_id] = provider
@@ -837,6 +840,8 @@ class StatusMonitor:
         }
 
         for runtime in self._plugin_runtimes:
+            if runtime.context is None:
+                continue
             provider_id = runtime.spec.provider_id
             provider = _poll_process(providers_by_id[provider_id], runtime)
             providers_by_id[provider_id] = provider

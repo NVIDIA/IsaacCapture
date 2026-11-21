@@ -10,6 +10,7 @@ rather than initialization code.
 """
 
 import logging
+import os
 import time
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ from isaaccapture.retargeting_engine.interface.retargeter_subgraph import (
     RetargeterSubgraph,
 )
 
-from . import _remote
+from . import _headset_wait, _remote
 from .async_retarget_runner import (
     AsyncRetargetRunner,
     AsyncRetargetRunnerStopped,
@@ -65,12 +66,21 @@ logger = logging.getLogger(__name__)
 # Plugins that publish device status (see PluginDeviceStatusPublisher); others launch unmonitored.
 _MONITORED_PLUGIN_NAMES = frozenset({"manus_hand_plugin", "spacemouse", "gamepad"})
 
-# How oxr.OpenXRSession(wait_for_system=False) fails while no headset has reached the runtime (oxr_session.cpp).
-_NO_HEADSET_ERROR = "Failed to get OpenXR system: XR_ERROR_FORM_FACTOR_UNAVAILABLE"
-_NO_HEADSET_AT_RUNTIME = (
-    "No headset has reached the OpenXR runtime since it started, and a LIVE session cannot start "
-    "without one yet (wait_for_headset=False). Wake a headset once, set wait_for_headset=True to "
-    "wait for one, or run a Teleop Session Server on this machine and use SessionMode.REMOTE."
+# LIVE with wait_for_headset False while no headset has reached the OpenXR runtime (see _headset_wait).
+_NO_HEADSET_NEEDS_ONE = (
+    "No headset has reached the OpenXR runtime since it started, and this session cannot start "
+    "without one (wait_for_headset=False): {reason}. Wake a headset once, or set "
+    "wait_for_headset=True to wait for one."
+)
+_NO_RECORDING_FOLDER = (
+    "The folder of the recording file does not exist or cannot be written: {folder}"
+)
+_TRACKERS_NOT_STARTED = (
+    "A headset reached the OpenXR runtime, but the trackers could not be started: "
+    "{error}"
+)
+_PLUGIN_NOT_STARTED = (
+    "A headset reached the OpenXR runtime, but a plugin could not be started: {error}"
 )
 
 
@@ -228,6 +238,11 @@ class TeleopSession:
         # are handed to: the RemoteSession (REMOTE) or a RobotStateHost (LIVE, REPLAY).
         self._robot_description: Any | None = None
         self._robot_state_sender: Any | None = None
+        # LIVE entered with no headset at the OpenXR runtime (config.wait_for_headset False):
+        # the background wait for one, and what step() starts the trackers with when it comes
+        # (trackers, MCAP config, vendor config). Both None otherwise.
+        self._headset_wait: _headset_wait.HeadsetWait | None = None
+        self._live_start: tuple[list[Any], Any, Any] | None = None
 
         # The robot twin's render thread, when config.joint_publisher is set.
         self._twin_runner: Any | None = None
@@ -271,7 +286,7 @@ class TeleopSession:
 
     @property
     def oxr_session(self) -> oxr.OpenXRSession | None:
-        """The internal OpenXR session, or ``None`` outside LIVE mode, when using external handles or after the context manager exits (read-only)."""
+        """The internal OpenXR session, or ``None`` outside LIVE mode, when using external handles, after the context manager exits, or while a LIVE session entered with ``wait_for_headset`` False still waits for a headset (read-only)."""
         return self._oxr_session
 
     @property
@@ -616,7 +631,12 @@ class TeleopSession:
             RuntimeError: If a critical DeviceIO/tracker/runtime failure occurs
                 while updating the session. This is a fatal condition; the
                 application is expected to terminate rather than continue.
+                Also, after a LIVE entry with ``wait_for_headset`` False, when the
+                OpenXR session, the trackers or a plugin could not be started once a
+                headset arrived; every later call raises it again.
         """
+        if self._headset_wait is not None:
+            self._adopt_headset()
         if self.frame_count % 60 == 0:
             self._check_plugin_health()
 
@@ -701,11 +721,14 @@ class TeleopSession:
         Returns outputs, context and the remote tick age in seconds (``None``
         outside REMOTE mode).
         """
-        try:
-            self.deviceio_session.update()
-        except BaseException as error:
-            self._status_monitor.mark_runtime_failed(error)
-            raise
+        # Until step() has started the trackers there is nothing to update.
+        waiting = self._headset_wait
+        if waiting is None:
+            try:
+                self.deviceio_session.update()
+            except BaseException as error:
+                self._status_monitor.mark_runtime_failed(error)
+                raise
         if self._awaiting_ready and _remote.ready_reported(
             self._remote_status.latest()
         ):
@@ -716,7 +739,12 @@ class TeleopSession:
         remote_tick_age_s = self._remote_tick_age_s()
         self._status_monitor.refresh(
             self.deviceio_session,
-            self._oxr_session if self._remote_openxr is None else self._remote_openxr,
+            waiting
+            or (
+                self._oxr_session
+                if self._remote_openxr is None
+                else self._remote_openxr
+            ),
             openxr_controllers=self._controller_status_snapshots(),
         )
         pipeline_inputs = self._collect_tracker_data()
@@ -786,8 +814,9 @@ class TeleopSession:
         # contract is non-throwing, so a device hiccup cannot tear down the loop.
         for executable, _sink_node in self._sinks:
             executable.execute_pipeline_with_cache(cache)
-        # A RemoteSession has no sink trackers; their data is dropped in REMOTE mode.
-        if self._remote_session is None:
+        # A RemoteSession has no sink trackers; their data is dropped in REMOTE mode and
+        # while a LIVE session waits for a headset.
+        if self._remote_session is None and waiting is None:
             for _executable, sink_node in self._sinks:
                 sink_node.flush_to_device(self.deviceio_session)
 
@@ -1243,8 +1272,10 @@ class TeleopSession:
             RuntimeError: If the session is already active, or (REMOTE) with the
                 server's error text, when the connection is lost, or when a ``ws://``
                 endpoint does not accept the WebSocket upgrade; (LIVE with
-                ``config.wait_for_headset`` False) when no headset has reached the OpenXR
-                runtime since it started; (LIVE, REPLAY with ``config.robot_description``)
+                ``config.wait_for_headset`` False, no headset at the OpenXR runtime) when
+                a tracker of the session cannot wait for one, a required plugin is missing
+                or the recording folder cannot be written; (LIVE, REPLAY with
+                ``config.robot_description``)
                 when another program on this machine serves a robot's state, before
                 anything else of the session starts.
             TimeoutError: (REMOTE) The server did not answer, or was not ready within
@@ -1281,6 +1312,8 @@ class TeleopSession:
                     self._remote_status = None
                     self._robot_description = None
                     self._robot_state_sender = None
+                    self._headset_wait = None
+                    self._live_start = None
                     self._in_context = False
                 raise
 
@@ -1306,6 +1339,8 @@ class TeleopSession:
         self._remote_status = None
         self._robot_description = None
         self._robot_state_sender = None
+        self._headset_wait = None
+        self._live_start = None
 
         mode = self.config.mode
         live_mode = mode == SessionMode.LIVE
@@ -1407,25 +1442,34 @@ class TeleopSession:
                     *self._start_twin(stack, required_extensions)
                 )
             else:
-                self._oxr_session = stack.enter_context(
-                    self._create_openxr_session(required_extensions)
-                )
-                handles = self._oxr_session.get_handles()
+                openxr = self._create_openxr_session(required_extensions)
+                if openxr is None:
+                    self._wait_for_headset(
+                        stack, required_extensions, trackers, mcap_config, vendor_config
+                    )
+                else:
+                    self._oxr_session = stack.enter_context(openxr)
+                    handles = self._oxr_session.get_handles()
 
-            # Create DeviceIO session with all trackers
-            self.deviceio_session = stack.enter_context(
-                deviceio.DeviceIOSession.run(
-                    trackers, handles, mcap_config, vendor_config
+            if self._headset_wait is None:
+                # Create DeviceIO session with all trackers
+                self.deviceio_session = stack.enter_context(
+                    deviceio.DeviceIOSession.run(
+                        trackers, handles, mcap_config, vendor_config
+                    )
                 )
-            )
         elif mode == SessionMode.REMOTE:
             self._enter_remote(stack)
 
         # Plugins retain their historical launch behavior in both live and replay
         # sessions. In live mode, Manus launches only after DeviceIO has created
         # its status reader.
-        self._start_configured_plugins(stack)
-        self._status_monitor.mark_available()
+        if self._headset_wait is None:
+            self._start_configured_plugins(stack)
+            self._status_monitor.mark_available()
+        else:
+            # Waiting for a headset: step() starts the DeviceIO session, then the plugins.
+            self._status_monitor.refresh(self.deviceio_session, self._headset_wait)
         if host is not None:
             self._robot_state_sender = host
         if mode == SessionMode.REMOTE:
@@ -1450,11 +1494,11 @@ class TeleopSession:
         self._async_runner = None
         self._active_retargeting_execution_mode = self.config.retargeting_execution.mode
 
-    def _create_openxr_session(self, required_extensions: list[str]) -> Any:
+    def _create_openxr_session(self, required_extensions: list[str]) -> Any | None:
         """The session's own OpenXR session (LIVE).
 
-        With ``config.wait_for_headset`` False it does not wait for a headset: RuntimeError
-        when none has reached the OpenXR runtime since it started.
+        With ``config.wait_for_headset`` False it does not wait for a headset: None when
+        none has reached the OpenXR runtime since it started.
         """
         if self.config.wait_for_headset:
             return oxr.OpenXRSession(self.config.app_name, required_extensions)
@@ -1463,9 +1507,134 @@ class TeleopSession:
                 self.config.app_name, required_extensions, wait_for_system=False
             )
         except RuntimeError as error:
-            if not str(error).startswith(_NO_HEADSET_ERROR):
+            if not str(error).startswith(_headset_wait.NO_HEADSET_ERROR):
                 raise
-            raise RuntimeError(_NO_HEADSET_AT_RUNTIME) from error
+            return None
+
+    def _wait_for_headset(
+        self,
+        stack: ExitStack,
+        required_extensions: list[str],
+        trackers: list[Any],
+        mcap_config: Any,
+        vendor_config: Any,
+    ) -> None:
+        """Enter with no headset at the OpenXR runtime: wait for one in the background.
+
+        Until ``step()`` starts the trackers, ``deviceio_session`` is a session whose trackers
+        report no data: a RemoteSession that is never connected, which is what a REMOTE
+        session steps before the server's first samples. What can be checked without a
+        headset is checked here, so that it does not fail in a later ``step()``.
+        """
+        try:
+            entries = _remote.collect_trackers(
+                self._sources,
+                (sink_node.get_tracker() for _executable, sink_node in self._sinks),
+                self.config.trackers,
+            )
+            no_data = deviceio.RemoteSession.create(
+                [(tracker, str(index)) for index, (tracker, _, _) in enumerate(entries)]
+            )
+        except ValueError as error:
+            raise RuntimeError(_NO_HEADSET_NEEDS_ONE.format(reason=error)) from error
+        for plugin_config in self.config.plugins:
+            if plugin_config.enabled:
+                self._resolve_plugin(plugin_config)
+        if mcap_config is not None:
+            folder = os.path.dirname(os.path.abspath(self.config.mcap_config.filename))
+            if not (os.path.isdir(folder) and os.access(folder, os.W_OK)):
+                raise RuntimeError(_NO_RECORDING_FOLDER.format(folder=folder))
+        self.deviceio_session = stack.enter_context(no_data)
+        wait = _headset_wait.HeadsetWait(self.config.app_name, required_extensions)
+        # Registered before start(), so a failure of start() still stops the thread.
+        stack.callback(wait.close)
+        wait.start()
+        self._headset_wait = wait
+        self._live_start = (trackers, mcap_config, vendor_config)
+        logger.info(
+            "No headset has reached the OpenXR runtime; the session starts without one. "
+            "Its trackers report no data and its plugins are not started until one does"
+        )
+
+    def _adopt_headset(self) -> None:
+        """Start the trackers and plugins once the background thread has an OpenXR session.
+
+        Runs on the thread that calls ``step()``, with the calls ``_enter_resources`` makes
+        when a headset is there. A failure here, or of the background thread, is raised by
+        this and every later ``step()``; an interrupt is rolled back and tried again.
+        """
+        wait = self._headset_wait
+        try:
+            openxr = wait.poll()
+        except RuntimeError as error:
+            self._status_monitor.mark_runtime_failed(error)
+            raise
+        if openxr is None:
+            return
+        runner = self._async_runner
+        if runner is not None:
+            # Pipelined: the worker steps the no-data session and must be gone before the
+            # session changes. The step that follows runs as a seed step with a new worker.
+            runner.stop()
+            try:
+                runner.raise_if_failed()
+            except AsyncRetargetWorkerError:
+                # _step_pipelined reports it, in this step and every later one.
+                return
+            self._async_runner = None
+        trackers, mcap_config, vendor_config = self._live_start
+        logger.info(
+            "A headset has reached the OpenXR runtime; starting %d tracker(s) and the "
+            "plugins now. This step() returns late, and every Python thread of this "
+            "program waits until it does",
+            len(trackers),
+        )
+        started = time.monotonic()
+        text = _TRACKERS_NOT_STARTED
+        stack = ExitStack()
+        # The same native code as at entry writes to the descriptors here.
+        with capture_native_output():
+            try:
+                deviceio_session = stack.enter_context(
+                    deviceio.DeviceIOSession.run(
+                        trackers, openxr.get_handles(), mcap_config, vendor_config
+                    )
+                )
+                text = _PLUGIN_NOT_STARTED
+                self._start_configured_plugins(stack)
+                # Unwinds before the wait (which closes the OpenXR session) and the no-data
+                # session, both registered at entry.
+                self._exit_stack.push(stack)
+                # One statement: an interrupt finds the session waiting or running, not between.
+                (
+                    self.deviceio_session,
+                    self._oxr_session,
+                    self._headset_wait,
+                    self._live_start,
+                ) = (deviceio_session, openxr, None, None)
+            except BaseException as error:
+                try:
+                    stack.__exit__(type(error), error, error.__traceback__)
+                except BaseException:
+                    logger.exception("Failed to roll back the start of the trackers")
+                self.plugin_managers = []
+                self.plugin_contexts = []
+                for _config, _manager, spec in self._resolved_plugins:
+                    if spec is not None:
+                        self._status_monitor.bind_plugin_context(spec.provider_id, None)
+                if not isinstance(error, Exception):
+                    # Ctrl-C: nothing is kept; the next step() starts the trackers again.
+                    raise
+                text = text.format(error=error)
+                wait.fail(text, error)
+                self._status_monitor.mark_runtime_failed(text)
+                raise RuntimeError(text) from error
+        self._status_monitor.mark_available()
+        logger.info(
+            "Started the trackers and %d plugin(s) in %.0f ms; the session now reads the headset",
+            len(self.plugin_contexts),
+            (time.monotonic() - started) * 1e3,
+        )
 
     def _host_robot_state(self, stack: ExitStack) -> Any | None:
         """Host robot state in this program (LIVE, REPLAY); None without ``config.robot_description``.
@@ -1886,6 +2055,8 @@ class TeleopSession:
             self._remote_status = None
             self._robot_description = None
             self._robot_state_sender = None
+            self._headset_wait = None
+            self._live_start = None
             self._in_context = False
 
         if runner_error is not None:

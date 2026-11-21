@@ -71,9 +71,9 @@ from isaaccapture.teleop_session_manager import (
     StatusReason,
     TeleopSession,
     TeleopSessionConfig,
+    _headset_wait,
     _remote,
     create_bool_selector,
-    teleop_session,
 )
 from isaaccapture.teleop_session_manager.teleop_state_manager_types import bool_signal
 from isaaccapture.teleop_session_server import _session as server_session
@@ -94,12 +94,6 @@ NO_HEADSET_AT_OPENXR = (
     "is up but no headset is connected to it, and this session asked for wait_for_system=false "
     "rather than waiting for one. Connect the headset, or check NV_DEVICE_PROFILE matches it. "
     "See docs/source/references/cloudxr.rst, Troubleshooting."
-)
-NO_HEADSET_AT_RUNTIME = (
-    "No headset has reached the OpenXR runtime since it started, and a LIVE session cannot "
-    "start without one yet (wait_for_headset=False). Wake a headset once, set "
-    "wait_for_headset=True to wait for one, or run a Teleop Session Server on this machine and "
-    "use SessionMode.REMOTE."
 )
 EXTENSIONS = ["XR_EXT_test"]
 READER_THREAD = "isaaccapture-robot-state-readers"
@@ -229,6 +223,7 @@ class TestEarlyEntry:
                 assert fake.wait_ready_timeouts == []
                 assert session.deviceio_session is fake
                 assert session._awaiting_ready
+                assert headset_wait_threads() == []
             assert fake.events[-1] == "exit"
             assert fake.wait_ready_timeouts == []
             # Left before READY: nothing of the wait is kept for the next entry.
@@ -833,12 +828,11 @@ def _state_manager(controllers):
     )
 
 
-def _real_sources_config(server, *, state_manager=False, **kwargs):
+def _real_sources():
+    """A pipeline over the built-in head, hands and controllers sources, and the last of them."""
     head = HeadSource(name="head")
     hands = HandsSource(name="hands")
     controllers = ControllersSource(name="controllers")
-    if state_manager:
-        kwargs["teleop_control_pipeline"] = _state_manager(controllers)
     pipeline = OutputCombiner(
         {
             "head": head.output("head"),
@@ -848,6 +842,13 @@ def _real_sources_config(server, *, state_manager=False, **kwargs):
             "controller_right": controllers.output(ControllersSource.RIGHT),
         }
     )
+    return pipeline, controllers
+
+
+def _real_sources_config(server, *, state_manager=False, **kwargs):
+    pipeline, controllers = _real_sources()
+    if state_manager:
+        kwargs["teleop_control_pipeline"] = _state_manager(controllers)
     return TeleopSessionConfig(
         app_name="NoHeadsetLoopback",
         pipeline=pipeline,
@@ -1109,6 +1110,11 @@ def reader_threads():
     return [t for t in threading.enumerate() if t.name == READER_THREAD]
 
 
+def headset_wait_threads():
+    """The threads that wait for a headset for a LIVE session."""
+    return [t for t in threading.enumerate() if t.name == _headset_wait.THREAD_NAME]
+
+
 class TestLive:
     def test_false_makes_one_attempt_that_does_not_wait(self):
         with local_backends() as mocks:
@@ -1130,47 +1136,57 @@ class TestLive:
                 assert mocks.oxr_cls.call_args_list == [call("LocalApp", EXTENSIONS)]
                 assert session.oxr_session is mocks.openxr
 
-    @pytest.mark.parametrize("description", [None, DESCRIPTION], ids=["plain", "robot"])
-    def test_no_headset_at_the_runtime_is_a_clear_error(
-        self, description, runtime_dir, caplog
-    ):
-        assert teleop_session._NO_HEADSET_AT_RUNTIME == NO_HEADSET_AT_RUNTIME
-        assert NO_HEADSET_AT_OPENXR.startswith(teleop_session._NO_HEADSET_ERROR)
-        error = RuntimeError(NO_HEADSET_AT_OPENXR)
-        config = local_config(wait_for_headset=False, robot_description=description)
-        session = TeleopSession(config)
-        with local_backends() as mocks, caplog.at_level(logging.WARNING):
-            mocks.oxr_cls.side_effect = error
-            start = time.monotonic()
-            with pytest.raises(RuntimeError) as raised:
-                session.__enter__()
-            assert time.monotonic() - start < 5.0
-            assert type(raised.value) is RuntimeError
-            assert str(raised.value) == NO_HEADSET_AT_RUNTIME
-            assert raised.value.__cause__ is error
-            assert mocks.oxr_cls.call_args_list == [
-                call("LocalApp", EXTENSIONS, wait_for_system=False)
-            ]
-            mocks.live_run.assert_not_called()
+    def test_waiting_gives_what_a_remote_early_entry_gives(self, monkeypatch):
+        """The same pipeline of real sources, stepped in both modes with no headset anywhere."""
+        monkeypatch.setattr(_headset_wait, "RETRY_S", 0.02)
 
-            # Rolled back: nothing of the entry is left.
-            assert not session._in_context
-            assert session.oxr_session is None
-            assert not session.robot_state_active
-            assert not os.path.exists(default_socket_path())
-            assert robot_state_files(runtime_dir) == (
-                [] if description is None else ["robot_state.sock.lock"]
+        def observe(session):
+            result = session.step()
+            headset = _headset(session)
+            provider = session.get_provider_status("openxr/runtime")
+            return SimpleNamespace(
+                same=(
+                    {name: group.is_none for name, group in result.items()},
+                    (headset.status, headset.reason),
+                    (provider.status, provider.reason, provider.error),
+                    session.last_step_info.remote_tick_age_s,
+                    _execution(session),
+                    type(session.deviceio_session),
+                    session.oxr_session,
+                ),
+                headset_error=headset.error,
+                controller=session.get_device_status("openxr/controller/left").status,
             )
-            assert reader_threads() == []
-            if description is not None:
-                with pytest.raises(RuntimeError, match="TeleopSession is not active"):
-                    session.publish_robot_state("arm", [0.0, 0.0, 0.0])
 
-            # Once a headset has reached the runtime the same session enters.
-            mocks.oxr_cls.side_effect = None
-            with session:
-                assert session.robot_state_active == (description is not None)
-        assert _messages(caplog, logging.WARNING) == []
+        script, _go = _late_headset()
+        server = _MiniServer(script)
+        try:
+            with TeleopSession(_real_sources_config(server)) as session:
+                remote = observe(session)
+                assert headset_wait_threads() == []
+        finally:
+            server.stop()
+
+        pipeline, _controllers = _real_sources()
+        config = local_config(pipeline=pipeline, wait_for_headset=False)
+        with local_backends() as mocks:
+            mocks.oxr_cls.side_effect = RuntimeError(NO_HEADSET_AT_OPENXR)
+            with TeleopSession(config) as session:
+                live = observe(session)
+                assert len(headset_wait_threads()) == 1
+            mocks.live_run.assert_not_called()
+        assert headset_wait_threads() == []
+
+        assert live.same == remote.same
+        absent, headset, *_ = live.same
+        assert len(absent) == 5
+        assert all(absent.values())
+        assert headset == (DeviceState.DISCONNECTED, StatusReason.NO_CURRENT_DATA)
+        # Where the two differ: the text, and the controllers in the first second.
+        assert live.headset_error == _headset_wait.WAITING
+        assert remote.headset_error.startswith("Teleop Session Server: ")
+        assert live.controller == DeviceState.INITIALIZING
+        assert remote.controller == DeviceState.UNKNOWN
 
     @pytest.mark.parametrize(
         "text",
@@ -1243,6 +1259,8 @@ class TestNoEffect:
                 mocks.replay_config.return_value = "replay config"
                 with TeleopSession(config) as session:
                     session.step()
+                    assert headset_wait_threads() == []
+                    assert session._headset_wait is None
                 made[wait] = _calls(mocks, factory)
         assert made[True] == made[False]
         assert made[False]["openxr"] == []
