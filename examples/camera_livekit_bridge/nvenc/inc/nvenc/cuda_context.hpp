@@ -35,6 +35,10 @@ public:
     {
         return m_context;
     }
+    int device_index() const
+    {
+        return static_cast<int>(m_device);
+    }
     const std::string& device_name() const
     {
         return m_name;

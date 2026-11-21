@@ -138,6 +138,12 @@ struct StreamWorker::Impl
         if (client.streams().size() != 1)
             throw std::runtime_error("the IPC publisher has no stream named '" + cfg.stream + "'");
         const IpcStream& stream = client.streams().front();
+        // The client imports the slots on the stream's device; the steps and encoder run on the bridge's.
+        if (stream.gpu_id != context.device_index())
+            throw std::runtime_error("stream '" + cfg.stream + "' is on GPU " + std::to_string(stream.gpu_id) +
+                                     " but the bridge runs on GPU " + std::to_string(context.device_index()) +
+                                     "; pass --gpu " + std::to_string(stream.gpu_id));
+        context.make_current();
         layout = read_layout(stream);
         check_plane_extents(stream, layout);
         source = { static_cast<uint32_t>(stream.width), static_cast<uint32_t>(stream.height) };
