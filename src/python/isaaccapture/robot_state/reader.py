@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reading robot state on the Teleop Session Server machine.
+"""Reading robot state from the Teleop Session Server, or a robot app in a local session.
 
 robot = RobotState.connect()
 what = robot.description()            # None until a robot app sent one
@@ -177,7 +177,8 @@ def _names(names) -> str:
 
 
 class RobotState:
-    """What the robot is and its newest readings, on the Teleop Session Server machine.
+    """What the robot is and its newest readings, read on the machine of the program that
+    serves them: the Teleop Session Server, or a robot app in a local session.
 
     Make one with `connect()` (a program of its own) or `from_store()` (the server's program).
     A read is None when the series has no fresh record or no robot app is connected;
@@ -190,10 +191,14 @@ class RobotState:
         *,
         client: LocalClient | None = None,
         auto_refresh: bool = True,
+        robot: str | None = None,
     ) -> None:
         self._store = store
         self._client = client
         self._auto_refresh = auto_refresh
+        # The robot a `connect()` reader expects; None reads whichever is served.
+        self._robot = robot
+        self._other_robot_reported: str | None = None
         self._lock = threading.RLock()
         self._closed = False
         self._reachable: bool | None = None if client is not None else True
@@ -208,19 +213,23 @@ class RobotState:
         cls,
         socket_path: str | os.PathLike | None = None,
         *,
+        robot: str | None = None,
         timeout_s: float = 1.0,
         auto_refresh: bool = True,
     ) -> RobotState:
-        """Read from the Teleop Session Server running on this machine.
+        """Read from the Teleop Session Server, or a robot app in a local session, on this machine.
 
         Never raises for a server that is not running: `server_reachable` is then False and
-        every refresh tries again. `timeout_s` is how long one refresh waits for the server.
-        With `auto_refresh=False` the readings change only when `refresh()` is called.
+        every refresh tries again. `robot` is the robot this reader expects, by
+        `RobotDescription.robot`: while another robot is served, nothing is read. `timeout_s` is
+        how long one refresh waits for the server. With `auto_refresh=False` the readings change
+        only when `refresh()` is called.
         """
         state = cls(
             RobotStateStore(),
             client=LocalClient(socket_path, timeout_s),
             auto_refresh=auto_refresh,
+            robot=robot,
         )
         state.refresh()
         return state
@@ -244,9 +253,10 @@ class RobotState:
 
     @property
     def server_reachable(self) -> bool:
-        """True when the Teleop Session Server answered the last refresh.
+        """True when the Teleop Session Server, or a robot app in a local session, answered
+        the last refresh.
 
-        False until a robot app agreed robot state with the server: the server opens the
+        With a server, False until a robot app agreed robot state with it: the server opens the
         connection for readers only then.
         """
         with self._lock:
@@ -255,10 +265,16 @@ class RobotState:
 
     @property
     def connected(self) -> bool:
-        """True while a robot app that sends robot state is connected to the server."""
+        """True while a robot app that sends robot state is connected to the server or, in a
+        local session, is in its session.
+
+        A reader that expects a robot (`connect(robot=...)`) also needs that robot's description.
+        """
         with self._lock:
             self._update()
-            return self._store.connected
+            if not self._store.connected:
+                return False
+            return self._robot is None or self._describe() is not None
 
     def description(self) -> RobotDescription | None:
         """What the robot is; None until a robot app sent its description.
@@ -409,10 +425,7 @@ class RobotState:
             self._other_version_reported = False
             if self._reachable is not True:
                 self._reachable = True
-                logger.info(
-                    "Reading robot state from the Teleop Session Server at %s",
-                    client.path,
-                )
+                logger.info("Reading robot state at %s", client.path)
             return True
         return self._lost("the server's robot state kept changing")
 
@@ -424,18 +437,14 @@ class RobotState:
         if other_version and not self._other_version_reported:
             self._other_version_reported = True
             logger.warning(
-                "The Teleop Session Server at %s runs another version of the isaaccapture "
-                "package than this program; no robot state is read (%s)",
+                "The program that serves robot state at %s runs another version of the "
+                "isaaccapture package than this program; no robot state is read (%s)",
                 client.path,
                 reason,
             )
         if self._reachable is not False:
             self._reachable = False
-            logger.info(
-                "No Teleop Session Server serves robot state at %s (%s)",
-                client.path,
-                reason,
-            )
+            logger.info("Nothing serves robot state at %s (%s)", client.path, reason)
         return False
 
     def _forget(self) -> None:
@@ -446,6 +455,14 @@ class RobotState:
         self._undecodable.clear()
 
     def _describe(self) -> RobotDescription | None:
+        """The served description; None without one, and while it names another robot than
+        the one this reader expects."""
+        description = self._decode_description()
+        if description is None or self._robot in (None, description.robot):
+            return description
+        return None
+
+    def _decode_description(self) -> RobotDescription | None:
         store = self._store
         # The session number is read first: a description that belongs to a newer session is
         # then decoded again at the next call instead of being kept under the newer number.
@@ -462,7 +479,23 @@ class RobotState:
                 logger.warning("The robot's description cannot be read: %s", error)
             self._description_key = key
             self._description = description
+            if description is not None and self._client is not None:
+                self._report_robot(self._client.path, description.robot)
         return self._description
+
+    def _report_robot(self, path: str, robot: str) -> None:
+        """Say which robot is read: once per description, and once per robot that is refused."""
+        logger.info("Robot state at %s: robot '%s'", path, robot)
+        if self._robot in (None, robot):
+            self._other_robot_reported = None
+        elif robot != self._other_robot_reported:
+            self._other_robot_reported = robot
+            logger.warning(
+                "Robot state at %s is of robot '%s', not '%s'; nothing is read",
+                path,
+                robot,
+                self._robot,
+            )
 
     def _entry(
         self, description: RobotDescription, series: str, shape: str | None

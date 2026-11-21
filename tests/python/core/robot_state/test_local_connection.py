@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reading robot state from another program: `RobotState.connect()` and the server's local service.
+"""Reading robot state from another program: `RobotState.connect()` and the local service of
+the program that serves it.
 
 Every socket is a Unix socket in a temporary directory of the test.
 """
@@ -240,8 +241,13 @@ def test_a_reader_that_starts_before_the_server_sees_it_once_it_serves(
     assert 0.0 <= arm.age_s < 30.0
     assert reader.gripper("jaw").opening == pytest.approx(0.5, abs=1e-5)
 
-    # One line per change of what the reader can reach, however often it asks.
-    assert len(messages(logs, logging.INFO, READER_LOGGER)) == 2
+    # One line per change of what the reader can reach and one per robot, however often it asks.
+    assert messages(logs, logging.INFO, READER_LOGGER) == [
+        f"Nothing serves robot state at {socket_path} "
+        "([Errno 2] No such file or directory)",
+        f"Reading robot state at {socket_path}",
+        f"Robot state at {socket_path}: robot 'rover'",
+    ]
     assert messages(logs, logging.WARNING) == []
 
 
@@ -287,10 +293,14 @@ def test_a_server_that_stops_takes_everything_it_served_with_it(
 
     infos = messages(logs, logging.INFO, READER_LOGGER)
     assert [text.split(" at ")[0] for text in infos] == [
-        "Reading robot state from the Teleop Session Server",
-        "No Teleop Session Server serves robot state",
-        "Reading robot state from the Teleop Session Server",
+        "Reading robot state",
+        "Robot state",
+        "Nothing serves robot state",
+        "Reading robot state",
+        "Robot state",
     ]
+    assert infos[1].endswith(": robot 'rover'")
+    assert infos[4].endswith(": robot 'rebot_b601'")
 
 
 def test_a_server_that_restarts_between_two_reads_is_read_at_once(
@@ -522,6 +532,155 @@ def test_a_large_robot_state_reaches_a_reader_while_another_does_not_take_its_an
 
 
 # ---------------------------------------------------------------------------------------------
+# A reader that expects one robot
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_reader_that_expects_another_robot_reads_nothing(
+    socket_path, store, serve, connect, logs
+):
+    description = rover()
+    start_robot(store, description)
+    put_arm(store, description, 0.25)
+    put(store, description, "mast", [3.0])
+    put(store, description, "health", [True, 12.0, "idle"])
+    put(store, description, "sonar", [0.5, "wall"])
+    serve(store, socket_path)
+
+    reader = connect(socket_path, robot="rebot_b601")
+    for _ in range(3):
+        assert reader.refresh() is True
+        assert reader.server_reachable is True
+        assert reader.connected is False
+        assert reader.description() is None
+        assert reader.series() == {}
+        for allow_stale in (False, True):
+            assert reader.joints("arm", allow_stale=allow_stale) is None
+            assert reader.joints("mast", allow_stale=allow_stale) is None
+            assert reader.gripper("jaw", allow_stale=allow_stale) is None
+            assert reader.status("health", allow_stale=allow_stale) is None
+            assert reader.record("sonar", allow_stale=allow_stale) is None
+    # A reader without the argument reads the robot that is served.
+    assert connect(socket_path).joints("arm")["lift"].position == pytest.approx(0.25)
+    assert messages(logs, logging.WARNING) == [
+        f"Robot state at {socket_path} is of robot 'rover', not 'rebot_b601'; "
+        "nothing is read"
+    ]
+
+    # The robot app leaves and the expected robot's app connects: the same reader reads it.
+    second = six_joint_arm()
+    start_robot(store, second)
+    put(store, second, "arm", [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 1.0])
+    put(store, second, "status", [True, ""])
+    assert reader.connected is True
+    assert reader.description() == second
+    assert list(reader.series()) == list(second.series)
+    assert reader.joints("arm")["joint2"].position == pytest.approx(0.1)
+    assert reader.gripper("gripper") is not None
+    assert reader.status()["motors_on"] is True
+    assert reader.record("arm").sequence == 1
+    assert len(messages(logs, logging.WARNING)) == 1
+
+    # The other robot again: nothing is read, and it is said again.
+    start_robot(store, description)
+    put_arm(store, description, 0.3)
+    assert reader.server_reachable is True
+    assert reader.connected is False
+    assert reader.description() is None
+    assert reader.joints("arm", allow_stale=True) is None
+    assert len(messages(logs, logging.WARNING)) == 2
+
+
+def test_a_reader_that_expects_the_robot_served_reads_it(
+    socket_path, store, serve, connect, logs
+):
+    description = rover()
+    start_robot(store, description, send_description=False)
+    serve(store, socket_path)
+    reader = connect(socket_path, robot="rover")
+    # Which robot it is, is not known before its description came.
+    assert reader.server_reachable is True
+    assert reader.connected is False
+    assert reader.description() is None
+
+    start_robot(store, description)
+    put_arm(store, description, 0.25)
+    assert reader.connected is True
+    assert reader.description() == description
+    assert reader.joints("arm")["lift"].position == pytest.approx(0.25)
+    assert messages(logs, logging.WARNING) == []
+
+
+def test_one_wrong_robot_is_reported_once_however_often_it_returns(
+    socket_path, store, serve, connect, logs
+):
+    description = rover()
+    serve(store, socket_path)
+    reader = connect(socket_path, robot="rebot_b601")
+    for _ in range(3):
+        start_robot(store, description)
+        assert reader.connected is False
+        assert reader.description() is None
+        store.end_session()
+        assert reader.description() is None
+    warnings = messages(logs, logging.WARNING)
+    assert len(warnings) == 1
+    assert "'rover'" in warnings[0] and "'rebot_b601'" in warnings[0]
+
+
+def test_the_robot_that_is_read_is_logged_once_per_description(
+    socket_path, store, serve, connect, logs
+):
+    def named():
+        return [
+            text
+            for text in messages(logs, logging.INFO, READER_LOGGER)
+            if text.startswith("Robot state at ")
+        ]
+
+    first = rover()
+    start_robot(store, first)
+    service = serve(store, socket_path)
+    reader = connect(socket_path)
+    assert named() == []  # nothing asked for the description yet
+    for lift in (0.1, 0.2, 0.3):
+        put_arm(store, first, lift)
+        assert reader.description() == first
+        assert reader.joints("arm") is not None
+    assert named() == [f"Robot state at {socket_path}: robot 'rover'"]
+
+    # The next robot app's description is another one, also of the same robot.
+    start_robot(store, first)
+    assert reader.description() == first
+    start_robot(store, six_joint_arm())
+    assert reader.description().robot == "rebot_b601"
+    assert reader.description().robot == "rebot_b601"
+    assert named() == [
+        f"Robot state at {socket_path}: robot 'rover'",
+        f"Robot state at {socket_path}: robot 'rover'",
+        f"Robot state at {socket_path}: robot 'rebot_b601'",
+    ]
+
+    # Read again after the program that serves it was away.
+    service.close()
+    assert reader.description() is None
+    serve(store, socket_path)
+    assert reader.description().robot == "rebot_b601"
+    assert len(named()) == 4
+
+
+def test_a_reader_of_a_store_in_this_program_names_no_robot(store, logs):
+    description = rover()
+    start_robot(store, description)
+    reader = RobotState.from_store(store)
+    assert reader.description() == description
+    assert reader.connected is True
+    assert messages(logs, logging.INFO, READER_LOGGER) == []
+    with pytest.raises(TypeError):
+        RobotState.from_store(store, robot="rover")
+
+
+# ---------------------------------------------------------------------------------------------
 # Closing
 # ---------------------------------------------------------------------------------------------
 
@@ -569,8 +728,10 @@ def test_closing_a_service_leaves_the_socket_of_its_successor(
     socket_path, store, serve, connect
 ):
     first = serve(store, socket_path)
-    # The path is taken over by another server while the first still runs.
+    # The path is taken over by another program while the first still runs: somebody removed
+    # the socket file and the lock file beside it.
     os.unlink(socket_path)
+    os.unlink(socket_path + _local.LOCK_SUFFIX)
     serve(store, socket_path)
     first.close()
     assert os.path.exists(socket_path)
@@ -641,9 +802,7 @@ def test_a_path_another_server_serves_is_refused(socket_path, store, serve, conn
     second = RobotStateLocalService(RobotStateStore(), socket_path)
     with pytest.raises(OSError) as raised:
         second.start()
-    assert str(raised.value) == (
-        f"another Teleop Session Server serves robot state at {socket_path}"
-    )
+    assert str(raised.value) == f"another program serves robot state at {socket_path}"
     second.close()
     # The first one is untouched.
     assert os.path.exists(socket_path)

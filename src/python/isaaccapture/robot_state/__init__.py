@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Robot state: what a robot is and its newest readings, read on the Teleop Session Server machine."""
+"""Robot state: what a robot is and its newest readings, read on the machine of the program that
+serves them."""
 
 from importlib import import_module
 
