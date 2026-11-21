@@ -10,6 +10,8 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <deviceio_session/remote_session.hpp>
 #include <deviceio_session/remote_session_host.hpp>
+#include <deviceio_trackers/controller_tracker.hpp>
+#include <deviceio_trackers/full_body_tracker.hpp>
 #include <deviceio_trackers/hand_tracker.hpp>
 #include <deviceio_trackers/head_tracker.hpp>
 #include <deviceio_trackers/joint_se3_pose_tracker.hpp>
@@ -21,6 +23,8 @@
 #include <mcap/writer.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <remote_link/messages.hpp>
+#include <schema/controller_generated.h>
+#include <schema/full_body_generated.h>
 #include <schema/hand_generated.h>
 #include <schema/head_generated.h>
 #include <schema/joint_se3_pose_generated.h>
@@ -38,6 +42,8 @@ namespace
 
 using HeadChannels = core::McapTrackerChannels<core::HeadPoseRecord>;
 using HandChannels = core::McapTrackerChannels<core::HandPoseRecord>;
+using ControllerChannels = core::McapTrackerChannels<core::ControllerSnapshotRecord>;
+using FullBodyChannels = core::McapTrackerChannels<core::FullBodyPoseRecord>;
 using JointSe3PoseChannels = core::McapTrackerChannels<core::JointSe3PoseOutputRecord>;
 
 template <typename Array>
@@ -82,6 +88,30 @@ void write_head(HeadChannels& ch, float x)
     ch.write(0, core::pack_record<core::HeadPoseRecord>(&data, stamp()));
 }
 
+void write_hand(HandChannels& ch, size_t channel_index, float wrist_radius)
+{
+    const core::Pose pose(core::Point(0.0f, 0.0f, 0.0f), core::Quaternion(0.0f, 0.0f, 0.0f, 1.0f));
+    core::HandPoseT data;
+    data.joints = std::make_shared<core::HandJoints>();
+    data.joints->mutable_poses()->Mutate(core::HandJoint_WRIST, core::HandJointPose(pose, true, wrist_radius));
+    ch.write(channel_index, core::pack_record<core::HandPoseRecord>(&data, stamp()));
+}
+
+void write_controller(ControllerChannels& ch, size_t channel_index, float trigger_value)
+{
+    const core::ControllerInputState inputs(false, false, false, false, 0.0f, 0.0f, 0.0f, trigger_value);
+    core::ControllerSnapshotT data;
+    data.inputs = std::make_shared<core::ControllerInputState>(inputs);
+    ch.write(channel_index, core::pack_record<core::ControllerSnapshotRecord>(&data, stamp()));
+}
+
+void write_full_body(FullBodyChannels& ch)
+{
+    core::FullBodyPoseT data;
+    data.all_joint_poses_tracked = true;
+    ch.write(0, core::pack_record<core::FullBodyPoseRecord>(&data, stamp()));
+}
+
 //! The tracked channel only, which is all replay and remote read of a pusher-fed tracker.
 void write_joint_se3_pose(JointSe3PoseChannels& ch, float x)
 {
@@ -123,6 +153,82 @@ TEST_CASE("RemoteSession: head and hands round-trip through the stream", "[remot
     CHECK(pose->pose()->position().x() == 1.5f);
     CHECK(hands.get_left_hand(*session));
     CHECK_FALSE(hands.get_right_hand(*session));
+}
+
+TEST_CASE("RemoteSession: every tracker kind reports no data until its channels are declared", "[remote][session]")
+{
+    Server server;
+    core::HeadTracker head;
+    core::HandTracker hands;
+    core::ControllerTracker controllers;
+    core::FullBodyTracker body;
+    core::JointSe3PoseTracker tips("manus_sensors_left");
+    auto stream = std::make_shared<core::TrackerSampleStreamReader>();
+    core::RemoteSessionConfig config;
+    config.stream = stream;
+    config.tracker_names = { { &head, "0" }, { &hands, "1" }, { &controllers, "2" }, { &body, "3" }, { &tips, "4" } };
+    auto session = core::RemoteSession::run(config);
+
+    const auto check_no_data = [&]
+    {
+        CHECK_FALSE(session->is_fresh());
+        CHECK_FALSE(session->tick_age_ns().has_value());
+        CHECK_FALSE(head.get_head(*session));
+        CHECK_FALSE(hands.get_left_hand(*session));
+        CHECK_FALSE(hands.get_right_hand(*session));
+        CHECK_FALSE(controllers.get_left_controller(*session));
+        CHECK_FALSE(controllers.get_right_controller(*session));
+        CHECK_FALSE(body.get_body_pose(*session));
+        CHECK_FALSE(tips.get_data(*session));
+    };
+
+    // The stream holds no Schema, Channel or Message record, as before the server's session exists.
+    for (int update = 0; update < 3; ++update)
+    {
+        CAPTURE(update);
+        REQUIRE_NOTHROW(session->update());
+        check_no_data();
+    }
+
+    HeadChannels head_ch(server.writer, "0", to_string_vec(core::HeadRecordingTraits::recording_channels));
+    HandChannels hand_ch(server.writer, "1", to_string_vec(core::HandRecordingTraits::recording_channels));
+    ControllerChannels controller_ch(
+        server.writer, "2", to_string_vec(core::ControllerRecordingTraits::recording_channels));
+    FullBodyChannels body_ch(server.writer, "3", to_string_vec(core::FullBodyRecordingTraits::recording_channels));
+    JointSe3PoseChannels tips_ch(
+        server.writer, "4", to_string_vec(core::JointSe3PoseRecordingTraits::recording_channels));
+
+    // Declared channels with no record yet.
+    stream->add_setup(server.out.take_setup());
+    REQUIRE_NOTHROW(session->update());
+    check_no_data();
+
+    write_head(head_ch, 1.5f);
+    write_hand(hand_ch, 0, 0.25f);
+    write_hand(hand_ch, 1, 0.75f);
+    write_controller(controller_ch, 0, 0.25f);
+    write_controller(controller_ch, 1, 0.75f);
+    write_full_body(body_ch);
+    write_joint_se3_pose(tips_ch, 3.0f);
+    server.send(*stream);
+
+    REQUIRE_NOTHROW(session->update());
+    CHECK(session->is_fresh());
+    CHECK(session->tick_age_ns().has_value());
+    REQUIRE(head.get_head(*session));
+    CHECK(head.get_head(*session)->pose()->position().x() == 1.5f);
+    REQUIRE(hands.get_left_hand(*session));
+    CHECK(hands.get_left_hand(*session)->joints()->poses()->Get(core::HandJoint_WRIST)->radius() == 0.25f);
+    REQUIRE(hands.get_right_hand(*session));
+    CHECK(hands.get_right_hand(*session)->joints()->poses()->Get(core::HandJoint_WRIST)->radius() == 0.75f);
+    REQUIRE(controllers.get_left_controller(*session));
+    CHECK(controllers.get_left_controller(*session)->inputs()->trigger_value() == 0.25f);
+    REQUIRE(controllers.get_right_controller(*session));
+    CHECK(controllers.get_right_controller(*session)->inputs()->trigger_value() == 0.75f);
+    REQUIRE(body.get_body_pose(*session));
+    CHECK(body.get_body_pose(*session)->all_joint_poses_tracked());
+    REQUIRE(tips.get_data(*session));
+    CHECK(tips.get_data(*session)->joints()->Get(0)->pose().position().x() == 3.0f);
 }
 
 TEST_CASE("RemoteSession: every update sees the newest samples", "[remote][session]")
