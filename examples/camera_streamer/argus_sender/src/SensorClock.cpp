@@ -268,11 +268,6 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
         result.reason = "the sensor counter and CLOCK_MONOTONIC disagree between anchors: a clock step";
         return result;
     }
-    if (m_haveRealtimeHold && nowMonotonicNs < m_realtimeHoldUntilNs)
-    {
-        result.reason = "a wall-clock step was detected: capture timing is held off until the hold ends";
-        return result;
-    }
     if (m_counterWentBackwards)
     {
         result.reason = "the sensor counter went backwards between anchors: event order is lost until reset";
@@ -326,9 +321,13 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
     }
     result.valid = true;
     result.captureMonotonicNs = capture;
+    // During the hold after a wall-clock step only the realtime reading is withheld; the sensor-to-monotonic mapping
+    // is unaffected by the step and stays valid.
+    const bool realtimeHeld = m_haveRealtimeHold && nowMonotonicNs < m_realtimeHoldUntilNs;
     int64_t realtimeOffset = 0;
     int64_t captureRealtime = 0;
-    if (m_anchor.hasRealtime && !__builtin_sub_overflow(m_anchor.realtimeNs, m_anchor.monotonicNs, &realtimeOffset) &&
+    if (!realtimeHeld && m_anchor.hasRealtime &&
+        !__builtin_sub_overflow(m_anchor.realtimeNs, m_anchor.monotonicNs, &realtimeOffset) &&
         !__builtin_add_overflow(capture, realtimeOffset, &captureRealtime))
     {
         result.hasRealtime = true;

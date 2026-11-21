@@ -102,10 +102,10 @@ public:
         // A frame whose uncertainty would exceed this is not qualified, rather than reported with a bound too wide to
         // mean anything.
         int64_t maxUncertaintyNs = 20000000;
-        // After a step of the wall clock (CLOCK_REALTIME) no frame is mapped for this long. A consumer holds chrony
-        // evidence for this host that the step outdates, and it cannot tell when that evidence is fresh again, so the
-        // sender stays silent instead. Longer than a recording take tolerates silence (5 s), so a take cannot continue
-        // across the step.
+        // After a step of the wall clock (CLOCK_REALTIME) no realtime capture time is given for this long. A consumer
+        // holds chrony evidence for this host that the step outdates, and it cannot tell when that evidence is fresh
+        // again, so the sender withholds the realtime time instead; the monotonic mapping continues. Longer than a
+        // recording take tolerates silence (5 s), so a take cannot continue across the step.
         int64_t realtimeStepHoldNs = 8000000000;
     };
 
