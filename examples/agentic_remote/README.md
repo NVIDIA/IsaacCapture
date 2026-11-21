@@ -6089,6 +6089,45 @@ in the example's folder with the shipped files.
   an hour or more takes all of it, and keeps it. No program removes a run folder.
   Delete the ones you no longer need, while no agent program and no viewer reads them.
 
+### 11. The clocks of the two machines, once per machine
+
+The programs read each machine's system clock. **chrony** is the system service that keeps
+that clock right: it starts at boot and runs in the background. It is set up once per
+machine, not once per session, and no program of this example starts or calls it. The
+workstation serves its time to the Thor, and the Thor follows the workstation, as the
+camera streamer's own deployment files arrange it
+(`<camera streamer folder>/argus_sender/deploy/camera-chrony-host.conf.in` and
+`camera-chrony-agx.conf.in`).
+
+Do this while nothing records and the arm is at rest: the Thor's clock may jump once.
+The commands were not run on the rig as they stand here.
+
+On the workstation, with one `allow` line for each Thor that follows it:
+
+```bash
+printf 'allow <Thor address>\nlocal stratum 10\n' | sudo tee /etc/chrony/conf.d/robot-time-server.conf
+sudo systemctl restart chrony
+```
+
+On the Thor:
+
+```bash
+sudo apt install -y chrony
+printf 'server <workstation address> iburst minpoll 2 maxpoll 4 prefer\nmakestep 1.0 3\n' | sudo tee /etc/chrony/conf.d/robot-time-client.conf
+sudo systemctl restart chrony
+sleep 10; chronyc sources -v; chronyc tracking
+```
+
+- **Good**: in `chronyc sources -v` the line of `<workstation address>` begins with `^*`,
+  and `chronyc tracking` shows a `System time` well below a millisecond.
+- **Blocked**: that line begins with `^?`. The time requests (UDP port 123) do not get
+  through between the two machines, or a firewall on the workstation stops them
+  (`sudo ufw status` shows whether one is on).
+- A Thor that is moved to another workstation gets that workstation's address in its
+  `server` line, and that workstation gets the `allow` line.
+- `timedatectl` on either machine shows `System clock synchronized: yes` once chrony has
+  a source.
+
 ### Troubleshooting: what a program printed, and what to do
 
 Each line below was met in the first session on the rig, is what the code prints for a
