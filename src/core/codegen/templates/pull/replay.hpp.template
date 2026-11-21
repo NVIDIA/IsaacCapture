@@ -23,7 +23,11 @@ public:
 #if @HAS_METADATA@
     //! The metadata the recording holds for `base_name`, or an empty handle when it holds none.
     static Serialized<@METADATA@> read_metadata(TrackerSampleSource source, std::string_view base_name);
-    @REPLAY_IMPL@(TrackerSampleSource source, std::string_view base_name, Serialized<@METADATA@> metadata);
+    //! `warn_without_metadata`: whether an empty `metadata` is logged as missing from the recording.
+    @REPLAY_IMPL@(TrackerSampleSource source,
+                  std::string_view base_name,
+                  Serialized<@METADATA@> metadata,
+                  bool warn_without_metadata = true);
 #else
     @REPLAY_IMPL@(TrackerSampleSource source, std::string_view base_name);
 #endif

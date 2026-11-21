@@ -3,7 +3,8 @@ std::unique_ptr<@IFACE@> ReplayDeviceIOFactory::create_@NAME@_tracker_impl(const
 #if @HAS_METADATA@
     // Each McapTrackerViewers iterates a reader of its own, so the metadata is read through a second one.
     auto metadata = @REPLAY_IMPL@::read_metadata(open_source(), get_name(tracker));
-    return std::make_unique<@REPLAY_IMPL@>(open_source(), get_name(tracker), std::move(metadata));
+    return std::make_unique<@REPLAY_IMPL@>(
+        open_source(), get_name(tracker), std::move(metadata), !hold_metadata_trackers_);
 #else
     return std::make_unique<@REPLAY_IMPL@>(open_source(), get_name(tracker));
 #endif

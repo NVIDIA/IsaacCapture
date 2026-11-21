@@ -159,10 +159,15 @@ ReplayDeviceIOFactory::ReplayDeviceIOFactory(std::string filename,
 }
 
 ReplayDeviceIOFactory::ReplayDeviceIOFactory(TrackerSampleStreamReader& stream,
-                                             const std::vector<std::pair<const ITracker*, std::string>>& tracker_names)
-    : stream_(&stream)
+                                             const std::vector<std::pair<const ITracker*, std::string>>& tracker_names,
+                                             bool hold_metadata_trackers)
+    : stream_(&stream), hold_metadata_trackers_(hold_metadata_trackers)
 {
     map_names(tracker_names);
+    if (hold_metadata_trackers_)
+    {
+        return;
+    }
     // Before any impl subscribes to topics on the stream.
     for (const auto& entry : tracker_names)
     {

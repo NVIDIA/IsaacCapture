@@ -66,9 +66,11 @@ public:
 
     //! `stream` must outlive every impl this factory creates, each of which subscribes to its topics on it.
     //! Throws std::invalid_argument for a tracker with metadata (e.g. TactileTracker), whose impl reads it before
-    //! any sample arrives.
+    //! any sample arrives. With `hold_metadata_trackers`, for a stream that nothing feeds, such a tracker gets an
+    //! impl that has no metadata and publishes no data.
     ReplayDeviceIOFactory(TrackerSampleStreamReader& stream,
-                          const std::vector<std::pair<const ITracker*, std::string>>& tracker_names);
+                          const std::vector<std::pair<const ITracker*, std::string>>& tracker_names,
+                          bool hold_metadata_trackers = false);
 
     /** Create tracker impl from a tracker instance using dynamic dispatch. */
     std::unique_ptr<ITrackerImpl> create_tracker_impl(const ITracker& tracker);
@@ -94,6 +96,7 @@ private:
     std::string filename_;
     RecordedSchemas recorded_schemas_;
     TrackerSampleStreamReader* stream_ = nullptr;
+    bool hold_metadata_trackers_ = false;
     std::unordered_map<const ITracker*, std::string> name_map_;
 };
 

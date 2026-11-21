@@ -33,7 +33,8 @@ Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(TrackerSampleSource source, 
 }
 @REPLAY_IMPL@::@REPLAY_IMPL@(TrackerSampleSource source,
                              std::string_view base_name,
-                             Serialized<@METADATA@> metadata)
+                             Serialized<@METADATA@> metadata,
+                             bool warn_without_metadata)
 #else
 @REPLAY_IMPL@::@REPLAY_IMPL@(TrackerSampleSource source, std::string_view base_name)
 #endif
@@ -48,7 +49,7 @@ Serialized<@METADATA@> @REPLAY_IMPL@::read_metadata(TrackerSampleSource source, 
 #endif
 {
 #if @HAS_METADATA@
-    if (!metadata_)
+    if (!metadata_ && warn_without_metadata)
     {
         logger_->warn("recording has no {} for base_name={}; its data is not published",
                       @METADATA@::GetFullyQualifiedName(), base_name);
