@@ -93,3 +93,45 @@ class AvailableNotBeforeSample(Check):
             f"{self.worst_ns / 1e6:.1f} ms before the sample was taken",
             measurements,
         )
+
+
+class DeviceClockDistinct(Check):
+    name = "timestamps.device_clock_distinct"
+    severity = Severity.ADVISORY
+    summary = "The raw device clock is not a copy of the local common clock"
+
+    # Largest fraction of records whose device and common-clock times may be identical.
+    MAX_IDENTICAL_RATE = 0.5
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.samples = 0
+        self.identical = 0
+
+    def _update(self, frame: Frame) -> None:
+        if frame.device_time_ns is None or frame.sample_time_ns is None:
+            return
+        self.samples += 1
+        if frame.device_time_ns == frame.sample_time_ns:
+            self.identical += 1
+
+    def _result(self) -> Outcome:
+        if self.samples == 0:
+            return Outcome(Status.INSUFFICIENT_DATA, "no timestamps present")
+        rate = self.identical / self.samples
+        measurements = {
+            "samples": self.samples,
+            "identical": self.identical,
+            "rate": rate,
+        }
+        if rate <= self.MAX_IDENTICAL_RATE:
+            return Outcome(
+                Status.PASS, f"{rate:.1%} of records share a value", measurements
+            )
+        return Outcome(
+            Status.FAIL,
+            f"sample_time_raw_device_clock equals sample_time_local_common_clock on "
+            f"{rate:.0%} of records, so there is no independent device clock for "
+            f"cross-device sync",
+            measurements,
+        )

@@ -100,7 +100,7 @@ Usage
 
 Start the plugin with the session through ``TeleopSessionConfig.plugins``, from the copy bundled
 with ``isaaccapture`` (wheel installs included), and read it with ``GamepadSource``, as
-:code-file:`examples/teleop/python/gamepad_printer_example.py` does:
+:code-file:`examples/teleop/python/isaaccapture_examples/teleop/gamepad_printer_example.py` does:
 
 .. code-block:: python
 

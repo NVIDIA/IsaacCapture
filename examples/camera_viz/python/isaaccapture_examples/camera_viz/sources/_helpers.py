@@ -375,14 +375,21 @@ class PolledSource(FrameSource):
 class PairedFrameSource(FrameSource):
     """Pair two per-eye FrameSources into one stereo source.
 
-    Caches each child's latest Frame and emits a pair whenever either
-    side updates. The "wait for both, drop on miss" alternative loses
-    frames at the producer-publishes-L-then-R / consumer-polls-between
-    race, halving effective fps. Inter-eye drift is bounded to one
-    producer frame — well under perceptual threshold.
+    Caches each child's latest Frame. By default it emits a pair whenever
+    either side updates, preserving the historical behavior for SDKs that
+    publish eyes in lockstep. ``emit_mode="both"`` waits until both eyes
+    have refreshed since the last emit, which reduces redundant stereo
+    submits for independent Argus sessions. Inter-eye drift is bounded to
+    one producer frame.
     """
 
-    def __init__(self, name: str, left: FrameSource, right: FrameSource) -> None:
+    def __init__(
+        self,
+        name: str,
+        left: FrameSource,
+        right: FrameSource,
+        emit_mode: str = "either",
+    ) -> None:
         if left.spec.width != right.spec.width or left.spec.height != right.spec.height:
             raise ValueError(
                 f"PairedFrameSource: left/right resolution mismatch "
@@ -400,10 +407,15 @@ class PairedFrameSource(FrameSource):
             height=left.spec.height,
             pixel_format=left.spec.pixel_format,
         )
+        if emit_mode not in ("either", "both"):
+            raise ValueError("PairedFrameSource emit_mode must be 'either' or 'both'")
         self._left = left
         self._right = right
+        self._emit_mode = emit_mode
         self._cached_left: Optional[Frame] = None
         self._cached_right: Optional[Frame] = None
+        self._left_dirty = False
+        self._right_dirty = False
 
     @property
     def spec(self) -> SourceSpec:
@@ -420,7 +432,13 @@ class PairedFrameSource(FrameSource):
 
     def start(self) -> None:
         self._left.start()
-        self._right.start()
+        try:
+            self._right.start()
+        except Exception:
+            try:
+                self._left.stop()
+            finally:
+                raise
 
     def stop(self) -> None:
         self._left.stop()
@@ -431,16 +449,23 @@ class PairedFrameSource(FrameSource):
         fl = self._left.latest()
         if fl is not None:
             self._cached_left = fl
+            self._left_dirty = True
             updated = True
         fr = self._right.latest()
         if fr is not None:
             self._cached_right = fr
+            self._right_dirty = True
             updated = True
         if not updated:
             return None
         # Both eyes must have produced at least once before we emit.
         if self._cached_left is None or self._cached_right is None:
             return None
+        if self._emit_mode == "both":
+            if not (self._left_dirty and self._right_dirty):
+                return None
+            self._left_dirty = False
+            self._right_dirty = False
         return Frame(
             image=self._cached_left.image,
             image_right=self._cached_right.image,

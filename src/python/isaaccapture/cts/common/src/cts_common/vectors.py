@@ -38,6 +38,10 @@ def normalised(a: Vector) -> Vector | None:
     return (a[0] / length, a[1] / length, a[2] / length)
 
 
+def is_finite(a: tuple[float, ...]) -> bool:
+    return all(math.isfinite(component) for component in a)
+
+
 def rotate(q: Quaternion, v: Vector) -> Vector:
     """Rotates world-frame vector ``v`` by orientation ``q``."""
     x, y, z, w = q
@@ -85,3 +89,12 @@ def multiply(a: Quaternion, b: Quaternion) -> Quaternion:
 def relative(parent: Quaternion, child: Quaternion) -> Quaternion:
     """The child's rotation expressed in the parent's frame."""
     return multiply(conjugate(parent), child)
+
+
+def signed_angle_about(q: Quaternion, axis: Vector) -> float:
+    """Radians of ``q`` about ``axis``, signed by the right-hand rule."""
+    unit = normalised(axis)
+    if unit is None:
+        return 0.0
+    along = dot((q[0], q[1], q[2]), unit)
+    return 2.0 * math.atan2(along, q[3])

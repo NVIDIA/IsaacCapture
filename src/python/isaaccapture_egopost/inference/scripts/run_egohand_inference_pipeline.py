@@ -43,13 +43,13 @@ an explicit warning when ``--intrinsics_json`` is omitted.
 """
 
 # ruff: noqa: E402
-import argparse
 import functools
 import json
 import os
 import sys
 from pathlib import Path
 import time
+from typing import NoReturn
 
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
@@ -86,53 +86,22 @@ from inference.hand_detector_2d.hand_bbox_detector import SquarePixelFrameBBoxDe
 from inference.perf import LocalPerfWriter, PerfStage
 from inference.pipeline.results_io import save_hand_results, save_hand_results_clip
 from inference.visualization.overlay import render_clip
+from inference.cli import parse_args as parse_pipeline_args
+from inference.video_io import (
+    FPS_FALLBACK,
+    UnsupportedVideoCodecError,
+    VideoDecodeError,
+    VideoDecoderUnavailableError,
+    find_videos,
+    get_video_meta,
+    read_video_frames_batched,
+)
 
-FPS_FALLBACK = 30.0
 MESH_COLOR = (1.0, 1.0, 0.9)
 
 
-def get_video_meta(video_path: str) -> dict:
-    """Return fps, width, height, num_frames without decoding any frames."""
-    cap = cv2.VideoCapture(video_path)
-    meta = {
-        "fps": cap.get(cv2.CAP_PROP_FPS) or FPS_FALLBACK,
-        "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        "num_frames": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-    }
-    cap.release()
-    return meta
-
-
-def read_video_frames_batched(
-    video_path: str,
-    batch_size: int,
-    max_frames: int | None = None,
-):
-    """Generator that yields lists of (frame_idx, BGR_frame), batch_size at a time.
-
-    Each yielded list has exactly batch_size entries, except possibly the last
-    which may be smaller. Stops early when max_frames is reached.
-    """
-    cap = cv2.VideoCapture(video_path)
-    idx = 0
-    batch = []
-    try:
-        while True:
-            if max_frames is not None and idx >= max_frames:
-                break
-            ret, frame = cap.read()
-            if not ret:
-                break
-            batch.append((idx, frame))
-            idx += 1
-            if len(batch) == batch_size:
-                yield batch
-                batch = []
-        if batch:
-            yield batch
-    finally:
-        cap.release()
+class DetectorConfigError(ValueError):
+    """A bbox detector config that cannot be loaded or names no known backend."""
 
 
 def _load_detector_config(path: str) -> dict:
@@ -140,10 +109,21 @@ def _load_detector_config(path: str) -> dict:
     import os
     import yaml
 
-    with open(path) as f:
-        raw = f.read()
-    expanded = os.path.expandvars(raw)
-    return yaml.safe_load(expanded)
+    try:
+        with open(path) as f:
+            raw = f.read()
+        cfg = yaml.safe_load(os.path.expandvars(raw))
+    except OSError as exc:
+        raise DetectorConfigError(
+            f"Cannot read --bbox_detector_config {path}: {exc.strerror or exc}"
+        ) from None
+    except yaml.YAMLError as exc:
+        raise DetectorConfigError(f"Invalid YAML in {path}: {exc}") from None
+    if not isinstance(cfg, dict) or "detector_backend" not in cfg:
+        raise DetectorConfigError(
+            f"{path} must be a mapping with a detector_backend key"
+        )
+    return cfg
 
 
 def _build_detector_from_config(cfg: dict, device: str, batch_size: int) -> tuple:
@@ -165,213 +145,112 @@ def _build_detector_from_config(cfg: dict, device: str, batch_size: int) -> tupl
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name == module_name:
-            raise ValueError(f"Unknown detector_backend: {backend!r}") from exc
+            raise DetectorConfigError(
+                f"Unknown detector_backend {backend!r} in the detector config; see "
+                "inference/hand_detector_2d/configs/ for the available backends"
+            ) from None
         raise
-    return module.build(cfg, device, batch_size, tracking), backend
+    try:
+        return module.build(cfg, device, batch_size, tracking), backend
+    except ValueError as exc:
+        # Backends raise ValueError for invalid settings; missing files and
+        # import failures use other exception types and propagate unchanged.
+        raise DetectorConfigError(f"Invalid {backend} detector config: {exc}") from exc
 
 
 def parse_args():
-    p = argparse.ArgumentParser(
-        description="E2E EgoHand hand inference with 2D hand bbox detection on video files",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
-    )
-    p.add_argument("--input", required=True, help="MP4 file or folder of MP4 files")
-    p.add_argument(
-        "--egohand_ckpt",
-        default=None,
-        help="EgoHand checkpoint (.ckpt). Default: downloaded from "
-        "the nvidia/EgoHand-v1 HF repo (see --egohand_ckpt_hf_path) and cached locally -- "
-        "pass an explicit path to use a local checkpoint instead.",
-    )
-    p.add_argument(
-        "--egohand_ckpt_hf_path",
-        default="egohand_s060000.ckpt",
-        help="Filename within the nvidia/EgoHand-v1 HF repo to fetch for --egohand_ckpt's "
-        "default. Only consulted when --egohand_ckpt is not given.",
-    )
-    p.add_argument(
-        "--bbox_detector_config",
-        default=None,
-        metavar="YAML",
-        help="Path to a bbox detector config YAML (inference/hand_detector_2d/configs/). "
-        "Supports ${ENV_VAR} substitution for per-video paths. "
-        "Replaces the former --detector/--sam3_ckpt/--vitpose_ckpt/etc. flags.",
-    )
-    p.add_argument(
-        "--output_dir",
-        required=True,
-        help="Output root; per-video results go into <output_dir>/<video_stem>/",
-    )
-    p.add_argument(
-        "--soma_hand_assets",
-        default=None,
-        help="Directory containing SOMAHand.npz, SOMA_neutral.npz, SOMA_template_rig.usda, "
-        "SOMA_procedural_transforms.json, and MHR/{mhr_model_lod1.pt, base_body_lod1.obj, "
-        "SOMA_wrap_lod1.obj} (the default checkpoint uses the MHR identity model). "
-        "Default: resolved via soma.get_assets_dir(), which downloads the public asset "
-        "snapshot from https://huggingface.co/nvidia/SOMA-X on first use and caches it "
-        "locally (see the py-soma-x package). Pass this to use a local copy instead.",
-    )
-    p.add_argument(
-        "--intrinsics_json",
-        default=None,
-        help="Shared camera JSON (model, image_width, image_height, "
-        "camera_matrix.matrix_3x3, distortion_coefficients); see README. "
-        "Use the decoded video's resolution/orientation. Default: None "
-        "(estimate focal length from image dimensions).",
-    )
-    p.add_argument(
-        "--perspective_cropping",
-        action="store_true",
-        default=False,
-        help="Use the calibrated source model for virtual pinhole hand crops. "
-        "Requires --intrinsics_json. Default: off (undistort full frames, then crop hands).",
-    )
-    p.add_argument(
-        "--batch_size",
-        type=int,
-        default=32,
-        help="Batch size for EgoHand (default: 32). RT-DETR takes its own "
-        "via the batch_size: key in the rtdetr_config YAML mapping.",
-    )
-    p.add_argument(
-        "--dino_compile",
-        action="store_true",
-        help="Compile each DINO block for eval/no-grad full batches of "
-        "--batch_size. Training, grad-enabled calls, and partial batches use "
-        "the eager path. Use for throughput-sensitive batch inference where "
-        "most batches are full-size (e.g. long videos); skip it for small "
-        "one-off runs, since torch.compile warm-up cost may exceed the "
-        "savings. Off by default, so it has no effect unless passed.",
-    )
-    p.add_argument(
-        "--postprocessing_smooth",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Adaptively smooth SOMA hand rotations, translation and shape using "
-        "video timestamps, then rebuild geometry and re-project 2D keypoints. "
-        "Filtering spans the complete clip, including across --frame_batch_size "
-        "boundaries. See inference/postprocessing/adaptive_smoothing.py. "
-        "Distinct from bbox tracking "
-        "(the tracking: key in --bbox_detector_config), which post-processes the 2D "
-        "bboxes going into the model rather than the predictions coming out. "
-        "Default: on. Pass --no-postprocessing_smooth to disable.",
-    )
-    p.add_argument(
-        "--postprocessing_qc",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Run 3D quality control once per complete video and write quality_control.json. "
-        "Predictions and overlays are preserved even when QC reports drop=true. "
-        "Requires --hand both and camera intrinsics. Default: off.",
-    )
-    p.add_argument(
-        "--qc_max_bad_frac",
-        type=float,
-        default=0.02,
-        help="Allowed fraction of flagged frame-hands for QC, in [0, 1]. "
-        "Default: 0.02 (up to 2%% flagged frame-hands). Coverage checks always apply.",
-    )
-    p.add_argument("--hand", choices=["left", "right", "both"], default="both")
-    p.add_argument("--device", default="cuda")
-    p.add_argument(
-        "--dtype",
-        choices=["float32", "float16", "bfloat16"],
-        default="float32",
-        help="Inference dtype (default: float32)",
-    )
-    p.add_argument(
-        "--rectify_pixel_aspect_ratio",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="For calibrations with fx != fy, correct non-square camera pixels by "
-        "resizing each frame and adjusting its intrinsics before detection and "
-        "inference. Overlays, bbox JSONs and the 3D outputs are all expressed in "
-        "the original frame. For PINHOLE input, per-frame NPZs from --save_npzs "
-        "retain their corrected-frame 2D fields. "
-        "No effect with --perspective_cropping "
-        "or when fx == fy. Default: on. Pass --no-rectify_pixel_aspect_ratio "
-        "to disable.",
-    )
-    p.add_argument("--no_save_videos", action="store_true", help="Skip .mp4 outputs")
-    p.add_argument(
-        "--no_mesh",
-        action="store_true",
-        help="Skip mesh rendering in overlays (skeleton only if --draw_skeleton). "
-        "Enabled automatically for non-PINHOLE input as rendering hand mesh "
-        "in distorted fisheye camera space is unsupported.",
-    )
-    p.add_argument(
-        "--save_crop_overlays",
-        action="store_true",
-        help="Save crop_overlay_<hand>.mp4 (and crop_overlay_<hand>/ images). "
-        "Off by default -- bbox_viz.mp4 and fullimg_overlay.mp4 are unaffected "
-        "either way. Crop overlays are mainly a debugging aid for bbox/crop "
-        "alignment: the crop window is centered on each frame's raw detected "
-        "bbox, which --postprocessing_smooth never touches, so the crop can "
-        "look jittery even though the mesh/pose inside it is smoothed like "
-        "everywhere else. Disabled with --perspective_cropping or non-PINHOLE input.",
-    )
-    p.add_argument(
-        "--save_images",
-        action="store_true",
-        help="Save per-frame .jpg outputs (default: off)",
-    )
-    p.add_argument(
-        "--save_npzs",
-        action="store_true",
-        help="Save per-frame full SOMA .npz outputs (default: off).",
-    )
-    p.add_argument(
-        "--per_frame_results",
-        action="store_true",
-        help="Write one result .npz per frame under <video>/<hand>/results/ (legacy layout). "
-        "Default is a single <video>/<hand>_results.npz per hand for the whole clip.",
-    )
-    p.add_argument(
-        "--perf_output",
-        default=None,
-        help="Write perf metrics as JSON to this path "
-        "(default: <output_dir>/<video_stem>/perf.json for each video)",
-    )
-    p.add_argument(
-        "--max_seconds",
-        type=float,
-        default=None,
-        help="Limit inference to the first N seconds of each video (default: full video).",
-    )
-    p.add_argument(
-        "--draw_skeleton",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Draw the 2D joint skeleton overlay (default: on). "
-        "Pass --no-draw-skeleton to disable.",
-    )
-    p.add_argument(
-        "--frame_batch_size",
-        type=int,
-        default=None,
-        help="Stream video in batches of this many frames to cap peak RAM. "
-        "Disables video/image saving. Recommended for long videos (default: disabled).",
-    )
-    args = p.parse_args()
-    if args.frame_batch_size is not None and args.frame_batch_size < 1:
-        p.error("--frame_batch_size must be positive")
-    if not 0 <= args.qc_max_bad_frac <= 1:
-        p.error("--qc_max_bad_frac must be between 0 and 1")
-    if args.postprocessing_qc:
-        if args.hand != "both":
-            p.error("--postprocessing_qc requires --hand both")
-        if not args.intrinsics_json:
-            p.error("--postprocessing_qc requires --intrinsics_json")
-    return args
+    """Parse and validate command-line arguments."""
+    return parse_pipeline_args(epilog=__doc__)
 
 
-def find_videos(input_path: Path) -> list[Path]:
-    if input_path.is_file():
-        return [input_path]
-    return sorted(input_path.glob("*.mp4"))
+EXIT_RUNTIME_ERROR = 1
+EXIT_INVALID_INPUT = 2
+
+
+def reject_input(message: str) -> NoReturn:
+    """Print one line to stderr and exit with the invalid-input code.
+
+    Argument errors from argparse also exit 2, so every rejection made before
+    inference starts shares one code.
+    """
+    print(message, file=sys.stderr)
+    raise SystemExit(EXIT_INVALID_INPUT)
+
+
+def fail_runtime(message: str) -> NoReturn:
+    """Print one line to stderr and exit with the runtime-failure code."""
+    print(message, file=sys.stderr)
+    raise SystemExit(EXIT_RUNTIME_ERROR)
+
+
+def check_gpu_visible(device: str) -> None:
+    """Fail with a runtime error when a CUDA device is requested but unavailable."""
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        fail_runtime(
+            f"No CUDA GPU available for --device {device}. "
+            "In Docker, run the container with --gpus all."
+        )
+
+
+def check_video_decodable(video_path, video_metadata: dict) -> None:
+    """Fail unless the video reports a size and yields a readable first frame.
+
+    A 0x0 size means an empty, truncated or unsupported file; a stream that
+    reports a size can still fail to decode. The first frame is read through
+    the active video backend, which also rejects an unsupported codec here
+    rather than after the model loads.
+    """
+    decodable = video_metadata["width"] > 0 and video_metadata["height"] > 0
+    if decodable:
+        frames = read_video_frames_batched(str(video_path), 1, 1)
+        try:
+            decodable = next(frames, None) is not None
+        finally:
+            frames.close()
+    if not decodable:
+        fail_runtime(
+            f"Cannot read video {video_path}: no decodable video stream "
+            "(empty, truncated, or unsupported file)"
+        )
+
+
+def probe_video(video_path) -> dict:
+    """Return the video's metadata, or exit with one line if it cannot be decoded."""
+    try:
+        metadata = get_video_meta(str(video_path))
+        check_video_decodable(video_path, metadata)
+    except UnsupportedVideoCodecError as exc:
+        reject_input(f"{video_path}: {exc}")
+    except (VideoDecodeError, VideoDecoderUnavailableError) as exc:
+        fail_runtime(f"Cannot read video {video_path}: {str(exc).splitlines()[0]}")
+    return metadata
+
+
+def check_frame_batching(bbox_detector, frame_batch_size) -> None:
+    """Reject --frame_batch_size with a detector that needs the whole clip."""
+    if frame_batch_size is None or not getattr(
+        bbox_detector, "requires_full_clip", False
+    ):
+        return
+    reject_input(
+        "--frame_batch_size cannot be used with bbox_smoothing, which needs "
+        "whole-clip detection before EgoHand cropping. Omit --frame_batch_size, "
+        "or generate boxes with run_hand_detector.py and use saved_bboxes.yaml "
+        "for batched EgoHand inference. Setting bbox_smoothing: false permits "
+        "batching, but live RT-DETR tracking then runs independently within "
+        "each batch."
+    )
+
+
+def prepare_output_dir(output_dir: Path) -> None:
+    """Create output_dir and fail now, not after inference, if it is read-only."""
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        writable = os.access(output_dir, os.W_OK | os.X_OK)
+    except OSError as exc:
+        reject_input(f"Cannot create --output_dir {output_dir}: {exc.strerror or exc}")
+    if not writable:
+        reject_input(f"--output_dir {output_dir} is not writable")
 
 
 def process_video(
@@ -415,14 +294,6 @@ def process_video(
     """
     total_wall_start = time.perf_counter()
     smooth_bboxes = getattr(pipeline.bbox_detector, "requires_full_clip", False)
-    if smooth_bboxes and frame_batch_size is not None:
-        raise ValueError(
-            "bbox_smoothing requires whole-clip detection before EgoHand cropping. "
-            "Omit --frame_batch_size, or generate boxes with run_hand_detector.py "
-            "and use saved_bboxes.yaml for batched EgoHand inference. "
-            "Setting bbox_smoothing: false permits batching, but live RT-DETR "
-            "tracking then runs independently within each batch."
-        )
     print(f"\n[infer_video] === {video_path.name} ===")
 
     meta = get_video_meta(str(video_path))
@@ -725,15 +596,19 @@ def process_video(
 
 
 def main():
+    """Run EgoHand inference over every input video."""
     args = parse_args()
+    check_gpu_visible(args.device)
     hands = ["left", "right"] if args.hand == "both" else [args.hand]
     input_path = Path(args.input)
     output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if not input_path.exists():
+        reject_input(f"Input not found: {input_path}")
+    prepare_output_dir(output_dir)
 
     videos = find_videos(input_path)
     if not videos:
-        raise SystemExit(f"No MP4 files found at {input_path}")
+        reject_input(f"No MP4 files found at {input_path}")
     print(f"[infer_video] {len(videos)} video(s) to process")
 
     dtype_map = {
@@ -753,7 +628,7 @@ def main():
             with Path(args.intrinsics_json).open() as calibration_file:
                 parsed_calibration = json.load(calibration_file)
         for video_path in videos:
-            video_metadata = get_video_meta(str(video_path))
+            video_metadata = probe_video(video_path)
             source_camera, K_source = resolve_K(
                 video_metadata["width"],
                 video_metadata["height"],
@@ -767,22 +642,29 @@ def main():
             )
             video_cameras[video_path] = (source_camera, K_source, video_metadata)
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise SystemExit(f"Invalid camera calibration: {exc}") from None
+        reject_input(f"Invalid camera calibration: {exc}")
 
     if use_perspective_cropping:
         args.save_crop_overlays = False
 
     if not args.bbox_detector_config:
-        raise ValueError(
+        reject_input(
             "--bbox_detector_config is required. See inference/hand_detector_2d/configs/."
         )
 
-    _detector_cfg = _load_detector_config(args.bbox_detector_config)
-    bbox_detector, backend = _build_detector_from_config(
-        _detector_cfg, args.device, args.batch_size
-    )
+    try:
+        _detector_cfg = _load_detector_config(args.bbox_detector_config)
+        bbox_detector, backend = _build_detector_from_config(
+            _detector_cfg, args.device, args.batch_size
+        )
+    except DetectorConfigError as exc:
+        reject_input(str(exc))
+    check_frame_batching(bbox_detector, args.frame_batch_size)
     if hasattr(bbox_detector, "validate_inputs"):
-        bbox_detector.validate_inputs(videos, hands)
+        try:
+            bbox_detector.validate_inputs(videos, hands)
+        except ValueError as exc:
+            reject_input(str(exc))
     if (
         not use_perspective_cropping
         and getattr(bbox_detector, "reports_in_source_frame", False)
@@ -790,7 +672,7 @@ def main():
             not isinstance(camera[0], np.ndarray) for camera in video_cameras.values()
         )
     ):
-        raise ValueError(
+        reject_input(
             "Full-image undistortion requires detection on the undistorted frames. "
             "Use a live bbox detector, or --perspective_cropping with source-frame boxes."
         )

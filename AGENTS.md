@@ -262,9 +262,11 @@ pre-commit install --hook-type commit-msg
   SKIP=check-copyright-year pre-commit run --all-files
   ```
 
-- Finish a rebase before the full hook run. While rebase metadata exists,
+- Finish a merge or rebase before the full hook run. While merge or rebase metadata exists,
   `check-merge-conflict` can mistake an RST heading underline (`=======`) for
-  an unresolved conflict.
+  an unresolved conflict. Before bypassing that false positive for a merge commit,
+  verify there are no unmerged paths or actual conflict markers. Rerun the full
+  hook set after the merge commit and before pushing.
 - **`--all-files` means all *tracked* files.** pre-commit enumerates through
   `git ls-files`, so a file you have created but not yet `git add`ed is skipped
   and the run passes for the wrong reason — REUSE and `ruff format` alike.
@@ -272,6 +274,8 @@ pre-commit install --hook-type commit-msg
 - Format touched Python source with `ruff format` before staging. If the
   pre-commit hook rewrites a file, restage it and rerun the hooks.
 - **REUSE:** files covered by the REUSE hook need **`SPDX-FileCopyrightText`** and **`SPDX-License-Identifier`** in the form the repo already uses (for example the HTML comment block at the top of `README.md` also applies to **`AGENTS.md`** and similar docs).
+- Keep local dependency or toolchain trees outside the repository or ignored:
+  the REUSE `--fix` hook enumerates non-ignored files and can rewrite them.
 - **C++ formatting is enforced by CI, not pre-commit.** The hook set runs `ruff` for Python but does **not** run `clang-format`; CI (`build-ubuntu.yml`) installs **`clang-format-14`** and rejects unformatted C++ as `-Wclang-format-violations`. Before pushing, format touched C++ with the system `clang-format` (match CI's version 14) and verify:
 
   ```bash

@@ -94,6 +94,7 @@ class CapturePanel:
         self._recording = recording
         self._plugins = plugins
         self._spoken = {label: cues.wav(label, text) for label, _, text in STEPS}
+        self._closing = cues.wav("closing", cues.CLOSING)
         self._armed = threading.Event()
         self._valid: dict[str, int | None] = dict.fromkeys(SIDES)
         self._listed: tuple[int, bool] | None = None
@@ -191,7 +192,7 @@ class CapturePanel:
         )
         with TeleopSession(config) as session:
             self._loop(LiveHands(session, hands), take)
-        cues.play(cues.wav("closing", cues.CLOSING))
+        cues.play(self._closing)
         self._label(take)
 
     def _loop(self, live: LiveHands, take: Take) -> None:

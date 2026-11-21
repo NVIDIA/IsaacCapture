@@ -74,9 +74,9 @@ const WARMUP_COMPLETE_LOG_PATTERN =
 // override via the streamAttachTimeoutMs prop, not by lowering this default.
 const STREAM_ATTACH_BASE_TIMEOUT_MS = 120000; // 2 minutes
 
-// Debug log for each keep-alive "idle" frame the server sends while no OpenXR app is submitting
-// frames. Not currently emitted by CloudXR.js: until a release that emits it is consumed, and the
-// session logLevel includes Debug, none of the idle-frame handling below runs.
+// Info log for each keep-alive "idle" frame the server sends while no OpenXR app is submitting
+// frames. Emitted by CloudXR.js 6.4.1-isaaccapture and later; with an older SDK none of the
+// idle-frame handling below runs.
 const IDLE_FRAME_LOG_MESSAGE = 'Received idle frame';
 // Idle frames are sent about every 250 ms; this long with none means real frames have started
 // (or the stream stalled), so the warm-up watchdogs resume.
@@ -115,7 +115,7 @@ export interface WarmupStatus {
 
 /**
  * Server keep-alive ("idle") frame status for the current connection attempt, derived from the
- * SDK's 'Received idle frame' debug log (see IDLE_FRAME_LOG_MESSAGE). Idle frames mean the server
+ * SDK's 'Received idle frame' log (see IDLE_FRAME_LOG_MESSAGE). Idle frames mean the server
  * is alive but no OpenXR app is submitting frames. Reset at the start of each connection attempt.
  */
 export interface IdleStatus {
@@ -207,6 +207,16 @@ interface CloudXRComponentProps {
 
   /** Callback fired with the resolved server address after proxy configuration is applied. */
   onServerAddress?: (address: string) => void;
+
+  /**
+   * Callback fired with the reference space poses are actually streamed in: the one
+   * `config.referenceSpaceType` resolved to (including the 'auto' fallback order and the
+   * WebXRManager last resort), with `config.xrOffset*` already applied. Anything that
+   * needs to express poses in the same frame as the stream should take this rather than
+   * request its own space, which would miss the offset and could resolve differently.
+   * Fired on each session creation; not fired when no space could be resolved.
+   */
+  onReferenceSpace?: (space: XRReferenceSpace) => void;
 
   /**
    * Callback fired with render performance metrics ({@link CloudXR.MetricsCadence.PerRender}).
@@ -303,6 +313,7 @@ export default function CloudXRComponent({
   warmupBeginTimeoutMs,
   warmupEndTimeoutMs,
   onServerAddress,
+  onReferenceSpace,
   onRenderPerformanceMetrics,
   onStreamingPerformanceMetrics,
   onNetworkPerformanceMetrics,
@@ -720,6 +731,11 @@ export default function CloudXRComponent({
             referenceSpace = referenceSpace.getOffsetReferenceSpace(offsetTransform);
           }
 
+          // Resolved only now: this is the space the session streams in, after both
+          // the fallback chain and the offset. Published per CloudXR session rather
+          // than here, so a reconnect does not leave the parent without one.
+          const streamingReferenceSpace = referenceSpace;
+
           // Fill in CloudXR session options.
           const cloudXROptions: CloudXR.SessionOptions = {
             serverAddress: connectionConfig.serverIP,
@@ -749,7 +765,7 @@ export default function CloudXRComponent({
             telemetry: {
               enabled: true,
               appInfo: {
-                version: '6.3.0',
+                version: '6.4.1-isaaccapture',
                 product: applicationName,
               },
             },
@@ -1085,6 +1101,9 @@ export default function CloudXRComponent({
 
             // Notify parent that session is ready
             onSessionReady?.(cxrSession);
+            // Republished on every attempt, reconnects included: the parent drops its
+            // copy whenever onSessionReady(null) fires, so the two have to stay paired.
+            onReferenceSpace?.(streamingReferenceSpace);
 
             // Start session (synchronous call that initiates connection)
             try {

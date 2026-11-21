@@ -58,14 +58,14 @@ python src/plugins/noitom_mocap/tools/noitom_mocap_printer.py --duration=10
 ```
 
 Record through the Noitom example wrapper and replay with the shared MCAP
-script:
+script, in a venv set up as in [Running an example](../../../examples/README.md#running-an-example):
 
 ```bash
 uv pip install -e ./examples/noitom
 python -m isaaccapture_examples.noitom.record_noitom_full_body \
   10 recordings/noitom_full_body.mcap
 
-uv pip install -e ./examples/mcap_record_replay
+uv pip install -e ./examples/mcap_record_replay --no-sources
 python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
   recordings/noitom_full_body.mcap
 ```

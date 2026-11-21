@@ -7,6 +7,8 @@
 # Node.js
 node_modules/
 package-lock.json
+# Keep the tested Synthetic XR client dependency graph reproducible.
+!deps/cloudxr/webxr_client/package-lock.json
 
 # Build directories
 build/
@@ -77,6 +79,9 @@ MUJOCO_LOG.TXT
 # Agent session logs (never committed)
 tmp/
 
+# Local unpacked toolchain/dependency trees are not repository inputs.
+.local-deps/
+
 # SO-101 leader-gripper and follower-arm assets, fetched by
 # scripts/fetch-so-arm.sh into the package's assets directory, so only the
 # authored wrapper XML is tracked.
@@ -90,3 +95,7 @@ tmp/
 !/examples/mujoco_xr/python/isaacteleop_examples/mujoco_xr/assets/follower/follower_arm.xml
 # Wheel SBOM and license evidence written by the collector in scripts/sbom/
 /sbom/
+examples/egocap/recordings/
+
+# Agent-only plans and status notes; never checked in.
+/agentPlans/

@@ -7,21 +7,23 @@ SPDX-License-Identifier: Apache-2.0
 
 Generates the step GIFs and the hand rehearsal track used by the Device Conformance
 pages (`docs/source/conformance/`). The outputs are committed; nothing here runs in CI.
-Re-run it, and commit the outputs with the change, when the hand `capture/session.py`
+Re-run it, and commit the outputs with the change, when a suite's `capture/session.py`
 (`STEPS`, `COUNTDOWN_BEATS`, `BEAT_S`), the hand `capture_panel.py` `TAIL_S`, the hand
-cue WAVs or the oracle's motion changes.
+cue WAVs or an oracle's motion changes.
 
 | Output | Made by |
 |---|---|
 | `docs/source/_static/cts/hand/NN-<label>.gif` (960×600, 10 fps) | `build_pages.py` → `capture.mjs` → `encode.py` |
+| `docs/source/_static/cts/full_body/NN-<label>.gif` (640×640, 12.5 fps) | same |
 | `docs/source/conformance/hand-rehearsal.mp3` | `rehearsal_audio.py` |
 
 Not generated here, so update them by hand:
 
-- `hand-checker-panel.png`: a screenshot (1400×910) of the checker viewer on the
-  oracle's golden take. Retake it when the viewer's sidebar changes.
-- `hand-pacing.svg`, `verdicts.svg`: hand-drawn. Edit them when `STEPS` durations, the
-  pacing or the verdict rules change.
+- `hand-checker-panel.png`, `full-body-checker-panel.png`: screenshots (1400×910) of each
+  checker viewer on its oracle's golden take. Retake one
+  when that viewer's sidebar changes.
+- `hand-pacing.svg`, `full-body-pacing.svg`, `verdicts.svg`: hand-drawn. Edit them when
+  `STEPS` durations, the pacing or the verdict rules change.
 
 ## Prerequisites
 
@@ -43,7 +45,9 @@ From the repository root:
 OUT=$(mktemp -d)
 python3 docs/tools/cts_media/build_pages.py --out "$OUT"
 node docs/tools/cts_media/capture.mjs "$OUT/hand.html" "$OUT/hand" 480 300 2
+node docs/tools/cts_media/capture.mjs "$OUT/full_body.html" "$OUT/full_body" 320 320 2
 python3 docs/tools/cts_media/encode.py "$OUT/hand" docs/source/_static/cts/hand --stats full
+python3 docs/tools/cts_media/encode.py "$OUT/full_body" docs/source/_static/cts/full_body
 python3 docs/tools/cts_media/rehearsal_audio.py docs/source/conformance/hand-rehearsal.mp3
 ```
 
@@ -51,22 +55,25 @@ Stage the results with a plain `git add`: GIFs and MP3s go through Git LFS.
 
 ## What the GIFs show
 
-- The motion is the oracle's synthetic reference take
-  (`src/python/isaaccapture/cts/hand/oracle/`), with sway, tremor and noise switched
-  off in `build_pages.py` only. Steps, order and durations come from the suite's
-  `capture/session.py`; file names follow that order.
+- The motion is each oracle's synthetic reference take
+  (`src/python/isaaccapture/cts/{hand,full_body}/oracle/`), with sway, tremor and noise
+  switched off in `build_pages.py` only. Steps, order and durations come from each
+  suite's `capture/session.py`; file names follow that order.
 - `build_pages.py` also redraws two hand poses to match the cues, without touching the
   oracle: flat on the table with the fingers together and the thumb beside the index,
   and, for palms together, each thumb straight beside its own index, clear of the seam.
-- From the oracle's poses and placements, holds play at real speed: the flats are one
+- Hand, from the oracle's poses and placements, holds at real speed: the flats are one
   still frame; the pinches close from an open hand and the fingertips come together
   from ~13 cm apart, each over 1 s, then hold; fist and palms hold while the camera
   circles the fists once and swings ±70° from your view of the palms. The rolls are the
   oracle's take: 1.2 s still in the pose, then the turn from beep to tick.
+- Full body: the oracle's windows are shorter than the real ones, so each window is
+  resampled to play for the session's duration. Still steps open with a short
+  "getting into the pose" lead-in, which a performer does before pressing.
 - Each GIF holds its last frame for 0.6 s, then loops. The canvas font is pinned to
   Helvetica Neue / Helvetica / Arial.
-- Keep the suite under 3 MB (3,000,000 bytes) and each GIF under 1 MB; `encode.py`
-  prints the sizes.
+- Keep the hand suite under 3 MB (3,000,000 bytes), the full-body suite under 2.5 MB and
+  each GIF under 1 MB; `encode.py` prints the sizes.
 
-`hand.html` is a render-only template: `build_pages.py` fills in the data, `capture.mjs`
-calls its `setup()` and `render(step, frame)`.
+`hand.html` and `full_body.html` are render-only templates: `build_pages.py` fills in the
+data, `capture.mjs` calls their `setup()` and `render(step, frame)`.

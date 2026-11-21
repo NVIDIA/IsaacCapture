@@ -102,10 +102,11 @@ with no arguments. Stale files from a crashed run are cleared on the next startu
 
 ## Recording / replay (Python examples)
 
-Both run with no arguments once the plugin is up:
+Both run with no arguments once the plugin is up, in a venv set up as in
+[Running an example](../../../examples/README.md#running-an-example):
 
 ```bash
-uv pip install -e ./examples/mcap_record_replay
+uv pip install -e ./examples/mcap_record_replay --no-sources
 # records 10 s of every advertised collection to ./recordings/<timestamp>.mcap
 python -m isaaccapture_examples.mcap_record_replay.record_se3_vive
 # replays the newest recording, auto-discovering collections + capture rate,

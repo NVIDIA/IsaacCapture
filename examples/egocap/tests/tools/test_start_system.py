@@ -1,0 +1,1115 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import importlib.util
+import json
+import os
+import shlex
+import signal
+import sys
+import threading
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+import yaml
+
+# tools/ is a plain scripts directory, not a package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import start_system as ss  # noqa: E402
+
+EXAMPLE_STATION = ss.DEFAULT_STATION_CONFIG
+EXAMPLE_CAMERAS = [
+    source["name"]
+    for source in next(iter(yaml.safe_load(EXAMPLE_STATION.read_text())["stations"].values()))["video_sources"]
+]
+TIMESYNC_STUB = (
+    "def lan_address_toward(host):\n    return '192.0.2.2'\n\n\ndef reference_id_for(host):\n    return 'REFID'\n"
+)
+CAMERA_ARGS = [arg for name in EXAMPLE_CAMERAS for arg in ("--capture-camera", f"{name}=dev0")]
+
+
+def _decode(segment: str) -> bytes:
+    return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+
+
+def test_publisher_token_is_a_verifiable_hs256_jwt():
+    token = ss.publisher_token("k", "s3cret", "room-a", "bridge")
+    header, body, signature = token.split(".")
+    expected = hmac.new(b"s3cret", f"{header}.{body}".encode(), hashlib.sha256).digest()
+    assert _decode(signature) == expected
+    claims = json.loads(_decode(body))
+    assert claims["iss"] == "k"
+    assert claims["sub"] == "bridge"
+    assert claims["video"]["room"] == "room-a"
+    assert claims["video"]["canPublish"] is True
+
+
+def test_generated_configs_parse_and_carry_parameters():
+    streams = yaml.safe_load(ss.streams_yaml("ws://h:1", "r", "p", "trk", 640, 480, 30, "b", "head"))
+    stream = streams["livekit"]["streams"][0]
+    assert (stream["track"], stream["width"], stream["height"]) == ("trk", 640, 480)
+
+    receiver = yaml.safe_load(ss.receiver_yaml("h", 5555, "/tmp/s.sock", 640, 480, "head"))
+    assert receiver["receiver"]["port"] == 5555
+    assert (receiver["streams"][0]["width"], receiver["streams"][0]["height"]) == (640, 480)
+
+    assert streams["livekit"]["timestamp_basis"] == "b"
+    assert stream["name"] == "head"
+    assert receiver["streams"][0]["name"] == "head"
+    assert receiver["streams"][0]["ipc"]["mono"] == "head"
+
+
+def test_control_token_found_or_absent(tmp_path: Path):
+    log = tmp_path / "backend.log"
+    log.write_text(f"noise\n{ss.CONTROL_TOKEN_MARKER} abc\n")
+    assert ss.control_token(log) == "abc"
+    log.write_text("noise only\n")
+    assert ss.control_token(log) is None
+
+
+def test_main_requires_deploy_script_with_orin(monkeypatch, capsys, tmp_path: Path):
+    monkeypatch.delenv("EGOCAP_DEPLOY_SCRIPT", raising=False)
+    # signal.signal is stubbed so main()'s SIGTERM handler is never installed in the test process.
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
+    assert ss.main(["--orin", "x@y"]) == 1
+    assert "--deploy-script" in capsys.readouterr().err
+
+
+def test_main_rejects_a_hostname_orin(monkeypatch, capsys, tmp_path: Path):
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
+    argv = [
+        "--orin",
+        "user@some-host-name",
+        "--deploy-script",
+        "x",
+        "--bridge",
+        "b",
+        "--livekit-server",
+        "l",
+        *CAMERA_ARGS,
+    ]
+    assert ss.main(argv) == 1
+    assert "IPv4 address" in capsys.readouterr().err
+
+
+def test_main_refuses_to_start_without_a_built_frontend(monkeypatch, capsys, tmp_path: Path):
+    def fail_start(*_, **__):
+        raise AssertionError("a child process was started")
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", tmp_path / "dist" / "index.html")
+    monkeypatch.setattr(ss.Stack, "start", fail_start)
+    argv = [
+        "--orin",
+        "user@192.0.2.10",
+        "--deploy-script",
+        "x",
+        "--bridge",
+        "b",
+        "--livekit-server",
+        "l",
+        *CAMERA_ARGS,
+    ]
+    assert ss.main(argv) == 1
+    assert "frontend is not built" in capsys.readouterr().err
+
+
+def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sensor_size(
+    monkeypatch, capsys, tmp_path: Path
+):
+    commands: dict[str, list[str]] = {}
+
+    def record_start(self, name, command, *_, **__):
+        commands[name] = list(command)
+        if name == "bridge":
+            # The bridge is the last thing the files under test feed; stop the run once it is launched.
+            raise ss.StartupError("stop after the bridge")
+
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    index = tmp_path / "dist" / "index.html"
+    index.parent.mkdir()
+    index.write_text("")
+    timesync = tmp_path / "timesync_tool.py"
+    timesync.write_text(TIMESYNC_STUB, encoding="utf-8")
+    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", index)
+    monkeypatch.setattr(ss.Stack, "start", record_start)
+    monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
+    monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
+    monkeypatch.setattr(ss.subprocess, "run", lambda *_, **__: None)
+    argv = ["--orin", "user@192.0.2.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "192.0.2.2", *CAMERA_ARGS]
+    assert ss.main(argv) == 1
+    assert "stop after the bridge" in capsys.readouterr().err
+
+    declared = yaml.safe_load((workdir / "streams.yaml").read_text())["livekit"]["streams"][0]
+    received = yaml.safe_load((workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (declared["width"], declared["height"]) == (2560 // ss.BRIDGE_DOWNSCALE, 1984 // ss.BRIDGE_DOWNSCALE)
+    assert (declared["width"], declared["height"]) == (1280, 992)
+    assert (received["width"], received["height"]) == (2560, 1984)
+    bridge = commands["bridge"]
+    assert bridge[bridge.index("--stream") + 1].endswith(f":{ss.BRIDGE_DOWNSCALE}")
+
+
+def test_default_profile_gives_the_head_camera_settings():
+    config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
+    assert ss.sender_settings(config) == ss.SenderSettings(
+        port=5000, fps=30, bitrate_mbps=4, stream_id="head", full_range=True, sipl=True
+    )
+
+
+def test_argus_backend_is_not_full_range():
+    config = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
+    settings = ss.sender_settings(config)
+    assert (settings.full_range, settings.sipl) == (False, False)
+
+
+def test_overrides_replace_only_their_values():
+    config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, 60, 9, 5100)
+    assert ss.sender_settings(config) == ss.SenderSettings(
+        port=5100, fps=60, bitrate_mbps=9, stream_id="head", full_range=True, sipl=True
+    )
+    partial = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, fps=15))
+    assert (partial.fps, partial.bitrate_mbps, partial.port) == (15, 4, 5000)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda c: c["streams"][0]["output"].update(fps=0),
+        lambda c: c["streams"][0]["output"].pop("fps"),
+        lambda c: c.update(capture_backend="auto"),
+        lambda c: c.pop("capture_backend"),
+        lambda c: c["streams"][0].pop("id"),
+        lambda c: c["streams"][0].update(id=""),
+    ],
+)
+def test_sender_settings_rejects_an_incomplete_profile(mutate):
+    config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
+    mutate(config)
+    with pytest.raises(ss.StartupError):
+        ss.sender_settings(config)
+
+
+def test_load_sender_config_rejects_missing_file_and_two_streams(tmp_path: Path):
+    with pytest.raises(ss.StartupError):
+        ss.load_sender_config(tmp_path / "absent.yaml")
+    two = tmp_path / "two.yaml"
+    two.write_text("streams:\n  - {id: a}\n  - {id: b}\n")
+    with pytest.raises(ss.StartupError):
+        ss.load_sender_config(two)
+
+
+def _profile_with(tmp_path: Path, mutate) -> Path:
+    config = yaml.safe_load(ss.DEFAULT_SENDER_CONFIG.read_text())
+    mutate(config)
+    path = tmp_path / "profile.yaml"
+    path.write_text(yaml.safe_dump(config))
+    return path
+
+
+@pytest.mark.parametrize("section", ["network", "output"])
+def test_load_sender_config_treats_a_null_section_as_empty_and_applies_overrides(tmp_path: Path, section: str):
+    def null_it(config):
+        if section == "network":
+            config["network"] = None
+        else:
+            config["streams"][0]["output"] = None
+
+    config = ss.load_sender_config(_profile_with(tmp_path, null_it), 30, 12, 5701)
+    output = config["streams"][0]["output"]
+    assert output["fps"] == 30 and output["bitrate_mbps"] == 12
+    assert config["network"]["port"] == 5701
+    if section == "network":
+        assert config["network"] == {"port": 5701}
+    else:
+        assert output == {"fps": 30, "bitrate_mbps": 12}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "key"),
+    [
+        (lambda c: c.update(network=5), "network"),
+        (lambda c: c["streams"][0].update(output=[1]), "output"),
+        (lambda c: c.update(streams=[3]), "streams[0]"),
+    ],
+)
+def test_load_sender_config_rejects_a_wrongly_typed_section(tmp_path: Path, mutate, key: str):
+    with pytest.raises(ss.StartupError, match=key.replace("[", r"\[").replace("]", r"\]")):
+        ss.load_sender_config(_profile_with(tmp_path, mutate))
+
+
+def test_load_sender_config_rejects_malformed_yaml(tmp_path: Path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("a: [")
+    with pytest.raises(ss.StartupError):
+        ss.load_sender_config(bad)
+
+
+def test_start_of_a_missing_executable_is_a_startup_error_with_no_child(tmp_path: Path):
+    stack = ss.Stack(tmp_path)
+    with pytest.raises(ss.StartupError, match="cannot start ghost"):
+        stack.start("ghost", [str(tmp_path / "no-such-tool")])
+    assert stack.children == []
+
+
+def test_check_station_cameras_with_the_example_station():
+    ss.check_station_cameras(EXAMPLE_STATION, [f"{name}=dev0" for name in EXAMPLE_CAMERAS])
+    with pytest.raises(ss.StartupError, match=EXAMPLE_CAMERAS[0]):
+        ss.check_station_cameras(EXAMPLE_STATION, ["other=dev1"])
+
+
+def test_check_station_cameras_accepts_a_station_without_video_sources(tmp_path: Path):
+    station = tmp_path / "station.yaml"
+    station.write_text("stations:\n  one:\n    meta: {}\n")
+    ss.check_station_cameras(station, [])
+
+
+def test_stack_stop_all_terminates_child(tmp_path: Path):
+    stack = ss.Stack(tmp_path)
+    child = stack.start("sleeper", ["sleep", "30"])
+    assert child.process.poll() is None
+    stack.stop_all()
+    assert child.process.poll() is not None
+
+
+def test_wait_until_raises_when_child_exits_early(tmp_path: Path):
+    stack = ss.Stack(tmp_path)
+    child = stack.start("quick", ["true"])
+    try:
+        with pytest.raises(ss.StartupError):
+            stack.wait_until(child, lambda: False, "ready", 5)
+    finally:
+        stack.stop_all()
+
+
+POLITE_CHILD = """
+import signal, sys, time
+name, shared, ready = sys.argv[1:4]
+def log(what):
+    with open(shared, "a") as f:
+        f.write(f"{name} {what} {time.monotonic()}\\n")
+def on_int(*_):
+    log("int")
+    time.sleep(0.3)
+    log("exit")
+    sys.exit(0)
+signal.signal(signal.SIGINT, on_int)
+open(ready, "w").close()
+time.sleep(60)
+"""
+
+STUBBORN_CHILD = """
+import signal, sys, time
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+open(sys.argv[1], "w").close()
+time.sleep(60)
+"""
+
+
+def _await_files(paths: list[Path]) -> None:
+    deadline = time.monotonic() + 10
+    while not all(p.exists() for p in paths):
+        assert time.monotonic() < deadline, "child never became ready"
+        time.sleep(0.02)
+
+
+def _polite(stack: ss.Stack, tmp_path: Path, name: str, **kwargs) -> Path:
+    ready = tmp_path / f"{name}.ready"
+    stack.start(name, [sys.executable, "-c", POLITE_CHILD, name, str(tmp_path / "events"), str(ready)], **kwargs)
+    return ready
+
+
+def _stubborn(stack: ss.Stack, tmp_path: Path, name: str, **kwargs) -> Path:
+    ready = tmp_path / f"{name}.ready"
+    stack.start(name, [sys.executable, "-c", STUBBORN_CHILD, str(ready)], **kwargs)
+    return ready
+
+
+@pytest.fixture
+def stack(tmp_path: Path):
+    stack = ss.Stack(tmp_path)
+    yield stack
+    # Whatever a test left running must not outlive it.
+    for child in stack.children:
+        try:
+            os.killpg(child.process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            # The test already stopped this child's group; reaping it below is all that is left to do.
+            pass
+        child.process.wait(timeout=5)
+
+
+def test_stop_all_signals_in_reverse_order_and_waits_for_each_exit(stack, tmp_path: Path):
+    ready = [_polite(stack, tmp_path, n) for n in "abc"]
+    _await_files(ready)
+    stack.stop_all()
+    events = [line.split() for line in (tmp_path / "events").read_text().splitlines()]
+    assert [(n, what) for n, what, _ in events] == [
+        ("c", "int"),
+        ("c", "exit"),
+        ("b", "int"),
+        ("b", "exit"),
+        ("a", "int"),
+        ("a", "exit"),
+    ]
+    stamps = [float(t) for _, _, t in events]
+    assert stamps == sorted(stamps)
+    assert all(c.process.poll() == 0 for c in stack.children)
+
+
+def test_child_that_ignores_sigint_is_killed_after_its_grace(stack, tmp_path: Path):
+    stubborn = _stubborn(stack, tmp_path, "stubborn", grace_s=0.5)
+    polite = _polite(stack, tmp_path, "polite")
+    _await_files([stubborn, polite])
+    started = time.monotonic()
+    stack.stop_all()
+    assert time.monotonic() - started < 5
+    assert all(c.process.poll() is not None for c in stack.children)
+    assert stack.children[0].process.returncode == -signal.SIGKILL
+    assert stack.children[1].process.returncode == 0
+
+
+def test_child_whose_group_is_already_gone_is_treated_as_stopped(stack, tmp_path: Path, monkeypatch):
+    ready = [_polite(stack, tmp_path, n) for n in "ab"]
+    _await_files(ready)
+    real_killpg = os.killpg
+    calls: list[int] = []
+
+    def flaky_killpg(pgid: int, sig: int) -> None:
+        calls.append(pgid)
+        real_killpg(pgid, sig)
+        if len(calls) == 1:
+            raise ProcessLookupError
+
+    monkeypatch.setattr(ss.os, "killpg", flaky_killpg)
+    stack.stop_all()
+    assert calls[0] == stack.children[1].process.pid
+    # b's first signal reports its group as gone; it is not an error, and both children still end up stopped.
+    assert [c.process.poll() for c in stack.children] == [0, 0]
+
+
+def test_grace_is_recorded_per_child(stack, tmp_path: Path):
+    ready = [_polite(stack, tmp_path, "a", grace_s=7), _polite(stack, tmp_path, "b")]
+    _await_files(ready)
+    assert stack.children[0].grace_s == 7
+    assert stack.children[1].grace_s == ss.DEFAULT_GRACE_S
+    stack.stop_all()
+
+
+def test_second_ctrl_c_kills_the_child_and_the_rest_at_once(stack, tmp_path: Path, monkeypatch):
+    ready = [
+        _stubborn(stack, tmp_path, "a", grace_s=30),
+        _stubborn(stack, tmp_path, "b", grace_s=30),
+        _stubborn(stack, tmp_path, "c", grace_s=30),
+    ]
+    _await_files(ready)
+    last = stack.children[2].process
+    real_wait = last.wait
+    calls = []
+
+    def interrupted_wait(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise KeyboardInterrupt
+        return real_wait(*args, **kwargs)
+
+    monkeypatch.setattr(last, "wait", interrupted_wait)
+    started = time.monotonic()
+    stack.stop_all()
+    assert time.monotonic() - started < 5
+    assert [c.process.returncode for c in stack.children] == [-signal.SIGKILL] * 3
+
+
+def test_mock_sender_command_follows_the_profile():
+    settings = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
+    command = ss.mock_sender_command("python", Path("mock.py"), settings, 2560, 1984)
+    assert command == ["python", "mock.py", "--port", "5000", "--stream", "head:2560x1984@30"]
+
+
+def test_bridge_timing_arguments_for_mock_and_real_sender():
+    sipl = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
+    assert ss.bridge_timing_arguments(sipl, True, None, None, 12301) == ["--timestamp-basis", "monotonic_us"]
+    real = " ".join(ss.bridge_timing_arguments(sipl, False, "192.0.2.10", "C000020A", 12301))
+    assert "--timestamp-basis capture_monotonic_us" in real
+    assert "--chrony-sender 192.0.2.10 --chrony-sender-refid C000020A --chrony-pc-port 12301" in real
+    assert "--sender-clock" not in real
+    assert "--source-full-range" in real
+    argus_config = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
+    argus = ss.sender_settings(argus_config)
+    assert "--source-full-range" not in ss.bridge_timing_arguments(argus, False, "192.0.2.10", "C000020A", 12301)
+
+
+def test_main_refuses_orin_together_with_mock(monkeypatch, capsys, tmp_path: Path):
+    monkeypatch.delenv("EGOCAP_DEPLOY_SCRIPT", raising=False)
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
+    assert ss.main(["--orin", "user@192.0.2.10", "--mock"]) == 1
+    assert "do not pass --orin" in capsys.readouterr().err
+
+
+def test_main_refuses_a_missing_mock_sender(monkeypatch, capsys, tmp_path: Path):
+    def fail_start(*_, **__):
+        raise AssertionError("a child process was started")
+
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
+    monkeypatch.setattr(ss.Stack, "start", fail_start)
+    monkeypatch.delenv("EGOCAP_MOCK_SENDER", raising=False)
+    argv = ["--mock", "--bridge", "b", "--livekit-server", "l", "--mock-sender", str(tmp_path / "missing.py")]
+    assert ss.main(argv) == 1
+    assert "--mock-sender" in capsys.readouterr().err
+    assert ss.main(["--mock", "--bridge", "b", "--livekit-server", "l"]) == 1
+    assert "--mock-sender" in capsys.readouterr().err
+
+
+def test_main_refuses_a_station_that_requests_cameras_not_given(monkeypatch, capsys, tmp_path: Path):
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
+    assert ss.main(["--capture-camera", "other=dev1"]) == 1
+    assert EXAMPLE_CAMERAS[0] in capsys.readouterr().err
+
+
+@pytest.fixture
+def recorded_main(monkeypatch, tmp_path: Path):
+    # Every child, wait, deploy and sleep is stubbed; the wait loop ends by raising KeyboardInterrupt.
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    frontend = tmp_path / "index.html"
+    frontend.write_text("")
+    children: list[SimpleNamespace] = []
+    deploys: list[list[str]] = []
+
+    def fake_start(
+        self, name, command, env=None, cwd=None, grace_s=ss.DEFAULT_GRACE_S, leader_only=False, optional=False
+    ):
+        log = self.workdir / f"{name}.log"
+        log.write_text("")
+        children.append(
+            SimpleNamespace(name=name, command=list(command), env=env, leader_only=leader_only, optional=optional)
+        )
+        managed = ss.Managed(name, SimpleNamespace(poll=lambda: None, pid=0), log, grace_s, leader_only, optional)
+        self.children.append(managed)
+        return managed
+
+    def interrupt(_seconds):
+        raise KeyboardInterrupt
+
+    installed: list[tuple] = []
+    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", frontend)
+    monkeypatch.setattr(ss.Stack, "start", fake_start)
+    monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
+    # The fake children are not real processes, so there is nothing to signal.
+    monkeypatch.setattr(ss.Stack, "stop_all", lambda self: None)
+    monkeypatch.setattr(ss, "ensure_receiver_environment", lambda: None)
+    # Every deploy, stop and timesync step is recorded and reports success.
+    monkeypatch.setattr(
+        ss.subprocess, "run", lambda command, **_: deploys.append(list(command)) or SimpleNamespace(returncode=0)
+    )
+    # The supervised helper (time-sync status) is recorded like the other commands.
+    monkeypatch.setattr(ss, "run_supervised", lambda _stack, command: deploys.append(list(command)) or 0)
+    monkeypatch.setattr(
+        ss,
+        "load_timesync_tool",
+        lambda _path: SimpleNamespace(
+            lan_address_toward=lambda host: "192.0.2.1", reference_id_for=lambda host: "C000020A"
+        ),
+    )
+    monkeypatch.setattr(ss.time, "sleep", interrupt)
+    return SimpleNamespace(children=children, deploys=deploys, workdir=workdir, installed=installed)
+
+
+def _command(recorded, name: str) -> str:
+    return " ".join(next(c.command for c in recorded.children if c.name == name))
+
+
+def test_main_starts_the_orin_chain_in_order(recorded_main):
+    argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    assert ss.main([*argv, *CAMERA_ARGS]) == 0
+    names = [c.name for c in recorded_main.children]
+    assert names == ["sender", "livekit", "capture-server", "backend", "receiver", "bridge", "timesync-follower"]
+    capture = _command(recorded_main, "capture-server")
+    assert "--camera" in capture
+    assert all(f"{name}=dev0" in capture for name in EXAMPLE_CAMERAS)
+    assert "--livekit-streams" in capture
+    assert "--mock" not in capture
+    bridge = _command(recorded_main, "bridge")
+    assert "--timestamp-basis capture_monotonic_us" in bridge
+    assert "--sender-clock" not in bridge
+    assert "--source-full-range" in bridge
+    assert "--config" in _command(recorded_main, "receiver")
+    release_deploys = [d for d in recorded_main.deploys if "--with-sipl" in d]
+    assert len(release_deploys) == 1
+    assert release_deploys[0][1:3] == ["x", "user@192.0.2.10"]
+
+
+def test_main_wires_chrony_into_the_bridge_and_starts_the_follower_after_it(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    names = [c.name for c in recorded_main.children]
+    assert names.index("timesync-follower") > names.index("bridge")
+    bridge = _command(recorded_main, "bridge")
+    assert "--chrony-sender 192.0.2.10 --chrony-sender-refid C000020A --chrony-pc-port 12301" in bridge
+
+
+def test_the_timing_follower_is_optional_unless_chrony_is_required(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    follower = next(c for c in recorded_main.children if c.name == "timesync-follower")
+    assert follower.optional
+    others = [c for c in recorded_main.children if c.name != "timesync-follower"]
+    assert not any(c.optional for c in others)
+
+
+def test_the_timing_follower_is_required_with_require_chrony(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--require-chrony"]) == 0
+    follower = next(c for c in recorded_main.children if c.name == "timesync-follower")
+    assert not follower.optional
+
+
+def _exited(name: str, optional: bool, tmp_path: Path, code: int = 1) -> ss.Managed:
+    return ss.Managed(
+        name,
+        SimpleNamespace(poll=lambda: code, returncode=code, pid=0),
+        tmp_path / f"{name}.log",
+        optional=optional,
+    )
+
+
+def _running(name: str, tmp_path: Path) -> ss.Managed:
+    return ss.Managed(name, SimpleNamespace(poll=lambda: None, returncode=None, pid=0), tmp_path / f"{name}.log")
+
+
+def test_watch_keeps_the_stack_up_when_an_optional_child_exits(monkeypatch, capsys, tmp_path: Path):
+    stack = SimpleNamespace(children=[_running("backend", tmp_path), _exited("timesync-follower", True, tmp_path)])
+    ticks: list[int] = []
+
+    def sleep(_seconds):
+        ticks.append(1)
+        if len(ticks) == 3:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(ss.time, "sleep", sleep)
+    with pytest.raises(KeyboardInterrupt):
+        ss.watch(stack)
+    out = capsys.readouterr().out
+    assert out.count("timesync-follower exited with 1") == 1
+    assert "preview stays up" in out
+
+
+def test_watch_returns_a_required_child_that_exits(tmp_path: Path):
+    backend = _exited("backend", False, tmp_path, code=3)
+    stack = SimpleNamespace(children=[_exited("timesync-follower", True, tmp_path), backend])
+    assert ss.watch(stack) is backend
+
+
+def test_the_required_follower_exit_stops_the_stack(tmp_path: Path):
+    follower = _exited("timesync-follower", False, tmp_path)
+    assert ss.watch(SimpleNamespace(children=[_running("backend", tmp_path), follower])) is follower
+
+
+def test_stop_daemon_runs_only_for_the_sipl_backend(recorded_main, tmp_path: Path):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    assert any(d[-1] == "stop-daemon" for d in recorded_main.deploys)
+    recorded_main.deploys.clear()
+    argus = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
+    config = tmp_path / "argus.yaml"
+    config.write_text(yaml.safe_dump(argus))
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(config)]) == 0
+    assert not any(d[-1] == "stop-daemon" for d in recorded_main.deploys)
+
+
+TIMESYNC_TOOL = ss.REPO_ROOT / "src/core/timesync/tools/timesync_tool.py"
+
+
+@pytest.mark.skipif(
+    not TIMESYNC_TOOL.is_file(), reason="the timesync tool comes from the timesync PR, absent from this tree"
+)
+def test_every_timesync_command_the_launcher_issues_is_accepted_by_the_real_timesync_tool(
+    recorded_main, monkeypatch
+):
+    spec = importlib.util.spec_from_file_location("timesync_tool_real", TIMESYNC_TOOL)
+    tool = importlib.util.module_from_spec(spec)
+    # The tool's dataclasses look their module up by name while the class bodies run.
+    monkeypatch.setitem(sys.modules, spec.name, tool)
+    spec.loader.exec_module(tool)
+    dispatched: list[str] = []
+    # The tool looks its commands up by module-level name when it runs, so replacing them records the dispatch
+    # without installing or configuring anything.
+    for name in ("cmd_ensure_local", "cmd_follow", "cmd_configure_remote", "cmd_status"):
+        monkeypatch.setattr(tool, name, lambda args, _name=name: dispatched.append(_name) or 0)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--timesync-tool", str(TIMESYNC_TOOL)]) == 0
+    issued = [d[2:] for d in recorded_main.deploys if d[1] == str(TIMESYNC_TOOL)]
+    issued += [c.command[2:] for c in recorded_main.children if c.command[1] == str(TIMESYNC_TOOL)]
+    assert {command[0] for command in issued} == {"ensure-local", "follow", "configure-remote", "status"}
+    for command in issued:
+        assert tool.main(command) == 0, command
+    assert len(dispatched) == len(issued)
+
+
+def test_the_page_address_is_printed_before_time_sync_starts(recorded_main, capsys):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    out = capsys.readouterr().out
+    assert out.index("Ego Capture is up") < out.index("setting up time sync")
+    assert "time sync: settled" in out
+
+
+def test_a_child_that_dies_during_time_sync_stops_startup(recorded_main, monkeypatch, capsys):
+    real_start = ss.Stack.start
+
+    def start(self, name, command, *args, **kwargs):
+        managed = real_start(self, name, command, *args, **kwargs)
+        if name == "bridge":
+            managed.process.poll = lambda: 3
+            managed.process.returncode = 3
+        return managed
+
+    monkeypatch.setattr(ss.Stack, "start", start)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 1
+    captured = capsys.readouterr()
+    assert "bridge exited with 3" in captured.err
+    # The banner was printed first: the preview is up while time sync runs.
+    assert "Ego Capture is up" in captured.out
+
+
+def test_the_receiver_python_follows_the_receivers_own_environment_variables(monkeypatch, tmp_path: Path):
+    spaced = tmp_path / "a dir" / "python"
+    spaced.parent.mkdir()
+    spaced.write_text("")
+    monkeypatch.setenv("CAMERA_RECEIVER_PYTHON", str(spaced))
+    words = shlex.split(ss.default_receiver_command())
+    assert words[0] == str(spaced)
+    assert words[1].endswith("camera_receiver.py")
+    monkeypatch.delenv("CAMERA_RECEIVER_PYTHON")
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin/python").write_text("")
+    monkeypatch.setenv("CAMERA_RECEIVER_VENV", str(venv))
+    assert shlex.split(ss.default_receiver_command())[0] == str(venv / "bin/python")
+
+
+def test_the_remote_stop_on_exit_is_skipped_when_the_orin_was_never_contacted(recorded_main, monkeypatch):
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", Path("/nonexistent/index.html"))
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 1
+    assert not any(d[-1] == "stop" for d in recorded_main.deploys)
+
+
+def test_a_remote_stop_that_times_out_on_exit_does_not_raise(recorded_main, monkeypatch, capsys):
+    stops: list[int] = []
+    real_run = ss.subprocess.run
+
+    def run(command, **kwargs):
+        if command[-1] == "stop":
+            stops.append(1)
+            if len(stops) == 2:  # the one on exit; the first clears a sender an earlier run left
+                raise ss.subprocess.TimeoutExpired(command, kwargs.get("timeout", 0))
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(ss.subprocess, "run", run)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    assert "could not confirm that the Orin sender stopped" in capsys.readouterr().err
+
+
+DEPLOY_TOOL = ss.REPO_ROOT / "examples/camera_streamer/argus_sender/deploy/deploy_sender.py"
+
+
+@pytest.mark.skipif(
+    not DEPLOY_TOOL.is_file(),
+    reason="the deploy tool comes from the camera-streaming tools PR, absent from this tree",
+)
+def test_every_deploy_command_the_launcher_issues_is_accepted_by_the_real_deploy_tool(recorded_main, monkeypatch):
+    spec = importlib.util.spec_from_file_location("deploy_sender_real", DEPLOY_TOOL)
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    dispatched: list[str] = []
+    for name in dir(tool):
+        if name.startswith("cmd_"):
+            monkeypatch.setattr(tool, name, lambda *a, _name=name, **k: dispatched.append(_name))
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    issued = [d[2:] for d in recorded_main.deploys if d[1] == "x"]
+    issued += [c.command[2:] for c in recorded_main.children if c.command[1] == "x"]
+    assert any(command[1] == "stop-daemon" for command in issued)
+    for command in issued:
+        # `target command ...` is exactly how the launcher calls the tool; the real parser must accept it.
+        assert tool.main(command) == 0, command
+    assert "cmd_stop_daemon" in dispatched
+    assert len(dispatched) == len(issued)
+
+
+def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
+    mock_sender = tmp_path / "mock_sender.py"
+    mock_sender.write_text("")
+    argv = ["--mock", "--bridge", "b", "--livekit-server", "l", "--mock-sender", str(mock_sender)]
+    assert ss.main(argv) == 0
+    names = [c.name for c in recorded_main.children]
+    assert names == ["mock-sender", "livekit", "capture-server", "backend", "receiver", "bridge"]
+    assert "--mock" in recorded_main.children[2].command
+    bridge = _command(recorded_main, "bridge")
+    assert "--timestamp-basis monotonic_us" in bridge
+    assert "--sender-clock" not in bridge
+    assert recorded_main.deploys == []
+
+
+ORIN_ARGV = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+
+
+def test_main_returns_zero_when_the_sender_finishes_its_run(recorded_main, monkeypatch, capsys):
+    started = ss.Stack.start
+
+    def start(self, name, *args, **kwargs):
+        managed = started(self, name, *args, **kwargs)
+        if name == "sender":
+            managed.process = SimpleNamespace(poll=lambda: 0, pid=0, returncode=0)
+        return managed
+
+    monkeypatch.setattr(ss.Stack, "start", start)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    captured = capsys.readouterr()
+    assert "finished" in captured.out
+    assert "error" not in captured.err
+
+
+@pytest.mark.parametrize(("name", "code"), [("sender", 3), ("receiver", 0)])
+def test_main_fails_when_the_sender_errors_or_another_child_exits(recorded_main, monkeypatch, capsys, name, code):
+    started = ss.Stack.start
+
+    def start(self, n, *args, **kwargs):
+        managed = started(self, n, *args, **kwargs)
+        if n == name:
+            managed.process = SimpleNamespace(poll=lambda: code, pid=0, returncode=code)
+        return managed
+
+    monkeypatch.setattr(ss.Stack, "start", start)
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 1
+    assert f"{name} exited with {code}" in capsys.readouterr().err
+
+
+def test_main_installs_the_stop_handlers_and_starts_the_backend_leader_only(recorded_main, tmp_path: Path):
+    mock_sender = tmp_path / "mock_sender.py"
+    mock_sender.write_text("")
+    argv = ["--mock", "--bridge", "b", "--livekit-server", "l", "--mock-sender", str(mock_sender)]
+    assert ss.main(argv) == 0
+    handlers = dict(recorded_main.installed)
+    assert handlers[signal.SIGTERM] is ss._raise_interrupt
+    assert handlers[signal.SIGHUP] is ss._raise_interrupt
+    leader_only = {c.name: c.leader_only for c in recorded_main.children}
+    assert leader_only["backend"] is True
+
+
+GRANDCHILD = """
+import signal, sys, time
+pid_file, int_file = sys.argv[1:3]
+def on_int(*_):
+    open(int_file, "w").write("grandchild-int")
+    sys.exit(0)
+signal.signal(signal.SIGINT, on_int)
+open(pid_file, "w").write(str(__import__("os").getpid()))
+time.sleep(60)
+"""
+
+PARENT_OF_GRANDCHILD = """
+import signal, subprocess, sys, time
+from pathlib import Path
+grandchild, pid_file, int_file, ready = sys.argv[1:5]
+subprocess.Popen([sys.executable, "-c", grandchild, pid_file, int_file])
+while not Path(pid_file).exists():
+    time.sleep(0.02)
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+open(ready, "w").close()
+time.sleep(60)
+"""
+
+
+def _with_grandchild(stack: ss.Stack, tmp_path: Path, **kwargs) -> tuple[Path, Path, Path]:
+    pid_file, int_file, ready = tmp_path / "gc.pid", tmp_path / "gc.int", tmp_path / "parent.ready"
+    command = [sys.executable, "-c", PARENT_OF_GRANDCHILD, GRANDCHILD, str(pid_file), str(int_file), str(ready)]
+    stack.start("parent", command, **kwargs)
+    _await_files([ready])
+    return pid_file, int_file, ready
+
+
+def _assert_pid_gone(pid: int) -> None:
+    # A killed orphan stays visible until init reaps it, so allow a moment.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"pid {pid} still exists")
+
+
+def test_leader_only_child_keeps_its_helper_from_the_polite_signal_and_the_helper_is_killed(stack, tmp_path: Path):
+    pid_file, int_file, _ = _with_grandchild(stack, tmp_path, leader_only=True)
+    stack.stop_all()
+    assert stack.children[0].process.poll() is not None
+    assert not int_file.exists()
+    _assert_pid_gone(int(pid_file.read_text()))
+
+
+def test_helper_left_in_the_group_of_an_exited_child_is_killed(stack, tmp_path: Path):
+    pid_file, int_file, _ = _with_grandchild(stack, tmp_path)
+    stack.stop_all()
+    assert stack.children[0].process.poll() is not None
+    _assert_pid_gone(int(pid_file.read_text()))
+
+
+def test_sighup_during_stop_kills_everything_at_once_and_restores_the_handler(stack, tmp_path: Path):
+    ready = [_stubborn(stack, tmp_path, "a", grace_s=30), _stubborn(stack, tmp_path, "b", grace_s=30)]
+    _await_files(ready)
+    before = signal.getsignal(signal.SIGHUP)
+    timer = threading.Timer(0.3, os.kill, (os.getpid(), signal.SIGHUP))
+    timer.start()
+    started = time.monotonic()
+    try:
+        stack.stop_all()
+    finally:
+        timer.cancel()
+    assert time.monotonic() - started < 5
+    assert [c.process.returncode for c in stack.children] == [-signal.SIGKILL] * 2
+    assert signal.getsignal(signal.SIGHUP) is before
+
+
+def test_default_profile_declares_no_sender_clock_responder():
+    network = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)["network"]
+    assert "timing_extension" not in network and "clock_port" not in network
+
+
+def test_parse_args_timesync_defaults(monkeypatch):
+    monkeypatch.delenv("EGOCAP_TIMESYNC_TOOL", raising=False)
+    args = ss.parse_args([])
+    assert args.chrony_cmd_port == 12301
+    assert args.chrony_wait == 120.0
+    assert args.require_chrony is False
+    assert args.timesync_tool.as_posix().endswith("src/core/timesync/tools/timesync_tool.py")
+
+
+def test_load_timesync_tool_exposes_module_functions(tmp_path: Path):
+    tool = tmp_path / "fake_tool.py"
+    tool.write_text("def lan_address_toward(h):\n    return h\n\ndef reference_id_for(a):\n    return 'ID' + a\n")
+    module = ss.load_timesync_tool(tool)
+    assert module.reference_id_for("y") == "IDy"
+
+
+def test_load_timesync_tool_missing_file_raises(tmp_path: Path):
+    with pytest.raises(ss.StartupError, match="does not exist"):
+        ss.load_timesync_tool(tmp_path / "absent.py")
+
+
+def test_default_receiver_uses_its_venv_python_when_present(monkeypatch, tmp_path: Path):
+    receiver_dir = tmp_path / "examples/camera_streamer/camera_receiver"
+    (receiver_dir / ".venv/bin").mkdir(parents=True)
+    (receiver_dir / ".venv/bin/python").write_text("")
+    monkeypatch.setattr(ss, "REPO_ROOT", tmp_path)
+    assert ss.default_receiver_command().startswith(f"{receiver_dir}/.venv/bin/python ")
+    (receiver_dir / ".venv/bin/python").unlink()
+    assert ss.default_receiver_command().startswith("python3 ")
+
+
+def test_ensure_receiver_environment_runs_setup_only_when_something_is_missing(monkeypatch, tmp_path: Path):
+    receiver_dir = tmp_path / "examples/camera_streamer/camera_receiver"
+    (receiver_dir / ".venv/bin").mkdir(parents=True)
+    (receiver_dir / "codec").mkdir()
+    monkeypatch.setattr(ss, "REPO_ROOT", tmp_path)
+    calls = []
+    monkeypatch.setattr(ss.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    ss.ensure_receiver_environment()
+    assert calls == [["bash", str(receiver_dir / "setup.sh")]]
+    calls.clear()
+    (receiver_dir / ".venv/bin/python").write_text("")
+    (receiver_dir / "codec/_camera_receiver_codec.cpython-313-x86_64-linux-gnu.so").write_text("")
+    ss.ensure_receiver_environment()
+    assert calls == []
+
+
+class _FakeProcess:
+    def __init__(self, returncode: int | None) -> None:
+        self.returncode = returncode
+        self.pid = 0
+
+    def poll(self):
+        return self.returncode
+
+
+def _run_main_with_stub_children(monkeypatch, tmp_path: Path, extra_argv: list[str], exit_codes=None):
+    """Run main() against a REPO_ROOT without a receiver venv.
+
+    Returns (exit code, argv per child, run calls, receiver dir).
+
+    ``exit_codes`` maps a child name to the code its poll() reports; other children keep running.
+    """
+    exit_codes = exit_codes or {}
+    started: dict[str, list[str]] = {}
+    runs: list = []
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    index = tmp_path / "dist" / "index.html"
+    index.parent.mkdir()
+    index.write_text("")
+    timesync = tmp_path / "timesync_tool.py"
+    timesync.write_text(TIMESYNC_STUB, encoding="utf-8")
+    receiver_dir = tmp_path / "repo/examples/camera_streamer/camera_receiver"
+    receiver_dir.mkdir(parents=True)
+
+    def fake_start(self, name, command, *_, **__):
+        started[name] = list(command)
+        log = self.workdir / f"{name}.log"
+        log.write_text("")
+        child = ss.Managed(name, _FakeProcess(exit_codes.get(name)), log)
+        self.children.append(child)
+        return child
+
+    class _Done:
+        returncode = 0
+
+    monkeypatch.delenv("EGOCAP_RECEIVER", raising=False)
+    monkeypatch.setattr(signal, "signal", lambda *_: None)
+    monkeypatch.setattr(ss, "REPO_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(workdir))
+    monkeypatch.setattr(ss, "FRONTEND_INDEX", index)
+    monkeypatch.setattr(ss.Stack, "start", fake_start)
+    monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
+    monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
+    monkeypatch.setattr(ss.subprocess, "run", lambda cmd, **__: runs.append(list(cmd)) or _Done())
+    monkeypatch.setattr(ss.time, "sleep", lambda *_: None)
+    argv = ["--orin", "user@192.0.2.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "192.0.2.2", *CAMERA_ARGS, *extra_argv]
+    return ss.main(argv), started, runs, receiver_dir
+
+
+def test_first_run_starts_the_receiver_with_the_venv_python_that_setup_created(monkeypatch, tmp_path: Path):
+    venv_python = tmp_path / "repo/examples/camera_streamer/camera_receiver/.venv/bin/python"
+    setups = []
+
+    def fake_setup():
+        setups.append(True)
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("")
+
+    monkeypatch.setattr(ss, "ensure_receiver_environment", fake_setup)
+    # The sender exits cleanly as soon as the stack is up, which ends the run.
+    code, started, _, _ = _run_main_with_stub_children(monkeypatch, tmp_path, [], {"sender": 0})
+    assert code == 0
+    assert setups == [True]
+    assert started["receiver"][0] == str(venv_python)
+    assert "python3" not in started["receiver"][0]
+
+
+def test_explicit_receiver_is_passed_through_without_setup(monkeypatch, tmp_path: Path):
+    def fail_setup():
+        raise AssertionError("setup ran for an explicit receiver")
+
+    monkeypatch.setattr(ss, "ensure_receiver_environment", fail_setup)
+    code, started, _, _ = _run_main_with_stub_children(
+        monkeypatch, tmp_path, ["--receiver", "custom-python recv.py"], {"sender": 0}
+    )
+    assert code == 0
+    assert started["receiver"][:2] == ["custom-python", "recv.py"]
+
+
+def _stereo_profile(config: dict) -> None:
+    config["streams"][0]["type"] = "stereo"
+
+
+def _sized(width, height):
+    def mutate(config: dict) -> None:
+        output = config["streams"][0].setdefault("output", {})
+        output["width"], output["height"] = width, height
+
+    return mutate
+
+
+def test_load_sender_config_refuses_a_stream_that_is_not_mono(tmp_path: Path):
+    with pytest.raises(ss.StartupError, match="mono"):
+        ss.load_sender_config(_profile_with(tmp_path, _stereo_profile))
+
+
+def test_frame_size_defaults_to_the_sensor_size_and_follows_the_flags():
+    settings = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
+    assert ss.frame_size(settings, None, None) == (2560, 1984)
+    assert ss.frame_size(settings, 640, 480) == (640, 480)
+    with pytest.raises(ss.StartupError, match="divide"):
+        ss.frame_size(settings, 641, 480)
+
+
+def test_frame_size_follows_the_profile_and_refuses_contradicting_flags(tmp_path: Path):
+    config = yaml.safe_load(_profile_with(tmp_path, _sized(1280, 960)).read_text())
+    settings = ss.sender_settings(config)
+    assert ss.frame_size(settings, None, None) == (1280, 960)
+    assert ss.frame_size(settings, 1280, 960) == (1280, 960)
+    with pytest.raises(ss.StartupError, match="--width 2560 contradicts"):
+        ss.frame_size(settings, 2560, None)
+    with pytest.raises(ss.StartupError, match="--height"):
+        ss.frame_size(settings, None, 1984)
+
+
+def test_frame_size_refuses_a_profile_that_sets_only_one_dimension(tmp_path: Path):
+    config = ss.load_sender_config(_profile_with(tmp_path, _sized(1280, None)))
+    with pytest.raises(ss.StartupError, match="both"):
+        ss.frame_size(ss.sender_settings(config), None, None)
+
+
+def test_main_writes_the_profile_output_size_into_the_receiver_and_the_descriptor(recorded_main, tmp_path: Path):
+    profile = _profile_with(tmp_path, _sized(1280, 960))
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(profile)]) == 0
+    declared = yaml.safe_load((recorded_main.workdir / "streams.yaml").read_text())["livekit"]["streams"][0]
+    received = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (received["width"], received["height"]) == (1280, 960)
+    assert (declared["width"], declared["height"]) == (1280 // ss.BRIDGE_DOWNSCALE, 960 // ss.BRIDGE_DOWNSCALE)
+
+
+def test_main_refuses_a_width_that_contradicts_the_profile(recorded_main, capsys, tmp_path: Path):
+    profile = _profile_with(tmp_path, _sized(1280, 960))
+    argv = [*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(profile), "--width", "2560"]
+    assert ss.main(argv) == 1
+    assert "contradicts" in capsys.readouterr().err
+
+
+def _stack_with_child_polling(tmp_path: Path, code):
+    stack = ss.Stack(tmp_path)
+    stack.children.append(
+        ss.Managed("bridge", SimpleNamespace(poll=lambda: code, returncode=code, pid=0), tmp_path / "bridge.log")
+    )
+    return stack
+
+
+def test_run_supervised_returns_the_helpers_exit_code(tmp_path: Path):
+    stack = _stack_with_child_polling(tmp_path, None)
+    assert ss.run_supervised(stack, [sys.executable, "-c", "raise SystemExit(3)"]) == 3
+
+
+def test_run_supervised_kills_the_helper_when_a_required_child_exits(monkeypatch, tmp_path: Path):
+    stack = _stack_with_child_polling(tmp_path, 1)
+    helpers = []
+    real_popen = ss.subprocess.Popen
+
+    def popen(command, **kwargs):
+        helpers.append(real_popen(command, **kwargs))
+        return helpers[-1]
+
+    monkeypatch.setattr(ss.subprocess, "Popen", popen)
+    with pytest.raises(ss.StartupError, match="bridge exited with 1"):
+        ss.run_supervised(stack, ["sleep", "30"])
+    assert helpers[0].poll() is not None

@@ -12,6 +12,7 @@
 # chumpy use, so patching here applies before the first chumpy load.
 import builtins as _builtins
 import inspect as _inspect
+import warnings as _warnings
 
 import numpy as _np
 
@@ -27,5 +28,9 @@ for _attr, _val in (
     ("str", _builtins.str),
     ("unicode", _builtins.str),
 ):
-    if not hasattr(_np, _attr):
+    # hasattr() on a deprecated alias warns on some NumPy versions; the probe is not user-facing.
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        _missing = not hasattr(_np, _attr)
+    if _missing:
         setattr(_np, _attr, _val)

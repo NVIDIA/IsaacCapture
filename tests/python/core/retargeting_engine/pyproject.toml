@@ -87,3 +87,13 @@ exclude = [
 [[tool.mypy.overrides]]
 module = "isaaccapture.retargeting_engine.deviceio_source_nodes.haptic_sink"
 disable_error_code = ["redundant-cast"]
+
+# CPU-only torch: the default x86_64 wheel brings ~4 GB of CUDA libraries that
+# this GPU-less test never loads, and they fill the CI runner's disk.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
