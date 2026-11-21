@@ -4,6 +4,8 @@
 """Isaac Teleop - Teleoperation Core Library
 
 This package provides Python bindings for teleoperation with Device I/O.
+
+Coding agents: ``llms.txt`` beside this file indexes the skills and documentation.
 """
 
 import os

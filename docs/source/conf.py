@@ -44,17 +44,19 @@ else:
 
 
 def _pip_pin(ref_name, fallback):
-    """Install specifier for the series a build describes: ``1.5.x`` -> ``~=1.5.0``.
+    """Install specifier for the series a build describes: ``1.5.x`` -> ``~=1.5.0a0``.
 
     Release refs name their own series (``release/1.4.x``, ``v1.4.7``); ``main``
-    and plain ``sphinx-build`` fall back to the checked-out ``VERSION``.
+    and plain ``sphinx-build`` fall back to the checked-out ``VERSION``. Naming a
+    pre-release lets pip and uv pick one for isaaccapture alone, where
+    ``--prerelease=allow`` would extend that to every dependency.
     """
     tail = ref_name.rsplit("/", 1)[-1].removeprefix("v")
     major, _, rest = (tail if tail[:1].isdigit() else fallback).partition(".")
     minor = rest.partition(".")[0]
     if not (major.isdigit() and minor.isdigit()) or major == "0":
-        return "~=1.0"
-    return f"~={major}.{minor}.0"
+        return "~=1.0a0"
+    return f"~={major}.{minor}.0a0"
 
 
 _pip_version_pin = _pip_pin(_smv_ref_name(), version)
@@ -68,6 +70,8 @@ extensions = [
     "sphinx_design",
     "ecosystem_grid",
     "breakable_literals",
+    "markdown_nodes",
+    "sphinx_llm.txt",
 ]
 
 exclude_patterns = ["build", "_templates", "_data", "_ext", "Thumbs.db", ".DS_Store"]
@@ -77,6 +81,27 @@ exclude_patterns = ["build", "_templates", "_data", "_ext", "Thumbs.db", ".DS_St
 # that interpolate a substitution have to use ``parsed-literal``, so widen the selector
 # to keep the copy button on them.
 copybutton_selector = "div.highlight pre, pre.literal-block"
+
+# sphinx-llm writes llms.txt and a page.md beside every page.html for agents. Only main
+# publishes them; plain sphinx-build ("") keeps them on so CI's -W covers the Markdown
+# build too.
+llms_txt_enabled = _smv_ref_name() in ("", "main")
+llms_txt_suffix_mode = "replace"
+# Anchor every section so in-page links (`Title`_ in RST) resolve in the Markdown.
+markdown_anchor_sections = True
+# A redirect stub's refresh and a hidden toctree mean nothing outside HTML.
+llms_txt_suppress_unknown_node_warnings = ["meta", "toctree"]
+# sphinx-llm indexes every *.md in its build, so a :download: of a README.md would be
+# listed as a page with no doctree, which -W turns into a failure. setup() adds the
+# redirect stubs, whose Markdown only says the page has moved.
+llms_txt_exclude = ["_downloads/**"]
+# The default is pyproject.toml's description, which still reads "Isaac Teleop".
+llms_txt_description = (
+    "Isaac Capture is shared capture infrastructure for teleoperation (Isaac Teleop) "
+    "and egocentric data (Ego Pipeline): device plugins, retargeters, and data "
+    "utilities for recording, replaying, and converting human and robot "
+    "demonstration data."
+)
 
 templates_path = ["_templates"]
 
@@ -306,7 +331,23 @@ def _external_links_new_tab(app, doctree, docname):
             node["target"] = "_blank"
 
 
+def _exclude_redirect_stubs(app, config):
+    """Keep redirect stubs out of llms.txt; their Markdown pages still build."""
+    from redirect_stubs import is_redirect_stub
+
+    srcdir = app.srcdir
+    config.llms_txt_exclude = [
+        *config.llms_txt_exclude,
+        *(
+            path.relative_to(srcdir).with_suffix("").as_posix()
+            for path in sorted(srcdir.rglob("*.rst"))
+            if is_redirect_stub(path)
+        ),
+    ]
+
+
 def setup(app):
+    app.connect("config-inited", _exclude_redirect_stubs)
     app.connect("html-page-context", _versioning_context)
     app.add_role("code-file", _code_file_role)
     app.add_role("code-dir", _code_dir_role)

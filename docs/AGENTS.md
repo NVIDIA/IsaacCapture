@@ -44,6 +44,19 @@ that references it. Stage new artwork with a plain `git add` before running pre-
 whose hooks pre-commit installed has no LFS pre-push hook, so GitHub declines a push that
 adds artwork; run `git lfs push origin <branch>` first.
 
+## Agents read a Markdown build of every page
+
+sphinx-llm runs a second, Markdown build, and `make current-docs` holds it to `-W` too.
+sphinx-markdown-builder drops any node it has no visitor for, children included, and
+warns. Give such a node a `markdown` visitor, in `_ext/markdown_nodes.py` or in the
+extension that owns the node, and list nodes that only matter in HTML in
+`llms_txt_suppress_unknown_node_warnings`. To leave a block out of the Markdown, use
+`.. only:: not sphinx_llm_markdown`: sphinx-llm 1.1.0 has no `human` or `agent` tag, and
+it forwards the HTML build's tags, `html` included, to the Markdown build.
+
+sphinx-llm treats every `*.md` in its output as a page, `:download:` copies included.
+Keep non-page output paths in `llms_txt_exclude`, not out of the docs.
+
 ## Device pages stand alone
 
 `docs/source/device/*.rst` is what the public site renders. A `:code-file:`
