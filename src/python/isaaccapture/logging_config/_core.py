@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -108,20 +109,41 @@ def log_dir() -> Path:
 
 
 def ensure_private_dir(directory: Path) -> Path:
-    """Create *directory* and make only newly created components owner-only."""
-    missing = []
-    probe = directory
-    while not probe.exists() and probe != probe.parent:
-        missing.append(probe)
-        probe = probe.parent
-
-    try:
-        directory.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
+    """Create owner-only directories without following replaceable POSIX paths."""
+    if not _POSIX:
+        directory.mkdir(parents=True, exist_ok=True)
         return directory
-    if _POSIX:
-        for component in missing:
-            component.chmod(0o700)
+
+    parts = directory.absolute().parts[1:]
+    if not parts or ".." in parts:
+        raise PermissionError(f"refusing ambiguous log directory path: {directory}")
+
+    # Keep each parent open so a pathname swap cannot redirect the next mkdir.
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    parent = os.open("/", flags)
+    try:
+        for index, name in enumerate(parts):
+            try:
+                os.mkdir(name, mode=0o700, dir_fd=parent)
+            except FileExistsError:
+                pass
+            child = os.open(name, flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
+
+            info = os.fstat(parent)
+            target = index == len(parts) - 1
+            # Sticky shared ancestors (such as /tmp) are safe to traverse, but
+            # the final directory must belong to us and forbid other writers.
+            if info.st_uid not in (0, os.getuid()) or (
+                target and info.st_uid != os.getuid()
+            ):
+                raise PermissionError(f"refusing foreign-owned log path: {directory}")
+            writable = info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            if writable and (target or not info.st_mode & stat.S_ISVTX):
+                raise PermissionError(f"refusing replaceable log path: {directory}")
+    finally:
+        os.close(parent)
     return directory
 
 

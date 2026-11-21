@@ -231,6 +231,9 @@ Signed-off-by: Your Name <your@email.com>
 The name and e-mail must match the committer's git identity
 (`git config user.name` / `git config user.email`).
 
+If a local pre-commit hook is installed, pass `SKIP=check-copyright-year` to
+`git commit` too; CI deliberately skips that annual rewrite.
+
 A `commit-msg` pre-commit hook enforces this. Install it **once per clone**
 (in addition to the usual `pre-commit install`):
 
@@ -282,6 +285,27 @@ pre-commit install --hook-type commit-msg
   ```
 
 - If a hook failure shows **missing or non-obvious repo policy** (not a one-off typo), you **must** add a **short** reminder under **Mandatory learning loop** rules to the right `AGENTS.md` or adjacent **`//` comments** so the next run does not repeat it—unless it is already documented.
+
+## Final vulnerability check
+
+After implementation, simplification, formatting, and tests are settled, review
+and analyze the **final diff** before pushing or reporting completion.
+
+- Trace untrusted inputs to deserialization, command execution, and filesystem
+  writes or deletion. Check applicable risks: unsafe deserialization, injection,
+  temporary-path races, symlink/path traversal, excessive permissions, memory or
+  descriptor misuse, and cleanup outside owned resources.
+- Run available security and bug-finding static analysis appropriate to the
+  changed languages. Compare findings with the agreed base; investigate new
+  findings and distinguish existing warnings and false positives. Passing
+  formatting and ordinary lint alone does not complete this pass.
+- Fix confirmed issues, add focused regression coverage where useful, then rerun
+  affected checks and this vulnerability pass on the final code. Report tools,
+  scope, unresolved findings, and unavailable checks without claiming full safety.
+- When adding security guidance to `AGENTS.md`, name the vulnerability class the
+  rule prevents and the action an agent should take. Link a relevant public
+  finding or authoritative reference when available; keep implementation details
+  in source comments.
 
 ## The wheel SBOM
 
@@ -342,6 +366,8 @@ heading that still said the opposite.
 
 - **High-level** expectations: boundaries between layers, what to avoid, naming or structural conventions, CMake/include policy at a glance, “always / never” rules that stay true across refactors.
 - **Style of work**: how minimal to keep diffs, when to ask for clarification, how this subsystem should relate to OpenXR/schema/deviceio, etc.
+- Split cross-language security changes when their toolchains and approval criteria differ; identify any merge-order dependency explicitly.
+- When a task names a finding identifier, verify its stated category and affected paths before choosing code; do not infer the target from report ordering.
 - For build-only requests, use the documented CMake flags and environment first (for example `-DISAAC_TELEOP_PYTHON_VERSION=...`) rather than patching build files to select options.
 
 **What does *not* belong in `AGENTS.md`**

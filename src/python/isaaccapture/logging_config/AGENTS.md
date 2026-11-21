@@ -37,6 +37,13 @@ stub generation.
   earlier. Empty-file cleanup may close the file handler only when it is also
   removing that empty file; leave a non-empty handler for `logging.shutdown()`.
 
+## Private directory creation
+
+- Prevent symlink attacks and time-of-check/time-of-use races by validating
+  each opened parent before creating children. Create directories privately from
+  the start to prevent temporary permission exposure; sticky shared ancestors do
+  not make a writable final directory safe.
+
 ## Leader and forwarding children
 
 `ISAACCAPTURE_LOG_SOCKET` decides which half of `_setup.install()` a process
