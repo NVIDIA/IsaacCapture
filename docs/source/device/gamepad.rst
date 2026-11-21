@@ -127,10 +127,13 @@ The plugin reads the first connected pad, keeps it until it disconnects, and the
 one again. Its name, type and USB IDs are logged when it is opened.
 
 The plugin can also run on its own, for example on another machine pushing to the same runtime,
-next to any reader of the same collection:
+next to any reader of the same collection. Start the CloudXR runtime and source its environment in
+the shell that launches the plugin:
 
 .. code-block:: bash
 
+   python -m isaaccapture.cloudxr.service start --accept-eula
+   source ~/.cloudxr/run/cloudxr.env
    ./install/plugins/gamepad/gamepad_plugin
 
 Multiple pads
