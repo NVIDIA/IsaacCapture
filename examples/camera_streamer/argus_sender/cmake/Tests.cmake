@@ -154,3 +154,9 @@ add_executable(argus_sender_test_output_rate_selector
     tests/test_output_rate_selector.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_output_rate_selector output_rate_selector)
+
+add_executable(argus_sender_test_sensor_clock
+    tests/test_sensor_clock.cpp
+    src/SensorClock.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_sensor_clock sensor_clock)

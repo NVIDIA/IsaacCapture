@@ -1047,6 +1047,12 @@ class Avs1TcpReceiver:
             # Same value under the key the CUDA IPC consumer tools and other viewers
             # already read for their "sof_to_consumer_ms" column.
             "sof_wall_clock_ns": sample_sof_ns,
+            # Sensor start-of-frame on the sender's CLOCK_REALTIME (timing extension), with the sender's stated
+            # uncertainty and the age of its sensor anchor; None when the sender sent none or marked it invalid.
+            "sensor_capture_realtime_ns": sample.sensor_capture_realtime_ns,
+            "sensor_capture_uncertainty_ns": sample.capture_uncertainty_ns,
+            "sensor_anchor_age_ns": sample.capture_anchor_age_ns,
+            "sensor_capture_valid": sample.capture_valid,
             "sensor_sof_lag_ms": (
                 sof_lag_ns / 1.0e6 if sof_lag_ns is not None else None
             ),

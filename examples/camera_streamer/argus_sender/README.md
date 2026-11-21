@@ -28,6 +28,7 @@ replaced. Until then it is the supported seam, and SIPL and Argus capture and th
 | --- | --- | --- | --- |
 | `src/CaptureBackend.h`, `src/CaptureFrame.h`, `src/CameraCapture.h` | A shared camera backend contract and frame ownership | Adapt the wrappers; retire the duplicate standalone contract | Map source configuration, frame identity and buffer ownership onto the shared contract. Lands when SIPL and Argus both use it with equivalent behaviour and safe buffer lifetime. |
 | Capture and encoder implementation, `src/Avs1Wire.*` | Camera backends and encoders; AVS1 over TCP remains the transport baseline | Reuse | Carry the tested behaviour forward. AVS1 over TCP stays the baseline until a replacement transport is qualified. |
+| `src/SensorClock.*` sensor-to-host time mapping and the AVS1 timing record | The timing implementation shared by the camera and receiver | Reuse the mapping; adapt the wire record | The wire representation may change when shared camera records carry capture identity, clock mapping and validity. An unavailable mapping stays explicit. Lands when the receiver side carries those fields. |
 
 ## Build
 
@@ -303,6 +304,48 @@ raw streams immediately after its transform returns. It is not the later time
 at which the coordinator waits for that worker. These metrics are diagnostic
 metadata only and do not alter the AVS1 wire format.
 
+## Sensor capture time
+
+A camera backend that reports its sensor's capture timestamp can have the sender state it in the sender's
+`CLOCK_REALTIME`, so another host whose wall clock is synchronised can compare it with its own. `SensorClockMap` reads the
+platform counter, `CLOCK_MONOTONIC` and `CLOCK_REALTIME` in one bracket ten times a second and converts each frame's timestamp
+from the difference: counter to `CLOCK_MONOTONIC` through the anchor, then to `CLOCK_REALTIME` through the anchor's
+realtime-minus-monotonic offset. Every conversion is checked: a capture time after the frame was ready, an
+implausibly old one, a counter or clock that cannot be read, an unknown frequency, or a step between two consecutive
+anchors (the counter against `CLOCK_MONOTONIC`, or `CLOCK_REALTIME` against `CLOCK_MONOTONIC`) gives
+no capture time for that frame, never a substituted host-side stamp, and the reason is logged when it changes. A frame
+that passes also carries an uncertainty (the anchor's read bracket plus 83334 ppm, `chrony`'s default maximum slew rate, of the time between the anchor
+and the sensor event, the bound on how far `CLOCK_MONOTONIC` can be slewed against the counter) and the anchor's age, which is
+reported separately as its freshness. The slew rate is an assumption about the host's clock discipline, not a
+measurement: it holds while the host's `chrony` (or other discipline) slews no faster than that, which is `chrony`'s
+default `maxslewrate`; a host configured to slew faster is outside the bound. The anchor is read ten times a second,
+so the distance, and with it the uncertainty, stays small, and a frame whose uncertainty would exceed 20 ms is given
+no capture time. The uncertainty bounds the mapping only; it does not include how closely the sensor's timestamp event
+matches the physical exposure, or how well the two hosts' wall clocks agree.
+
+The SIPL backend reports its start-of-frame timestamp this way. On the board it was measured against the platform counter
+(`CNTVCT_EL0`, 31.25 MHz): the raw value counts that counter, advances at the same rate as `CLOCK_MONOTONIC`, and leads
+the moment the frame is dequeued by about 22 ms. That is one board and one camera, not vendor documentation.
+
+The Argus backend reports the start-of-frame TSC from `Argus::Ext::ISensorTimestampTsc`, which the Argus headers document as
+nanoseconds. It is the same counter scaled to nanoseconds, so it goes through the same `SensorTimeMapper` as the SIPL
+ticks, with the unit declared as nanoseconds and never inferred from the value. That the Argus TSC is the platform counter
+on a given board follows from the documentation and is not measured here; the mapping's checks refuse a frame whose
+converted time is after it was ready or implausibly old. A frame without the extension, or one the mapping refuses, has
+no capture time; the generic sensor timestamp is never used instead. Each camera has its own mapper, because cameras are
+acquired on separate threads and a stereo bundle can have one eye qualified and not the other.
+
+Only the unit declaration and the extraction of the timestamp are backend code; the conversion, anchor reads, checks and
+the fields written to the timing record are shared. How closely the counter's start-of-frame value marks the physical exposure has been
+measured on that one board and has not been validated independently. The checks and their tests show that the counter
+is converted consistently onto the sender's clock; they do not show that it is the exposure instant. Describe the value
+downstream as the sensor's start-of-frame counter mapped onto the sender's clock, not as the exposure time.
+
+Every AVS1 bundle carries one timing record per sample (see [WIRE_FORMAT.md](WIRE_FORMAT.md)): the capture instant in
+the sender's `CLOCK_REALTIME` (clock domain 2), the uncertainty and the anchor age, valid only for frames that passed
+the checks; a sample without a checked mapping carries an all-zero record. A receiver that predates the extension
+rejects those bundles, so deploy the receiver before the sender. A new `session_id` invalidates every earlier mapping.
+
 ## Wire dump
 
 Set `network.dump_wire` to save the exact length-prefixed AVS1 records that were
@@ -320,6 +363,7 @@ See [WIRE_FORMAT.md](WIRE_FORMAT.md) for the byte-level format.
 
 ## Source layout
 
+- `SensorClock.*`: the counter-to-`CLOCK_REALTIME` mapping (through `CLOCK_MONOTONIC`), its checks, and `SensorTimeMapper`, the one path both backends use.
 - `Config.*`: YAML parsing and validation.
 - `CaptureManager.*` / `CaptureDomainPlan.*` / `PriorityFrameHandoff.h`: independent priority-eye acquisition and latest-frame slots, event-driven secondary Argus domains, configurable EGL mailbox/FIFO consumers, and timing.
 - `CapturePriorityPolicy.*`: priority-stream selection, startup synchronization tolerance, and secondary release timing.

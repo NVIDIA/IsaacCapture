@@ -15,6 +15,7 @@
 #include "HevcEncoder.h"
 #include "PriorityFrameHandoff.h"
 #include "Runtime.h"
+#include "SensorClock.h"
 #include "StereoAlignmentPolicy.h"
 
 #include <Argus/BufferStream.h>
@@ -177,6 +178,9 @@ public:
         EGLStream::IFrameConsumer* iConsumer = NULL;
         uint64_t lastFrameNumber = 0;
         bool hasLastFrameNumber = false;
+        // Places the Argus TSC start-of-frame on CLOCK_MONOTONIC. Used only by the thread that acquires this camera.
+        std::unique_ptr<SensorTimeMapper> timeMapper;
+        std::string lastMappingReason;
     };
 
     struct PendingFrame
@@ -1586,6 +1590,40 @@ private:
         }
     }
 
+    // The Argus TSC start-of-frame is documented in nanoseconds of the platform counter. A frame without it, or one the
+    // mapping refuses, carries no capture time; the generic sensor timestamp is not a substitute.
+    void mapCaptureTime(CameraState* camera, FrameTiming* timing)
+    {
+        if (!camera->timeMapper)
+        {
+            SensorClockMap::Config config;
+            camera->timeMapper.reset(new SensorTimeMapper(readCounterHz(), config, readCounterPair));
+        }
+        SensorTimeMapping mapping;
+        if (!timing->hasSensorSofTimestampTsc)
+        {
+            mapping.reason = "the frame metadata has no TSC start-of-frame timestamp";
+        }
+        else
+        {
+            const int64_t nowNs = monotonicNowNs();
+            mapping =
+                camera->timeMapper->map(timing->sensorSofTimestampTscNs, SensorTimestampUnit::Nanoseconds, nowNs, nowNs);
+        }
+        applyMappingToTiming(mapping, timing);
+        if (!mapping.valid && mapping.reason != camera->lastMappingReason)
+        {
+            // Reported when the reason changes, not per frame: the frames still flow without a capture time.
+            std::fprintf(
+                stderr, "[argus] camera %s: no capture time: %s\n", camera->label.c_str(), mapping.reason.c_str());
+            camera->lastMappingReason = mapping.reason;
+        }
+        else if (mapping.valid)
+        {
+            camera->lastMappingReason.clear();
+        }
+    }
+
     std::unique_ptr<PendingFrame> acquireCameraFrame(DomainState* domain,
                                                      size_t flatIndex,
                                                      const std::atomic<bool>* expectedStop,
@@ -1660,6 +1698,7 @@ private:
         }
         sample->timing.acquiredSteadyNs = acquiredNs;
         sample->timing.acquiredTscNs = acquiredTscNs;
+        mapCaptureTime(&camera, &sample->timing);
         sample->duplicate = camera.hasLastFrameNumber && sample->timing.frameNumber == camera.lastFrameNumber;
         if (camera.hasLastFrameNumber && sample->timing.frameNumber > camera.lastFrameNumber + 1)
         {

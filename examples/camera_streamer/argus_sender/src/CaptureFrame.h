@@ -133,6 +133,15 @@ struct CaptureFrame
     SensorClockDomain sensorClock = SENSOR_CLOCK_NONE;
     // CLOCK_MONOTONIC when the backend had the frame ready: processing time, not capture time.
     uint64_t readyMonotonicNs = 0;
+    // The sensor capture time placed on this machine's CLOCK_MONOTONIC, only when the backend could map and check
+    // it (see SensorClockMap). captureUncertaintyNs is the mapping's bracket and captureAnchorAgeNs the age of the
+    // anchor it used; none of the three is meaningful unless captureMapped.
+    bool captureMapped = false;
+    int64_t captureMonotonicNs = 0;
+    int64_t captureUncertaintyNs = 0;
+    int64_t captureAnchorAgeNs = 0;
+    // The same capture event on CLOCK_REALTIME; 0 when the mapping had no realtime anchor.
+    int64_t captureRealtimeNs = 0;
     Nv12Surface surface;
     FrameLease lease;
 };
