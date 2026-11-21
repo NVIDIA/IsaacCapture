@@ -209,3 +209,32 @@ def test_resize_override(tmp_path):
         frames = _collect(source, 2)
     assert len(frames) == 2
     assert frames[-1].image.shape == (24, 32, 4)
+
+
+@requires_gpu
+def test_a_stereo_camera_frame_stays_intact_while_the_reader_holds_it(tmp_path):
+    from isaaccapture_examples.camera_viz.sources import build_stereo_camera
+
+    clip = tmp_path / "sbs.mp4"
+    # Every frame is brighter than the last. The clip's length shares no
+    # factor with the source's buffers, so a buffer written again while the
+    # clip loops never gets the frame it had.
+    frames = [
+        np.hstack([_solid(32, 32, (v, v, v)), _solid(32, 32, (255 - v, 0, v))])
+        for v in range(8, 252, 4)
+    ]
+    assert len(frames) % 3
+    _write_clip(clip, frames)
+    source = build_stereo_camera(
+        {"name": "clip", "type": "video", "stereo": True, "path": str(clip), "fps": 200}
+    )
+    source.start()
+    try:
+        (held,) = _collect(source, 1)
+        left, right = held.image.get(), held.image_right.get()
+        time.sleep(0.1)  # some twenty frames replace one another meanwhile
+        np.testing.assert_array_equal(held.image.get(), left)
+        np.testing.assert_array_equal(held.image_right.get(), right)
+        assert _collect(source, 1) and source.dropped_captures >= 5
+    finally:
+        source.stop()

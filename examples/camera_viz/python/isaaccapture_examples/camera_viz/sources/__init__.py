@@ -385,4 +385,4 @@ def build_stereo_camera(spec: dict, *, imu: bool = False) -> FrameSource:
     if kind == "synthetic":
         return SyntheticSceneSource(name=name, **arguments)
     # video: a side-by-side file already emits both eyes in one frame.
-    return VideoFileSource(name=name, stereo=True, **arguments)
+    return VideoFileSource(name=name, stereo=True, hold=True, **arguments)

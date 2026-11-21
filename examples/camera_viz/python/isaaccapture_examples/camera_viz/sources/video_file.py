@@ -27,7 +27,7 @@ from typing import Optional
 
 import numpy as np
 
-from ._helpers import PolledSource, alloc_pinned_host, notify
+from ._helpers import CaptureMailbox, PolledSource, alloc_pinned_host, notify
 
 # Playback rate used when the container reports a missing / absurd FPS.
 _FALLBACK_FPS = 30.0
@@ -76,6 +76,7 @@ class VideoFileSource(PolledSource):
         fps: float = 0.0,
         loop: bool = True,
         stereo: bool = False,
+        hold: bool = False,
     ) -> None:
         try:
             import cv2
@@ -134,6 +135,16 @@ class VideoFileSource(PolledSource):
         self._cap = None
         self._finished = False
         self._deadline = 0.0
+        # hold: a frame handed out stays intact until the next latest(),
+        # and frames that were replaced unread are counted.
+        if hold:
+            self._mailbox = CaptureMailbox(len(self._gpu_buffers))
+
+    @property
+    def dropped_captures(self) -> int:
+        """Frames that were replaced before they were read; counted with
+        ``hold``."""
+        return self._mailbox.dropped if self._mailbox is not None else 0
 
     def _open_device(self) -> bool:
         cap = self._cv2.VideoCapture(str(self._path))

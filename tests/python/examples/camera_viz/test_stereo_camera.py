@@ -171,6 +171,19 @@ def test_a_calibration_names_a_lens_model_that_is_known():
         )
 
 
+def test_a_calibration_is_read_only_and_compared_by_identity():
+    from isaaccapture_examples.camera_viz.pipeline import StereoCalibration
+
+    def calibration():
+        eye, none = np.eye(3), np.zeros(5)
+        return StereoCalibration(8, 8, eye, none, eye.copy(), none, eye, np.zeros(3))
+
+    one, two = calibration(), calibration()
+    assert one == one and one != two and len({one, two}) == 2
+    with pytest.raises(ValueError, match=r"read-only"):
+        one.left_K[0, 0] = 2.0
+
+
 def test_zed_settings_take_a_number_in_range_or_auto_where_the_camera_has_it():
     settings = zed_source.video_settings(
         {**ZED, "exposure": 40, "gain": 12, "white_balance": "auto", "gamma": 5}
@@ -580,6 +593,24 @@ def test_a_reconnected_camera_carries_on_with_new_captures_and_its_imu(
 
 
 @requires_gpu
+def test_a_restarted_source_hands_out_nothing_of_its_last_session(zed_sdk):
+    source = build_stereo_camera(ZED)
+    source.start()
+    try:
+        _read(source, 2)
+        time.sleep(5 * CAPTURE_PERIOD_S)  # captures arrive and stay unread
+    finally:
+        source.stop()
+    last_session = _Camera.captures[0]
+    source.start()
+    try:
+        (frame,) = _read(source, 1)
+    finally:
+        source.stop()
+    assert frame[1] > last_session, "a capture of the last session was handed out"
+
+
+@requires_gpu
 def test_a_camera_without_an_imu_is_not_polled_for_one(zed_sdk, monkeypatch):
     monkeypatch.setattr(
         _Camera,
@@ -659,6 +690,20 @@ def test_the_mailbox_never_writes_the_buffer_the_reader_holds():
         assert box.write_index() != writing
     newest, _ = box.take()
     assert newest != held
+
+
+def test_a_reset_mailbox_forgets_the_capture_but_not_the_buffer_that_is_held():
+    box = CaptureMailbox()
+    box.publish(box.write_index(), 1)
+    held, _ = box.take()
+    box.publish(box.write_index(), 2)
+    box.reset()
+    assert box.take() is None, "a capture of the last session was handed out"
+    for stamp in (3, 4, 5):
+        writing = box.write_index()
+        assert writing != held
+        box.publish(writing, stamp)
+    assert box.take()[1] == 5
 
 
 def test_the_mailbox_needs_a_buffer_to_publish_one_to_hold_and_one_to_write():
