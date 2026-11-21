@@ -67,6 +67,31 @@ std::vector<std::string> SchemaTrackerBase::get_required_extensions()
     return exts;
 }
 
+bool SchemaTrackerBase::timestamp_is_fresh(const DeviceDataTimestamp& timestamp,
+                                           int64_t monotonic_time_ns,
+                                           std::optional<std::chrono::nanoseconds> max_sample_age) noexcept
+{
+    if (!max_sample_age)
+    {
+        return true;
+    }
+
+    int64_t source_time_ns = timestamp.sample_time_local_common_clock();
+    if (source_time_ns <= 0)
+    {
+        source_time_ns = timestamp.available_time_local_common_clock();
+    }
+    return source_time_ns <= 0 || source_time_ns > monotonic_time_ns ||
+           monotonic_time_ns - source_time_ns < max_sample_age->count();
+}
+
+bool SchemaTrackerBase::sample_is_fresh(const SampleResult& sample,
+                                        int64_t monotonic_time_ns,
+                                        std::optional<std::chrono::nanoseconds> max_sample_age) noexcept
+{
+    return timestamp_is_fresh(sample.timestamp, monotonic_time_ns, max_sample_age);
+}
+
 bool SchemaTrackerBase::ensure_collection()
 {
     uint64_t latest_generation = 0;

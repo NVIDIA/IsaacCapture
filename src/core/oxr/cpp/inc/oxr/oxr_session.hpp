@@ -84,6 +84,7 @@ private:
     SpaceHandle headset_space_;
     std::unique_ptr<XrTimeConverter> time_converter_;
     bool wait_for_system_;
+    std::shared_ptr<std::atomic_bool> session_running_ = std::make_shared<std::atomic_bool>(false);
     std::optional<std::chrono::steady_clock::time_point> untracked_since_;
     OpenXRProviderSnapshot provider_snapshot_;
     std::shared_ptr<spdlog::logger> logger_ = isaaccapture::Logger::get("isaaccapture.core.OpenXRSession");

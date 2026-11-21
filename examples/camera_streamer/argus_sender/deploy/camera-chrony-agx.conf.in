@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# chrony drop-in for the robot AGX — installed at /etc/chrony/conf.d/camera-agx.conf
+# deploy time. The same deploy installs camera-time-sync.service so camera-argus-sender
+# starts only after this source has disciplined the clock (see both unit files).
+#
+# The AGX has no internet; its only time source is the host PC over the robot
+# LAN, which is internet-disciplined and re-serves. Software timestamping over the
+# sub-ms link is ~10-50 us — far below the 33 ms (30fps) / 16 ms (60fps) frame
+# budget. iburst = fast lock; short poll = tight tracking on the quiet link.
+server @HOST_LAN_IP@ iburst minpoll 2 maxpoll 4
+
+# Step (not slew) a large initial offset, but only in the first few updates after
+# chronyd starts. Do the first big correction in a coordinated no-recording window.
+makestep 1.0 3

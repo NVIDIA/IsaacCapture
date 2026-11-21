@@ -103,7 +103,7 @@ _smv_name = _smv_ref_name()
 _DEFAULT_ICONS = {
     "teleop_version": "main",
     "teleop_url": "https://github.com/NVIDIA/IsaacCapture",
-    "cloudxr_version": "6.3.0",
+    "cloudxr_version": "6",
     "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk",
     "lab_version": "3.0",
     "lab_url": "https://isaac-sim.github.io/IsaacLab",
@@ -112,7 +112,7 @@ _VERSION_ICON_MAP = {
     "release/1.0.x": {
         "teleop_version": "1.0",
         "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.0.x",
-        "cloudxr_version": "6.1.0",
+        "cloudxr_version": "6",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab/develop",
@@ -120,7 +120,7 @@ _VERSION_ICON_MAP = {
     "release/1.1.x": {
         "teleop_version": "1.1",
         "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.1.x",
-        "cloudxr_version": "6.1.0",
+        "cloudxr_version": "6",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab",
@@ -128,7 +128,7 @@ _VERSION_ICON_MAP = {
     "release/1.2.x": {
         "teleop_version": "1.2",
         "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.2.x",
-        "cloudxr_version": "6.1.0",
+        "cloudxr_version": "6",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab",
@@ -136,7 +136,7 @@ _VERSION_ICON_MAP = {
     "release/1.3.x": {
         "teleop_version": "1.3",
         "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.3.x",
-        "cloudxr_version": "6.2.0",
+        "cloudxr_version": "6",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab",
@@ -144,7 +144,7 @@ _VERSION_ICON_MAP = {
     "release/1.4.x": {
         "teleop_version": "1.4",
         "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.4.x",
-        "cloudxr_version": "6.3.0",
+        "cloudxr_version": "6",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab",
@@ -152,7 +152,7 @@ _VERSION_ICON_MAP = {
     "release/1.5.x": {
         "teleop_version": "1.5",
         "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.5.x",
-        "cloudxr_version": "6.3.0",
+        "cloudxr_version": "6",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab",
@@ -160,7 +160,7 @@ _VERSION_ICON_MAP = {
     "release/1.6.x": {
         "teleop_version": "1.6",
         "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.6.x",
-        "cloudxr_version": "6.3.0",
+        "cloudxr_version": "6",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab",
@@ -168,7 +168,7 @@ _VERSION_ICON_MAP = {
     "release/1.7.x": {
         "teleop_version": "1.7",
         "teleop_url": "https://github.com/NVIDIA/IsaacCapture/tree/release/1.7.x",
-        "cloudxr_version": "6.3.0",
+        "cloudxr_version": "6",
         "cloudxr_url": "https://docs.nvidia.com/cloudxr-sdk/release/6",
         "lab_version": "3.0",
         "lab_url": "https://isaac-sim.github.io/IsaacLab",

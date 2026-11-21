@@ -99,6 +99,39 @@ def test_paired_no_drop_at_full_rate():
     assert not missing, f"lost pairs: {missing}"
 
 
+def test_paired_emit_mode_both_waits_for_both_eyes_each_cycle():
+    """Argus independent stereo can suppress duplicate paired submits.
+
+    In this mode a new pair is emitted only after both cached eyes have
+    refreshed since the previous pair.
+    """
+    left = FakeSource("L")
+    right = FakeSource("R")
+    paired = PairedFrameSource("pair", left, right, emit_mode="both")
+
+    left.publish("L0")
+    right.publish("R0")
+    f = paired.latest()
+    assert f is not None
+    assert f.image == "L0" and f.image_right == "R0"
+
+    left.publish("L1")
+    assert paired.latest() is None
+
+    right.publish("R1")
+    f = paired.latest()
+    assert f is not None
+    assert f.image == "L1" and f.image_right == "R1"
+
+    right.publish("R2")
+    assert paired.latest() is None
+
+    left.publish("L2")
+    f = paired.latest()
+    assert f is not None
+    assert f.image == "L2" and f.image_right == "R2"
+
+
 def test_paired_returns_none_when_nothing_new():
     """latest() returns None when neither child has produced since the
     last call. Otherwise the consumer would keep submitting stale data

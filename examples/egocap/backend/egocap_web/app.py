@@ -1,0 +1,726 @@
+# SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""FastAPI lifetime, the one status endpoint, and static hosting of the
+built React app.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import secrets
+import sys
+import time
+import uuid
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+from dataclasses import replace
+from pathlib import Path
+from typing import Any, AsyncIterator
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from egocap.core.data_root import calibration_dir
+from recording_service import (
+    CalibrationAsset,
+    ConfigurationError,
+    QcConfig,
+    RecordingPhase,
+    ServiceConfig,
+    StateError,
+    VideoSourceSpec,
+)
+
+from .auto_align import AutoAligner
+from .capture_preview import MAX_CAMERA_JPEG_BYTES
+from .capture_status import CaptureStatusMonitor
+from .config import VisualizationConfig, config_from_env, visualization_from_env
+from .day_report_routes import router as day_report_router
+from .host_addresses import headset_addresses
+from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
+from .livekit_preview import router as livekit_preview_router
+from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
+from .livekit_recording import (
+    LiveKitRecordingSource,
+    recordable_livekit_streams,
+    sensor_capture_names,
+    unrecordable_reason,
+)
+from .operator_settings import OperatorSettingsStore, operator_settings_path
+from .operator_settings import router as operator_settings_router
+from .preview_routes import router as preview_router
+from .recording_adapter import (
+    MANUS_GLOVE_SPEC,
+    PICO_CONTROLLER_SPEC,
+    RecordingAdapterError,
+    validate_tracking_descriptor,
+)
+from .recording_command import RecordingContext, interrupted_take
+from .recording_session import CoordinatorBusyError, RecordingSessionCoordinator, TaskContext
+from .recordings import router as recordings_router
+from .session_locks import SessionLocks
+from .settings_routes import EffectiveSettings
+from .settings_routes import router as settings_router
+from .setup_routes import router as setup_router
+from .setup_service import CHECKLIST_SECONDS, SetupService, capture_facts
+from .station_config import ResolvedStation, StationConfigError, load_station_config, station_config_path_from_env
+from .station_routes import router as station_router
+from .station_service import TAKE_IN_PROGRESS, StationService, session_adapter
+from .station_uptime import DOWN, READY, RECORDING, UPTIME_DIR, UptimeLog, UptimeSampler
+from .stations import StationError, StationStore, station_store_path
+from .task_file_routes import router as task_file_router
+from .viser_scene import VisualizationScene
+
+logger = logging.getLogger(__name__)
+
+# The built frontend's output directory (`npm run build` -> `frontend/dist/`).
+# Not present in a source checkout until the frontend is built once; see
+# frontend/README.md.
+_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+# The task catalogs shipped with the application (read-only; see task_files.py). EGOCAP_TASK_FILES_DIR points the
+# API at another directory, for example the one the recorder reads its task library from.
+_DEFAULT_TASK_FILE_ROOT = Path(__file__).resolve().parents[2] / "data" / "taskfiles"
+
+# ONE total memory budget covering every queued/in-flight copy this
+# pipeline holds AT ONCE, together: the per-take ingress's own raw queue,
+# one raw+decoded pair held live during conversion, the real service's own
+# decoded-sample queue, AND the service's own writer in-flight copy (the
+# one sample it has dequeued and is actively encoding/writing). Sized
+# independently, each of these would look individually reasonable while
+# still summing to far more memory than intended -- see
+# _recording_config_factory below for how the decoded-queue capacity is
+# derived from what's left after the raw side's own reservation. The
+# LiveKit streams' own ingress share and receiver queues are added on top
+# per take (they scale with the stream geometry), not carved out of this.
+_RECORDING_QUEUE_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024
+
+# RecordingIngress's own raw-item queue, per take -- items queued here are
+# the UNconverted CaptureFrame/CameraImage values. It is bounded by bytes,
+# not item count: _INGRESS_QUEUE_BYTES of actual compressed JPEG / tracking
+# blob (a typical camera frame is a few hundred KB, so this holds seconds
+# of 60 Hz tracking plus two or three 30 fps cameras, where an 8-slot count
+# held ~50 ms). _INGRESS_QUEUE_CAPACITY is only a safety cap on item count.
+# The reservation adds one raw item held live in the executor during
+# conversion: MAX_CAMERA_JPEG_BYTES (capture_preview.py's own cap), or a
+# LiveKit stream's decoded frame when that is larger.
+_INGRESS_QUEUE_BYTES = 64 * 1024 * 1024
+_INGRESS_QUEUE_CAPACITY = 4096
+#: How long shutdown waits for queued time alignments before leaving them for the next start.
+_ALIGNER_SHUTDOWN_SECONDS = 30.0
+# LiveKit frames are decoded RGB (megabytes each, ~15 MB at 2560x1984), so
+# the JPEG allowance above holds only a few and a short consumer stall would
+# fail the take. Each recordable stream therefore adds this many of its own
+# frames to the ingress queue, and the receiver's queues (see
+# livekit_receiver.RECEIVER_FRAMES_PER_STREAM) are added to the total budget.
+_LIVEKIT_INGRESS_FRAMES_PER_STREAM = 6
+
+
+def _livekit_frame_bytes(started: Any) -> list[int]:
+    """Decoded RGB size of one frame of each LiveKit stream a take would record."""
+    return [s.width * s.height * 3 for s in recordable_livekit_streams(started)]
+
+
+def _livekit_ingress_bytes(started: Any) -> int:
+    """Extra raw-ingress bytes the recordable LiveKit streams need."""
+    return sum(_livekit_frame_bytes(started)) * _LIVEKIT_INGRESS_FRAMES_PER_STREAM
+
+
+def _livekit_receiver_bytes(started: Any) -> int:
+    """Worst-case bytes the LiveKit receiver's own queues pin for the recordable streams."""
+    return sum(_livekit_frame_bytes(started)) * RECEIVER_FRAMES_PER_STREAM
+
+
+def _ingress_queue_bytes(started: Any) -> int:
+    """The raw-ingress byte bound of a take: the JPEG/tracking allowance plus the LiveKit frames' share."""
+    return _INGRESS_QUEUE_BYTES + _livekit_ingress_bytes(started)
+
+
+def _recording_output_root(station_data_dir: Path | None = None) -> Path:
+    """Server-owned recording output location -- an operator/deployment
+    setting, never something the browser supplies (see config.py's own
+    docstring for the same rule applied to capture configuration). Resolves
+    from the station YAML's ``recording.data_dir`` when configured, else the
+    fixed development default."""
+    if station_data_dir is not None:
+        return station_data_dir
+    return Path("./recordings").expanduser()
+
+
+# Per-station calibration files copied into every new session (and, once there, into each
+# routed group) when present at EGOCAP_CALIBRATION_DIR. Calibration files are optional unless
+# the deployment requires them: the copy never fails for a missing one (required=False), and a
+# station in use is held from recording only while the operator setting require_calibration is
+# on (see setup_checks.py).
+_STATION_CALIBRATION_FILES = (
+    "head_camera_intrinsics.json",
+    "head_camera_extrinsics.json",
+    "wrist_calibration_offsets.json",
+    "left_wrist_camera_intrinsics.json",
+    "right_wrist_camera_intrinsics.json",
+)
+
+
+def _station_calibration_assets() -> tuple[CalibrationAsset, ...]:
+    """The station's calibration files, resolved fresh from EGOCAP_CALIBRATION_DIR each call."""
+    source_dir = calibration_dir()
+    return tuple(
+        CalibrationAsset(name=name, path=source_dir / name, required=False) for name in _STATION_CALIBRATION_FILES
+    )
+
+
+def _recorder_livekit_token(room: str) -> str:
+    """A viewer-capability token (subscribe and data messages, no media) for the recorder's LiveKit connection."""
+    api_key, signing_key = os.environ.get(API_KEY_ENV, ""), os.environ.get(API_SECRET_ENV, "")
+    if not api_key or not signing_key:
+        raise RuntimeError(f"{API_KEY_ENV} and {API_SECRET_ENV} must be set to record LiveKit video")
+    return subscriber_token(api_key=api_key, signing_key=signing_key, room=room, now=int(time.time()))
+
+
+def _recording_config_factory(
+    monitor: CaptureStatusMonitor,
+    station_label: str | None | Callable[[], str | None],
+    output_root: Path,
+    on_video_sources: Callable[[frozenset[str], frozenset[str]], None] | None = None,
+):
+    """Builds the real ``ServiceConfig`` lazily, read fresh each time the
+    coordinator actually opens/reopens a session (not once at import time)
+    -- so it reflects whichever cameras CaptureServer has ACTUALLY accepted
+    by then, not a fixed guess made before the capture attempt connected.
+    Declares ``intrinsics=False`` for every camera -- per-camera
+    intrinsics exist on the accepted descriptor but are not yet threaded
+    through the conversion path into each submitted ``VideoSample``
+    (``recording_adapter.convert_camera_image``'s ``intrinsics`` param is
+    always ``None`` today); declaring a schema that doesn't require them is
+    the honest choice until that plumbing is added, rather than manufacturing
+    calibration values the backend doesn't actually have.
+
+    ``station_label`` may be a callable, read at each session open, so a session opened after the operator
+    changes the station in use carries the new station's name."""
+
+    def factory() -> ServiceConfig:
+        video_sources = tuple(
+            VideoSourceSpec(cam.name, cam.width, cam.height, cam.fps, intrinsics=False)
+            for cam in monitor.camera_descriptors
+        ) + tuple(
+            # LiveKit cameras with a capture-time stamp and a configured size are recorded like any camera.
+            VideoSourceSpec(s.name, s.width, s.height, s.fps, intrinsics=False)
+            for s in recordable_livekit_streams(monitor.native.started)
+        )
+        if on_video_sources is not None:
+            # Tells the aligner, once per session open, which cameras this session records and which of them
+            # have a sensor capture time (only LiveKit streams stamped that way do).
+            on_video_sources(
+                frozenset(v.name for v in video_sources),
+                sensor_capture_names(recordable_livekit_streams(monitor.native.started)),
+            )
+        # A supported profile must record actual tracking AND the
+        # selected cameras -- pico_controller and every configured camera
+        # are required for a KEPT result. manus_glove is NOT required:
+        # a hand legitimately going briefly untracked (the whole-row
+        # omission policy in recording_adapter.py) must not by itself
+        # invalidate an otherwise-good take.
+        required = (PICO_CONTROLLER_SPEC.name, *(v.name for v in video_sources))
+        config = ServiceConfig(
+            output_root=output_root,
+            numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC),
+            video_sources=video_sources,
+            qc=QcConfig(required_sources=required),
+            calibration_assets=_station_calibration_assets(),
+            station_label=station_label() if callable(station_label) else station_label,
+        )
+        largest_decoded_frame_bytes = max((cam.width * cam.height * 3 for cam in video_sources), default=0)
+        if largest_decoded_frame_bytes > 0:
+            # What's left of the total budget after the raw ingress side's
+            # own reservation (above), minus TWO more decoded-frame copies
+            # held live at once: one in the executor during conversion,
+            # one in the real service's own writer (the sample it has
+            # already dequeued and is actively encoding). Genuinely bounds
+            # the combined worst case at _RECORDING_QUEUE_MEMORY_BUDGET_BYTES.
+            started = monitor.native.started
+            # The live raw item is a JPEG, or a LiveKit stream's decoded frame when that is larger.
+            live_item_bytes = max([MAX_CAMERA_JPEG_BYTES, *_livekit_frame_bytes(started)])
+            # Owned storage, each counted once: the raw ingress queue, the LiveKit receivers' own frame queues, and
+            # the one live item. The budget is the base plus the LiveKit ingress allowance plus the receiver
+            # allowance, so the receiver queues are taken out of it here and what remains is the decoded queue.
+            reserved = _ingress_queue_bytes(started) + _livekit_receiver_bytes(started) + live_item_bytes
+            total = (
+                _RECORDING_QUEUE_MEMORY_BUDGET_BYTES
+                + _livekit_ingress_bytes(started)
+                + _livekit_receiver_bytes(started)
+            )
+            decoded_queue_budget = total - reserved - 2 * largest_decoded_frame_bytes
+            capacity = decoded_queue_budget // largest_decoded_frame_bytes
+            if capacity < 1:
+                # A silent floor here would claim a cap that doesn't
+                # actually hold -- this profile's own geometry genuinely
+                # cannot fit within the stated budget; refuse rather than
+                # pretend.
+                raise ConfigurationError(
+                    f"camera resolution ({largest_decoded_frame_bytes} bytes/decoded frame) cannot fit even "
+                    f"one queued frame within the {_RECORDING_QUEUE_MEMORY_BUDGET_BYTES}-byte recording queue "
+                    "memory budget"
+                )
+            config = replace(config, queue_capacity=capacity)
+        # No camera configured keeps the dataclass default -- numeric-only
+        # samples are tiny, so that default is already a conservative bound.
+        return config
+
+    return factory
+
+
+#: How old a backend-local-received tracking/camera sample may be and still
+#: count as "ready" -- matches preview_routes.py's own staleness threshold
+#: for the same preview slots (that constant isn't exported, so this is a
+#: local equivalent, not a second, differently-tuned policy).
+_READINESS_STALE_SECONDS = 2.0
+
+
+def _recording_readiness_check(
+    monitor: CaptureStatusMonitor,
+    station_config_error: str | None = None,
+    capture_server_url: str | None = None,
+):
+    """Real backend-local capture facts, injected into the coordinator --
+    it never imports CaptureStatusMonitor/CaptureClient itself (see
+    recording_session.py's own module docstring). Checked at start_episode
+    admission (BEFORE storage ever opens -- an incompatible descriptor
+    must never reach the point of recording a whole take's worth of zero
+    tracking data before anyone notices), the post-await activation
+    recheck inside _start_episode_impl, AND continuously on every accepted
+    capture callback while a take is active (see
+    RecordingSessionCoordinator._check_still_ready_while_recording), so a
+    source that goes stale or becomes incompatible at any of those points
+    is caught. Requires a tracking descriptor this adapter can actually
+    decode, capture running, and a tracking/camera sample actually
+    received within the staleness window -- not merely "ever arrived
+    once."
+
+    ``capture_server_url`` lets LiveKit recording be refused when CaptureServer is not on this machine.
+
+    ``station_config_error``, when set, unconditionally blocks new recording
+    admission with that reason -- a configured-but-invalid station YAML
+    must never silently fall back to a development default, but it must
+    also never prevent capture preview from running."""
+
+    def check() -> tuple[bool, str | None]:
+        if station_config_error is not None:
+            return False, station_config_error
+        if monitor.tracking_descriptor is None:
+            return False, "tracking source not yet accepted"
+        try:
+            validate_tracking_descriptor(monitor.tracking_descriptor)
+        except RecordingAdapterError as exc:
+            return False, f"tracking descriptor unsupported for recording: {exc}"
+        if monitor.native.status is None or not monitor.native.status.running:
+            return False, "capture is not running"
+        now = time.monotonic()
+        tracking = monitor.preview.tracking()
+        if tracking is None or (now - tracking.received_monotonic) > _READINESS_STALE_SECONDS:
+            return False, "tracking source is stale or has no sample yet"
+        # An offered LiveKit stream that cannot be recorded blocks recording by name, never silently dropped.
+        blocked = unrecordable_reason(monitor.native.started, capture_server_url)
+        if blocked is not None:
+            return False, blocked
+        cameras = monitor.camera_descriptors
+        # A recordable LiveKit stream is a camera too; its liveness is checked when the take prepares and
+        # while it records, not by a preview sample here.
+        if not cameras and not recordable_livekit_streams(monitor.native.started):
+            return False, "no camera selected"
+        for cam in cameras:
+            slot = monitor.preview.camera(cam.name)
+            if slot is None or (now - slot.received_monotonic) > _READINESS_STALE_SECONDS:
+                return False, f"camera {cam.name!r} is stale or has no sample yet"
+        return True, None
+
+    return check
+
+
+#: The recording phases in which no take is being written, so the station in use may change.
+_STATION_CHANGE_PHASES = (RecordingPhase.IDLE, RecordingPhase.RECOVERY_REQUIRED, RecordingPhase.CLOSED)
+
+
+def _station_change_blocked(coordinator: RecordingSessionCoordinator) -> str | None:
+    """Why the station in use cannot change now: a take is being recorded or a recording command is still
+    running. An interrupted take waiting for recovery does not block; it stays with the session it was in."""
+    snapshot = coordinator.snapshot()
+    writing = snapshot.service is not None and snapshot.service.phase not in _STATION_CHANGE_PHASES
+    return TAKE_IN_PROGRESS if writing or snapshot.active_operation is not None else None
+
+
+#: The reason the station is logged down while an interrupted take waits to be recovered or discarded.
+INTERRUPTED_TAKE = "an interrupted take needs recovery"
+#: Why a change that would start a new batch is refused while an interrupted take waits.
+RESOLVE_INTERRUPTED_TAKE = "recover or discard the interrupted take first"
+#: Why a station change is refused while the recording session cannot end its batch, by what stopped it.
+STATION_CHANGE_BUSY = "the recording session is busy; finish the current take before changing stations"
+STATION_CHANGE_REFUSED = "the recording session cannot change stations in its current state"
+
+#: How often the station's state is asked for the uptime log; a take's start and end are logged this late at most.
+_UPTIME_SAMPLE_SECONDS = 2.0
+#: How often a connected headset's host address is compared with the one remembered for the station.
+_HEADSET_MEMORY_SECONDS = 30.0
+
+
+def _station_state(
+    coordinator: RecordingSessionCoordinator, context: RecordingContext, stations: StationService
+) -> tuple[str, str, str | None]:
+    """The station in use and whether it is recording, ready to record, or down and why. Down means a take
+    would be refused for a station, device or capture reason; a missing task or operator name is not downtime."""
+    station = stations.label()
+    service = coordinator.snapshot().service
+    # An interrupted take is still the service's episode, but nothing records until it is resolved.
+    if interrupted_take(service):
+        return station, DOWN, INTERRUPTED_TAKE
+    if service is not None and service.episode is not None:
+        return station, RECORDING, None
+    blocked = context.setup_block()
+    if blocked is not None:
+        return station, DOWN, blocked
+    ready, reason = coordinator.readiness()
+    if not ready:
+        return station, DOWN, reason or "capture is not ready"
+    return station, READY, None
+
+
+async def _remember_headset_address(
+    stations: StationService, setup: SetupService, capture_server_url: str
+) -> None:
+    """Keep, for the station in use, the capture host address its headset is evidently using.
+
+    A connected headset proves it was given an address that works. The remembered one is replaced only when it
+    is no longer one of the host's, so an operator's choice among several valid addresses is never overwritten.
+    """
+    selected = stations.registry.selected
+    if selected is None or not setup.headset_connected():
+        return
+    candidates = await asyncio.to_thread(headset_addresses, capture_server_url)
+    addresses = [candidate.address for candidate in candidates]
+    if addresses and selected.headset_address not in addresses:
+        # Another station may have been put in use during the await; the service checks what was seen here.
+        await stations.remember_headset_address(selected.station_id, selected.headset_address, addresses[0])
+
+
+async def _every(seconds: float, duty: Callable[[], Any], what: str) -> None:
+    """Run a background duty at an interval for as long as the application runs. One failed pass is logged
+    and the next still runs: these duties keep records, and must never take the application down."""
+    failure: str | None = None
+    while True:
+        try:
+            await duty()
+            # Said once, so the log shows when a fault that was reported ended.
+            if failure is not None:
+                logger.info("%s is working again", what)
+            failure = None
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            # Logged when the cause changes, not at every pass, or a disk that stays full would fill the log.
+            if repr(exc) != failure:
+                failure = repr(exc)
+                logger.exception("%s failed", what)
+        await asyncio.sleep(seconds)
+
+
+async def _rotate_batch_for_station(coordinator: RecordingSessionCoordinator) -> None:
+    """Ends the current batch so the next take opens a session under the new station label. A session's
+    configuration is frozen when it opens, so the label can only change between sessions.
+
+    Refused while an interrupted take waits: a new batch would leave it on disk with nothing on the page to
+    recover or discard it, and the station would stop being logged as down for it."""
+    if interrupted_take(coordinator.snapshot().service):
+        raise StationError(RESOLVE_INTERRUPTED_TAKE)
+    try:
+        await coordinator.new_batch()
+    except CoordinatorBusyError as exc:
+        # The cause stays in the log: its text is the coordinator's own and not written for the page.
+        logger.info("A station change was refused while the recording session was busy: %s", exc)
+        raise StationError(STATION_CHANGE_BUSY) from exc
+    except StateError as exc:
+        logger.info("A station change was refused by the recording session's state: %s", exc)
+        raise StationError(STATION_CHANGE_REFUSED) from exc
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Creates and starts the one CaptureStatusMonitor for the station,
+    independent of any browser connecting. Multiple viewers share this
+    single attempt; closing a browser tab never stops it -- only
+    application shutdown does, via an explicit, confirmed stop().
+
+    Also constructs the one RecordingSessionCoordinator (owning the real
+    RecordingService) and the RecordingContext wrapping it, the same
+    ownership pattern -- every WS connection shares it rather than getting
+    its own, so a disconnect/reconnect never loses the active episode/
+    task/totals and two simultaneous viewers can never collide on episode
+    identity. The coordinator is NOT opened here -- it opens lazily on the
+    first real start_episode attempt (see recording_command.py), so its
+    config factory reads real, by-then-accepted camera descriptors instead
+    of a fixed guess made before capture has had a chance to connect.
+
+    Construction order resolves the real circular dependency (the
+    coordinator's config/readiness closures need the monitor; the monitor's
+    recording consumer needs the coordinator): the monitor is built first
+    with no recording consumer, then the coordinator is built against that
+    real monitor, then attached via ``set_recording``.
+
+    Also records the fixed task-catalog directory for the read-only task-file API,
+    independently of capture: a missing directory is logged and reported by that API
+    (503) while the capture preview still starts.
+
+    A deployment station YAML (``EGOCAP_STATION_CONFIG``, see station_config.py), when
+    configured, is loaded exactly once here and seeds the station's label, initial
+    operator/instruction and recording output root through the same existing
+    config/context mechanisms below -- not a second configuration path. A
+    configured-but-invalid file is a real configuration failure, but NOT a backend
+    startup crash: capture preview has nothing to do with recording configuration and
+    must keep working, so the failure is instead captured as a readiness-check reason
+    that blocks new recording admission (see ``_recording_readiness_check``) -- never
+    silently replaced by the unset/development default. Unset ``EGOCAP_STATION_CONFIG``
+    preserves today's configuration-free development workflow."""
+    task_file_root = Path(os.environ.get("EGOCAP_TASK_FILES_DIR") or _DEFAULT_TASK_FILE_ROOT)
+    app.state.task_file_root = task_file_root
+    if not task_file_root.is_dir():
+        logger.error("task file directory %s is missing; /api/task-files is unavailable", task_file_root)
+    resolved_station: ResolvedStation | None = None
+    # The PUBLIC reason exposed via readiness rejection -- deliberately generic: the real
+    # StationConfigError text can contain the configured file's path and raw YAML-parser
+    # context, which stays backend-only (see the logged line below).
+    station_config_error: str | None = None
+    try:
+        resolved_station = load_station_config(station_config_path_from_env())
+    except StationConfigError as exc:
+        station_config_error = "station configuration is invalid; see backend logs"
+        logger.error("station configuration failed; new recording is blocked: %s", exc)
+    config = config_from_env()
+    # The station YAML's label wins when configured, else the fixed development default.
+    if resolved_station is not None and resolved_station.station_label:
+        config = replace(config, station_label=resolved_station.station_label)
+    # The station YAML's video_sources become the cameras requested from CaptureServer -- an
+    # explicit empty video_sources list is respected as "no cameras", same as the unconfigured
+    # default and the configured-but-invalid-file case above (resolved_station stays None, so
+    # config.cameras keeps its empty default -- capture preview then shows no camera tiles,
+    # it is not unaffected). Each requested name must already be known to the CaptureServer
+    # instance actually running (its own --camera list, mock or real) -- an unknown name rejects
+    # the WHOLE Begin, not just that one camera, which also takes tracking preview down with it.
+    if resolved_station is not None:
+        config = replace(config, cameras=resolved_station.cameras)
+    # task_text seeds the committed next-task instruction. operator seeds ONLY a prefill
+    # default for the frontend's entry field (via recording_command.py's snapshot
+    # "default_operator") -- start_episode's own operator parameter always replaces
+    # context.operator with the browser command's own (required) operator before a take can
+    # ever start (see recording_session.py's start_episode), so this seeded value is never
+    # itself used to admit or attribute a take.
+    initial_context = (
+        TaskContext(
+            task_text=resolved_station.task_description or "",
+            operator=resolved_station.operator_name or "",
+        )
+        if resolved_station is not None
+        else None
+    )
+    # Resolved exactly ONCE here, then shared verbatim with both the recording factory and
+    # recordings.py's browse/download routes (via app.state) -- the recorder and the recordings
+    # UI must never end up pointed at two different roots mid-process.
+    recording_output_root = _recording_output_root(resolved_station.data_dir if resolved_station else None)
+    app.state.recording_output_root = recording_output_root
+    # Station roles and task choices stay under a hidden directory excluded from recording downloads.
+    operator_settings_file = operator_settings_path(recording_output_root)
+    app.state.operator_settings_store = OperatorSettingsStore(operator_settings_file)
+    # Catalogs the operator imports from the page sit beside that file, apart from the shipped ones.
+    app.state.imported_task_file_root = operator_settings_file.parent / "taskfiles"
+    monitor = CaptureStatusMonitor(config, backend_instance_id=str(uuid.uuid4()))
+    livekit_source = LiveKitRecordingSource(
+        lambda: recordable_livekit_streams(monitor.native.started),
+        _recorder_livekit_token,
+    )
+    # Shared by the aligner and the end-of-day correction: whichever holds a session's lock has its labels.
+    session_locks = SessionLocks()
+    app.state.session_locks = session_locks
+    # Kept episodes are time-aligned in the background when the station configures an index camera.
+    aligner = (
+        AutoAligner(recording_output_root, resolved_station.alignment_index, session_locks)
+        if resolved_station is not None and resolved_station.alignment_index is not None
+        else None
+    )
+    # The station's time today, observed rather than entered: see the sampler started below.
+    station_uptime = UptimeLog(recording_output_root / UPTIME_DIR)
+    app.state.station_uptime = station_uptime
+    coordinator = RecordingSessionCoordinator(
+        _recording_config_factory(
+            monitor,
+            # Read at each session open: the station service below owns the label once it exists.
+            lambda: station_service.label(),
+            recording_output_root,
+            aligner.note_video_sources if aligner is not None else None,
+        ),
+        queue_capacity=_INGRESS_QUEUE_CAPACITY,
+        queue_bytes=lambda: _ingress_queue_bytes(monitor.native.started),
+        readiness_check=_recording_readiness_check(monitor, station_config_error, config.capture_server_url),
+        initial_context=initial_context,
+        livekit_source=livekit_source,
+        tracking_latency=resolved_station.latency if resolved_station is not None else None,
+    )
+    monitor.set_recording(coordinator)
+    # The station registry sits beside the operator settings. Its selected station names what is recorded and
+    # shown; with no station selected the deployment's own label stays in effect.
+    station_service = StationService(
+        StationStore(station_store_path(operator_settings_file)),
+        session_adapter(
+            offered_cameras=monitor.offered_camera_names,
+            change_blocked=lambda: _station_change_blocked(coordinator),
+            show_label=monitor.set_station_label,
+            rotate_batch=lambda: _rotate_batch_for_station(coordinator),
+            renamed=station_uptime.rename,
+        ),
+        default_label=config.station_label,
+    )
+    app.state.station_service = station_service
+    monitor.set_station_label(station_service.label())
+    # The start-of-day flow: the live station checklist, which gates a take for a station in use.
+    setup_service = SetupService(
+        facts=lambda: capture_facts(monitor, config),
+        stations=station_service,
+        calibration_dir=calibration_dir,
+        output_root=recording_output_root,
+        require_calibration=app.state.operator_settings_store.calibration_required,
+    )
+    app.state.setup_service = setup_service
+    await monitor.start()
+    app.state.monitor = monitor
+    # Generated once per backend process start (a restart is the only way
+    # to issue a new one) and printed here -- this console line is the
+    # distribution mechanism, which the operator reads off the machine
+    # they started the backend on. A plain print, not logger.info: the
+    # documented `uv run uvicorn` launch configures no logging, so a log
+    # call here would be silently dropped.
+    control_token = secrets.token_urlsafe(32)
+    print(f"Recording control token for this run: {control_token}", file=sys.stderr, flush=True)
+    auto_fill_operator_name = resolved_station.auto_fill_operator_name if resolved_station is not None else False
+    app.state.recording_context = RecordingContext(
+        coordinator=coordinator,
+        control_token=control_token,
+        auto_fill_operator_name=auto_fill_operator_name,
+        setup_gate=setup_service.block_reason,
+    )
+    # The 3D view settings are read once, for the view itself and for the settings report.
+    visualization_config: VisualizationConfig | None = None
+    visualization_error: str | None = None
+    try:
+        visualization_config = visualization_from_env()
+    except Exception as exc:
+        visualization_error = str(exc)
+    app.state.settings = EffectiveSettings(
+        capture=config,
+        station_path=station_config_path_from_env(),
+        station=resolved_station,
+        station_error=station_config_error,
+        recording_output_root=recording_output_root,
+        visualization=visualization_config,
+        visualization_error=visualization_error,
+        task_file_root=task_file_root,
+    )
+    # The station's state is sampled every few seconds for the uptime log.
+    sampler = UptimeSampler()
+
+    async def sample_uptime() -> None:
+        """Ask what the station is doing and log it; the file write stays off the event loop."""
+        observed = sampler.settle(*_station_state(coordinator, app.state.recording_context, station_service))
+        await asyncio.to_thread(station_uptime.observe, *observed)
+
+    # Owned by the lifespan: all stop with the application.
+    duties = [
+        # The gate answers from this duty's last result; a station in use is held until the first one.
+        asyncio.create_task(_every(CHECKLIST_SECONDS, setup_service.refresh, "the station checklist")),
+        asyncio.create_task(_every(_UPTIME_SAMPLE_SECONDS, sample_uptime, "the uptime sample")),
+        asyncio.create_task(
+            _every(
+                _HEADSET_MEMORY_SECONDS,
+                lambda: _remember_headset_address(station_service, setup_service, config.capture_server_url),
+                "remembering the headset address",
+            )
+        ),
+    ]
+    aligner_task: asyncio.Task[None] | None = None
+    if aligner is not None:
+        coordinator.on_episode_kept = aligner.submit
+        aligner_task = asyncio.create_task(aligner.run())
+    visualization: VisualizationScene | None = None
+    try:
+        visualization = _optional_visualization(monitor, visualization_config, visualization_error)
+        app.state.visualization = visualization
+        await visualization.start()  # never raises: a failed start only reports the view unavailable
+        yield
+    finally:
+        for duty in duties:
+            duty.cancel()
+        await asyncio.gather(*duties, return_exceptions=True)
+        try:
+            if visualization is not None:
+                await visualization.stop()
+        finally:
+            # The recording coordinator settles/closes before the capture
+            # owner stops -- it still needs the live capture connection to
+            # retire any in-flight take cleanly. An unreleased close is
+            # surfaced, not silently discarded.
+            close_result = await coordinator.close(final=True)
+            if aligner is not None and aligner_task is not None:
+                # After the recorder closed, so its last kept episode is queued; bounded so shutdown is too.
+                await aligner.close(aligner_task, _ALIGNER_SHUTDOWN_SECONDS)
+            if not close_result.released:
+                logger.error("recording coordinator did not fully release on shutdown: %s", close_result.issues)
+            await monitor.stop()
+
+
+def _optional_visualization(
+    monitor: CaptureStatusMonitor, config: VisualizationConfig | None, error: str | None
+) -> VisualizationScene:
+    """The optional 3D view; settings that could not be read leave it unavailable instead of stopping the app."""
+    if config is not None:
+        return VisualizationScene(monitor, config)
+    logger.error("3D view settings are invalid: %s", error)
+    scene = VisualizationScene(monitor, VisualizationConfig(enabled=True))
+    scene.mark_unavailable(f"3D view settings are invalid: {error}")
+    return scene
+
+
+app = FastAPI(lifespan=lifespan)
+app.include_router(preview_router)
+app.include_router(livekit_preview_router)
+app.include_router(task_file_router)
+app.include_router(settings_router)
+app.include_router(operator_settings_router)
+app.include_router(station_router)
+app.include_router(setup_router)
+app.include_router(day_report_router)
+# PoC demo integration: browse/download recorded files, off unless
+# EGOCAP_RECORDINGS_ENABLED=1. Not part of the final system design -- see
+# recordings.py's own module docstring.
+app.include_router(recordings_router)
+
+
+@app.get("/api/capture-status")
+async def get_capture_status(request: Request) -> JSONResponse:
+    """Returns the one current status value. Capture failure is still a
+    normal HTTP 200 with an actual failed/stopped status in the body -- a
+    healthy HTTP server is distinct from healthy capture."""
+    monitor: CaptureStatusMonitor = request.app.state.monitor
+    return JSONResponse(monitor.snapshot().to_json(), headers={"Cache-Control": "no-store"})
+
+
+@app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def api_not_found(path: str) -> JSONResponse:
+    """Any /api path this module didn't explicitly register above is a
+    real 404, not the SPA shell -- registered before the static mount so
+    it takes precedence over that mount's own HTML fallback."""
+    return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+
+# Static hosting of the built frontend, mounted last so it never shadows
+# /api routes above. Only mounted if the frontend has actually been built
+# (a source checkout before `npm run build` can still run the backend
+# standalone, e.g. for API-only development/tests).
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")

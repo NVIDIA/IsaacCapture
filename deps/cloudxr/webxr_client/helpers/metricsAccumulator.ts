@@ -33,6 +33,7 @@
 
 import * as CloudXR from '@nvidia/cloudxr';
 
+import type { MetricsSnapshot } from './controlChannel';
 import type {
   FrameMetricsUpdate,
   NetworkMetricsUpdate,
@@ -43,10 +44,7 @@ import type {
 export type MetricsCadenceLabel = 'render' | 'frame' | 'network';
 
 /** One cadence's worth of metrics, ready to place in a `clientMetrics` payload. */
-export interface MetricsSnapshot {
-  cadence: string;
-  metrics: Record<string, number>;
-}
+export type { MetricsSnapshot } from './controlChannel';
 
 /**
  * Copies the defined entries of `update` into `target` under their SDK metric names.
@@ -59,14 +57,17 @@ function mergeDefined<T extends object>(
   target: Record<string, number>,
   update: T,
   names: { [K in keyof T]-?: string }
-): void {
+): boolean {
+  let observed = false;
   for (const key of Object.keys(names) as Array<keyof T>) {
     const value = update[key];
     // Guard on the value, not the key: absent and explicitly-undefined must behave alike.
     if (typeof value === 'number' && Number.isFinite(value)) {
       target[names[key]] = value;
+      observed = true;
     }
   }
+  return observed;
 }
 
 /** Field-to-MetricsName maps, one per cadence. Kept beside the interfaces they mirror. */
@@ -106,20 +107,27 @@ export class MetricsAccumulator {
     frame: {},
     network: {},
   };
+  private readonly observedAt: Partial<Record<MetricsCadenceLabel, number>> = {};
 
   /** Merge a PerRender callback payload. */
   recordRender(update: RenderMetricsUpdate): void {
-    mergeDefined(this.byCadence.render, update, RENDER_NAMES);
+    if (mergeDefined(this.byCadence.render, update, RENDER_NAMES)) {
+      this.observedAt.render = performance.now();
+    }
   }
 
   /** Merge a PerFrame callback payload. */
   recordFrame(update: FrameMetricsUpdate): void {
-    mergeDefined(this.byCadence.frame, update, FRAME_NAMES);
+    if (mergeDefined(this.byCadence.frame, update, FRAME_NAMES)) {
+      this.observedAt.frame = performance.now();
+    }
   }
 
   /** Merge a PerNetwork callback payload. */
   recordNetwork(update: NetworkMetricsUpdate): void {
-    mergeDefined(this.byCadence.network, update, NETWORK_NAMES);
+    if (mergeDefined(this.byCadence.network, update, NETWORK_NAMES)) {
+      this.observedAt.network = performance.now();
+    }
   }
 
   /**
@@ -131,6 +139,7 @@ export class MetricsAccumulator {
   reset(): void {
     for (const cadence of Object.keys(this.byCadence) as MetricsCadenceLabel[]) {
       this.byCadence[cadence] = {};
+      delete this.observedAt[cadence];
     }
   }
 
@@ -146,7 +155,7 @@ export class MetricsAccumulator {
       const metrics = this.byCadence[cadence];
       if (Object.keys(metrics).length === 0) continue;
       // Copy: the caller serializes asynchronously, and callbacks keep mutating.
-      snapshots.push({ cadence, metrics: { ...metrics } });
+      snapshots.push({ cadence, metrics: { ...metrics }, observedAt: this.observedAt[cadence] });
     }
     return snapshots;
   }

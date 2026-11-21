@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 std::unique_ptr<ITrackerImpl> try_create_@NAME@_impl(LiveDeviceIOFactory& factory, const ITracker& tracker)
 {
     auto* typed = dynamic_cast<const @CLASS@*>(&tracker);

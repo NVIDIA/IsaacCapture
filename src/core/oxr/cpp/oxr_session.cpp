@@ -90,15 +90,19 @@ OpenXRSession::OpenXRSession(const std::string& app_name, const std::vector<std:
     create_session();
     create_reference_space();
     create_headset_probe();
+    // Synchronous startup requires the runtime to have made the new session READY.
     begin();
 }
 
-OpenXRSession::~OpenXRSession() = default;
+OpenXRSession::~OpenXRSession()
+{
+    session_running_->store(false);
+}
 
 OpenXRSessionHandles OpenXRSession::get_handles() const
 {
     // Pass the global xrGetInstanceProcAddr - oxr_session links against OpenXR loader
-    return OpenXRSessionHandles(instance_.get(), session_.get(), space_.get(), ::xrGetInstanceProcAddr);
+    return OpenXRSessionHandles(instance_.get(), session_.get(), space_.get(), ::xrGetInstanceProcAddr, session_running_);
 }
 
 OpenXRProviderSnapshot OpenXRSession::get_provider_snapshot()
@@ -110,6 +114,7 @@ OpenXRProviderSnapshot OpenXRSession::get_provider_snapshot()
 
     const auto fail = [this](OpenXRProviderReason reason, std::optional<std::int32_t> result_code, std::string error)
     {
+        session_running_->store(false);
         provider_snapshot_.state = OpenXRProviderState::FAILED;
         provider_snapshot_.reason = reason;
         provider_snapshot_.result_code = result_code;
@@ -158,6 +163,28 @@ OpenXRProviderSnapshot OpenXRSession::get_provider_snapshot()
         {
             continue;
         }
+        logger_->debug("OpenXR session state changed: {}", static_cast<int>(state_change->state));
+        if (!terminal_reason && state_change->state == XR_SESSION_STATE_STOPPING && session_running_->load())
+        {
+            session_running_->store(false);
+            const XrResult end_result = xrEndSession(session_.get());
+            if (XR_FAILED(end_result))
+            {
+                return fail(OpenXRProviderReason::POLL_ERROR, static_cast<std::int32_t>(end_result),
+                            "xrEndSession failed with XrResult " + std::to_string(end_result));
+            }
+        }
+        if (!terminal_reason && state_change->state == XR_SESSION_STATE_READY && !session_running_->load())
+        {
+            try
+            {
+                begin();
+            }
+            catch (const std::exception& error)
+            {
+                return fail(OpenXRProviderReason::POLL_ERROR, std::nullopt, error.what());
+            }
+        }
         if (state_change->state == XR_SESSION_STATE_LOSS_PENDING && !terminal_reason)
         {
             terminal_reason = OpenXRProviderReason::SESSION_LOST;
@@ -182,6 +209,12 @@ OpenXRProviderSnapshot OpenXRSession::get_provider_snapshot()
         provider_snapshot_.error = std::move(error);
         return provider_snapshot_;
     };
+
+    if (!session_running_->load())
+    {
+        untracked_since_.reset();
+        return disconnect("OpenXR session is stopped; waiting for XR_SESSION_STATE_READY");
+    }
 
     XrTime now;
     try
@@ -438,6 +471,7 @@ void OpenXRSession::begin()
     {
         throw std::runtime_error("Failed to begin OpenXR session: " + std::to_string(result));
     }
+    session_running_->store(true);
 }
 
 } // namespace core

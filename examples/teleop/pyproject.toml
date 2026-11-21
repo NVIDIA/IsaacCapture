@@ -27,6 +27,8 @@ ui = ["isaaccapture[ui]"]
 #
 # config/ lives inside the package because the bimanual examples resolve it
 # from __file__, so the YAML and URDF must travel with them.
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/teleop"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]

@@ -1,0 +1,34 @@
+<!--
+SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Recordings</title>
+<link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+<header class="app-header">Recordings</header>
+<main class="app-main">
+  <form class="sign-in" id="sign-in" hidden>
+    <label for="sign-in-token">Control token</label>
+    <p class="sign-in-help">Recordings need the control token the backend printed when it started.</p>
+    <div class="sign-in-row">
+      <input id="sign-in-token" type="password" autocomplete="off" placeholder="Enter control token" />
+      <button type="submit" id="sign-in-submit">Browse recordings</button>
+    </div>
+    <p class="sign-in-error" id="sign-in-error" role="alert" hidden></p>
+  </form>
+  <nav class="breadcrumbs" id="breadcrumbs"></nav>
+  <div id="error" hidden></div>
+  <div id="empty" hidden>No recordings here yet.</div>
+  <ul class="grid" id="grid"></ul>
+</main>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

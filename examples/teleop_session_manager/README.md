@@ -5,7 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 
 # TeleopSessionManager examples
 
-Four standalone demos of the `TeleopSession` API. Install once, then run
+Four standalone demos of the `TeleopSession` API. In a venv set up as in
+[Running an example](../README.md#running-an-example), install once, then run
 whichever one you want:
 
 ```bash
@@ -22,5 +23,5 @@ python -m isaaccapture_examples.teleop_session_manager.teleop_session_example
 
 ## See also
 
-- Module docs: `docs/source/references/teleop_session.rst`
-- Retargeting engine: `src/core/retargeting_engine/`
+- Module docs: `docs/source/teleop/teleop_session.rst`
+- Retargeting engine: `src/python/isaaccapture/retargeting_engine/`

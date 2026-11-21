@@ -47,6 +47,8 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
   multiline layout.
 - Format changed Python tests before staging; if pre-commit rewrites a file,
   restage the result and rerun the full hook set.
+- Changes to OOB wake/recovery policy must run the full CloudXR test leaf;
+  USB health tests also cover preserved-browser recovery.
 - Use raw strings for regular-expression patterns passed to
   ``pytest.raises(..., match=...)``; Ruff rejects escaped metacharacters in
   ordinary strings.
@@ -58,8 +60,10 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
   in-tree configure: standalone wheel builds use the example as `CMAKE_SOURCE_DIR`,
   not the repo root.
 - A stand-in child process must stay alive on its own (`python -m <builtin>`
-  exits at once), and a `/proc/<pid>/cmdline` check made right after `Popen()`
-  must poll, because the cmdline can still read empty
+  exits at once), and `Popen()` can return while the child's
+  `/proc/<pid>/cmdline` still reads empty or the parent's argv: wait for the
+  child's own argv before any check, including one that expects no match,
+  which either stale value passes without testing anything
   (`python/core/cloudxr/test_background.py` does both).
 
 ## Adding tests
