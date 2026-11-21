@@ -210,13 +210,20 @@ bool SensorClockMap::refresh(int64_t nowMonotonicNs, std::string* reason)
         {
             // The step happened somewhere between the previous anchor and this one, so an event up to this anchor may
             // lie on either side of it. The counter is sampled before the realtime read that exposes a wall-clock step,
-            // both inside the bracket, so the step can follow the sampled value by up to the bracket (grown by the
-            // slew allowed over it). Events up to that upper edge stay invalid even once later anchors agree again.
+            // both inside the bracket, so the step can follow the sampled value by up to the bracket. Events up to that
+            // upper edge stay invalid even once later anchors agree again.
+            // CLOCK_MONOTONIC advances (1 + s) per counter second with |s| <= slewPpm, so the largest counter time a
+            // monotonic bracket can hold is bracket / (1 - slewPpm), rounded up. A slew of 100% or more is not a
+            // supported range: everything up to the end of time stays invalid.
             const Int128 bracketNs = std::max<int64_t>(next.bracketNs, 0);
-            const Int128 widenedNs =
-                bracketNs + scaledByPpm(next.bracketNs > 0 ? next.bracketNs : 0, m_config.slewPpm) + 1;
-            const Int128 bracketTicks = (widenedNs * m_config.counterHz + 999999999) / 1000000000;
-            const Int128 edge = std::min<Int128>(static_cast<Int128>(next.source) + bracketTicks, kInt64Max);
+            const Int128 slewRemainder = 1000000 - static_cast<Int128>(m_config.slewPpm);
+            Int128 edge = kInt64Max;
+            if (slewRemainder > 0)
+            {
+                const Int128 counterNs = (bracketNs * 1000000 + slewRemainder - 1) / slewRemainder;
+                const Int128 bracketTicks = (counterNs * m_config.counterHz + 999999999) / 1000000000;
+                edge = std::min<Int128>(static_cast<Int128>(next.source) + bracketTicks, kInt64Max);
+            }
             const int64_t edgeSource = static_cast<int64_t>(edge);
             m_cutoffSource = m_haveCutoff ? std::max(m_cutoffSource, edgeSource) : edgeSource;
             m_haveCutoff = true;
