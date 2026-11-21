@@ -9,7 +9,6 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <vector>
 
 class TemporaryDirectory
 {
@@ -18,14 +17,12 @@ public:
     {
 #ifndef _WIN32
         auto pattern = (std::filesystem::temp_directory_path() / "isaacteleop_plugin_manager_XXXXXX").string();
-        std::vector<char> buffer(pattern.begin(), pattern.end());
-        buffer.push_back('\0');
-        if (::mkdtemp(buffer.data()) == nullptr)
+        if (::mkdtemp(pattern.data()) == nullptr)
         {
             throw std::runtime_error("Failed to create temporary test directory");
         }
         // mkdtemp creates the directory atomically with owner-only access.
-        m_path = buffer.data();
+        m_path = pattern;
 #else
         const auto seed = std::chrono::steady_clock::now().time_since_epoch().count();
         for (int suffix = 0; suffix < 100; ++suffix)

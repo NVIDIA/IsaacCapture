@@ -20,7 +20,6 @@
 #include <string>
 #include <string_view>
 #include <system_error>
-#include <vector>
 
 #ifdef _WIN32
 #    include <process.h>
@@ -48,15 +47,13 @@ inline std::string temp_mcap_path(std::string_view prefix)
 {
 #ifndef _WIN32
     auto pattern = (fs::temp_directory_path() / (std::string(prefix) + "_XXXXXX")).string();
-    std::vector<char> buffer(pattern.begin(), pattern.end());
-    buffer.push_back('\0');
-    if (::mkdtemp(buffer.data()) == nullptr)
+    if (::mkdtemp(pattern.data()) == nullptr)
     {
         throw std::runtime_error("Failed to create private MCAP test directory");
     }
     // Keep the recording below an atomically created owner-only directory;
     // McapWriter may safely create and reopen its predictable child name.
-    return (fs::path(buffer.data()) / "recording.mcap").string();
+    return (fs::path(pattern) / "recording.mcap").string();
 #else
     static std::atomic<int> counter{ 0 };
     const auto name =
@@ -76,7 +73,9 @@ public:
     {
         std::error_code ec;
 #ifndef _WIN32
-        fs::remove_all(fs::path(path_).parent_path(), ec);
+        fs::remove(path_, ec);
+        // Remove only an empty container; never recurse from a supplied filename.
+        fs::remove(fs::path(path_).parent_path(), ec);
 #else
         fs::remove(path_, ec);
 #endif

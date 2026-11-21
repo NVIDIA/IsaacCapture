@@ -80,6 +80,12 @@ and, past the first writer, a `-1`/`-2` suffix (`unique_log_path()`). Keep them
 disjoint, and keep any new suffix out of the shape `rotating_file_sink` gives
 its own backups.
 
+## Private directory creation
+
+- Validate each opened parent before creating children. Reject `..` before
+  normalization so it cannot hide a symlink, and distinguish sticky shared
+  ancestors from the final user-owned directory that must forbid other writers.
+
 ## The env-var contract is shared with Python, not parallel to it
 
 `sink_config.cpp` and `socket_sink.cpp` read `ISAACCAPTURE_LOGGING`, `ISAACCAPTURE_LOG_DIR`,

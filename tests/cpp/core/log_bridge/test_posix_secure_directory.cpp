@@ -6,10 +6,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <sys/stat.h>
 
-#include <algorithm>
-#include <array>
+#include <cstdlib>
 #include <filesystem>
-#include <iterator>
+#include <string>
 #include <unistd.h>
 
 namespace
@@ -20,9 +19,7 @@ class TemporaryDirectory
 public:
     TemporaryDirectory()
     {
-        std::array<char, 32> pattern{};
-        constexpr char kPattern[] = "/tmp/isaaccapture-log-test-XXXXXX";
-        std::copy(std::begin(kPattern), std::end(kPattern), pattern.begin());
+        std::string pattern = "/tmp/isaaccapture-log-test-XXXXXX";
         char* created = ::mkdtemp(pattern.data());
         REQUIRE(created != nullptr);
         path_ = created;
@@ -50,7 +47,10 @@ TEST_CASE("secure directory creation uses owner-only permissions", "[unit]")
     TemporaryDirectory temporary;
     const auto directory = temporary.path() / "nested" / "logs";
 
-    REQUIRE(isaaccapture::detail::ensure_secure_directory(directory));
+    const auto previous_umask = ::umask(0);
+    const bool created = isaaccapture::detail::ensure_secure_directory(directory);
+    ::umask(previous_umask);
+    REQUIRE(created);
 
     struct ::stat info
     {
@@ -80,4 +80,37 @@ TEST_CASE("secure directory creation rejects writable parents", "[unit]")
     REQUIRE(::chmod(shared.c_str(), 0777) == 0);
 
     REQUIRE_FALSE(isaaccapture::detail::ensure_secure_directory(shared / "logs"));
+}
+
+TEST_CASE("secure directory creation distinguishes sticky ancestors from targets", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto shared = temporary.path() / "shared";
+    REQUIRE(std::filesystem::create_directory(shared));
+    REQUIRE(::chmod(shared.c_str(), 01777) == 0);
+
+    REQUIRE(isaaccapture::detail::ensure_secure_directory(shared / "logs"));
+    REQUIRE_FALSE(isaaccapture::detail::ensure_secure_directory(shared));
+}
+
+TEST_CASE("secure directory creation rejects traversal before creating children", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto child = temporary.path() / "new";
+    REQUIRE_FALSE(isaaccapture::detail::ensure_secure_directory(child / ".." / "logs"));
+    REQUIRE_FALSE(std::filesystem::exists(child));
+}
+
+TEST_CASE("secure directory creation accepts trailing separators and preserves existing permissions", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto directory = temporary.path() / "logs";
+    REQUIRE(std::filesystem::create_directory(directory));
+    REQUIRE(::chmod(directory.c_str(), 0755) == 0);
+    REQUIRE(isaaccapture::detail::ensure_secure_directory(directory / ""));
+    struct ::stat info
+    {
+    };
+    REQUIRE(::lstat(directory.c_str(), &info) == 0);
+    REQUIRE((info.st_mode & 0777) == 0755);
 }

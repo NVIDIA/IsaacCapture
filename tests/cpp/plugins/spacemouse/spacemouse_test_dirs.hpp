@@ -7,14 +7,13 @@
 
 #include <sys/stat.h>
 
-#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <vector>
 
 namespace spacemouse_test
 {
@@ -26,18 +25,14 @@ public:
     {
 #ifndef _WIN32
         auto pattern = (std::filesystem::temp_directory_path() / "spacemouse_test_XXXXXX").string();
-        std::vector<char> buffer(pattern.begin(), pattern.end());
-        buffer.push_back('\0');
-        if (::mkdtemp(buffer.data()) == nullptr)
+        if (::mkdtemp(pattern.data()) == nullptr)
         {
             throw std::runtime_error("Failed to create temporary SpaceMouse test directory");
         }
         // mkdtemp prevents another user from pre-creating the test root.
-        root_ = buffer.data();
+        root_ = pattern;
 #else
-        root_ = std::filesystem::temp_directory_path() /
-                ("spacemouse_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-        std::filesystem::create_directory(root_);
+        root_ = std::filesystem::temp_directory_path() / ("spacemouse_test_" + std::to_string(std::random_device{}()));
 #endif
         std::filesystem::create_directories(class_dir());
         std::filesystem::create_directories(dev_dir());
