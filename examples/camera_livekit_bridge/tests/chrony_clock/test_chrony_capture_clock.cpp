@@ -291,8 +291,34 @@ void test_stale_evidence()
     r.healthy();
     r.build();
     r.clock->poll_once();
-    r.clocks.advance(11 * kSec); // max_evidence_age is 10 s
+    r.clocks.advance(11 * kSec); // max_evidence_age defaults to 5 s
     CHECK(r.qualify().verdict == Verdict::StaleEvidence);
+}
+
+// The default evidence limit is 5 s, measured per host from the last successful report. One host stops answering while
+// the other keeps polling, so its report ages alone.
+void test_evidence_age_limit(bool sender_stops)
+{
+    Rig r;
+    r.healthy();
+    r.build();
+    r.clock->poll_once();
+    (sender_stops ? r.chrony.sender : r.chrony.pc) = CommandResult{};
+    r.clocks.advance(4900 * kMs);
+    r.clock->poll_once();
+    CHECK(r.qualify().verdict == Verdict::Qualified);
+    r.clocks.advance(200 * kMs);
+    CHECK(r.qualify().verdict == Verdict::StaleEvidence);
+}
+
+void test_evidence_age_limit_sender()
+{
+    test_evidence_age_limit(true);
+}
+
+void test_evidence_age_limit_pc()
+{
+    test_evidence_age_limit(false);
 }
 
 void test_realtime_step()
@@ -505,6 +531,8 @@ int main()
     test_reference_mismatch();
     test_unsynchronised();
     test_stale_evidence();
+    test_evidence_age_limit_sender();
+    test_evidence_age_limit_pc();
     test_realtime_step();
     test_realtime_step_discards_evidence_read_before_it();
     test_step_hold();

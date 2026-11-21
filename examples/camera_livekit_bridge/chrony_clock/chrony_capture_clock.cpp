@@ -48,6 +48,7 @@ ChronyCaptureClock::ChronyCaptureClock(ChronyCaptureClockConfig config,
                        m_clocks.realtime_ns)
 {
     m_qualifier_config.budget_ns = m_config.budget_ns;
+    m_qualifier_config.max_evidence_age_ns = m_config.max_evidence_age_ns;
     m_qualifier_config.expected_sender_reference_id = m_config.expected_sender_reference_id;
 }
 

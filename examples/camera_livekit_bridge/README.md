@@ -113,6 +113,14 @@ carry a timestamp; the rest do not), the last combined uncertainty and the clock
 under. These are runtime diagnostics only and are not recorded with the video. The caller of a recording should treat a
 frame without a timestamp as a timing fault.
 
+A step of the camera host's wall clock is handled the same way on the sender: the frame that reveals it and every frame
+for the next 8 s carry no timestamp, then timestamps resume on their own. The bridge refuses chrony reports requested
+more than 5 s ago, so a report requested before the step cannot qualify once that hold ends. This covers steps the
+camera host's chronyd makes or recognises promptly. A step made by anything else (for example `date -s`) shows in
+chrony's report only when chronyd notices it, which is not bounded by the bridge's polling; until then a frame captured
+after the step can carry an offset error as large as the step that is not part of its stated uncertainty. Step the
+camera host's clock only through chronyd.
+
 Recording precision is best-effort by design. An `over_budget` frame is converted validly, keeps its capture time and
 is published like a `qualified` one, so a recording that accepts every timestamped frame records it. The precision
 target (5 ms by default) classifies frames in the statistics; it is not an admission limit, and no frame is refused

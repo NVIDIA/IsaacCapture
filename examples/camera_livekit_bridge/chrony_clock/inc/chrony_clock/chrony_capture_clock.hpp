@@ -33,6 +33,11 @@ struct ChronyCaptureClockConfig
     /// off for longer than a recording consumer tolerates silence (5 s) means a take cannot continue across a step even
     /// if the media path drops the frames that were refused. Frames still flow without timestamps meanwhile.
     int64_t step_hold_ns = 8'000'000'000;
+    /// A chrony report older than this, measured from when it was requested, is refused. It must stay well under the
+    /// sender's hold after a realtime step on the camera host (8 s), so a report requested before that step cannot
+    /// still qualify once the hold ends, and well over the poll interval plus command timeout, so normal polling is
+    /// never refused.
+    int64_t max_evidence_age_ns = 5'000'000'000;
     std::chrono::milliseconds poll_interval{ 1000 };
     std::chrono::milliseconds command_timeout{ 2000 };
 };

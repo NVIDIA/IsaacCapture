@@ -144,6 +144,11 @@ bool isClockStep(const SensorTimeMapping& mapping)
     return !mapping.valid && mapping.reason.find("clock step") != std::string::npos;
 }
 
+bool isHeldOff(const SensorTimeMapping& mapping)
+{
+    return !mapping.valid && mapping.reason.find("held off") != std::string::npos;
+}
+
 // The largest tick count whose truncated nanosecond conversion still fits in int64.
 int64_t largestTicks(int64_t hz)
 {
@@ -359,23 +364,76 @@ int main()
     }
 
     // A wall-clock step between anchors, larger than stepThresholdNs plus both brackets, invalidates the mapping
-    // although the counter still agrees with CLOCK_MONOTONIC; the next consistent refresh recovers.
+    // although the counter still agrees with CLOCK_MONOTONIC. The next consistent refresh clears the step but not the
+    // hold: mapping stays off for realtimeStepHoldNs after the detecting refresh, then recovers by itself.
+    for (const int64_t stepNs : { 50 * kMs, -50 * kMs })
     {
         FakeClocks clocks;
         clocks.hasRealtime = true;
         clocks.realtimeOffsetNs = 1700000000LL * 1000000000LL;
         int64_t now = 10000 * kMs;
         SensorClockMap map = makeMap(&clocks, &now);
-        TEST_CHECK(test, map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now).valid);
+        auto mapNow = [&] { return map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now); };
+        TEST_CHECK(test, mapNow().valid);
         now += 1000 * kMs;
-        clocks.realtimeOffsetNs += 50 * kMs;
-        const SensorTimeMapping stepped = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
+        clocks.realtimeOffsetNs += stepNs;
+        const int64_t detectedNs = now;
+        const int64_t holdUntilNs = detectedNs + SensorClockMap::Config().realtimeStepHoldNs;
+        const SensorTimeMapping stepped = mapNow();
         TEST_CHECK(test, !stepped.valid);
         TEST_CHECK(test, stepped.reason.find("clock step") != std::string::npos);
         now += 1000 * kMs;
-        const SensorTimeMapping recovered = map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now);
+        TEST_CHECK(test, isHeldOff(mapNow())); // consistent anchor, still inside the hold
+        now = holdUntilNs - 1;
+        TEST_CHECK(test, isHeldOff(mapNow()));
+        now = holdUntilNs;
+        const SensorTimeMapping recovered = mapNow();
         TEST_CHECK(test, recovered.valid);
         TEST_CHECK_EQ(test, recovered.captureRealtimeNs, recovered.captureMonotonicNs + clocks.realtimeOffsetNs);
+        // An event at or before the post-step cutoff is still refused once the hold has ended.
+        const SensorTimeMapping old = map.map(static_cast<uint64_t>((detectedNs - 30 * kMs) / 32), now, now);
+        TEST_CHECK(test, !old.valid);
+        TEST_CHECK(test, old.reason.find("not after a detected clock step") != std::string::npos);
+    }
+
+    // reset() clears the hold, so a restarted capture maps from a fresh anchor at once. A counter-only step sets no
+    // hold (see "A clock step between anchors" above: it recovers on the next consistent anchor).
+    {
+        FakeClocks clocks;
+        clocks.hasRealtime = true;
+        clocks.realtimeOffsetNs = 1700000000LL * 1000000000LL;
+        int64_t now = 10000 * kMs;
+        SensorClockMap map = makeMap(&clocks, &now);
+        auto mapNow = [&] { return map.map(static_cast<uint64_t>((now - 30 * kMs) / 32), now, now); };
+        mapNow();
+        now += 1000 * kMs;
+        clocks.realtimeOffsetNs += 50 * kMs;
+        mapNow();
+        now += 1000 * kMs;
+        TEST_CHECK(test, isHeldOff(mapNow()));
+        map.reset();
+        TEST_CHECK(test, mapNow().valid);
+    }
+
+    // The hold's end saturates at INT64_MAX instead of wrapping: held just before it, allowed at it.
+    {
+        SensorClockMap::Config config = gigahertzConfig();
+        config.refreshNs = 1;
+        const int64_t rt = 1700000000LL * 1000000000LL;
+        ClockPair anchor;
+        auto setAnchor = [&anchor, rt](int64_t t, int64_t realtimeStep)
+        { anchor = pairOf(t, t, true, t + rt + realtimeStep); };
+        SensorClockMap map = makeAnchorMap(config, &anchor);
+        auto mapAt = [&map, &anchor](int64_t now)
+        { return map.map(static_cast<uint64_t>(anchor.source), anchor.monotonicNs, now); };
+        setAnchor(10000 * kMs, 0);
+        TEST_CHECK(test, mapAt(INT64_MAX - 4).valid);
+        setAnchor(10001 * kMs, 50 * kMs);
+        TEST_CHECK(test, isClockStep(mapAt(INT64_MAX - 3)));
+        setAnchor(10002 * kMs, 50 * kMs);
+        TEST_CHECK(test, isHeldOff(mapAt(INT64_MAX - 2)));
+        setAnchor(10003 * kMs, 50 * kMs);
+        TEST_CHECK(test, mapAt(INT64_MAX).valid);
     }
 
     // A realtime offset movement inside the allowance (2 ms threshold plus two 2 us brackets) is not a step.
@@ -832,6 +890,8 @@ int main()
     {
         SensorClockMap::Config config = gigahertzConfig();
         config.refreshNs = 100 * kMs;
+        // Short hold so the cutoff edges can be probed after it ends: A1 detects at 10.1 s, the hold ends at 10.25 s.
+        config.realtimeStepHoldNs = 150 * kMs;
         const int64_t rt = 1700000000LL * 1000000000LL;
         ClockPair anchor;
         auto setAnchor = [&anchor, rt](int64_t t, int64_t realtimeStep)
@@ -848,34 +908,40 @@ int main()
         FrameTiming timing;
         applyMappingToTiming(mapAt(10000 * kMs, 10100 * kMs), &timing);
         TEST_CHECK(test, !timing.hasCaptureMonotonic);
-        setAnchor(10200 * kMs, 50 * kMs); // A2 agrees with A1
-        TEST_CHECK(test, notAfterStep(mapAt(10040 * kMs, 10200 * kMs)));
-        TEST_CHECK(test, notAfterStep(mapAt(10100 * kMs, 10200 * kMs)));
-        TEST_CHECK(test, notAfterStep(mapAt(10100 * kMs + 1, 10200 * kMs)));
-        TEST_CHECK(test, mapAt(10150 * kMs, 10200 * kMs).valid);
-        TEST_CHECK(test, mapAt(10199 * kMs, 10200 * kMs).valid);
-        const SensorTimeMapping fresh = mapAt(10200 * kMs, 10200 * kMs);
+        setAnchor(10200 * kMs, 50 * kMs); // A2 agrees with A1 but is inside the hold: every event is refused
+        for (const int64_t event : { 10040LL * kMs, 10150LL * kMs, 10199LL * kMs, 10200LL * kMs })
+            TEST_CHECK(test, isHeldOff(mapAt(event, 10200 * kMs)));
+        TEST_CHECK(test, isHeldOff(mapAt(10240 * kMs, 10250 * kMs - 1)));
+        // From the hold's end (now >= detecting time + hold) the cutoff rules apply.
+        TEST_CHECK(test, notAfterStep(mapAt(10040 * kMs, 10250 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(10100 * kMs, 10250 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(10100 * kMs + 1, 10250 * kMs)));
+        TEST_CHECK(test, mapAt(10150 * kMs, 10250 * kMs).valid);
+        TEST_CHECK(test, mapAt(10199 * kMs, 10250 * kMs).valid);
+        const SensorTimeMapping fresh = mapAt(10200 * kMs, 10250 * kMs);
         TEST_CHECK(test, fresh.valid);
         applyMappingToTiming(fresh, &timing);
         TEST_CHECK(test, timing.hasCaptureMonotonic);
-        applyMappingToTiming(mapAt(10040 * kMs, 10200 * kMs), &timing);
+        applyMappingToTiming(mapAt(10040 * kMs, 10250 * kMs), &timing);
         TEST_CHECK(test, !timing.hasCaptureMonotonic);
         TEST_CHECK_EQ(test, timing.captureMonotonicNs, static_cast<int64_t>(0));
         TEST_CHECK_EQ(test, timing.captureRealtimeNs, static_cast<int64_t>(0));
 
-        // A second step moves the cutoff forward: what was valid before it is now ambiguous.
+        // A second step moves the cutoff forward and restarts the hold: what was valid before it is now ambiguous.
         setAnchor(10300 * kMs, 100 * kMs);
         TEST_CHECK(test, isClockStep(mapAt(10290 * kMs, 10300 * kMs)));
         setAnchor(10400 * kMs, 100 * kMs);
-        TEST_CHECK(test, notAfterStep(mapAt(10150 * kMs, 10400 * kMs)));
-        TEST_CHECK(test, notAfterStep(mapAt(10250 * kMs, 10400 * kMs)));
-        TEST_CHECK(test, notAfterStep(mapAt(10300 * kMs, 10400 * kMs)));
-        TEST_CHECK(test, mapAt(10350 * kMs, 10400 * kMs).valid);
+        TEST_CHECK(test, isHeldOff(mapAt(10350 * kMs, 10400 * kMs)));
+        setAnchor(10500 * kMs, 100 * kMs); // the second hold ended at 10.45 s
+        TEST_CHECK(test, notAfterStep(mapAt(10150 * kMs, 10500 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(10250 * kMs, 10500 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(10300 * kMs, 10500 * kMs)));
+        TEST_CHECK(test, mapAt(10350 * kMs, 10500 * kMs).valid);
 
         // reset() clears the cutoff: an event at an old source time maps again from a fresh anchor.
         map.reset();
-        setAnchor(10450 * kMs, 100 * kMs);
-        TEST_CHECK(test, mapAt(10250 * kMs, 10450 * kMs).valid);
+        setAnchor(10400 * kMs, 100 * kMs);
+        TEST_CHECK(test, map.map(static_cast<uint64_t>(10250 * kMs), 10260 * kMs, 10600 * kMs).valid);
     }
 
     // The counter is sampled before the realtime read inside the bracket, so a wall-clock step can land after the
@@ -904,6 +970,7 @@ int main()
             config.counterHz = c.hz;
             config.slewPpm = c.slewPpm;
             config.refreshNs = 100 * kMs;
+            config.realtimeStepHoldNs = 150 * kMs; // detected at 10.1 s: held through A2, ended by 10.25 s
             const int64_t rt = 1700000000LL * 1000000000LL;
             ClockPair anchor;
             auto setAnchor = [&](int64_t t, int64_t bracketNs, int64_t realtimeStep)
@@ -923,13 +990,14 @@ int main()
 
             const __int128 lastTicks =
                 static_cast<__int128>(c.bracketNs) * 1000000 * c.hz / ((1000000 - c.slewPpm) * 1000000000LL);
-            const SensorTimeMapping last = mapAt(sampled + static_cast<int64_t>(lastTicks), 10200 * kMs);
+            TEST_CHECK(test, isHeldOff(mapAt(sampled + static_cast<int64_t>(lastTicks) + 1000, 10250 * kMs - 1)));
+            const SensorTimeMapping last = mapAt(sampled + static_cast<int64_t>(lastTicks), 10250 * kMs);
             TEST_CHECK(test, !last.valid);
             TEST_CHECK(test, last.reason.find("not after a detected clock step") != std::string::npos);
-            TEST_CHECK(test, mapAt(sampled + static_cast<int64_t>(lastTicks) + c.firstValidOffset, 10200 * kMs).valid);
+            TEST_CHECK(test, mapAt(sampled + static_cast<int64_t>(lastTicks) + c.firstValidOffset, 10250 * kMs).valid);
             TEST_CHECK(
                 test,
-                mapAt(static_cast<int64_t>(static_cast<__int128>(10199 * kMs) * c.hz / 1000000000LL), 10200 * kMs).valid);
+                mapAt(static_cast<int64_t>(static_cast<__int128>(10199 * kMs) * c.hz / 1000000000LL), 10250 * kMs).valid);
         }
     }
 
@@ -938,6 +1006,7 @@ int main()
         SensorClockMap::Config config = gigahertzConfig();
         config.slewPpm = 1000000;
         config.refreshNs = 100 * kMs;
+        config.realtimeStepHoldNs = 150 * kMs; // ended by 10.25 s
         const int64_t rt = 1700000000LL * 1000000000LL;
         ClockPair anchor = pairOf(10000 * kMs, 10000 * kMs, true, 10000 * kMs + rt);
         SensorClockMap map = makeAnchorMap(config, &anchor);
@@ -949,7 +1018,7 @@ int main()
         for (const int64_t event :
              { static_cast<int64_t>(10100 * kMs), static_cast<int64_t>(10199 * kMs), static_cast<int64_t>(INT64_MAX) })
         {
-            const SensorTimeMapping refused = mapAt(event, 10200 * kMs);
+            const SensorTimeMapping refused = mapAt(event, 10250 * kMs);
             TEST_CHECK(test, !refused.valid);
             TEST_CHECK(test, refused.reason.find("not after a detected clock step") != std::string::npos);
         }
