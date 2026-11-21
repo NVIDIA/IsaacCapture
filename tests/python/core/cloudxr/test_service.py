@@ -36,6 +36,17 @@ _windows_skip = pytest.mark.skipif(
 )
 
 
+@contextlib.contextmanager
+def _usb_host_preflight_patches():
+    """Stub the adb/coturn/port preflights that run before the web client check."""
+    with (
+        patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+        patch("isaaccapture.cloudxr.oob_teleop_adb.require_coturn_available"),
+        patch("isaaccapture.cloudxr.oob_teleop_adb.require_turn_port_free"),
+    ):
+        yield
+
+
 # ============================================================================
 # TestServiceConstruction
 # ============================================================================
@@ -100,13 +111,72 @@ class TestServiceConstruction:
                 "isaaccapture.cloudxr.oob_teleop_env.require_web_client_static_dir",
                 side_effect=RuntimeError("lacks the OOB healthProbe"),
             ) as require_static,
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_coturn_available"),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_turn_port_free"),
         ):
             with pytest.raises(RuntimeError, match="lacks the OOB healthProbe"):
                 CloudXRService(
                     install_dir=str(tmp_path), setup_oob=True, usb_local=True
                 )
-            require_static.assert_called_once_with(require_health_probe=True)
+            require_static.assert_called_once_with(
+                require_health_probe=True, require_fragment_token=True
+            )
             mocks["popen"].assert_not_called()
+
+    def test_web_client_static_dir_validated_after_env_file_is_applied(
+        self, tmp_path, monkeypatch
+    ):
+        """The bundle validated is the env file's TELEOP_WEB_CLIENT_STATIC_DIR."""
+        monkeypatch.delenv("TELEOP_WEB_CLIENT_STATIC_DIR", raising=False)
+        env_file_dir = str(tmp_path / "from-env-file")
+        calls = []
+        seen = {}
+
+        def apply_env_file(*_args, **_kwargs):
+            calls.append("from_args")
+            monkeypatch.setenv("TELEOP_WEB_CLIENT_STATIC_DIR", env_file_dir)
+            return mocks["env_cfg"]
+
+        def observe(**_kwargs):
+            calls.append("require_static")
+            seen["dir"] = os.environ.get("TELEOP_WEB_CLIENT_STATIC_DIR")
+
+        with mock_service_deps(tmp_path, ready=True) as mocks:
+            mocks["from_args"].side_effect = apply_env_file
+            mocks["static_client"].side_effect = observe
+            with _usb_host_preflight_patches():
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+        assert seen["dir"] == env_file_dir
+        assert calls.index("from_args") < calls.index("require_static")
+
+    def test_unsupported_bundle_from_env_file_refused_before_runtime_spawn(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.delenv("TELEOP_WEB_CLIENT_STATIC_DIR", raising=False)
+
+        def apply_env_file(*_args, **_kwargs):
+            monkeypatch.setenv("TELEOP_WEB_CLIENT_STATIC_DIR", str(tmp_path / "old"))
+            return mocks["env_cfg"]
+
+        def refuse(**_kwargs):
+            assert os.environ["TELEOP_WEB_CLIENT_STATIC_DIR"] == str(tmp_path / "old")
+            raise RuntimeError("lacks the OOB fragment token")
+
+        with mock_service_deps(tmp_path, ready=True) as mocks:
+            mocks["from_args"].side_effect = apply_env_file
+            mocks["static_client"].side_effect = refuse
+            with (
+                _usb_host_preflight_patches(),
+                pytest.raises(RuntimeError, match="fragment token"),
+            ):
+                CloudXRService(
+                    install_dir=str(tmp_path), setup_oob=True, usb_local=True
+                )
+            mocks["popen"].assert_not_called()
+            mocks["check_eula"].assert_not_called()
 
     def test_construction_stores_parameters(self, tmp_path):
         """Constructor stores install_dir, env_config, device_profile, and accept_eula."""
@@ -536,6 +606,53 @@ class TestWssProxyStartup:
                 assert connected.wait(1)
             finally:
                 service._stop_wss_proxy()
+
+    @pytest.mark.parametrize("hub_only", [False, True])
+    @pytest.mark.parametrize("configured", ["operator-chosen", None])
+    def test_control_token_is_the_one_the_hub_enforces(
+        self, tmp_path, monkeypatch, configured, hub_only
+    ):
+        from isaaccapture.cloudxr.oob_teleop_hub import OOBControlHub
+
+        hubs = []
+
+        async def proxy(*, stop_future, on_listening, control_token, **kwargs):
+            hubs.append(OOBControlHub(control_token=control_token))
+            on_listening()
+            await stop_future
+
+        if configured:
+            monkeypatch.setenv("CONTROL_TOKEN", configured)
+        else:
+            monkeypatch.delenv("CONTROL_TOKEN", raising=False)
+        if hub_only:
+            monkeypatch.setenv("TELEOP_OOB_HUB_ONLY", "1")
+        else:
+            monkeypatch.delenv("TELEOP_OOB_HUB_ONLY", raising=False)
+        with (
+            mock_service_deps(tmp_path, wss=False),
+            _stub_wss(proxy),
+            patch("isaaccapture.cloudxr.oob_teleop_adb.require_adb_on_path"),
+        ):
+            service = CloudXRService(setup_oob=True)
+            try:
+                token = service.control_token
+                assert token and hubs[0].check_token(token)
+                if configured:
+                    assert token == configured
+                # The hub keeps its start-up token whatever the environment does.
+                monkeypatch.setenv("CONTROL_TOKEN", "changed-later")
+                assert service.control_token == token
+                monkeypatch.delenv("CONTROL_TOKEN")
+                assert service.control_token == token
+                assert hubs[0].check_token(token)
+            finally:
+                service._stop_wss_proxy()
+
+    def test_control_token_is_none_without_oob(self, tmp_path):
+        with mock_service_deps(tmp_path):
+            service = CloudXRService()
+            assert service.control_token is None
 
     def test_stopping_before_connect_does_not_launch_headset(self, tmp_path):
         from cloudxr_py_test_ns.wss import _wait_for_connect
