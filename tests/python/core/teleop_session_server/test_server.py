@@ -9,6 +9,7 @@ teardown can show that none of them outlived it.
 """
 
 import json
+import logging
 import os
 import queue
 import re
@@ -681,8 +682,13 @@ def test_a_stopping_server_refuses_waiting_robot_apps_and_stops_listening():
         socket.create_connection(("127.0.0.1", port), timeout=5.0)
 
 
-def test_the_server_stops_with_code_1_when_cloudxr_stops():
-    """The robot app it serves hears that the server is shutting down."""
+def test_the_server_keeps_serving_when_cloudxr_stops(caplog):
+    """The robot app it serves keeps reading the server's keyboard."""
+    caplog.set_level(logging.WARNING, logger="isaaccapture.teleop_session_server")
+    warning = (
+        "The CloudXR runtime serving /run has stopped; --placeholder-openxr serves on "
+        "without CloudXR"
+    )
     cloudxr_stopped = threading.Event()
 
     def check(_count):
@@ -691,23 +697,39 @@ def test_the_server_stops_with_code_1_when_cloudxr_stops():
 
     listening = _listening()
     port = listening.listener.port
-    server = server_main._Server(
-        [listening], _Launcher(check), server_main._StopRequest(), placeholder=True
-    )
+    stop = server_main._StopRequest()
+    launcher = _Launcher(check)
+    server = server_main._Server([listening], launcher, stop, placeholder=True)
     result = {}
     thread = threading.Thread(target=lambda: result.update(code=server.run()))
     thread.start()
     try:
-        _, session = _robot()
+        keyboard, session = _robot()
         with session:
             session.connect(f"127.0.0.1:{port}", _hello(session), WAIT_MS)
             assert session.wait_ready(WAIT_MS)
+            assert _wait_for(lambda: _fresh(session))
             cloudxr_stopped.set()
-            assert _wait_for(lambda: _update_error(session)) == SHUTDOWN
+            assert _wait_for(lambda: warning in caplog.messages)
+            # The server goes on checking CloudXR, and ticks made after it stopped arrive.
+            checks = len(launcher.checks)
+            assert _wait_for(lambda: len(launcher.checks) >= checks + 2)
+            assert _update_error(session) is None
+            assert _wait_for(lambda: _fresh(session))
+            assert abs(session.tick_age_ns) < 250_000_000
+            assert keyboard.get_keyboard_data(session) is None
+            assert _wait_for(lambda: _status(session)["stage"] == "running")
+            assert _status(session) == {
+                "stage": "running",
+                "message": "",
+                "headset": UNTRACKED_HEADSET,
+            }
     finally:
-        cloudxr_stopped.set()
+        stop.signal = signal.SIGTERM
         thread.join(timeout=30)
-    assert result == {"code": 1}
+    assert not thread.is_alive()
+    assert result == {"code": 0}
+    assert caplog.messages.count(warning) == 1
 
 
 def test_the_server_checks_cloudxr_about_once_a_second():

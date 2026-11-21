@@ -7,6 +7,8 @@ The server's loop runs in process on a thread, with its real listener and Remote
 free loopback port; stand-ins the test steers replace oxr.OpenXRSession and CloudXR. The robot
 app is a TeleopSession with an empty pipeline; a reader reads at the default socket path, under
 a temporary XDG_RUNTIME_DIR. No OpenXR runtime and no headset is used.
+
+The server's retry delays are the real ones, so a test that waits for a retry takes that long.
 """
 
 import logging
@@ -20,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from isaaccapture import oxr
-from isaaccapture.deviceio_session import RemoteSessionListener
+from isaaccapture.deviceio_session import RemoteSessionHost, RemoteSessionListener
 from isaaccapture.robot_state import (
     RobotState,
     default_socket_path,
@@ -35,7 +37,7 @@ from isaaccapture.teleop_session_manager import (
     TeleopSessionConfig,
 )
 from isaaccapture.teleop_session_server import __main__ as server_main
-from isaaccapture.teleop_session_server import _session
+from isaaccapture.teleop_session_server import _common, _session
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32", reason="the Teleop Session Server runs on Linux only"
@@ -70,6 +72,29 @@ START_FAILURE = (
 OPEN_FAILURE = (
     "The Teleop Session Server could not open an OpenXR session: " + OTHER_OPENXR_ERROR
 )
+# What the stand-in OpenXR session reports once it failed, and the server's reason for it.
+INSTANCE_LOST = "xrPollEvent failed because the OpenXR instance was lost"
+SESSION_FAILURE = f"The OpenXR session on the Teleop Session Server failed (INSTANCE_LOST): {INSTANCE_LOST}"
+# What the stand-in CloudXR's health check raises while it is down.
+CLOUDXR_STOPPED = "The CloudXR runtime serving /run has stopped"
+KEEPS_SERVING = (
+    "Robot apps are served without headset data until this is fixed; the Teleop Session "
+    "Server keeps checking and needs no restart"
+)
+START_HINT = ". Start CloudXR with: python -m isaaccapture.cloudxr.service start"
+STAYS_CONNECTED = (
+    "It stays connected without tracker data; the server starts the trackers again "
+    "by itself"
+)
+TRACKERS_RUN_AGAIN = "The trackers of the robot app at "
+# The robot app's lines when SAMPLES stop and when they arrive again.
+SAMPLES_STALE = (
+    "RemoteSession: samples stale (tick age over 250 ms); trackers report no data"
+)
+SAMPLES_FRESH = "RemoteSession: receiving fresh samples"
+RETRY_S = _common.RETRY_S
+# How far past a retry delay the server's retry may show on a loaded test machine.
+RETRY_SLACK_S = 5.0
 
 ROBOT = "test_arm"
 # stale_after_s leaves room for a loaded test machine; MAX_WAIT_S below is the stricter check.
@@ -108,12 +133,13 @@ class _OpenXR:
     """oxr.OpenXRSession stand-in the test steers.
 
     Construction fails with ``error`` until ``reached``; the session then tracks a headset
-    while ``tracked``.
+    while ``tracked``, and reports that it failed while ``failed``.
     """
 
     def __init__(self):
         self.reached = False
         self.tracked = False
+        self.failed = False
         self.error = NO_HEADSET_ERROR
         self.handles = (7, 7, 7, 7)
         # wait_for_system of every construction.
@@ -132,6 +158,13 @@ class _OpenXR:
         return oxr.OpenXRSessionHandles(*self.handles)
 
     def get_provider_snapshot(self):
+        if self.failed:
+            return SimpleNamespace(
+                state=oxr.OpenXRProviderState.FAILED,
+                headset_state=oxr.OpenXRHeadsetState.DISCONNECTED,
+                reason=oxr.OpenXRProviderReason.INSTANCE_LOST,
+                error=INSTANCE_LOST,
+            )
         tracked = self.tracked
         return SimpleNamespace(
             state=oxr.OpenXRProviderState.AVAILABLE,
@@ -149,8 +182,14 @@ class _OpenXR:
 
 
 class _Launcher:
+    """CloudXR stand-in the test steers: its health check fails while ``down``."""
+
+    def __init__(self):
+        self.down = False
+
     def health_check(self):
-        pass
+        if self.down:
+            raise RuntimeError(CLOUDXR_STOPPED)
 
 
 class _Running:
@@ -161,7 +200,8 @@ class _Running:
             RemoteSessionListener("127.0.0.1", 0), False, "tcp://127.0.0.1"
         )
         self._stop = server_main._StopRequest()
-        self.server = server_main._Server([listening], _Launcher(), self._stop)
+        self.launcher = _Launcher()
+        self.server = server_main._Server([listening], self.launcher, self._stop)
         self.endpoint = f"127.0.0.1:{listening.listener.port}"
         self.code = None
         self._thread = threading.Thread(target=self._run)
@@ -493,13 +533,58 @@ def test_a_robot_app_entering_while_a_headset_is_tracked_is_ready_each_time(
 
 
 # ============================================================================
-# The server's ERROR after early entry
+# A headset side that fails: the server, the session and robot state go on
 # ============================================================================
 
 
-def test_a_tracker_start_failure_once_a_headset_arrives_ends_the_session_in_step(
-    server, openxr, logs
+@pytest.fixture
+def starts(monkeypatch):
+    """When the server called RemoteSessionHost.start_session(), failed calls included."""
+    tried = []
+    start_session = RemoteSessionHost.start_session
+
+    def counted(self, *args, **kwargs):
+        tried.append(time.monotonic())
+        return start_session(self, *args, **kwargs)
+
+    monkeypatch.setattr(RemoteSessionHost, "start_session", counted)
+    return tried
+
+
+def _before_openxr(reason):
+    """The robot app's headset error while the server has no trackers and sent no READY."""
+    return f"Teleop Session Server: connecting_openxr ({reason})"
+
+
+def _warning(reason, start_hint=False):
+    """The server's warning about a headset side that cannot be used."""
+    return f"{reason}. {KEEPS_SERVING}{START_HINT if start_hint else ''}"
+
+
+def _robot_app_said(logs, text):
+    """How often the robot app's RemoteSession logged a line that starts with ``text``."""
+    return len([line for line in logs() if line.startswith(text)])
+
+
+def _is_fresh(session):
+    age = _tick_age_s(session)
+    return age is not None and 0.0 <= age < 0.25
+
+
+def _no_headset_data(session):
+    """A headset that is not tracked, with stale samples: every tracker reports no data."""
+    headset = _headset(session)
+    return (
+        headset.status == DeviceState.DISCONNECTED
+        and headset.error == NOT_TRACKED
+        and _tick_age_s(session) is None
+    )
+
+
+def test_a_tracker_start_failure_once_a_headset_arrives_keeps_the_session_and_robot_state(
+    server, openxr, logs, starts
 ):
+    failure = _before_openxr(START_FAILURE)
     with RobotState.connect(robot=ROBOT) as reader:
         with _early(server) as session:
             robot = _Robot(session, reader)
@@ -510,32 +595,47 @@ def test_a_tracker_start_failure_once_a_headset_arrives_ends_the_session_in_step
             # A headset reaches the runtime; the server cannot start the robot app's trackers.
             openxr.handles = NO_HANDLES
             openxr.reached = True
-            with pytest.raises(RuntimeError) as raised:
-                _step_for(session, 10.0)
-            assert type(raised.value) is RuntimeError
-            assert str(raised.value) == START_FAILURE
-
-            assert _wait_for(
-                lambda: not session.publish_robot_state("arm", _reading(0))
+            assert robot.run_until(lambda: _headset(session).error == failure)
+            headset = _headset(session)
+            assert (headset.status, headset.reason) == (
+                DeviceState.DISCONNECTED,
+                StatusReason.NO_CURRENT_DATA,
             )
             provider = session.get_provider_status("openxr/runtime")
-            assert provider.status == ProviderState.FAILED
-            # Robot state ended with the session; the last reading stays readable as stale.
-            assert _wait_for(lambda: not reader.connected)
-            assert reader.server_reachable
-            assert reader.description() == DESCRIPTION
-            assert reader.joints("arm") is None
-            assert reader.joints("arm", allow_stale=True) is not None
+            assert provider.status == ProviderState.AVAILABLE
 
-        # The server goes on without that robot app.
+            # The server starts them again by itself, on the OpenXR session it keeps.
+            assert robot.run_until(lambda: len(starts) >= 2, RETRY_S + RETRY_SLACK_S)
+            assert starts[1] - starts[0] >= RETRY_S - 0.1
+            assert _headset(session).error == failure
+            assert _tick_age_s(session) is None
+            assert (openxr.opened, openxr.closed) == (1, 0)
+            said = [text for text in logs() if text.endswith(f". {STAYS_CONNECTED}")]
+            assert len(said) == 1
+            assert said[0].endswith(f": {START_FAILURE}. {STAYS_CONNECTED}")
+
+            # CloudXR is started again with a headset whose trackers start.
+            openxr.handles = (7, 7, 7, 7)
+            server.launcher.down = True
+            assert robot.run_until(lambda: openxr.closed == 1)
+            server.launcher.down = False
+            assert robot.run_until(lambda: _headset(session).error == NOT_TRACKED)
+            assert robot.run_until(lambda: _is_fresh(session))
+            assert openxr.opened == 2
+            assert [t for t in logs() if t.startswith(TRACKERS_RUN_AGAIN)]
+
+            assert session.robot_state_active
+            assert reader.connected
+            assert robot.newest_shows()
+            assert robot.longest_wait_s < MAX_WAIT_S
         assert server.running
-        assert [text for text in logs() if text.endswith(": " + START_FAILURE)]
     assert server.stop() == 0
 
 
-def test_a_server_that_stops_on_an_openxr_failure_ends_the_session_in_step(
+def test_an_openxr_failure_keeps_the_server_the_session_and_robot_state(
     server, openxr, logs
 ):
+    ready = _is_ready(server)
     with RobotState.connect(robot=ROBOT) as reader:
         with _early(server) as session:
             robot = _Robot(session, reader)
@@ -544,17 +644,176 @@ def test_a_server_that_stops_on_an_openxr_failure_ends_the_session_in_step(
 
             # The server's next try to open its OpenXR session fails for another reason.
             openxr.error = OTHER_OPENXR_ERROR
-            with pytest.raises(RuntimeError) as raised:
-                _step_for(session, 10.0)
-            assert type(raised.value) is RuntimeError
-            assert str(raised.value) == OPEN_FAILURE
-            assert _wait_for(
-                lambda: not session.publish_robot_state("arm", _reading(0))
+            assert robot.run_until(
+                lambda: _headset(session).error == _before_openxr(OPEN_FAILURE)
+            )
+            assert _headset(session).status == DeviceState.DISCONNECTED
+            attempts = len(openxr.attempts)
+            assert server.running
+
+            # Its next try, a retry delay later, finds a tracked headset.
+            openxr.reached = True
+            openxr.tracked = True
+            assert robot.run_until(
+                lambda: _headset(session).status == DeviceState.CONNECTED,
+                RETRY_S + READY_AFTER_S + RETRY_SLACK_S,
+            )
+            assert len(openxr.attempts) == attempts + 1
+            assert robot.run_until(lambda: _is_fresh(session))
+            assert robot.run_until(lambda: ready in logs())
+
+            assert logs().count(_warning(OPEN_FAILURE)) == 1
+            assert session.robot_state_active
+            assert robot.newest_shows()
+            assert robot.longest_wait_s < MAX_WAIT_S
+        assert _wait_for(lambda: not reader.connected)
+        # The server and its reader socket are still there.
+        assert server.running
+        assert reader.server_reachable
+        assert reader.joints("arm", allow_stale=True) is not None
+    assert server.stop() == 0
+    assert not os.path.exists(default_socket_path())
+    stopping = [t for t in logs() if "stopping the Teleop Session Server" in t]
+    assert stopping == ["Received SIGTERM; stopping the Teleop Session Server"]
+
+
+def test_cloudxr_stopping_and_returning_keeps_the_session_and_robot_state(
+    server, openxr, logs
+):
+    ready = _is_ready(server)
+    openxr.reached = True
+    openxr.tracked = True
+    with RobotState.connect(robot=ROBOT) as reader:
+        with _early(server) as session:
+            robot = _Robot(session, reader)
+            assert robot.reads()
+            assert robot.run_until(lambda: ready in logs())
+            assert robot.run_until(
+                lambda: _headset(session).status == DeviceState.CONNECTED
+            )
+            assert robot.run_until(lambda: _is_fresh(session))
+            stale = _robot_app_said(logs, SAMPLES_STALE)
+
+            # CloudXR stops: the trackers and the OpenXR session they read through go.
+            server.launcher.down = True
+            assert robot.run_until(lambda: _no_headset_data(session))
+            # The robot app says so; its C++ log lines reach Python a moment later.
+            assert robot.run_until(
+                lambda: _robot_app_said(logs, SAMPLES_STALE) == stale + 1
+            )
+            assert _headset(session).reason == StatusReason.NO_CURRENT_DATA
+            assert (openxr.opened, openxr.closed) == (1, 1)
+            attempts = len(openxr.attempts)
+            # It stays so, and OpenXR is not called, while CloudXR is down.
+            robot.run_for(1.5 * server_main.HEALTH_CHECK_PERIOD_S)
+            assert _no_headset_data(session)
+            assert len(openxr.attempts) == attempts
+            assert reader.connected
+            # Said once for the outage, however long it lasts.
+            assert _robot_app_said(logs, SAMPLES_STALE) == stale + 1
+            fresh = _robot_app_said(logs, SAMPLES_FRESH)
+
+            # CloudXR is started again: the same session gets tracker data again.
+            server.launcher.down = False
+            assert robot.run_until(
+                lambda: _headset(session).status == DeviceState.CONNECTED
+            )
+            assert robot.run_until(lambda: _is_fresh(session))
+            assert (openxr.opened, openxr.closed) == (2, 1)
+            assert len(openxr.attempts) == attempts + 1
+            assert robot.run_until(
+                lambda: _robot_app_said(logs, SAMPLES_FRESH) == fresh + 1
             )
 
-        assert server.wait() == 1
-        # The server is gone, and its reader socket with it.
-        assert not reader.server_reachable
-        assert reader.joints("arm", allow_stale=True) is None
-    assert not os.path.exists(default_socket_path())
-    assert f"{OPEN_FAILURE}; stopping the Teleop Session Server" in logs()
+            assert logs().count(_warning(CLOUDXR_STOPPED, start_hint=True)) == 1
+            assert logs().count("CloudXR is available again") == 1
+            # READY is sent once for a connection.
+            assert logs().count(ready) == 1
+            assert len([t for t in logs() if t.startswith(SERVER_READY)]) == 1
+            assert session.robot_state_active
+            assert robot.newest_shows()
+            assert robot.longest_wait_s < MAX_WAIT_S
+        assert server.running
+    assert server.stop() == 0
+    assert openxr.closed == 2
+
+
+def test_a_robot_app_that_waited_for_the_headset_survives_an_outage_after_ready(
+    server, openxr, logs
+):
+    ready = _is_ready(server)
+    openxr.reached = True
+    openxr.tracked = True
+    with RobotState.connect(robot=ROBOT) as reader:
+        # The default: entry returns at READY.
+        with _robot_app(server) as session:
+            assert logs().count(ready) == 1
+            robot = _Robot(session, reader)
+            assert robot.reads()
+            assert robot.run_until(lambda: _is_fresh(session))
+            assert _headset(session).status == DeviceState.CONNECTED
+
+            # The server's OpenXR session fails; it reads as a headset taken off.
+            openxr.failed = True
+            assert robot.run_until(lambda: openxr.closed == 1)
+            openxr.failed = False
+            assert robot.run_until(lambda: _no_headset_data(session))
+            provider = session.get_provider_status("openxr/runtime")
+            assert provider.status == ProviderState.AVAILABLE
+
+            # A retry delay later the server has a new OpenXR session.
+            assert robot.run_until(
+                lambda: _headset(session).status == DeviceState.CONNECTED,
+                RETRY_S + RETRY_SLACK_S,
+            )
+            assert robot.run_until(lambda: _is_fresh(session))
+            assert (openxr.opened, openxr.closed) == (2, 1)
+
+            assert logs().count(_warning(SESSION_FAILURE)) == 1
+            assert logs().count(ready) == 1
+            assert robot.newest_shows()
+            assert robot.longest_wait_s < MAX_WAIT_S
+        assert server.running
+    assert server.stop() == 0
+
+
+def test_a_robot_app_that_waits_for_the_headset_times_out_with_the_reason_while_cloudxr_is_down(
+    server, openxr, logs
+):
+    server.launcher.down = True
+    warning = _warning(CLOUDXR_STOPPED, start_hint=True)
+    assert _wait_for(lambda: warning in logs())
+    attempts = len(openxr.attempts)
+
+    with RobotState.connect(robot=ROBOT) as reader:
+        with pytest.raises(TimeoutError) as raised:
+            with _robot_app(server, remote_connect_timeout_s=1.0):
+                pytest.fail("entry returned while CloudXR is down")
+        assert str(raised.value) == (
+            f"Teleop Session Server at {server.endpoint} was not ready after 1 s: "
+            f"connecting_openxr ({CLOUDXR_STOPPED})"
+        )
+        assert _wait_for(lambda: not reader.connected)
+
+        # The same server serves a robot app that does not wait.
+        with _early(server) as session:
+            robot = _Robot(session, reader)
+            assert robot.reads()
+            assert robot.run_until(
+                lambda: _headset(session).error == _before_openxr(CLOUDXR_STOPPED)
+            )
+            assert robot.newest_shows()
+        assert _wait_for(lambda: not reader.connected)
+        assert len(openxr.attempts) == attempts
+
+        # CloudXR is started and a headset connects: a robot app that waits enters.
+        openxr.reached = True
+        openxr.tracked = True
+        server.launcher.down = False
+        with _robot_app(server) as session:
+            assert _headset(session).status == DeviceState.CONNECTED
+            robot = _Robot(session, reader)
+            assert robot.reads()
+            assert robot.run_until(lambda: _is_fresh(session))
+    assert logs().count(warning) == 1
+    assert server.stop() == 0
