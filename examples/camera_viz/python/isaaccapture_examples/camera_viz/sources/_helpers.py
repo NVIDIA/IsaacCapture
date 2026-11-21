@@ -111,6 +111,53 @@ def notify_verbose(tag: str, msg: str) -> None:
 logger = logging.getLogger("isaaccapture.camera_viz.sources")
 
 
+class CaptureMailbox:
+    """Which of a source's buffers holds the newest capture, for a reader
+    that borrows it.
+
+    The producer asks where to write, fills that buffer, and publishes it
+    with the capture's timestamp. The reader takes the newest capture it
+    has not taken yet, and the buffer it took is not written again until
+    it takes the next. Captures that were replaced untaken are counted in
+    ``dropped``. Three buffers are the least that works: one published,
+    one held, one being written.
+    """
+
+    def __init__(self, buffers: int = 3) -> None:
+        if buffers < 3:
+            raise ValueError("CaptureMailbox needs at least three buffers")
+        self._buffers = buffers
+        self._lock = threading.Lock()
+        self._published: Optional[tuple] = None  # (buffer index, timestamp_ns)
+        self._held: Optional[int] = None
+        self._count = 0
+        self._taken = 0
+        self.dropped = 0
+
+    def write_index(self) -> int:
+        """The buffer the producer may fill now."""
+        with self._lock:
+            busy = {self._held, None if self._published is None else self._published[0]}
+            return next(index for index in range(self._buffers) if index not in busy)
+
+    def publish(self, index: int, timestamp_ns: int) -> None:
+        with self._lock:
+            self._published = (index, int(timestamp_ns))
+            self._count += 1
+
+    def take(self) -> Optional[tuple]:
+        """``(buffer index, timestamp_ns)`` of the newest capture not taken
+        yet, or None."""
+        with self._lock:
+            if self._published is None or self._taken == self._count:
+                return None
+            if self._taken:
+                self.dropped += self._count - self._taken - 1
+            self._taken = self._count
+            self._held = self._published[0]
+            return self._published
+
+
 def alloc_pinned_host(shape: tuple, dtype: np.dtype) -> np.ndarray:
     """Allocate page-locked (pinned) host memory as a numpy array.
 

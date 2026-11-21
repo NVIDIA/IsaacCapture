@@ -794,6 +794,10 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:
        sensor_mode: 0            # argus only
        repeat_capture: true      # argus only — use repeat requests when supported
        pair_emit_mode: both      # argus independent stereo only: either | both
+       exposure: auto            # zed only, optional — auto | 0..100; also gain, white_balance
+                                 # (auto | 2800..6500), brightness, contrast, saturation,
+                                 # sharpness (0..8), gamma (1..9). Absent keys leave the camera
+                                 # as the last application set it.
        rtp:
          port: 5000              # left eye when stereo
          port_right: 5001        # required when stereo + source: rtp
