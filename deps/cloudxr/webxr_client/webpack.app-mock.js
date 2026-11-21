@@ -29,8 +29,10 @@ const { merge } = require('webpack-merge');
 const common = require('./webpack.common.js');
 
 module.exports = merge(common, {
-  mode: 'development',
-  devtool: 'eval-source-map',
+  // Production React semantics: StrictMode's development effect replay would create
+  // duplicate mock sessions.
+  mode: 'production',
+  devtool: 'source-map',
   resolve: {
     alias: {
       // Exact match ($) only: the shim itself (and MockCloudXR.ts) reach the real SDK via the

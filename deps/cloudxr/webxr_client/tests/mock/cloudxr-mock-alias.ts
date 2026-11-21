@@ -58,7 +58,7 @@ export function createSession(
 
 declare global {
   interface Window {
-    __mockCloudXRFail?: (message?: string) => void;
+    __mockCloudXRFail?: (message?: string, code?: number) => void;
     __mockCloudXRConnectDelayMs?: number;
     __mockCloudXRVideoFrame?: (frameId: number) => void;
   }
@@ -66,7 +66,9 @@ declare global {
 
 if (typeof window !== 'undefined') {
   window.__mockCloudXRVideoFrame = frameId => activeSession?.videoFrameReceived(frameId);
-  window.__mockCloudXRFail = (message = 'Mock transient server/tunnel outage') => {
-    activeSession?.triggerFailure({ name: 'StreamingError', message });
+  // Without a code the failure is recoverable and reconnects silently; a code in the
+  // server-disconnect range (0xc0f22300-0xc0f223ff) is terminal and shows the error banner.
+  window.__mockCloudXRFail = (message = 'Mock transient server/tunnel outage', code) => {
+    activeSession?.triggerFailure({ name: 'StreamingError', message, code });
   };
 }
