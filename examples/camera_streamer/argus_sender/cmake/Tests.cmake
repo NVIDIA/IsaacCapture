@@ -28,6 +28,7 @@ endfunction()
 add_executable(argus_sender_test_config
     tests/test_config.cpp
     src/Config.cpp
+    src/CaptureBackend.cpp
 )
 argus_sender_add_cpp_test(argus_sender_test_config config)
 target_link_libraries(argus_sender_test_config PRIVATE yaml-cpp::yaml-cpp)
@@ -132,3 +133,24 @@ if(ARGUS_SENDER_HARDWARE_TESTS)
         TIMEOUT 90
     )
 endif()
+
+add_executable(argus_sender_test_capture_backend
+    tests/test_capture_backend.cpp
+    src/CaptureBackend.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_capture_backend capture_backend)
+
+add_executable(argus_sender_test_encoder_input_slots
+    tests/test_encoder_input_slots.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_encoder_input_slots encoder_input_slots)
+
+add_executable(argus_sender_test_scoped_release
+    tests/test_scoped_release.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_scoped_release scoped_release)
+
+add_executable(argus_sender_test_output_rate_selector
+    tests/test_output_rate_selector.cpp
+)
+argus_sender_add_cpp_test(argus_sender_test_output_rate_selector output_rate_selector)

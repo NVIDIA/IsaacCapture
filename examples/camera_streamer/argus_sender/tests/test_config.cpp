@@ -101,9 +101,46 @@ int main()
         TEST_CHECK(test, commandLine.checkConfig);
     }
 
+    {
+        argus_sender::AppConfig net;
+        const std::string streams =
+            "streams:\n  - id: a\n    type: mono\n    cameras: [{device: 0, mode: 0}]\n    output: {fps: 30, codec: hevc, width: 1280}\n";
+        TEST_CHECK(test, loadText("version: 1\n" + streams, &net, &error));
+        TEST_CHECK_EQ(test, net.network.sendBufferKb, 0U);
+        TEST_CHECK(test, loadText("version: 1\nnetwork: {send_buffer_kb: 128}\n" + streams, &net, &error));
+        TEST_CHECK_EQ(test, net.network.sendBufferKb, 128U);
+    }
+
     argus_sender::AppConfig invalid;
     TEST_CHECK(test, !loadText("version: 1\nstreams: []\nunknown: true\n", &invalid, &error));
     TEST_CHECK(test, error.find("unknown key") != std::string::npos);
+
+    {
+        argus_sender::AppConfig backend;
+        const std::string streams =
+            "streams:\n  - id: a\n    type: mono\n    cameras: [{device: 0, mode: 0}]\n    output: {fps: 30, codec: hevc, width: 1280}\n";
+        TEST_CHECK(test, loadText("version: 1\n" + streams, &backend, &error));
+        TEST_CHECK_EQ(
+            test, static_cast<int>(backend.captureBackend), static_cast<int>(argus_sender::CAPTURE_BACKEND_AUTO));
+        TEST_CHECK(test, !loadText("version: 1\ncapture_backend: sipl\n" + streams, &backend, &error));
+        TEST_CHECK(test, error.find("platform_config_json") != std::string::npos);
+        const std::string sipl =
+            "sipl:\n  platform_config_json: /p.json\n  platform_config_name: RIG\n  link_masks: [3, 0]\n";
+        TEST_CHECK(test, loadText("version: 1\ncapture_backend: sipl\n" + sipl + streams, &backend, &error));
+        TEST_CHECK_EQ(
+            test, static_cast<int>(backend.captureBackend), static_cast<int>(argus_sender::CAPTURE_BACKEND_SIPL));
+        TEST_CHECK_EQ(test, backend.sipl.linkMasks.size(), static_cast<size_t>(2));
+        TEST_CHECK_EQ(test, backend.sipl.platformConfigName, std::string("RIG"));
+        TEST_CHECK(
+            test,
+            !loadText(
+                "version: 1\ncapture_backend: sipl\n" + sipl +
+                    "streams:\n  - id: a\n    type: stereo\n    cameras: [{device: 0, mode: 0}, {device: 1, mode: 0}]\n    output: {fps: 30, codec: hevc, width: 1280}\n",
+                &backend, &error));
+        TEST_CHECK(test, error.find("mono hevc") != std::string::npos);
+        TEST_CHECK(test, !loadText("version: 1\ncapture_backend: gstreamer\n" + streams, &backend, &error));
+        TEST_CHECK(test, error.find("capture_backend") != std::string::npos);
+    }
 
     TEST_CHECK(test, !loadText("version: 1\n"
                                "streams:\n"
@@ -244,6 +281,79 @@ int main()
                                "      remap: {capture_width: 2560, capture_height: 1984}\n",
                                &invalid, &error));
     TEST_CHECK(test, error.find("file is required") != std::string::npos);
+
+
+    {
+        const std::string monoStream =
+            "streams:\n  - id: a\n    type: mono\n    cameras: [{device: 0, mode: 0}]\n    output: {fps: 30, codec: hevc, width: 1280}\n";
+        argus_sender::AppConfig head;
+        TEST_CHECK(test, loadText("version: 1\n" + monoStream, &head, &error));
+        head.sipl.platformConfigJson = "/p.json";
+        head.sipl.platformConfigName = "RIG";
+        head.sipl.linkMasks = { 3, 0 };
+        head.sipl.isp0Buffers = 2;
+        TEST_CHECK(test, argus_sender::validateSiplConfig(head, &error));
+
+        argus_sender::AppConfig bad = head;
+        bad.streams[0].output.codec = argus_sender::CODEC_RAW_NV12;
+        TEST_CHECK(test, !argus_sender::validateSiplConfig(bad, &error));
+        TEST_CHECK(test, error.find("mono hevc") != std::string::npos);
+
+        bad = head;
+        bad.sipl.platformConfigName.clear();
+        TEST_CHECK(test, !argus_sender::validateSiplConfig(bad, &error));
+        TEST_CHECK(test, error.find("platform_config_json") != std::string::npos);
+        bad = head;
+        bad.sipl.platformConfigJson.clear();
+        TEST_CHECK(test, !argus_sender::validateSiplConfig(bad, &error));
+        TEST_CHECK(test, error.find("platform_config_json") != std::string::npos);
+
+        bad = head;
+        bad.sipl.linkMasks.clear();
+        TEST_CHECK(test, !argus_sender::validateSiplConfig(bad, &error));
+        TEST_CHECK(test, error.find("link_masks") != std::string::npos);
+
+        bad = head;
+        bad.sipl.isp0Buffers = 1;
+        TEST_CHECK(test, !argus_sender::validateSiplConfig(bad, &error));
+        TEST_CHECK(test, error.find("isp0_buffers must be at least 2") != std::string::npos);
+
+        // Stereo stream: build it from the stereo config, then give it SIPL settings.
+        argus_sender::AppConfig stereo;
+        TEST_CHECK(test, loadText(validConfig(), &stereo, &error));
+        stereo.sipl = head.sipl;
+        TEST_CHECK(test, !argus_sender::validateSiplConfig(stereo, &error));
+        TEST_CHECK(test, error.find("mono hevc") != std::string::npos);
+
+        // An explicit sipl backend runs the same checks inside validateConfig.
+        TEST_CHECK(test, argus_sender::validateConfig(head, &error));
+        head.captureBackend = argus_sender::CAPTURE_BACKEND_SIPL;
+        TEST_CHECK(test, argus_sender::validateConfig(head, &error));
+        stereo.captureBackend = argus_sender::CAPTURE_BACKEND_SIPL;
+        TEST_CHECK(test, !argus_sender::validateConfig(stereo, &error));
+        TEST_CHECK(test, error.find("mono hevc") != std::string::npos);
+        bad = head;
+        bad.sipl.linkMasks.clear();
+        TEST_CHECK(test, !argus_sender::validateConfig(bad, &error));
+        TEST_CHECK(test, error.find("link_masks") != std::string::npos);
+        bad = head;
+        bad.sipl.isp0Buffers = 1;
+        TEST_CHECK(test, !argus_sender::validateConfig(bad, &error));
+        bad = head;
+        bad.sipl.platformConfigJson.clear();
+        TEST_CHECK(test, !argus_sender::validateConfig(bad, &error));
+        TEST_CHECK(test, error.find("platform_config_json") != std::string::npos);
+
+        // capture_backend auto skips the SIPL checks; SenderSession revalidates once auto resolves to SIPL.
+        stereo.captureBackend = argus_sender::CAPTURE_BACKEND_AUTO;
+        TEST_CHECK(test, argus_sender::validateConfig(stereo, &error));
+        TEST_CHECK(test, !argus_sender::validateSiplConfig(stereo, &error));
+        bad = head;
+        bad.captureBackend = argus_sender::CAPTURE_BACKEND_AUTO;
+        bad.sipl.linkMasks.clear();
+        bad.sipl.isp0Buffers = 1;
+        TEST_CHECK(test, argus_sender::validateConfig(bad, &error));
+    }
 
     TEST_CHECK(test, !loadText("version: 1\n"
                                "streams:\n"

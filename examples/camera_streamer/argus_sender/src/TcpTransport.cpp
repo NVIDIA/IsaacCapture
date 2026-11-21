@@ -6,8 +6,8 @@
 
 #include "TcpTransport.h"
 
+#include "FrameTiming.h"
 #include "Runtime.h"
-#include "StereoTiming.h"
 
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
@@ -309,6 +309,16 @@ public:
             std::fprintf(stderr, "Failed to configure TCP send timeout: %s\n", std::strerror(errno));
             closeWireDump();
             return false;
+        }
+        if (m_settings.sendBufferBytes != 0)
+        {
+            const int bytes = static_cast<int>(m_settings.sendBufferBytes);
+            if (setsockopt(*m_fd, SOL_SOCKET, SO_SNDBUF, &bytes, sizeof(bytes)) != 0)
+            {
+                std::fprintf(stderr, "Failed to set the TCP send buffer: %s\n", std::strerror(errno));
+                closeWireDump();
+                return false;
+            }
         }
         m_statsStart = std::chrono::steady_clock::now();
         m_accepting = true;

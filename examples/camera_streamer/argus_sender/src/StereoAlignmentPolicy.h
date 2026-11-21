@@ -7,8 +7,9 @@
 #ifndef ARGUS_SENDER_STEREO_ALIGNMENT_POLICY_H
 #define ARGUS_SENDER_STEREO_ALIGNMENT_POLICY_H
 
-#include "StereoTiming.h"
+#include "FrameTiming.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace argus_sender
