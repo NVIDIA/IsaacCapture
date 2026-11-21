@@ -4,6 +4,7 @@
 #pragma once
 
 #include <deviceio_session/deviceio_session.hpp>
+#include <deviceio_session/no_data_session.hpp>
 #include <deviceio_session/remote_session.hpp>
 #include <deviceio_session/remote_session_client.hpp>
 #include <deviceio_session/remote_session_host.hpp>
@@ -201,6 +202,64 @@ public:
 
 private:
     std::unique_ptr<ReplaySession> impl_;
+};
+
+/**
+ * @brief Python-facing NoDataSession; keeps its trackers alive. Same context-manager semantics as PyDeviceIOSession.
+ */
+class PyNoDataSession : public ITrackerSession
+{
+public:
+    static std::unique_ptr<PyNoDataSession> create(const std::vector<std::shared_ptr<ITracker>>& trackers)
+    {
+        std::vector<const ITracker*> pointers;
+        for (const auto& tracker : trackers)
+        {
+            pointers.push_back(tracker.get());
+        }
+        std::unique_ptr<PyNoDataSession> self(new PyNoDataSession());
+        self->impl_ = NoDataSession::run(pointers);
+        self->trackers_ = trackers;
+        return self;
+    }
+
+    void close()
+    {
+        impl_.reset();
+        trackers_.clear();
+    }
+
+    PyNoDataSession& enter()
+    {
+        check_open();
+        return *this;
+    }
+
+    void exit(py::object, py::object, py::object)
+    {
+        close();
+    }
+
+    const ITrackerImpl& get_tracker_impl(const ITracker& tracker) const override
+    {
+        check_open();
+        return impl_->get_tracker_impl(tracker);
+    }
+
+private:
+    PyNoDataSession() = default;
+
+    void check_open() const
+    {
+        if (!impl_)
+        {
+            throw std::runtime_error("NoDataSession has been closed/destroyed");
+        }
+    }
+
+    // Destroyed in reverse order: the session goes before the trackers.
+    std::vector<std::shared_ptr<ITracker>> trackers_;
+    std::unique_ptr<NoDataSession> impl_;
 };
 
 /**

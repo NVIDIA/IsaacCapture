@@ -244,6 +244,19 @@ PYBIND11_MODULE(_deviceio_session, m)
             "Create a replay session that reads recorded data from an MCAP file. "
             "The McapReplayConfig.tracker_names maps tracker objects to their MCAP channel base names.");
 
+    // ---- NoDataSession ----
+    py::class_<core::PyNoDataSession, core::ITrackerSession, std::unique_ptr<core::PyNoDataSession>>(
+        m, "NoDataSession",
+        "Holds a tracker of every kind and has no data for any of them: every accessor returns None, a message "
+        "channel reports DISCONNECTED and an empty batch and raises RuntimeError on send_message(). It has no "
+        "update(). A LIVE TeleopSession reads it until a headset has reached the OpenXR runtime.")
+        .def_static("create", &core::PyNoDataSession::create, py::arg("trackers"),
+                    "Create a session for these trackers. Raises ValueError for None or a tracker listed twice.")
+        .def("close", &core::PyNoDataSession::close,
+             "Release the native session immediately (usually automatic via context manager)")
+        .def("__enter__", &core::PyNoDataSession::enter)
+        .def("__exit__", &core::PyNoDataSession::exit);
+
     // ---- Remote sessions ----
     // Only the blocking calls release the GIL; the C++ threads behind them never take it. The waits run Python's
     // signal handlers every 100 ms, and start() after each TCP connect attempt, so Ctrl-C interrupts them.

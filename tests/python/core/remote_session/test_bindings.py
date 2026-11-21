@@ -1,21 +1,25 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Bindings a remote session relies on, exercised without a network."""
+"""Bindings a remote session relies on, and the no-data session, exercised without a network."""
 
 import pytest
 
 from isaaccapture import deviceio, deviceio_session, deviceio_trackers, oxr
 from isaaccapture.deviceio_trackers import (
     HapticCommandPushTracker,
+    HeadTracker,
     JointSe3PoseTracker,
     KeyboardTracker,
+    MessageChannelStatus,
     MessageChannelTracker,
     Se3Tracker,
+    TactileTracker,
 )
 from isaaccapture.deviceio_trackers._generated_tracker_exports import (
     __all__ as GENERATED_TRACKERS,
 )
+from isaaccapture.schema import MessageChannelMessages
 
 
 def test_pull_tracker_exposes_its_constructor_arguments():
@@ -116,3 +120,67 @@ def test_remote_session_connect_rejects_a_malformed_endpoint():
 def test_listener_rejects_a_bad_port():
     with pytest.raises(ValueError, match="port"):
         deviceio_session.RemoteSessionListener("127.0.0.1", 70000)
+
+
+def test_no_data_session_is_exported_from_both_packages():
+    assert "NoDataSession" in deviceio_session.__all__
+    assert "NoDataSession" in deviceio.__all__
+    assert deviceio.NoDataSession is deviceio_session.NoDataSession
+
+
+def test_no_data_session_holds_every_tracker_kind():
+    head = HeadTracker()
+    channels = [MessageChannelTracker(bytes(16), name) for name in "ab"]
+    tactiles = [TactileTracker(name) for name in ("left", "right")]
+    trackers = [channels[0], head, tactiles[0], channels[1], tactiles[1]]
+    with deviceio_session.NoDataSession.create(trackers) as session:
+        assert head.get_head(session) is None
+        for channel in channels:
+            assert channel.get_status(session) == MessageChannelStatus.DISCONNECTED
+            assert channel.get_messages(session).data == []
+            with pytest.raises(
+                RuntimeError,
+                match=r"^NoDataSession: MessageChannelTracker::send_message: "
+                r"channel is not open$",
+            ):
+                channel.send_message(session, MessageChannelMessages(b"x"))
+        for tactile in tactiles:
+            assert tactile.get_data(session) is None
+            assert tactile.get_metadata(session) is None
+        assert not hasattr(session, "update")
+
+
+def test_no_data_session_create_rejects_bad_arguments():
+    head = HeadTracker()
+    with pytest.raises(ValueError, match=r"^NoDataSession: tracker pointer is null$"):
+        deviceio_session.NoDataSession.create([head, None])
+    with pytest.raises(
+        ValueError, match=r"^NoDataSession: tracker 'HeadTracker' is listed twice$"
+    ):
+        deviceio_session.NoDataSession.create([head, head])
+
+
+def test_no_data_session_closes():
+    head = HeadTracker()
+    with deviceio_session.NoDataSession.create([head]) as session:
+        with pytest.raises(RuntimeError, match=r"^Tracker implementation not found"):
+            HeadTracker().get_head(session)
+    session.close()  # idempotent
+    with pytest.raises(
+        RuntimeError, match=r"^NoDataSession has been closed/destroyed$"
+    ):
+        head.get_head(session)
+
+
+def test_remote_session_create_rejects_a_tracker_with_metadata():
+    with pytest.raises(ValueError) as raised:
+        deviceio_session.RemoteSession.create([(TactileTracker("t"), "0")])
+    assert str(raised.value) == (
+        "TactileTracker is not supported over a remote session: its metadata is read "
+        "before any sample arrives"
+    )
+    with pytest.raises(ValueError) as raised:
+        deviceio_session.RemoteSession.create([(MessageChannelTracker(bytes(16)), "0")])
+    assert str(raised.value) == (
+        "MessageChannelTracker is not supported over a remote session"
+    )
