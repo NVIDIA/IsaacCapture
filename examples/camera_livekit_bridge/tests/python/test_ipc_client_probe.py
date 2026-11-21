@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -173,8 +174,13 @@ class IpcClientProbeTest(unittest.TestCase):
         deadline = time.monotonic() + _WAIT_S
         line = ""
         while time.monotonic() < deadline:
-            line = cls._publisher.stdout.readline().strip()
-            if line == "READY" or cls._publisher.poll() is not None:
+            # Wait on the pipe with a timeout: readline() alone blocks forever on a publisher that stalls.
+            ready, _, _ = select.select([cls._publisher.stdout], [], [], 0.5)
+            if ready:
+                line = cls._publisher.stdout.readline().strip()
+                if line == "READY" or line == "":
+                    break
+            if cls._publisher.poll() is not None:
                 break
         if line != "READY":
             _terminate(cls._publisher)

@@ -105,7 +105,15 @@ async def main():
         if len(tasks) >= n_tracks and all(t.done() for t in tasks):
             break
     keyframe_api = any(hasattr(rtc.VideoStream, n) for n in ("request_keyframe", "send_pli"))
+    # A reader that is still running at the deadline, or that raised, makes the samples partial: fail the run.
+    for t in tasks:
+        if not t.done():
+            t.cancel()
+    outcomes = await asyncio.gather(*tasks, return_exceptions=True)
     await room.disconnect()
+    failed = [repr(o) for o in outcomes if isinstance(o, BaseException)]
+    if failed:
+        sys.exit("subscriber reader failed: " + "; ".join(failed))
     print("RESULT " + json.dumps({"tracks": tracks, "keyframe_api": keyframe_api}))
 
 

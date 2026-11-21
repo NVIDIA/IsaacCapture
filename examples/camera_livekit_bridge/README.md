@@ -81,6 +81,10 @@ the same basis:
 | `capture_unix_us` (default) | The sensor start-of-frame as Unix time on the sender's clock. |
 | `monotonic_us` | This host's monotonic clock at the instant the picture is ready to encode (before encoding): frame-ready time, later than the sensor capture. |
 
+Egocap does not record with `capture_unix_us`, even when every frame has a valid timestamp, so the sample command is for
+preview. To record, pass `--timestamp-basis monotonic_us` and name the same basis in egocap's streams file; the
+recording then carries frame-ready time, not sensor capture time.
+
 `capture_unix_us` is used only when the receiver reports a realtime sender clock; a frame with no usable sensor
 start-of-frame (missing, in the future, older than 5 s, or on another clock domain) carries no `user_timestamp`, so
 a consumer that needs a capture time says so instead of using a guess. `capture_monotonic_us` is refused: it would

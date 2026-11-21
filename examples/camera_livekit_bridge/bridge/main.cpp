@@ -9,8 +9,10 @@
 #include <nvenc/cuda_context.hpp>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -92,7 +94,19 @@ int main(int argc, char** argv)
         else if (arg == "--source-full-range")
             defaults.source_full_range = true;
         else if (arg == "--max-notice-age-ms")
-            defaults.max_notice_age_ms = static_cast<uint32_t>(std::atoi(next().c_str()));
+        {
+            const std::string text = next();
+            char* end = nullptr;
+            errno = 0;
+            const long long value = std::strtoll(text.c_str(), &end, 10);
+            if (text.empty() || *end != '\0' || errno != 0 || value < 0 || value > UINT32_MAX)
+            {
+                std::cerr << "--max-notice-age-ms must be a whole number of milliseconds from 0 to " << UINT32_MAX
+                          << " (0 derives it from the ring), got '" << text << "'\n";
+                return 2;
+            }
+            defaults.max_notice_age_ms = static_cast<uint32_t>(value);
+        }
         else if (arg == "--idr-period")
             defaults.idr_period = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (arg == "--timestamp-basis")

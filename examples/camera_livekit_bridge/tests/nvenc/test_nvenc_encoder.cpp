@@ -427,8 +427,15 @@ int main()
     }
     catch (const std::exception& e)
     {
-        std::fprintf(stderr, "SKIP: cannot create an NVENC encoder here: %s\n", e.what());
-        return 77;
+        // Only a missing NVENC library is a skipped prerequisite; any other setup failure on a working GPU is a
+        // regression and must fail the test.
+        if (std::string(e.what()).find("libnvidia-encode is not available") != std::string::npos)
+        {
+            std::fprintf(stderr, "SKIP: %s\n", e.what());
+            return 77;
+        }
+        std::fprintf(stderr, "FAIL: cannot create an NVENC encoder: %s\n", e.what());
+        return 1;
     }
 
     test_invalid_geometry(*ctx);

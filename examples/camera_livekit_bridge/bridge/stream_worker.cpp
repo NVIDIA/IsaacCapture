@@ -89,6 +89,36 @@ PlaneLayout read_layout(const IpcStream& stream)
     return layout;
 }
 
+// Bytes a plane needs from the slot start through the end of its last row, or false on overflow.
+bool plane_extent(size_t offset, size_t pitch, size_t rows, size_t row_bytes, size_t& end)
+{
+    size_t span = 0;
+    if (rows == 0 || row_bytes > pitch || __builtin_mul_overflow(rows - 1, pitch, &span) ||
+        __builtin_add_overflow(span, row_bytes, &span) || __builtin_add_overflow(span, offset, &end))
+        return false;
+    return true;
+}
+
+// Every GPU read starts from the advertised offsets and pitches, so each plane must fit inside every slot.
+void check_plane_extents(const IpcStream& stream, const PlaneLayout& layout)
+{
+    const auto width = static_cast<size_t>(stream.width);
+    const auto height = static_cast<size_t>(stream.height);
+    size_t y_end = 0;
+    size_t uv_end = 0;
+    if (stream.width <= 0 || stream.height <= 0 || height % 2 != 0 ||
+        !plane_extent(layout.y_offset, layout.y_pitch, height, width, y_end) ||
+        !plane_extent(layout.uv_offset, layout.uv_pitch, height / 2, width, uv_end))
+        throw std::runtime_error("stream '" + stream.name + "' advertises an invalid NV12 plane layout");
+    const size_t needed = std::max(y_end, uv_end);
+    for (const IpcSlot& slot : stream.slots)
+    {
+        if (slot.nbytes < needed)
+            throw std::runtime_error("stream '" + stream.name + "' advertises NV12 planes that extend past its " +
+                                     std::to_string(slot.nbytes) + "-byte slots");
+    }
+}
+
 constexpr uint32_t kStartBitrateBps = 2'000'000;
 
 uint64_t unsigned_field(const nlohmann::json& metadata, const char* key)
@@ -109,6 +139,7 @@ struct StreamWorker::Impl
             throw std::runtime_error("the IPC publisher has no stream named '" + cfg.stream + "'");
         const IpcStream& stream = client.streams().front();
         layout = read_layout(stream);
+        check_plane_extents(stream, layout);
         source = { static_cast<uint32_t>(stream.width), static_cast<uint32_t>(stream.height) };
         if (!box_downscale_supported(source.width, source.height, cfg.scale_div))
             throw std::runtime_error("stream '" + cfg.stream + "' is " + std::to_string(source.width) + "x" +
@@ -285,7 +316,9 @@ struct StreamWorker::Impl
                 // The congestion controller's target for this track, with headroom. A fixed rate above what the
                 // connection can carry only fills the sender's pacing queue and ages every frame behind it. Never
                 // above the configured rate, never below a floor that keeps the picture usable.
-                constexpr uint32_t kMinBitrateBps = 500'000;
+                constexpr uint32_t kFloorBps = 500'000;
+                // A configured cap below the floor is the cap itself; clamp needs lo <= hi.
+                const uint32_t kMinBitrateBps = std::min(kFloorBps, config.bitrate_bps);
                 stats.target_bps = *feedback.target_bitrate_bps;
                 const uint64_t shaded = static_cast<uint64_t>(*feedback.target_bitrate_bps) * 9 / 10;
                 const auto wanted =
