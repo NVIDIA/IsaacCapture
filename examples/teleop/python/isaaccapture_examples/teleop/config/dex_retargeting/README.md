@@ -11,12 +11,12 @@ This directory contains example configuration files for the `DexHandRetargeter`.
 
 - **`hand_left_config.yml`** - Configuration for left hand retargeting (from IsaacLab Unitree G1 Inspire Hand)
 - **`hand_right_config.yml`** - Configuration for right hand retargeting (from IsaacLab Unitree G1 Inspire Hand)
-- **`robot_hand.urdf`** - Placeholder URDF file (REPLACE WITH YOUR ROBOT'S URDF)
+- **`left_robot_hand.urdf`**, **`right_robot_hand.urdf`** - Placeholder URDF files (REPLACE WITH YOUR ROBOT'S URDF)
 
 ## Using These Files
 
 ### For Testing/Demo
-The placeholder URDF (`robot_hand.urdf`) is a minimal example that matches the YAML config structure. It should work for basic testing of the retargeting pipeline.
+The placeholder URDFs (`left_robot_hand.urdf`, `right_robot_hand.urdf`) match the YAML config structure but give their joints no offsets, so moving a joint moves no fingertip. The retargeter therefore outputs the middle of each joint's range (0.785 for most joints) whatever the hand does, and 0 while no hand is tracked.
 
 ### For Real Robot Use
 You need to provide your robot-specific URDF and YAML config:
@@ -63,7 +63,7 @@ retargeting:
   type: DexPilot
 
   # Path to robot hand URDF
-  urdf_path: ./config/dex_retargeting/robot_hand.urdf
+  urdf_path: left_robot_hand.urdf
 
   # Wrist link name (base of the hand)
   wrist_link_name: L_hand_base_link
@@ -85,13 +85,13 @@ Real robot URDFs can be obtained from:
 
 ## Testing Without Real URDF
 
-The placeholder URDF is sufficient for:
+The placeholder URDFs are sufficient for:
 - Testing the retargeting pipeline
-- Verifying hand tracking data is being received
-- Checking joint angle outputs
+- Verifying hand tracking data is being received (outputs change from 0 to 0.785)
 
-It is **NOT** suitable for:
-- Actual robot control (joint angles won't be correct)
+They are **NOT** suitable for:
+- Checking joint angle outputs (they do not follow the hand)
+- Actual robot control
 - Production use
 - Accurate hand pose replication
 
