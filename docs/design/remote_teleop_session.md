@@ -25,6 +25,13 @@ agree to it while the link is set up; a robot app without a description, and a r
 built without robot state, exchange the same link messages as without it. User documentation:
 `docs/source/teleop/robot_state.rst`.
 
+A robot app in a local session (`SessionMode.LIVE` or `SessionMode.REPLAY`) has no link. It keeps the
+`RobotStateStore` and serves the readers itself, on its own machine; its publish calls and the reader's calls are the
+ones of a remote session, so one robot app and one reader are written once for both (section 5, "Robot state").
+
+One robot's state is served per machine: a robot that would be the second one at the place where readers get robot
+state is refused when it starts (section 5, "One robot per reader socket path").
+
 Non-goals: video or audio from the robot; changing how the robot is commanded; serving several robot apps at once.
 Robot state adds none of these to the library: an agent's commands and their answers, who controls the robot, stop, the
 handover between an agent and a person, and camera pictures stay in the application.
@@ -45,12 +52,18 @@ handover between an agent and a person, and camera pictures stay in the applicat
 | setup | The records that declare a topic and its schema (the layout of its records). |
 | link message; HELLO, HELLO_ACK, STATUS, READY, ERROR, SETUP, SAMPLES | A unit on the link: a 24-byte link message header (magic, version, type, channel, sequence number, payload size, send time), then a payload. HELLO: the robot app's request; HELLO_ACK: its acceptance; STATUS: progress and health; READY: the headset has been tracked for about a second (SAMPLES flow from the first tick, before it); ERROR: a refusal or failure, which closes the link; SETUP: setup records; SAMPLES: one tick's samples; PING, PONG, HEARTBEAT: liveness and clock (section 6). |
 | tick; tick time, rate, age; stale | One `RemoteSessionHost.tick()` for the robot app the server serves: one `DeviceIOSession.update()`, reading each of its trackers once, then one SAMPLES link message. Tick time: the server machine's monotonic clock at its start; rate: ticks per second; age: now minus the newest SAMPLES' tick time, on the robot machine's clock; stale: age above the limit. |
-| robot state | Readings of the robot, sent from the robot app to the server machine: joint positions (with velocities and efforts where the robot has them), a gripper's opening, status readings, faults, and any other series the robot declares. |
+| robot state | Readings of the robot, sent from the robot app to its readers: joint positions (with velocities and efforts where the robot has them), a gripper's opening, status readings, faults, and any other series the robot declares. |
 | data series (series), record | A named sequence of small records over time, e.g. the series `arm`: one record of joint positions per reading, some tens a second. It is not video. In code a series is a sample stream and its name a topic; a robot-state topic is the series name itself, e.g. `arm`. |
 | shape | The layout of a series' records. Standard shapes: `joints` (the existing `JointStateOutputRecord`; a gripper is one more named joint), `status` (`RobotStatusRecord`: named readings and faults) and `description`. Any other shape is one the robot defines in its description; its records are JSON objects. |
 | robot description | What a robot is: its series, the joints of each joints series with name, kind and limits, and its grippers. An integrator writes it once as a TOML file; it travels as the one record of the reserved series `robot_description`. |
-| reader | A program on the server machine that imports `isaaccapture.robot_state` to read robot state, e.g. an agent's harness. |
-| robot session | The time one robot app that sends robot state is connected to the Teleop Session Server. A new one empties the store. |
+| reader | A program on the host's machine that imports `isaaccapture.robot_state` to read robot state, e.g. an agent's harness. |
+| host | The program that keeps the `RobotStateStore` and serves the reader socket: the Teleop Session Server in remote mode, the robot app itself in a local session (`RobotStateHost`). A design word; the user page says "the program that serves robot state". |
+| reader socket, taken path | Reader socket: the Unix socket on which a host hands snapshots of its store to reader programs; its default path is one per user per machine. A path is taken while another live program serves it. |
+| sender | The object a publish call hands its record bytes to: the `RemoteSession` in remote mode, the `RobotStateHost` in a local session. |
+| local session | A `TeleopSession` in `SessionMode.LIVE` or `SessionMode.REPLAY`: no Teleop Session Server and no link. |
+| robot session | The time one robot app that sends robot state is connected to the Teleop Session Server, or is in a local session. A new one empties the store. |
+| entry, early entry | Entry: `TeleopSession.__enter__`. Early entry: a remote entry that returns once the server has answered HELLO, without waiting for READY (`TeleopSessionConfig.wait_for_headset=False`). |
+| no-data step | A `step()` in which every tracker reports no data. After an early entry every step is one until the server ticks. |
 | ROBOT_STATE_SETUP, ROBOT_STATE_SAMPLES, ROBOT_STATE_RECORDS | The link messages of robot state, all from the robot app to the server (section 6). ROBOT_STATE_SETUP declares the series; ROBOT_STATE_SAMPLES carries records of series of which only the newest record matters; ROBOT_STATE_RECORDS carries records that must all arrive, in order (the description). |
 | reading time, reading age, fresh | Reading time: the robot machine's monotonic clock when the robot app took the reading. Reading age: now minus the reading time, both on the server machine's clock. A record is fresh while its age is at most its series' `stale_after_s` (0: it never goes stale). These belong to robot state; tick time and tick age belong to SAMPLES. |
 
@@ -77,6 +90,30 @@ The endpoint (`remote_endpoint`) is `host[:port]`, `tcp://host[:port]` or `ws://
 been tracked (`openxr/headset` CONNECTED) for about a second; tracked means awake, not necessarily worn. It must get
 there within `remote_connect_timeout_s` (60 s; `None`: no limit). `plugins` must be empty in remote mode
 (`ValueError`): plugins run on the server machine, started by hand or with a script.
+
+With `wait_for_headset=False` the entry is an early entry: it returns at HELLO_ACK, and `remote_connect_timeout_s`
+bounds connecting, the retries and HELLO_ACK only. Until the server ticks every `step()` is a no-data step; when a
+headset is tracked the same session gets its data, nothing restarts, and `step()` logs the `is ready` line once. The
+field is an explicit opt-in (section 12). A robot app that also names a robot description publishes from the moment
+entry returns, with nobody in the headset:
+
+```python
+endpoint = settings.get("server")            # "server-machine:47600", or None for a local session
+config = TeleopSessionConfig(
+    app_name="my_robot", pipeline=pipeline,
+    mode=SessionMode.REMOTE if endpoint else SessionMode.LIVE, remote_endpoint=endpoint,
+    robot_description="six_joint_arm.toml", wait_for_headset=False)
+with TeleopSession(config) as session:
+    while running:
+        command = session.step()             # tracker outputs are absent until a headset is tracked
+        session.publish_robot_state("arm", read_joints(), time_ns=read_time_ns)
+
+robot = RobotState.connect(robot="rebot_b601")   # on the host's machine
+arm = robot.joints("arm") if robot.connected else None     # None also while there is no fresh reading
+```
+
+The pair `mode` and `remote_endpoint` is the one place where the robot app names its mode: `SessionMode.REMOTE`
+requires an endpoint and the other modes refuse one.
 
 `step()` uses the newest samples (the server ticks at `remote_tick_rate_hz`, 90 Hz) and reports their tick age in
 `last_step_info.remote_tick_age_s` (`None` when the step got no fresh samples). Above `remote_max_tick_age_s` (0.25 s)
@@ -147,8 +184,9 @@ Robot state adds one path in the other direction, from the robot app to a reader
   the store attached with `attach_robot_state`.
 - `src/python/isaaccapture/robot_state/`: `description.py` (the description file), `records.py` (numbers to record
   bytes and back), `reader.py` (`RobotState`, what a reader calls), `_local.py` (`RobotStateLocalService` and the
-  connection between a reader program and the server).
-- `src/python/isaaccapture/teleop_session_manager/`: `TeleopSessionConfig.robot_description`,
+  connection between a reader program and the host), `_host.py` (`RobotStateHost`, the host inside a robot app in a
+  local session; private, not exported).
+- `src/python/isaaccapture/teleop_session_manager/`: `TeleopSessionConfig.robot_description` and `wait_for_headset`,
   `TeleopSession.publish_robot_state`, `publish_robot_record` and `robot_state_active`.
   `src/python/isaaccapture/teleop_session_server/`: the server owns the store and the `RobotStateLocalService`.
 
@@ -205,6 +243,12 @@ the robot app never sees samples' timestamps, and a device time inside a payload
                                                   ROBOT_STATE_SAMPLES,                              │
                                                   ROBOT_STATE_RECORDS                               ▼
                                                                                    RobotState (reader): joints("arm")
+
+ robot app in a local session (one machine)
+ publish_robot_state("arm", numbers)
+        │ checks them against the description
+        ▼
+ records.encode_reading ─► RobotStateHost ─► RobotStateStore ─► RobotStateLocalService ══► RobotState (reader)
 ```
 
 **The description file.** `TeleopSessionConfig.robot_description` names a TOML file (or holds a loaded
@@ -228,15 +272,42 @@ hands any other encoding out as bytes with its schema.
 **Robot app, on entry.** The description is loaded before any connection, so its errors come first. HELLO offers robot
 state. When HELLO_ACK agrees, the robot app sends ROBOT_STATE_SETUP for every series and then the description, in
 ROBOT_STATE_RECORDS, before it waits for READY. When HELLO_ACK does not agree (a Teleop Session Server built without
-robot state ignores the offer), the robot app logs one warning and sends no robot-state link message. Entering returns
-at READY, as without robot state.
+robot state ignores the offer), the robot app logs one warning and sends no robot-state link message. When the server
+answers ERROR because its reader socket path is taken, entry raises that text ("One robot per reader socket path",
+below). Entering returns at READY, or at HELLO_ACK for an early entry, as without robot state. The description is
+sent at HELLO_ACK in either case; readings can be published once entry has returned, so an early entry is what lets
+a robot app publish with nobody in the headset.
 
 **Robot app, per reading.** `publish_robot_state(series, values, ...)` can be called from any thread while the session
 is entered and does not depend on `step()`. Python checks the values against the description (the count, the kinds, the
 optional velocities and efforts), adds the joint or reading names and the reading time, and builds the record; C++ wraps
 it in an MCAP Message record and sends it at once, with the robot link's clock offset in the payload. The call returns
 False, sending nothing, when the server did not agree or the link is down; `step()` raises the lost link as without
-robot state.
+robot state. The publish calls hold no test of the mode: they hand the record bytes to the session's sender, which is
+the `RemoteSession` here and a `RobotStateHost` in a local session.
+
+**Local session (LIVE, REPLAY): the robot app is the host.** With a description, entry makes one private
+`RobotStateHost` (`robot_state/_host.py`) before it opens the OpenXR session or the recording, so a reader sees the
+description while entry still waits for a headset; the host is closed when the session exits or entry fails. Nothing
+of robot state is created without a description or outside an entry. The host makes a new `RobotStateStore`, starts a
+robot session, declares the series, puts the description record, and then opens a `RobotStateLocalService` at the
+default reader socket path: the store is filled before the socket opens. A publish call puts its record straight
+into the store (`put_record`), not through `RobotStatePublisher` bytes, so no record is merged or dropped and the
+store's sequence counts every publish; in remote mode it counts the records that arrived. The refusal of a record above
+1 MiB is therefore worded by the store here and by the `RemoteSession` there.
+
+A publish call's True means the record is on its way to the readers: handed to the link of a server that agreed
+(remote mode), or stored behind a reader socket that is served (local session). `robot_state_active` is True while the
+server has agreed to robot state (remote mode; it stays True after the link is lost, until the session exits, while
+the publish calls return False) or while the host serves the reader socket (local session). A host does not start at
+a taken path: entry raises (see "One robot per reader socket path"). A host that cannot open the reader socket for
+any other reason (the path is too long, the directory is not private, a file that is no socket lies at the path, no
+Unix sockets, a thread that cannot start) is not active: it logs one warning per reason, stores nothing, and its
+publish calls return False. Entry still succeeds and teleoperation goes on. A publish call never opens the socket
+itself and never waits for it: at most once every 2 s (`RETRY_S`) a publish call asks, a thread of the host named
+`isaaccapture-robot-state-socket-retry` makes the attempt, and the call that asked returns False. That thread lives
+only while the socket is not served; `robot_state_active` itself asks for nothing. A robot app in a local session
+has no option for the socket path; it follows `XDG_RUNTIME_DIR`.
 
 **Teleop Session Server.** `RemoteSessionHost` hands each robot-state payload to the attached `RobotStateStore` with
 the time it arrived. The store applies records in arrival order and keeps, per series, the newest one. It never calls
@@ -249,10 +320,69 @@ robot app is connected.
 **Reader.** `RobotState` is the one class a reader uses: `description()`, `series()`, `joints(name)`, `gripper(name)`,
 `status(name)`, `record(name)`, and on each reading its age and whether it is fresh. Inside the server's process,
 `RobotState.from_store()` (or `teleop_session_server.hosted_robot_state()`) reads the server's store directly. In a
-program of its own, `RobotState.connect()` keeps a store of its own and fills it with snapshots of the server's. A
-reader program and the Teleop Session Server exchange robot state over a local socket that belongs to the isaaccapture
+program of its own, `RobotState.connect()` keeps a store of its own and fills it with snapshots of the host's. A
+reader program and the host exchange robot state over a local socket that belongs to the isaaccapture
 package. Its format is private and may change in any release; it is not an interface. Use the calls of
-`isaaccapture.robot_state`.
+`isaaccapture.robot_state`. `RobotState.connect()` also reads from inside a robot app that hosts.
+
+One default socket path serves the Teleop Session Server and every robot app in a local session of one user, and a
+reader cannot tell which program answers. `RobotState.connect(robot="name")` therefore names the robot the reader
+expects, by the description's `robot`: while another robot is served, `server_reachable` is True, `connected` False,
+`description()` None and every read None, also with `allow_stale=True`, and the reader logs one warning naming both
+robots. Every `connect()` reader logs which robot it reads, once per description. The guard is the name alone: a
+simulated robot whose description carries the real robot's name reads as the real one.
+
+**One owner per socket path.** `RobotStateLocalService.start()` takes an exclusive, non-blocking `flock` on
+`<socket path>.lock` (mode 0600, never removed) before it looks at the socket file, and holds it until the service ends.
+Probing a stale socket file, removing it and binding the path are thereby one step for all programs: two that start
+at once cannot both own a path. The one that finds the path taken gets `ReaderSocketTaken`, a private subclass of
+`OSError` with the text `another program serves robot state at <path>`: the lock is held by another process or by
+another service of the same process, or a program without a lock holds the socket. Callers tell this cause by
+the type, not by the text; every other failure of `start()` is a plain `OSError` or `RuntimeError`. A socket file
+that the program is not permitted to connect to is such another failure (`PermissionError`), not a taken path:
+whether a program serves it cannot be told, so nobody is refused for it. The service makes
+the socket's directory with mode 0700 in one step, so a program that starts at the same moment never finds it open
+to group or others. A service whose thread ended releases listener, socket file and lock by itself (`serving` turns
+False), so the path is free for the next; a killed program's lock ends with it, and its socket file is replaced. A
+fork hook (`os.register_at_fork`) closes the listener, the wake pair, the readers' connections and the lock
+descriptor in the child, so a forked child neither serves nor keeps the path after its parent ended. A child made by
+a fork that skips Python's hooks keeps them until it ends.
+
+**One robot per reader socket path.** One headset cannot sensibly drive two robots, e.g. a real robot in remote mode
+and a simulated robot in a local session on the server machine. A robot that would be the second one at a reader
+socket path is therefore refused when it starts and does not teleoperate. "Second" means that at the moment it
+starts the path is taken; which of the two is the real robot makes no difference.
+
+- **Robot app in a local session.** `RobotStateHost.start()` raises `RuntimeError` with the `ReaderSocketTaken` as
+  its cause when its first attempt finds the path taken, and leaves the host closed: no thread, no lock, no robot
+  session a reader could see. `TeleopSession.__enter__` lets it through. Entry starts the host before the OpenXR
+  session, the DeviceIO or replay session and every plugin, so nothing of the refused robot app has an effect
+  outside its process. The text: `Another program on this machine already serves a robot's state at <path>: a
+  Teleop Session Server or another robot app. One robot per machine is served; stop that program, then start this
+  robot app again.` The same session object can be entered again once the path is free.
+- **Robot app in remote mode.** For a HELLO that offers robot state the server tries its reader socket, unless it
+  serves it already, before it attaches the store and before it sends HELLO_ACK. When it finds the path taken, the
+  HELLO is refused as any HELLO the server cannot serve: ERROR with the text, the connection ended, one warning
+  `Refused the robot app at <peer>: <text>` in the server's log, nothing of that robot app in the store. The server
+  keeps running and takes the next robot app. The text: `Another program on the Teleop Session Server's machine
+  already serves a robot's state at <path>. One robot per machine is served; stop that program, or connect this
+  robot app without a robot description.` The robot app's entry raises it as `RuntimeError`, once; it does not
+  connect again by itself.
+- **No robot description.** A robot app that offers no robot state enters a local session and is served by a server
+  as without robot state, whoever holds the path.
+- **The server keeps the path.** It serves its reader socket from the first robot app that agreed robot state until
+  it stops, so a harness stays connected across a change of robot app. While such a server runs, a robot app with a
+  description in a local session on that machine is refused, also between two robot apps. A robot app the server
+  refused did not agree robot state: the server does not take the path for it later.
+- **Every other cause stays a warning.** A reader socket that cannot be opened for another reason refuses nobody:
+  the robot app teleoperates (local session) or is served (remote mode), and the socket is tried again. A taken path
+  that such a later attempt meets is a warning too: that program started while the path was not taken, and its robot
+  already runs. That holds for a server that lost its socket (its service's thread ended) and finds another program
+  there; it goes on serving its robot app and refuses a HELLO that offers robot state while that lasts.
+- **Two on purpose.** Each gets its own path: `--robot-state-socket PATH` for a server, another `XDG_RUNTIME_DIR` for
+  a robot app in a local session, and the same for their readers. There is no option that turns the rule off.
+  The rule holds per path: two programs that see different values of `XDG_RUNTIME_DIR` (a server started as a
+  system service sees none) have two default paths, and neither robot is refused.
 
 A read returns None when the series has no record in this robot session, when the record is not fresh (unless the
 caller passes `allow_stale=True`), while no robot app is connected, and while the server cannot be reached. A reader
@@ -269,13 +399,17 @@ delay, never too small, and `clock_two_way` on the reading says so. The age is n
 record arrived, so a reading time ahead of the robot machine's clock cannot keep a record fresh. The reading time
 itself stays on the robot machine's clock and is not comparable with a time taken on the server machine.
 
+In a local session both clocks are on one machine but are read by different code: the publish call's times come from
+Python's `time.monotonic_ns()`, the store ages records on its own monotonic clock. The host measures the difference
+at each put and passes it as the offset, marked two-way, so the ages are right from the first record.
+
 ## 6. Wire protocol
 
 `messages.hpp` and `message_header.hpp` in `src/core/remote_link/cpp/inc/remote_link/` define the format.
 
 | Link message | Payload |
 |---|---|
-| HELLO | JSON: protocol number, Isaac Capture version, app name (only logged), tick rate, trackers, topics, and `"robot_state": {"version": 1}` only from a robot app with a robot description. The server refuses one it cannot serve, e.g. with another protocol number, an unknown tracker type or one that needs an OpenXR extension the session lacks, a non-empty `plugins` list, over 1 MiB, over 256 trackers or 1024 topics, or a text over 1024 characters, or a `robot_state` that is not an object with an integer `version` of at least 1 |
+| HELLO | JSON: protocol number, Isaac Capture version, app name (only logged), tick rate, trackers, topics, and `"robot_state": {"version": 1}` only from a robot app with a robot description. The server refuses one it cannot serve, e.g. with another protocol number, an unknown tracker type or one that needs an OpenXR extension the session lacks, a non-empty `plugins` list, over 1 MiB, over 256 trackers or 1024 topics, or a text over 1024 characters, or a `robot_state` that is not an object with an integer `version` of at least 1, or one that offers robot state while the server's reader socket path is taken (section 5) |
 | HELLO_ACK | JSON: `session_id`, `server_version`, and `"robot_state": {"version": 1}` only when HELLO offered robot state and the server has a store |
 | STATUS, READY | JSON: stage, message, headset state |
 | ERROR | Text, shown to the user as is |
@@ -306,7 +440,8 @@ clock offset, and a one-way estimate stands in until the first PONG.
 | no robot description | any | HELLO and HELLO_ACK hold the same bytes as without robot state; no robot-state link message |
 | robot description | built without robot state | HELLO has the key, which that server ignores; HELLO_ACK lacks it; the robot app logs one warning, sends no robot-state link message, and its publish calls return False |
 | built without robot state | has a store | neither HELLO nor HELLO_ACK has the key; the store is not attached |
-| robot description | has a store | both have the key; the server attaches the store before it sends HELLO_ACK; the robot app sends ROBOT_STATE_SETUP, then the description, right after HELLO_ACK |
+| robot description | has a store | both have the key; the server first tries to serve its reader socket (a failure other than a taken path is a warning), then attaches the store, then sends HELLO_ACK; the robot app sends ROBOT_STATE_SETUP, then the description, right after HELLO_ACK |
+| robot description | has a store, and its reader socket path is taken | HELLO has the key; the server answers ERROR and ends the connection; no HELLO_ACK, nothing in the store |
 
 A server asked for a version above 1 answers with version 1; the robot app takes robot state as agreed only for an
 answer of exactly 1. A peer built without robot state drops a link message type it does not know, and it never
@@ -355,7 +490,8 @@ The server is one process, `python -m isaaccapture.teleop_session_server`, servi
   turns the capture off;
 - one `RobotStateStore` and, from the first robot app that agreed robot state until the server stops, a
   `RobotStateLocalService` that hands snapshots of the store to reader programs (see "Robot state" below). A server
-  that never serves robot state creates no socket.
+  that never serves robot state creates no socket. A server that has one keeps the path also while no robot app is
+  connected, so a robot app with a description in a local session on that machine is refused for that long.
 
 **Per robot app**, from when the server serves it until it leaves, the server has:
 
@@ -369,7 +505,8 @@ The server is one process, `python -m isaaccapture.teleop_session_server`, servi
   1 s a tracking loss takes to show), then READY (stage `ready`), sent once, and `running`. After READY a headset that
   disconnects changes only the STATUS headset state;
 - when its HELLO offers robot state: the server's store, attached to its `RemoteSessionHost` before HELLO_ACK is sent,
-  which starts a robot session.
+  which starts a robot session. Before that the server tries its reader socket, and refuses the robot app when the
+  path is taken (section 5, "One robot per reader socket path").
 
 When the robot app leaves, `RemoteSessionHost.close()` drops its trackers; the OpenXR session stays for the next one.
 `close()` also ends the robot session, once: the store then reports that no robot app is connected.
@@ -400,19 +537,29 @@ connection ends; the server and its OpenXR session keep running.
 **Robot state.** The server hosts the receiving side and does not implement it: the store is a library class
 (`RobotStateStore`), filled by `RemoteSessionHost` on the link's receive thread, and nothing in the server's loop reads
 or writes robot state. The server creates the store, gives it to each robot app's connection, and starts the
-`RobotStateLocalService` at the first agreement; that service runs on a thread of its own, beside the loop, as the
-refusals do. Together with the separate link message types (section 6), this keeps moving the receiving side into a
-program of its own a change of where the class runs (section 12).
+`RobotStateLocalService` for the first HELLO that offers robot state, before it answers; that service runs on a
+thread of its own, beside the loop, as the refusals do. Starting it is one attempt in the loop: taking the lock never
+waits, and probing a socket file that a program without the lock left or holds waits at most 1 s. Together with the
+separate link message types (section 6), hosting a library class keeps moving the receiving side into a program of
+its own a change of where the class runs (section 12).
 
 The reader socket is a Unix socket, by default `$XDG_RUNTIME_DIR/isaaccapture/robot_state.sock`, or
 `/tmp/isaaccapture-<uid>/robot_state.sock` when `XDG_RUNTIME_DIR` is unset or not a directory; `--robot-state-socket`
 names another path. Its directory must belong to the server's user and be closed to group and others (the server creates
 it with mode 0700), the socket has mode 0600, and a client of another user is closed. The service serves at most 16
 reader programs at a time, one connection each; it closes a further one and logs one warning, and that reader reports
-`server_reachable` False and reads None until another has closed. When the socket cannot be opened, e.g. because another
-Teleop Session Server serves robot state at that path, the server logs a warning and goes on: its robot app still sends,
-and `hosted_robot_state()` still reads, but reader programs see no server. Until the first robot app has agreed robot
-state the socket does not exist, so a reader program reports `server_reachable` False although the server runs.
+`server_reachable` False and reads None until another has closed.
+
+When the path is taken, by a second Teleop Session Server or by a robot app in a local session, the server refuses
+the robot app whose HELLO offers robot state (section 5, "One robot per reader socket path"); readers at that path
+go on reading the program that holds it. When the socket cannot be opened for any other reason, e.g. a directory
+that is open to group or others, the server logs the warning `Reader programs cannot get robot state from this
+Teleop Session Server: <reason>` and goes on: its robot app is served and still sends, and `hosted_robot_state()`
+still reads. Once it has served a robot app that offered robot state, the server tries the socket again from its
+health check, once a second, whenever no service serves, and logs the warning again only when its reason changes; a
+taken path that such a retry meets is that warning, not a refusal of the robot app being served. Until the first
+HELLO that offers robot state the socket does not exist, so a reader program reports `server_reachable` False
+although the server runs.
 
 **Robot state when the headset or CloudXR goes away.** A headset that disconnects and connects again leaves the server,
 the link and the store running: after READY it changes only the STATUS headset state, and the robot app keeps
@@ -421,9 +568,20 @@ from the server's rule to stop on a failed CloudXR health check or a failed Open
 carries headset data only. With robot state hosted in the same process it means: from the crash until a
 supervisor has started the server again and the robot app has entered a new session, no robot state reaches the server
 machine; a reader program sees `server_reachable` False and reads None; the robot app's `step()` raises, and its
-publish calls return False. The robot app does not reconnect by itself (section 13), and entering again waits for
-READY, which needs CloudXR and a tracked headset. The alternative, a server that treats a CloudXR crash as "no human
-input" and keeps its link and store, is not built.
+publish calls return False. The robot app does not reconnect by itself (section 13). Entering again needs a running
+server, which needs CloudXR; by default it also waits for READY, that is for a tracked headset, and an early entry
+(`wait_for_headset=False`) does not. The alternative, a server that treats a CloudXR crash as "no human input" and
+keeps its link and store, is not built.
+
+**Robot state with no headset.** The server needs no headset to serve robot state: it answers HELLO, attaches the
+store and takes the robot-state link messages while it has no OpenXR session (stage `connecting_openxr`), and an early
+entry lets the robot app publish from then on. The server starts that robot app's trackers only once its OpenXR
+session exists, which is when a headset has connected to CloudXR. If that start fails, the server sends ERROR
+(`The Teleop Session Server could not start the trackers: ...`) and closes the connection: the robot app's next
+`step()` raises, its publish calls return False, and the robot session ends. With the default entry the same failure
+is raised by entering. Robot state that outlives a tracker failure needs a server change and is not built
+(section 13). A robot app that stays connected without a headset holds the server's one place. How the server behaves
+over hours with CloudXR up and no headset, where it tries to open its OpenXR session once a second, is not measured.
 
 ## 8. Status reporting
 
@@ -434,6 +592,14 @@ shows that an operator is present. While no STATUS arrives, both keep the last o
 With a controller input source, `openxr/controller/left` and `/right` come from the controller samples the robot app
 receives, as in live mode, so they turn DISCONNECTED about a second after the samples turn stale. Plugins do not
 appear in it, and a plugin that stops raises no `PluginCrashException`: the server does not run plugins (section 7).
+
+After an early entry the robot app may poll before the server's OpenXR session exists. While there is no STATUS yet,
+or its stage is `connecting_openxr` and its headset entry is the empty one the server sends then, `get_status()` shows
+`openxr/runtime` AVAILABLE and `openxr/headset` DISCONNECTED with the stage in its error text, e.g. `Teleop Session
+Server: connecting_openxr (waiting for the headset to connect to CloudXR)`. The rule needs both the opt-in and that
+stage: with the default entry, and for any other malformed entry, the status is a poll error.
+`openxr/headset` is not aged, so it is for display; a robot app decides to move on tracker data present in this step
+or on a deliberate operator input.
 
 ## 9. Errors and timeouts as the robot app sees them
 
@@ -447,6 +613,12 @@ appear in it, and a plugin that stops raises no `PluginCrashException`: the serv
 | Link lost after HELLO_ACK; incompatible topic schema | `RuntimeError` from entering or `step()`: `Remote session lost: ...` or `MCAP schema mismatch on '<topic>': ...` |
 | `remote_connect_timeout_s=None`, and the server machine vanishes after accepting the connection, before answering | Nothing until TCP gives up, many minutes later (over `ws://` maybe never) |
 | Ctrl-C while entering | `KeyboardInterrupt` within about 0.1 s, or after the TCP connect attempt in progress (at most 2 s, plus any host name lookup) |
+| Early entry (`wait_for_headset=False`): no HELLO_ACK within `remote_connect_timeout_s` | `TimeoutError`: `... was not ready after <t> s: server did not answer`; READY is not waited for |
+| Early entry: the server cannot start the trackers when a headset arrives, or a topic's schema is incompatible | `RuntimeError` from a later `step()`, not from entering; after the tracker failure the link is closed and publish calls return False |
+| LIVE with `wait_for_headset=False` and an OpenXR session of its own, while no headset has reached the OpenXR runtime since it started | `RuntimeError` at once: `No headset has reached the OpenXR runtime since it started, and a LIVE session cannot start without one yet (wait_for_headset=False). ...`, with the OpenXR error as its cause; entry is rolled back |
+| LIVE or REPLAY with a robot description while another live program serves the reader socket path | `RuntimeError` at once, before the OpenXR session, the DeviceIO or replay session and any plugin: `Another program on this machine already serves a robot's state at <path>: a Teleop Session Server or another robot app. One robot per machine is served; stop that program, then start this robot app again.`, with `ReaderSocketTaken` as its cause; entry is rolled back and not retried |
+| REMOTE with a robot description while another live program on the server machine serves the server's reader socket path | `RuntimeError` from entering, with the server's ERROR text: `Another program on the Teleop Session Server's machine already serves a robot's state at <path>. One robot per machine is served; stop that program, or connect this robot app without a robot description.`; not retried |
+| LIVE or REPLAY with a robot description whose reader socket cannot be opened for any other reason | No exception: one warning per reason, `robot_state_active` False, publish calls return False. At most once every 2 s a publish call asks; a thread of the host named `isaaccapture-robot-state-socket-retry` makes the attempt, and the call that asked returns False |
 
 ## 10. Security model
 
@@ -473,6 +645,13 @@ directory has mode 0700, the socket mode 0600, and the service checks the user i
 another user. The socket only hands out snapshots; a client cannot write robot state through it. It is not reachable
 from another machine.
 
+A robot app that hosts in a local session has no network side: its robot state does not leave its machine, and the
+same socket rules apply with the robot app's user. The default socket path is shared by every host of one user on one
+machine and the first owner keeps it, so any program of that user can serve the path before the real robot app does;
+`connect(robot=...)` refuses another robot name, not a program that uses the same name. Such a program also keeps a
+robot app with a description from starting, and a server from serving one: the robot app is refused with the path in
+the text, so it does not run unnoticed without readers.
+
 ## 11. Testing
 
 No automated test needs a headset or an OpenXR runtime. C++ `RemoteSession` tests write head and hand records into a
@@ -492,6 +671,22 @@ Reader tests fill a store by hand and run the reader socket under a temporary fo
 remote session to a Teleop Session Server started with `--placeholder-openxr`, and a stand-in harness reads it back
 through `RobotState.connect()`, once for a six-joint arm and once for a two-arm robot. No robot-state test runs on a
 robot, with a headset or with CloudXR.
+
+Early entry and hosting in the robot app are tested the same way, without hardware. Early entry runs against a fake
+`RemoteSession`, against a scripted server over loopback that stays silent before it ticks and sends READY, and
+against the server's own loop with a scripted OpenXR session that first reports no headset. One C++ case steps every
+tracker kind before its channels are declared. The LIVE `RuntimeError` is tested with the OpenXR constructor replaced
+and the error text copied from `oxr_session.cpp`. Hosting is tested with a real store and reader socket under a
+temporary folder, in LIVE and REPLAY with OpenXR and DeviceIO replaced, and one test runs the same publish calls and
+the same wrong calls in LIVE, REPLAY and REMOTE and compares what they return and raise. The socket's owner rule is
+tested with processes that start at once, also where the socket's directory does not exist yet, a killed owner and a
+forked child. The refusal of a second robot is tested with the other program as a process of its own: a robot app
+that enters LIVE and REPLAY beside it (OpenXR, DeviceIO, replay and the plugin manager replaced, and none of them
+called), two robot apps that enter at once, a Teleop Session Server program that refuses a robot app and serves the
+same one without a description, a local robot app beside a server that keeps the path, and an owner ended with
+SIGKILL. None of this has run with CloudXR, a
+headset or a real OpenXR runtime: the server with CloudXR up and no headset, LIVE with `wait_for_headset=False` on a
+real runtime, and a server and a robot app on one machine with nobody in the headset are checks still to be run.
 
 ## 12. Decisions and reasons
 
@@ -539,13 +734,67 @@ warning, since the per-topic schema check already rejects unreadable data. A dif
 refused with an ERROR: the server cannot read the HELLO and closes the connection unanswered, so the robot app retries
 until `remote_connect_timeout_s` and reports `server did not answer`.
 
-**Robot state rides the remote teleop session, hosted by the Teleop Session Server.** The link already joins the two
-machines and already has a clock offset, liveness and a connect-time handshake. The receiving side sits in the Teleop
-Session Server for the time being, and two rules keep moving it into a program of its own cheap: it is a library class
+**Robot state rides the remote teleop session, hosted by the Teleop Session Server.** In remote mode the link already
+joins the two machines and already has a clock offset, liveness and a connect-time handshake. The receiving side sits
+in the Teleop Session Server for the time being, and two rules keep moving it into a program of its own cheap: it is a
+library class
 (`RobotStateStore`) that the server hosts, not code in the server's loop; and robot state has its own link message
 types and is never mixed into SETUP or SAMPLES. The move is then the same class in another small program and a second
 link from the robot app; the description file, the records and the calls of an application and of a reader stay as
 they are. The cost of hosting: robot state shares the server's lifetime, CloudXR crash included (section 7).
+
+**In a local session the robot app is the host, with the same classes.** The store, the reader socket service and the
+reader are the ones the server uses; `RobotStateHost` only joins them, and the publish calls hand their bytes to a
+sender without a test of the mode. One robot app and one harness therefore run unchanged in LIVE, REPLAY and REMOTE,
+no link message is added, and moving robot state to a connection of its own stays as cheap as before. Records go
+straight into the store instead of through the publisher's bytes: there is no link to shape them for, at the cost
+that the sequence and the wording of the 1 MiB refusal differ between the modes. Not built: a `session.robot_state`
+property and a `robot_state_socket` field; `RobotState.connect()` reads inside the robot app too, and
+`XDG_RUNTIME_DIR` moves the path.
+
+**A second robot on one machine is refused at start.** One headset cannot sensibly drive two robots, so a robot
+that finds the reader socket path taken when it starts does not teleoperate: entry raises in a local session, and
+the server answers ERROR in remote mode. The alternative, the second robot teleoperating with its robot state not
+served, a warning and a retry, would leave two robots under one headset and a harness reading one of them. The
+refusal comes before the OpenXR session and before any plugin starts, and before the server attaches its store or
+sends HELLO_ACK, so a refused robot app leaves nothing behind. The cause is a type (`ReaderSocketTaken`), since
+matching text could mistake another failure for it. Which robot is refused is decided by the order of starting
+alone, also when the second one is the real robot. The server keeps its path between robot apps, as it keeps its
+OpenXR session, so a harness stays connected; the cost is that a local robot app with a description cannot run
+beside a server that has served robot state, until that server stops. Two robots on purpose get a path each.
+
+**No reader socket for any other reason means not active.** A host that cannot open the reader socket for a reason
+other than a taken path keeps teleoperating with `robot_state_active` False and publish calls that return False,
+and tries again; failing entry would stop a robot for a fault in its reporting. A taken path that a retry meets is
+such a fault too, since that robot already runs. In a local session a True from a publish call therefore never
+reports a record that no reader program can get. In remote mode a server whose reader socket cannot be opened for
+such a reason still accepts the records, and `hosted_robot_state()` reads them.
+
+**One default socket path, one owner, and a reader that can name its robot.** A reader that had to know whether a
+server or a robot app serves it would not be written once. The cost is that the first program at the path keeps it
+and a reader cannot see who answers; the lock file makes the owner unique, the robot that comes second is refused,
+and `connect(robot=...)` lets a harness that commands a robot refuse another robot's state.
+
+**Not waiting for a headset is an explicit opt-in.** `wait_for_headset` defaults to True, so a program that does not
+set it has the same entry, link bytes and log lines as without the field; a robot app that forgets it still waits and
+gets no hint. The alternative, a robot description that implies early entry, would change when an existing robot app's
+`step()` first runs. Early entry changes nothing on the wire: the robot app only stops waiting for READY.
+
+**After an early entry the pipeline runs with no tracker data, and the library adds no stop guard.** Every output
+reaches the application from the first `step()`. Most retargeters write for absent input: `Se3AbsRetargeter` the pose
+at the origin, `GripperRetargeter` an open gripper, the joint and hand retargeters zeros. Only `SO101ClutchRetargeter`,
+`EePoseJumpGuard` and `JointStateRetargeter` with its clutch follow the teleop state, so a `teleop_control_pipeline`
+does not hold the others back. An application that forwards every output would send the robot there at start. The
+application moves the robot only on a deliberate operator input: tracker data present in this step, which it tests
+with `is_none` on a source's own output placed among the pipeline's outputs, together with a held control. The robot
+state page lists what every retargeter writes for absent input and shows that test where the field is described;
+`tests/python/core/retargeting_engine/test_absent_input.py` holds the list.
+
+**LIVE with no headset at the runtime raises instead of waiting.** With `wait_for_headset=False` a LIVE session makes
+one `OpenXRSession(..., wait_for_system=False)`; the runtime's no-headset error becomes a `RuntimeError` that names the
+three ways out. Waiting would break what the field says, and a warning before every healthy start would be noise.
+Starting the OpenXR session later, when a headset arrives, is not built (section 13); the route that works is a
+Teleop Session Server on the same machine and remote mode.
 
 **Agreed in HELLO and HELLO_ACK, not by a new protocol number.** A robot app or a Teleop Session Server built without
 robot state must see no difference, and a different protocol number is refused. A key that a server built without
@@ -609,10 +858,27 @@ Robot state:
 
 - Keeping the Teleop Session Server alive through a CloudXR crash. Whether its exit is intended is undecided
   (section 7); until it is decided, robot state stops reaching the server machine with it.
-- Publishing before READY. The description is sent at HELLO_ACK, but the application can publish only once the session
-  is entered, which needs a tracked headset.
+- Starting a LIVE session with no headset at the OpenXR runtime (a deferred OpenXR start): entry would return, and a
+  helper thread would open the OpenXR session, start the trackers and the plugins when a headset arrives, and hand
+  them to `step()`. Before it is built it needs a written hand-over (only the stepping thread touches the plugins, the
+  exit stack and the status inventory; the exit order, with a time limit) and a run on a real runtime: how long one
+  attempt takes and whether repeating it for hours is clean, how long tracker start-up pauses the loop, whether the
+  runtime accepts a session created on one thread and updated on another, and what plugins do with no headset.
+- Robot state that outlives a tracker failure on the server: when a headset arrives late and the trackers cannot
+  start, the server ends the connection, robot state included (section 7).
 - Authentication or encryption of robot state, as of the link.
-- Robot state toward the robot app, feedback to the headset's controllers, and a reader on the robot machine.
+- Robot state toward the robot app, feedback to the headset's controllers, and a reader on the robot machine in
+  remote mode.
+- One place per robot name on one machine: each robot answers under its own name, and a harness asks for a robot by
+  name. Until it exists, one robot per reader socket path is served and a second one is refused at start
+  (section 5). Noted for later; not designed.
+- A path option for a robot app that hosts (`XDG_RUNTIME_DIR` moves it), and a reader that can tell a server from a
+  robot app or a simulated robot from a real one of the same name.
+- The docstrings of the store's C++ binding (`robot_state_bindings.cpp`), which still say "on the server machine".
+- A robot app that runs the CloudXR runtime in its own process and hosts robot state: the host adds a Python thread,
+  and whether that meets the rule against new Python threads after the CloudXR service has started on Orin
+  (`src/core/AGENTS.md`) is not checked. A robot app that starts CloudXR through the launcher runs it in another
+  process and is not affected.
 - A history of records (the store keeps the newest per series) and a reading time per joint.
 - A gripper's position in space (a gripper is its opening, as a named joint) and standard shapes for force and pose.
 - A C++ loader of the description file and typed C++ helpers: a C++ robot app builds its record bytes itself.
