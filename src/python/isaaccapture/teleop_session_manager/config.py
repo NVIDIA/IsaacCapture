@@ -462,9 +462,9 @@ class TeleopSessionConfig:
             every tracker reports no data, plugins are not started and nothing is recorded;
             the first ``step()`` after one has reached it starts them. That ``step()``
             returns late, and every Python thread of the program waits for it (the tracker
-            start plus at least 0.1 s for each plugin). A session with a message channel
-            or a tracker with metadata raises ``RuntimeError`` at entry while no headset is
-            there. No effect in REPLAY mode and with ``oxr_handles``,
+            start plus at least 0.1 s for each plugin). Until then a message channel
+            reports ``DISCONNECTED`` and no messages, and a tracker with metadata no data
+            and no metadata. No effect in REPLAY mode and with ``oxr_handles``,
             ``oxr_session_factory`` or ``joint_publisher`` (the twin waits
             ``twin_render.system_wait_seconds``).
 

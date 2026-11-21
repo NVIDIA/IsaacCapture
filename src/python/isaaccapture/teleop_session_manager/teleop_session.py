@@ -814,8 +814,8 @@ class TeleopSession:
         # contract is non-throwing, so a device hiccup cannot tear down the loop.
         for executable, _sink_node in self._sinks:
             executable.execute_pipeline_with_cache(cache)
-        # A RemoteSession has no sink trackers; their data is dropped in REMOTE mode and
-        # while a LIVE session waits for a headset.
+        # A RemoteSession and a NoDataSession hold no sink trackers; their data is dropped
+        # in REMOTE mode and while a LIVE session waits for a headset.
         if self._remote_session is None and waiting is None:
             for _executable, sink_node in self._sinks:
                 sink_node.flush_to_device(self.deviceio_session)
@@ -1273,8 +1273,8 @@ class TeleopSession:
                 server's error text, when the connection is lost, or when a ``ws://``
                 endpoint does not accept the WebSocket upgrade; (LIVE with
                 ``config.wait_for_headset`` False, no headset at the OpenXR runtime) when
-                a tracker of the session cannot wait for one, a required plugin is missing
-                or the recording folder cannot be written; (LIVE, REPLAY with
+                the session that reports no data refuses a tracker, a required plugin is
+                missing or the recording folder cannot be written; (LIVE, REPLAY with
                 ``config.robot_description``)
                 when another program on this machine serves a robot's state, before
                 anything else of the session starts.
@@ -1521,10 +1521,9 @@ class TeleopSession:
     ) -> None:
         """Enter with no headset at the OpenXR runtime: wait for one in the background.
 
-        Until ``step()`` starts the trackers, ``deviceio_session`` is a session whose trackers
-        report no data: a RemoteSession that is never connected, which is what a REMOTE
-        session steps before the server's first samples. What can be checked without a
-        headset is checked here, so that it does not fail in a later ``step()``.
+        Until ``step()`` starts the trackers, ``deviceio_session`` is a NoDataSession: it
+        holds a tracker of every kind and has no data for any of them. What can be checked
+        without a headset is checked here, so that it does not fail in a later ``step()``.
         """
         try:
             entries = _remote.collect_trackers(
@@ -1532,8 +1531,8 @@ class TeleopSession:
                 (sink_node.get_tracker() for _executable, sink_node in self._sinks),
                 self.config.trackers,
             )
-            no_data = deviceio.RemoteSession.create(
-                [(tracker, str(index)) for index, (tracker, _, _) in enumerate(entries)]
+            no_data = deviceio.NoDataSession.create(
+                [tracker for tracker, _, _ in entries]
             )
         except ValueError as error:
             raise RuntimeError(_NO_HEADSET_NEEDS_ONE.format(reason=error)) from error

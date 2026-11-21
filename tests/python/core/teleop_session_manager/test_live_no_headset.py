@@ -40,6 +40,7 @@ from isaaccapture.deviceio import McapRecordingConfig
 from isaaccapture.deviceio_trackers import (
     HapticCommandPushTracker,
     HeadTracker,
+    MessageChannelStatus,
     MessageChannelTracker,
     TactileTracker,
 )
@@ -48,8 +49,12 @@ from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     HandsSource,
     HeadSource,
     IDeviceIOSink,
+    MessageChannelConnectionStatus,
+    TactileSource,
+    message_channel_config,
 )
 from isaaccapture.retargeting_engine.interface import ExecutionState, OutputCombiner
+from isaaccapture.retargeting_engine.interface.tensor_group import TensorGroup
 from isaaccapture.robot_state import (
     RobotState,
     RobotStateLocalService,
@@ -57,6 +62,7 @@ from isaaccapture.robot_state import (
     default_socket_path,
 )
 from isaaccapture.robot_state._host import RobotStateHost
+from isaaccapture.schema import MessageChannelMessages, MessageChannelMessagesTracked
 from isaaccapture.teleop_session_manager import (
     DeviceState,
     PluginConfig,
@@ -505,7 +511,7 @@ def rig(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
     assert default_socket_path().startswith(str(runtime_dir))
     rig = Rig(runtime_dir)
-    create = deviceio.RemoteSession.create
+    create = deviceio.NoDataSession.create
     start = _headset_wait.HeadsetWait.start
     close = _headset_wait.HeadsetWait.close
 
@@ -535,7 +541,7 @@ def rig(monkeypatch, tmp_path_factory):
             return_value=list(EXTENSIONS),
         ),
         patch(
-            "isaaccapture.deviceio.RemoteSession.create", side_effect=recorded_create
+            "isaaccapture.deviceio.NoDataSession.create", side_effect=recorded_create
         ),
         patch(
             "isaaccapture.plugin_manager.PluginManager",
@@ -688,6 +694,58 @@ def _enter_in_phase(rig, monkeypatch, mode, phase, **kwargs):
     return session
 
 
+def _channel(capacity=4):
+    """A message channel's source and sink, and a pipeline that returns its status."""
+    source, sink = message_channel_config(
+        "chat", bytes(range(16)), "chat", outbound_queue_capacity=capacity
+    )
+    # A pipelined session copies its outputs, and a message batch cannot be copied.
+    return source, sink, OutputCombiner({"status": source.output("status")})
+
+
+def _send(sink, payload):
+    group = TensorGroup(sink.input_spec()["messages_tracked"])
+    group[0] = MessageChannelMessagesTracked([MessageChannelMessages(payload)])
+    sink.compute({"messages_tracked": group}, {})
+
+
+@pytest.fixture
+def connected_channel(rig):
+    """Once the trackers run, every message channel is connected; yields what was sent."""
+    sent = []
+    real = {
+        name: getattr(MessageChannelTracker, name)
+        for name in ("get_status", "get_messages", "send_message")
+    }
+
+    def route(name, answer):
+        def accessor(tracker, session, *args):
+            if session is rig.live:
+                return answer(*args)
+            return real[name](tracker, session, *args)
+
+        return patch.object(MessageChannelTracker, name, accessor)
+
+    with (
+        route("get_status", lambda: MessageChannelStatus.CONNECTED),
+        route("get_messages", MessageChannelMessagesTracked),
+        route("send_message", lambda message: sent.append(bytes(message.payload))),
+    ):
+        yield sent
+
+
+class _CountingTactileSource(TactileSource):
+    """A TactileSource of a robot app that records what it is polled with."""
+
+    def __init__(self, *args, **kwargs):
+        self.polled_with = []
+        super().__init__(*args, **kwargs)
+
+    def poll_tracker(self, deviceio_session):
+        self.polled_with.append(deviceio_session)
+        return super().poll_tracker(deviceio_session)
+
+
 # ============================================================================
 # While no headset has reached the runtime
 # ============================================================================
@@ -719,7 +777,7 @@ class TestWaiting:
             attempt = (("LocalApp", EXTENSIONS), {"wait_for_system": False})
             assert rig.runtime.calls[0] == (APP, *attempt)
             assert session.oxr_session is None
-            assert type(session.deviceio_session) is deviceio.RemoteSession
+            assert type(session.deviceio_session) is deviceio.NoDataSession
             assert [session.deviceio_session] == rig.no_data
             assert (session.plugin_managers, session.plugin_contexts) == ([], [])
             assert [thread.daemon for thread in _threads(BACKGROUND)] == [True]
@@ -1779,35 +1837,20 @@ def _rolled_back(rig, session):
 
 
 class TestRefusedAtEntry:
-    @pytest.mark.parametrize(
-        "make",
-        [
-            lambda: MessageChannelTracker(bytes(16), "channel"),
-            lambda: TactileTracker("t"),
-        ],
-        ids=["MessageChannelTracker", "TactileTracker"],
-    )
-    def test_a_tracker_that_needs_the_headset(self, make, rig):
-        tracker = make()
-        config = _config(trackers=[tracker], robot_description=DESCRIPTION)
-        session = TeleopSession(config)
-        with pytest.raises(RuntimeError) as raised:
-            session.__enter__()
-        cause = raised.value.__cause__
-        assert type(raised.value) is RuntimeError
-        assert type(cause) is ValueError
-        assert str(cause).startswith(
-            f"{type(tracker).__name__} is not supported over a remote session"
+    def test_a_refusal_of_the_no_data_session_keeps_its_text(self, rig):
+        refusal = ValueError("NoDataSession: tracker 'HeadTracker' is listed twice")
+        session = TeleopSession(
+            _config(trackers=[HeadTracker()], robot_description=DESCRIPTION)
         )
-        assert str(raised.value) == NEEDS_ONE.format(reason=cause)
+        with (
+            patch.object(deviceio.NoDataSession, "create", side_effect=refusal),
+            pytest.raises(RuntimeError) as raised,
+        ):
+            session.__enter__()
+        assert type(raised.value) is RuntimeError
+        assert raised.value.__cause__ is refusal
+        assert str(raised.value) == NEEDS_ONE.format(reason=refusal)
         _rolled_back(rig, session)
-
-        # With a headset at the runtime the same session enters.
-        rig.runtime.headset.set()
-        with session:
-            assert session.oxr_session is rig.runtime.sessions[0]
-            assert session.robot_state_active
-            assert _threads(BACKGROUND) == []
 
     def test_a_missing_required_plugin(self, rig, tmp_path):
         missing = _plugin("nowhere", tmp_path / "missing", required=True)
@@ -1850,6 +1893,211 @@ class TestRefusedAtEntry:
         with session:
             assert session.step() == NO_DATA
             assert len(_threads(BACKGROUND)) == 1
+
+
+# ============================================================================
+# A message channel and a tracker with metadata
+# ============================================================================
+
+
+class TestEveryTrackerKind:
+    """A message channel and a tracker with metadata wait for the headset like any other tracker."""
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda: MessageChannelTracker(bytes(16), "channel"),
+            lambda: TactileTracker("t"),
+        ],
+        ids=["MessageChannelTracker", "TactileTracker"],
+    )
+    def test_both_tracker_kinds_enter_and_serve_robot_state(self, make, rig):
+        config = _config(trackers=[make()], robot_description=DESCRIPTION)
+        with TeleopSession(config) as session:
+            assert session.oxr_session is None
+            assert type(session.deviceio_session) is deviceio.NoDataSession
+            assert session.robot_state_active
+            assert len(_threads(BACKGROUND)) == 1
+            assert session.step() == NO_DATA
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_a_message_channel_has_no_messages_and_is_disconnected(self, mode, rig):
+        source, _sink, pipeline = _channel()
+        tracker = source.get_tracker()
+        with TeleopSession(_config(mode, pipeline=pipeline)) as session:
+            for _ in range(3):
+                status = session.step()["status"][0]
+                assert status == MessageChannelConnectionStatus.DISCONNECTED
+            waiting = session.deviceio_session
+            assert tracker.get_status(waiting) == MessageChannelStatus.DISCONNECTED
+            assert tracker.get_messages(waiting).data == []
+            assert _device(session) == HEADSET_WAITING
+            assert [d.id for d in session.get_status().devices] == ["openxr/headset"]
+            rig.live_run.assert_not_called()
+
+    def test_a_direct_send_is_refused_while_waiting(self, rig):
+        tracker = MessageChannelTracker(bytes(16), "channel")
+        with TeleopSession(_config(trackers=[tracker])) as session:
+            session.step()
+            with pytest.raises(RuntimeError) as raised:
+                tracker.send_message(
+                    session.deviceio_session, MessageChannelMessages(b"x")
+                )
+            assert str(raised.value) == (
+                "NoDataSession: MessageChannelTracker::send_message: channel is not open"
+            )
+            assert tracker.get_messages(session.deviceio_session).data == []
+            # The refusal is not a failure of the session.
+            session.step()
+            assert _provider(session) == RUNTIME_UP
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_a_message_sent_while_waiting_goes_out_once_the_channel_is_connected(
+        self, mode, rig, connected_channel
+    ):
+        source, sink, pipeline = _channel(capacity=4)
+        with TeleopSession(_config(mode, pipeline=pipeline)) as session:
+            for index in range(6):
+                _send(sink, b"m%d" % index)
+                session.step()
+            assert connected_channel == []
+            # A queue of four: the two oldest of six are dropped, as while a channel connects.
+            assert len(source._outbound_queue) == 4
+
+            _hand_over(rig, session)
+            assert _step_until(
+                session, lambda: connected_channel == [b"m2", b"m3", b"m4", b"m5"]
+            )
+            status = session.step()["status"][0]
+            assert status == MessageChannelConnectionStatus.CONNECTED
+            assert len(source._outbound_queue) == 0
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_a_tracker_with_metadata_has_no_data_and_no_metadata(self, mode, rig):
+        tactile = TactileSource(
+            "tactile", "tactile/right", num_segments=2, num_taxels=4
+        )
+        pipeline = OutputCombiner(
+            {
+                "forces": tactile.output(TactileSource.FORCES),
+                "layout": tactile.output(TactileSource.LAYOUT),
+            }
+        )
+        tracker = tactile.get_tracker()
+        with TeleopSession(_config(mode, pipeline=pipeline)) as session:
+            for _ in range(3):
+                result = session.step()
+                assert result["forces"].is_none and result["layout"].is_none
+            assert tracker.get_data(session.deviceio_session) is None
+            assert tracker.get_metadata(session.deviceio_session) is None
+            assert _device(session) == HEADSET_WAITING
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_a_tracker_the_robot_app_reads_itself_has_no_data(self, mode, rig):
+        tactile = TactileTracker("tactile/right")
+        channel = MessageChannelTracker(bytes(16), "channel")
+        with TeleopSession(_config(mode, trackers=[tactile, channel])) as session:
+            for _ in range(3):
+                session.step()
+                waiting = session.deviceio_session
+                assert tactile.get_data(waiting) is None
+                assert tactile.get_metadata(waiting) is None
+                assert channel.get_status(waiting) == MessageChannelStatus.DISCONNECTED
+                assert channel.get_messages(waiting).data == []
+            assert _device(session) == HEADSET_WAITING
+
+    def test_a_source_of_the_robot_app_is_polled_in_every_step(self, rig):
+        source = _CountingTactileSource("glove", "tactile/left", 2, 4)
+        pipeline = OutputCombiner({"forces": source.output(TactileSource.FORCES)})
+        real = {
+            name: getattr(TactileTracker, name) for name in ("get_data", "get_metadata")
+        }
+
+        def route(name):
+            # The stand-in for the live session is not a C++ session: answer for it here.
+            def accessor(tracker, session):
+                return None if session is rig.live else real[name](tracker, session)
+
+            return patch.object(TactileTracker, name, accessor)
+
+        with (
+            route("get_data"),
+            route("get_metadata"),
+            TeleopSession(_config(pipeline=pipeline)) as session,
+        ):
+            waiting = session.deviceio_session
+            for _ in range(3):
+                assert session.step()["forces"].is_none
+            assert source.polled_with == [waiting] * 3
+            _hand_over(rig, session)
+            session.step()
+            assert source.polled_with[3:] == [rig.live] * 2
+
+    def test_a_session_entered_twice_starts_disconnected(self, rig, connected_channel):
+        source, _sink, pipeline = _channel()
+        session = TeleopSession(_config(pipeline=pipeline))
+        rig.runtime.headset.set()
+        with session:
+            assert (
+                session.step()["status"][0] == MessageChannelConnectionStatus.CONNECTED
+            )
+        assert source._last_status == MessageChannelConnectionStatus.CONNECTED
+
+        rig.next_round()
+        with session:
+            assert len(rig.no_data) == 1
+            assert (
+                session.step()["status"][0]
+                == MessageChannelConnectionStatus.DISCONNECTED
+            )
+            assert source._last_drained_messages_tracked.data == []
+
+    def test_the_hand_over_starts_both_kinds_as_an_entry_with_a_headset_does(self, rig):
+        trackers = [
+            HeadTracker(),
+            MessageChannelTracker(bytes(16), "channel"),
+            TactileTracker("t"),
+        ]
+        config = _config(trackers=trackers, robot_description=DESCRIPTION)
+        with TeleopSession(config) as session:
+            assert session.robot_state_active
+            assert session.publish_robot_state("arm", [0.25, -0.5, 1.0])
+            session.step()
+            rig.live_run.assert_not_called()
+            _hand_over(rig, session)
+            assert session.deviceio_session is rig.live
+            assert session.robot_state_active
+            waited = rig.live_run.call_args
+
+        rig.next_round()
+        rig.runtime.headset.set()
+        with TeleopSession(config) as session:
+            assert rig.no_data == []
+            started = rig.live_run.call_args
+        (waited_trackers, _, *waited_rest), waited_kwargs = waited
+        (started_trackers, _, *started_rest), started_kwargs = started
+        assert list(waited_trackers) == list(started_trackers) == trackers
+        assert waited_rest[0] is started_rest[0] is None
+        assert type(waited_rest[1]) is type(started_rest[1])
+        assert waited_kwargs == started_kwargs == {}
+
+    def test_with_a_headset_no_no_data_session_is_made(self, rig):
+        source, _sink, pipeline = _channel()
+        tactile = TactileTracker("t")
+        for wait in (True, False):
+            rig.next_round()
+            rig.runtime.headset.set()
+            config = _base_config(
+                pipeline=pipeline, trackers=[tactile], wait_for_headset=wait
+            )
+            with TeleopSession(config) as session:
+                assert rig.no_data == []
+                assert session.deviceio_session is rig.live
+                assert _threads(BACKGROUND) == []
+                assert list(rig.live_run.call_args.args[0]) == [
+                    source.get_tracker(),
+                    tactile,
+                ]
 
 
 # ============================================================================

@@ -43,7 +43,7 @@ from test_remote_mode import (
 )
 from test_remote_robot_state import AGREED, DESCRIPTION, _ack, _Session
 
-from isaaccapture import oxr
+from isaaccapture import deviceio, oxr
 from isaaccapture.deviceio_session import VendorConfig
 from isaaccapture.deviceio_trackers import HeadTracker, KeyboardTracker
 from isaaccapture.retargeting_engine.deviceio_source_nodes import (
@@ -1151,9 +1151,9 @@ class TestLive:
                     (provider.status, provider.reason, provider.error),
                     session.last_step_info.remote_tick_age_s,
                     _execution(session),
-                    type(session.deviceio_session),
                     session.oxr_session,
                 ),
+                no_data=type(session.deviceio_session),
                 headset_error=headset.error,
                 controller=session.get_device_status("openxr/controller/left").status,
             )
@@ -1182,7 +1182,11 @@ class TestLive:
         assert len(absent) == 5
         assert all(absent.values())
         assert headset == (DeviceState.DISCONNECTED, StatusReason.NO_CURRENT_DATA)
-        # Where the two differ: the text, and the controllers in the first second.
+        # Where the two differ: the session, the text, and the controllers in the first second.
+        assert (live.no_data, remote.no_data) == (
+            deviceio.NoDataSession,
+            deviceio.RemoteSession,
+        )
         assert live.headset_error == _headset_wait.WAITING
         assert remote.headset_error.startswith("Teleop Session Server: ")
         assert live.controller == DeviceState.INITIALIZING
