@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""A stand-in harness: reads what a robot is and its newest readings on the server machine.
+"""A stand-in harness: reads what a robot is and its newest readings.
+
+It runs on the machine of the program that serves robot state: the Teleop Session Server,
+or a robot app in a local session.
 
 It knows no robot in advance: the robot's description says which data series, joints and
 grippers exist, and the calls of `isaaccapture.robot_state` read them by name.
@@ -60,7 +63,7 @@ def describe(robot: RobotState) -> list[str]:
     what = robot.description()
     if what is None:
         if not robot.server_reachable:
-            return ["no Teleop Session Server serves robot state here yet"]
+            return ["nothing serves robot state here yet"]
         return ["no robot app has sent a robot description"]
     lines = [
         f"robot {what.robot}"
@@ -111,15 +114,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m isaaccapture_examples.robot_state.stand_in_harness",
         description=(
-            "Stand-in harness: prints what the robot connected to this machine's "
-            "Teleop Session Server is and what it last read, until Ctrl+C."
+            "Stand-in harness: prints what the robot whose state is served on this "
+            "machine is and what it last read, until Ctrl+C."
         ),
     )
     parser.add_argument(
         "--robot-state-socket",
         default=None,
         metavar="PATH",
-        help="The path the server was given with --robot-state-socket (default: its default).",
+        help=(
+            "The reader socket's path, as given to the Teleop Session Server with "
+            "--robot-state-socket (default: the library's default path)."
+        ),
     )
     parser.add_argument(
         "--period-s",

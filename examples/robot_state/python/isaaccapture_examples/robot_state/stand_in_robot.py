@@ -179,7 +179,8 @@ def run(
 ) -> int:
     """Publish until `stop` is set or `records` are published; the number published.
 
-    A lost link raises from `session.step()`.
+    Publishing starts once the server has answered; no headset is needed. A lost link raises
+    from `session.step()`.
     """
     if rate_hz <= 0.0:
         raise ValueError("rate_hz must be above zero")
@@ -192,6 +193,7 @@ def run(
         remote_endpoint=endpoint,
         remote_connect_timeout_s=connect_timeout_s,
         robot_description=description,
+        wait_for_headset=False,
     )
     record = 0
     with TeleopSession(config) as session:
