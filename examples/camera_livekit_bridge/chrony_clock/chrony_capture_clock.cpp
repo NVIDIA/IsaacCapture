@@ -83,6 +83,11 @@ isaaccapture::timesync::Qualification ChronyCaptureClock::qualify(bool sender_va
     capture.realtime_ns = sender_realtime_ns;
     capture.mapping_uncertainty_ns = upstream_uncertainty_ns;
 
+    // Read the evidence before sampling the local clock: a poll that completes after the sample would otherwise carry
+    // an observation time later than `now_ns`, a negative age that reads as stale on a healthy link.
+    auto sender_evidence = m_sender_monitor.snapshot().evidence;
+    auto pc_evidence = m_pc_monitor.snapshot().evidence;
+
     isaaccapture::timesync::LocalClockObservation observation;
     int64_t now_ns = 0;
     int64_t evidence_floor_ns = 0;
@@ -110,8 +115,6 @@ isaaccapture::timesync::Qualification ChronyCaptureClock::qualify(bool sender_va
     }
     // Chrony evidence read at or before a step describes the clock as it was, so it cannot support a frame converted
     // against the clock as it is. Frames stay unqualified until both hosts have been read again after the step.
-    auto sender_evidence = m_sender_monitor.snapshot().evidence;
-    auto pc_evidence = m_pc_monitor.snapshot().evidence;
     if (evidence_floor_ns != 0)
     {
         if (sender_evidence && sender_evidence->observed_monotonic_ns <= evidence_floor_ns)

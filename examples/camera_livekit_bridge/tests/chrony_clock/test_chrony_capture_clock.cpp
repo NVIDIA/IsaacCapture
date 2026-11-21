@@ -236,6 +236,35 @@ void test_pc_follower_that_stops_answering_stops_qualifying()
     CHECK(r.qualify().verdict == Verdict::StaleEvidence);
 }
 
+// A poll that completes just after qualify() samples the local clock is stamped later than that sample. Evidence read
+// afterwards would carry a negative age and read as stale on a healthy link, so it must be read first.
+void test_poll_completing_after_clock_sample_is_not_stale()
+{
+    Rig r;
+    r.healthy();
+    ChronyCaptureClock* clock = nullptr;
+    int armed_calls = 0; // monotonic reads left until the hook fires; 0 = disarmed
+    ClockReader hooked{ [&r, &clock, &armed_calls]
+                        {
+                            const int64_t now = r.clocks.monotonic.load();
+                            if (armed_calls > 0 && --armed_calls == 0)
+                            {
+                                r.clocks.advance(kMs);
+                                clock->poll_once();
+                            }
+                            return now;
+                        },
+                        [&r] { return r.clocks.realtime.load(); } };
+    r.clock = std::make_unique<ChronyCaptureClock>(r.config, r.chrony.runner(), hooked);
+    clock = r.clock.get();
+    r.clock->poll_once();
+    // sample_local_clock reads the monotonic clock twice, then qualify() reads it once more for `now_ns`.
+    armed_calls = 3;
+    const Qualification q = r.qualify();
+    CHECK(armed_calls == 0);
+    CHECK(q.verdict == Verdict::Qualified);
+}
+
 void test_reference_mismatch()
 {
     Rig r;
@@ -472,6 +501,7 @@ int main()
     test_no_poll_yet();
     test_sender_unreachable();
     test_pc_follower_that_stops_answering_stops_qualifying();
+    test_poll_completing_after_clock_sample_is_not_stale();
     test_reference_mismatch();
     test_unsynchronised();
     test_stale_evidence();

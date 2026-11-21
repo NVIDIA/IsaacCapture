@@ -462,6 +462,9 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"--pause names unknown stream {pause.stream!r}")
     if not 0.0 <= args.sof_lag_ms <= 500.0:
         parser.error("--sof-lag-ms must be in [0, 500]")
+    if args.timing_ext and not 0.0 <= args.sensor_uncertainty_us <= 4_294_967.295:
+        # The timing record's uncertainty is an unsigned 32-bit nanosecond field; NaN fails the comparison too.
+        parser.error("--sensor-uncertainty-us must be a number in [0, 4294967.295]")
     sender = MockSender(
         specs,
         ensure_sources(specs, args.cache_dir),

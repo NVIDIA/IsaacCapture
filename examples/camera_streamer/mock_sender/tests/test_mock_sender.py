@@ -245,5 +245,50 @@ class ParseArgsTest(unittest.TestCase):
         self.assertEqual(ms.parse_pause("wrist1@10+2.5"), ms.Pause("wrist1", 10.0, 2.5))
 
 
+class SensorUncertaintyArgTest(unittest.TestCase):
+    def _main(self, uncertainty, *extra):
+        argv = ["--timing-ext", "--sensor-uncertainty-us", uncertainty, *extra]
+        # ensure_sources stops a valid command line before it can bind a listener.
+        with (
+            unittest.mock.patch.object(
+                ms, "ensure_sources", side_effect=RuntimeError("validated")
+            ) as sources,
+            unittest.mock.patch.object(ms.socket, "create_server") as server,
+            unittest.mock.patch.object(ms.logging, "basicConfig"),
+            unittest.mock.patch("sys.stderr"),
+        ):
+            try:
+                ms.main(argv)
+            except (SystemExit, RuntimeError) as exc:
+                server.assert_not_called()
+                return exc, sources.called
+        self.fail("main returned")
+
+    def test_out_of_range_uncertainty_is_a_usage_error(self):
+        for value in ("5000000", "nan", "inf", "-1"):
+            with self.subTest(value=value):
+                exc, reached_sources = self._main(value)
+                self.assertIsInstance(exc, SystemExit)
+                self.assertEqual(exc.code, 2)
+                self.assertFalse(reached_sources)
+
+    def test_representable_uncertainty_passes_validation(self):
+        for value in ("4294967.295", "500"):
+            with self.subTest(value=value):
+                exc, reached_sources = self._main(value)
+                self.assertIsInstance(exc, RuntimeError)
+                self.assertTrue(reached_sources)
+
+    def test_uncertainty_is_not_checked_without_timing_extension(self):
+        with (
+            unittest.mock.patch.object(
+                ms, "ensure_sources", side_effect=RuntimeError("validated")
+            ),
+            unittest.mock.patch.object(ms.logging, "basicConfig"),
+        ):
+            with self.assertRaises(RuntimeError):
+                ms.main(["--sensor-uncertainty-us", "5000000"])
+
+
 if __name__ == "__main__":
     unittest.main()
