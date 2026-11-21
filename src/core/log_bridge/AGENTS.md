@@ -82,9 +82,10 @@ its own backups.
 
 ## Private directory creation
 
-- Validate each opened parent before creating children. Reject `..` before
-  normalization so it cannot hide a symlink, and distinguish sticky shared
-  ancestors from the final user-owned directory that must forbid other writers.
+- Prevent symlink attacks and time-of-check/time-of-use races by validating
+  each opened parent before creating children. Reject `..` before normalization
+  to prevent hidden path traversal. Create directories privately from the start;
+  sticky shared ancestors do not make a writable final directory safe.
 
 ## The env-var contract is shared with Python, not parallel to it
 
