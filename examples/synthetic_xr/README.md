@@ -42,12 +42,12 @@ cmake -B build -DISAAC_TELEOP_PYTHON_VERSION=3.12 \
   -DCMAKE_INSTALL_PREFIX="$CAPTURE_ROOT/install"
 cmake --build build --parallel 6
 cmake --install build
-uv pip install 'isaaccapture[retargeters-lite,cloudxr,ui]==1.7+local' \
+uv pip install "isaaccapture[retargeters-lite,cloudxr,ui]==$(cut -d. -f1,2 VERSION)+local" \
   --find-links="$CAPTURE_ROOT/install/wheels"
 uv pip install './examples/synthetic_xr[franka]'
 ```
 
-Both the `isaaccapture` wheel and its `isaacteleop` transition wheel must be available in `install/wheels`. The feature's `[franka]` extra supplies its browser transport and numerical dependencies. This recipe builds the SDK without Televiz; the Franka example uses Lab's Kit viewport.
+A local build is versioned `X.Y+local`, where `X.Y` is the first two numbers of the `VERSION` file; the `cut` above reads them. Both the `isaaccapture` wheel and its `isaacteleop` transition wheel must be available in `install/wheels`. The feature's `[franka]` extra supplies its browser transport and numerical dependencies. This recipe builds the SDK without Televiz; the Franka example uses Lab's Kit viewport.
 
 Build the client with its committed dependency lockfile:
 
