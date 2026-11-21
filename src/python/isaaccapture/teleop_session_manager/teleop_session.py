@@ -65,6 +65,14 @@ logger = logging.getLogger(__name__)
 # Plugins that publish device status (see PluginDeviceStatusPublisher); others launch unmonitored.
 _MONITORED_PLUGIN_NAMES = frozenset({"manus_hand_plugin", "spacemouse", "gamepad"})
 
+# How oxr.OpenXRSession(wait_for_system=False) fails while no headset has reached the runtime (oxr_session.cpp).
+_NO_HEADSET_ERROR = "Failed to get OpenXR system: XR_ERROR_FORM_FACTOR_UNAVAILABLE"
+_NO_HEADSET_AT_RUNTIME = (
+    "No headset has reached the OpenXR runtime since it started, and a LIVE session cannot start "
+    "without one yet (wait_for_headset=False). Wake a headset once, set wait_for_headset=True to "
+    "wait for one, or run a Teleop Session Server on this machine and use SessionMode.REMOTE."
+)
+
 
 def _not_websocket(endpoint: str, error: BaseException) -> RuntimeError:
     """The error for a ``ws://`` endpoint that answered without accepting the WebSocket upgrade."""
@@ -213,8 +221,13 @@ class TeleopSession:
         # server's OpenXR session that the status monitor polls.
         self._remote_session: Any | None = None
         self._remote_openxr: _remote.RemoteOpenXRSession | None = None
-        # config.robot_description as loaded for the REMOTE run in progress.
+        self._remote_status: _remote.RemoteStatus | None = None
+        # True from an early entry (config.wait_for_headset False) until step() has seen READY.
+        self._awaiting_ready: bool = False
+        # config.robot_description as loaded for the run in progress, and what its records
+        # are handed to: the RemoteSession (REMOTE) or a RobotStateHost (LIVE, REPLAY).
         self._robot_description: Any | None = None
+        self._robot_state_sender: Any | None = None
 
         # The robot twin's render thread, when config.joint_publisher is set.
         self._twin_runner: Any | None = None
@@ -337,16 +350,16 @@ class TeleopSession:
 
     @property
     def robot_state_active(self) -> bool:
-        """Whether the Teleop Session Server takes this session's robot state.
+        """Whether readers can get this session's robot state.
 
-        True once the server agreed to it while the session is entered; False without
-        ``config.robot_description``, with a server that does not take robot state, and
-        outside the session.
+        True while the session is entered and the Teleop Session Server took it (REMOTE)
+        or this program serves it to reader programs (LIVE, REPLAY); False without
+        ``config.robot_description`` and outside the session.
         """
-        session = self._remote_session
-        if session is None or self._robot_description is None:
+        sender = self._robot_state_sender
+        if sender is None or self._robot_description is None:
             return False
-        return bool(session.robot_state_active)
+        return bool(sender.robot_state_active)
 
     def publish_robot_state(
         self,
@@ -359,7 +372,7 @@ class TeleopSession:
         faults: Any = None,
         time_ns: int | None = None,
     ) -> bool:
-        """Send one reading of a data series of ``config.robot_description`` to the server.
+        """Send one reading of a data series of ``config.robot_description`` to the readers.
 
         ``values`` are in the order the description lists them: the positions of a joints
         series (with ``velocities``, ``efforts`` and per-joint ``valid`` as it declares
@@ -371,13 +384,14 @@ class TeleopSession:
             time_ns: ``time.monotonic_ns()`` of the reading on this machine; None is now.
 
         Returns:
-            False when the server does not take robot state or the link is down.
+            False when robot state is not active (see ``robot_state_active``) or the link
+            is down.
 
         Raises:
             RuntimeError: Without ``config.robot_description``, or outside the session.
             ValueError: The reading does not fit the series' description.
         """
-        description, session = self._robot_state_target()
+        description, sender = self._robot_state_target()
         from isaaccapture.robot_state import records
 
         now_ns = time.monotonic_ns()
@@ -393,7 +407,7 @@ class TeleopSession:
             time_ns=sample_ns,
             publish_time_ns=now_ns,
         )
-        return bool(session.publish_robot_record(series, record, sample_ns))
+        return bool(sender.publish_robot_record(series, record, sample_ns))
 
     def publish_robot_record(
         self, series: str, record: Any, *, time_ns: int | None = None
@@ -406,14 +420,14 @@ class TeleopSession:
         return self.publish_robot_state(series, record, time_ns=time_ns)
 
     def _robot_state_target(self) -> tuple[Any, Any]:
-        """The loaded description and the RemoteSession that robot state goes through."""
+        """The loaded description and the sender that robot state is handed to."""
         description = self._robot_description
         if description is None and self.config.robot_description is None:
             raise RuntimeError("TeleopSessionConfig.robot_description is not set")
-        session = self._remote_session
-        if description is None or session is None:
+        sender = self._robot_state_sender
+        if description is None or sender is None:
             raise RuntimeError("TeleopSession is not active")
-        return description, session
+        return description, sender
 
     def _discover_sources(self) -> None:
         """Discover DeviceIO sources, output sinks, and external leaf nodes.
@@ -692,6 +706,13 @@ class TeleopSession:
         except BaseException as error:
             self._status_monitor.mark_runtime_failed(error)
             raise
+        if self._awaiting_ready and _remote.ready_reported(
+            self._remote_status.latest()
+        ):
+            self._awaiting_ready = False
+            logger.info(
+                "Teleop Session Server at %s is ready", self.config.remote_endpoint
+            )
         remote_tick_age_s = self._remote_tick_age_s()
         self._status_monitor.refresh(
             self.deviceio_session,
@@ -1209,6 +1230,9 @@ class TeleopSession:
         was killed before it took the connection up), is retried, and one that accepted
         the connection is waited for, all within ``remote_connect_timeout_s``. No OpenXR
         session is created here.
+        With ``config.wait_for_headset`` False it returns once the server has answered; a
+        mismatch of schemas and a tracker failure on the server are then raised by
+        ``step()``.
         Ctrl-C raises ``KeyboardInterrupt`` within about 0.1 s, or after the TCP
         connect attempt in progress (at most 2 s, plus any host name lookup).
 
@@ -1218,7 +1242,11 @@ class TeleopSession:
         Raises:
             RuntimeError: If the session is already active, or (REMOTE) with the
                 server's error text, when the connection is lost, or when a ``ws://``
-                endpoint does not accept the WebSocket upgrade.
+                endpoint does not accept the WebSocket upgrade; (LIVE with
+                ``config.wait_for_headset`` False) when no headset has reached the OpenXR
+                runtime since it started; (LIVE, REPLAY with ``config.robot_description``)
+                when another program on this machine serves a robot's state, before
+                anything else of the session starts.
             TimeoutError: (REMOTE) The server did not answer, or was not ready within
                 ``remote_connect_timeout_s``; the message names the last stage.
         """
@@ -1249,7 +1277,10 @@ class TeleopSession:
                     self._oxr_session = None
                     self._remote_session = None
                     self._remote_openxr = None
+                    self._awaiting_ready = False
+                    self._remote_status = None
                     self._robot_description = None
+                    self._robot_state_sender = None
                     self._in_context = False
                 raise
 
@@ -1271,7 +1302,10 @@ class TeleopSession:
         self._resolved_plugins = []
         self._remote_session = None
         self._remote_openxr = None
+        self._awaiting_ready = False
+        self._remote_status = None
         self._robot_description = None
+        self._robot_state_sender = None
 
         mode = self.config.mode
         live_mode = mode == SessionMode.LIVE
@@ -1320,6 +1354,9 @@ class TeleopSession:
                     mcap_tracker_names,
                 )
 
+        # Before the OpenXR session, the DeviceIO session and every plugin: a second robot
+        # on this machine is refused with none of them started.
+        host = None if mode == SessionMode.REMOTE else self._host_robot_state(stack)
         if mode == SessionMode.REPLAY:
             self.deviceio_session = stack.enter_context(
                 deviceio.ReplaySession.run(mcap_config)
@@ -1371,7 +1408,7 @@ class TeleopSession:
                 )
             else:
                 self._oxr_session = stack.enter_context(
-                    oxr.OpenXRSession(self.config.app_name, required_extensions)
+                    self._create_openxr_session(required_extensions)
                 )
                 handles = self._oxr_session.get_handles()
 
@@ -1389,6 +1426,8 @@ class TeleopSession:
         # its status reader.
         self._start_configured_plugins(stack)
         self._status_monitor.mark_available()
+        if host is not None:
+            self._robot_state_sender = host
         if mode == SessionMode.REMOTE:
             # The headset as the server last reported it; controllers wait for step().
             self._status_monitor.refresh(self.deviceio_session, self._remote_openxr)
@@ -1411,8 +1450,41 @@ class TeleopSession:
         self._async_runner = None
         self._active_retargeting_execution_mode = self.config.retargeting_execution.mode
 
+    def _create_openxr_session(self, required_extensions: list[str]) -> Any:
+        """The session's own OpenXR session (LIVE).
+
+        With ``config.wait_for_headset`` False it does not wait for a headset: RuntimeError
+        when none has reached the OpenXR runtime since it started.
+        """
+        if self.config.wait_for_headset:
+            return oxr.OpenXRSession(self.config.app_name, required_extensions)
+        try:
+            return oxr.OpenXRSession(
+                self.config.app_name, required_extensions, wait_for_system=False
+            )
+        except RuntimeError as error:
+            if not str(error).startswith(_NO_HEADSET_ERROR):
+                raise
+            raise RuntimeError(_NO_HEADSET_AT_RUNTIME) from error
+
+    def _host_robot_state(self, stack: ExitStack) -> Any | None:
+        """Host robot state in this program (LIVE, REPLAY); None without ``config.robot_description``.
+
+        RuntimeError when another program on this machine serves robot state.
+        """
+        description = self._load_robot_description()
+        if description is None:
+            return None
+        from isaaccapture.robot_state._host import RobotStateHost
+
+        host = RobotStateHost()
+        stack.callback(host.close)
+        host.start(description)
+        self._robot_description = description
+        return host
+
     def _enter_remote(self, stack: ExitStack) -> None:
-        """Open a RemoteSession to the Teleop Session Server and wait for READY."""
+        """Open a RemoteSession to the Teleop Session Server; see ``_connect_remote``."""
         config = self.config
         if self._sinks:
             logger.warning(
@@ -1461,15 +1533,21 @@ class TeleopSession:
         session.update()
         self.deviceio_session = session
         self._remote_session = session
-        self._remote_openxr = _remote.RemoteOpenXRSession(status)
+        if description is not None:
+            self._robot_state_sender = session
+        self._remote_openxr = _remote.RemoteOpenXRSession(
+            status, no_headset_before_openxr=not config.wait_for_headset
+        )
+        self._remote_status = status
+        self._awaiting_ready = not config.wait_for_headset
 
     def _connect_remote(
         self, session: Any, hello: str, status: _remote.RemoteStatus
     ) -> None:
         """Connect, send HELLO and wait for READY, all within ``remote_connect_timeout_s``.
 
-        Errors other than the server not answering, the server's ERROR text included,
-        are raised as they are.
+        With ``config.wait_for_headset`` False it returns at HELLO_ACK. Errors other than
+        the server not answering, the server's ERROR text included, are raised as they are.
         """
         endpoint = self.config.remote_endpoint
         deadline = _remote.Deadline(self.config.remote_connect_timeout_s)
@@ -1483,6 +1561,12 @@ class TeleopSession:
         self._check_server_version(endpoint, session.hello_ack())
         if self._robot_description is not None:
             self._start_robot_state(session, endpoint)
+        if not self.config.wait_for_headset:
+            logger.info(
+                "Teleop Session Server at %s answered; not waiting for a tracked headset",
+                endpoint,
+            )
+            return
 
         last_stage = None
         while True:
@@ -1637,9 +1721,9 @@ class TeleopSession:
             system_wait_seconds=view.system_wait_seconds,
         )
         # Registered before start(), so a failure part-way through creating the session
-        # still joins the thread; and first of everything in _enter_resources, so it
-        # unwinds LAST -- the compositor session outlives the trackers borrowing its
-        # handles.
+        # still joins the thread; and before every other OpenXR resource of
+        # _enter_resources, so it unwinds after them -- the compositor session outlives
+        # the trackers borrowing its handles.
         stack.callback(self._destroy_twin)
         self._twin_runner = runner
         runner.start()
@@ -1798,7 +1882,10 @@ class TeleopSession:
             self._oxr_session = None
             self._remote_session = None
             self._remote_openxr = None
+            self._awaiting_ready = False
+            self._remote_status = None
             self._robot_description = None
+            self._robot_state_sender = None
             self._in_context = False
 
         if runner_error is not None:

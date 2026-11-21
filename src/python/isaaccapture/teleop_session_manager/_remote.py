@@ -42,6 +42,12 @@ _PARAMETERLESS_TRACKERS = frozenset(
 # Its payload times are on the server's clock, so the robot side cannot judge their age.
 _PLUGIN_STATUS_TRACKER = "PluginDeviceStatusTracker"
 
+# The STATUS headset entry before the server's OpenXR session exists (teleop_session_server/_session.py).
+NO_HEADSET_ENTRY = {"state": "", "headset_state": "", "reason": ""}
+CONNECTING_OPENXR = "connecting_openxr"
+# The stages of READY and of every STATUS after it.
+_READY_STAGES = frozenset({"ready", "running"})
+
 
 def has_metadata(tracker: Any) -> bool:
     """Whether a tracker or tracker class has metadata, as ``TactileTracker`` does.
@@ -175,6 +181,11 @@ def describe_stage(status: dict | None) -> str:
     return f"{stage} ({message})" if message else stage
 
 
+def ready_reported(status: dict | None) -> bool:
+    """Whether the server has sent READY: READY carries stage "ready", every later STATUS "running"."""
+    return bool(status) and status.get("stage") in _READY_STAGES
+
+
 def not_ready_message(endpoint: str, stage: str, timeout_s: float | None) -> str:
     after = "" if timeout_s is None else f" after {timeout_s:g} s"
     return f"Teleop Session Server at {endpoint} was not ready{after}: {stage}"
@@ -235,10 +246,17 @@ class RemoteStatus:
 
 
 class RemoteOpenXRSession:
-    """Stands in for the server's OpenXR session; its provider snapshot comes from STATUS."""
+    """Stands in for the server's OpenXR session; its provider snapshot comes from STATUS.
 
-    def __init__(self, status: RemoteStatus) -> None:
+    With ``no_headset_before_openxr`` the time before the server's OpenXR session exists
+    reads as a headset that is not connected, not as a malformed STATUS.
+    """
+
+    def __init__(
+        self, status: RemoteStatus, *, no_headset_before_openxr: bool = False
+    ) -> None:
         self._status = status
+        self._no_headset_before_openxr = no_headset_before_openxr
 
     def get_provider_snapshot(self) -> SimpleNamespace:
         """The newest STATUS headset entry as ``oxr.OpenXRSession.get_provider_snapshot()`` returns it.
@@ -247,7 +265,16 @@ class RemoteOpenXRSession:
         """
         from isaaccapture import oxr
 
-        entry = (self._status.latest() or {}).get("headset")
+        status = self._status.latest()
+        if self._no_headset_before_openxr and _before_openxr(status):
+            return SimpleNamespace(
+                state=oxr.OpenXRProviderState.AVAILABLE,
+                headset_state=oxr.OpenXRHeadsetState.DISCONNECTED,
+                reason=oxr.OpenXRProviderReason.TRACKING_UNAVAILABLE,
+                result_code=None,
+                error=f"Teleop Session Server: {describe_stage(status)}",
+            )
+        entry = (status or {}).get("headset")
         try:
             state = oxr.OpenXRProviderState.__members__[entry["state"]]
             headset_state = oxr.OpenXRHeadsetState.__members__[entry["headset_state"]]
@@ -272,6 +299,16 @@ class RemoteOpenXRSession:
                 f"{headset_state.name} ({reason.name})"
             ),
         )
+
+
+def _before_openxr(status: dict | None) -> bool:
+    """Whether no STATUS came yet, or the newest one is of a server without an OpenXR session."""
+    if status is None:
+        return True
+    return (
+        status.get("stage") == CONNECTING_OPENXR
+        and status.get("headset") == NO_HEADSET_ENTRY
+    )
 
 
 def _tracker_type(tracker: Any, owner: str) -> str:

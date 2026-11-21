@@ -12,6 +12,7 @@ without robot state, in each pairing.
 import dataclasses
 import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -30,6 +31,7 @@ from isaaccapture.deviceio_session import (
 from isaaccapture.robot_state import (
     RobotDescriptionError,
     RobotStateStore,
+    default_socket_path,
     parse_robot_description,
     records,
 )
@@ -48,6 +50,14 @@ ENDPOINT = "tcp://server.example:47600"
 WAIT_MS = 5000
 NOT_TAKEN = (
     f"The Teleop Session Server at {ENDPOINT} does not take robot state; none is sent"
+)
+NOT_ACTIVE = r"^TeleopSession is not active$"
+# The server's ERROR for a robot app that offers robot state while another program on the
+# server's machine serves the reader socket's path.
+SERVER_TAKEN = (
+    "Another program on the Teleop Session Server's machine already serves a robot's state "
+    "at /srv/rs/robot_state.sock. One robot per machine is served; stop that program, or "
+    "connect this robot app without a robot description."
 )
 DESCRIPTION_TOML = """
 robot = "test_arm"
@@ -133,10 +143,14 @@ class TestConfig:
     def test_no_description_by_default(self):
         assert _config().robot_description is None
 
-    def test_it_is_the_last_field(self):
-        """Positional construction of the fields before it keeps its meaning."""
+    def test_the_last_fields_keep_their_order(self):
+        """Positional construction of the fields before them keeps its meaning."""
         names = [field.name for field in dataclasses.fields(TeleopSessionConfig)]
-        assert names[-2:] == ["remote_connect_timeout_s", "robot_description"]
+        assert names[-3:] == [
+            "remote_connect_timeout_s",
+            "robot_description",
+            "wait_for_headset",
+        ]
 
     def test_a_path_or_a_loaded_description_is_accepted(self, description_file):
         assert _config(robot_description=description_file).robot_description
@@ -144,25 +158,33 @@ class TestConfig:
         assert _config(robot_description=DESCRIPTION).robot_description is DESCRIPTION
 
     @pytest.mark.parametrize("mode", [SessionMode.LIVE, SessionMode.REPLAY])
-    def test_it_requires_remote_mode(self, mode):
-        with pytest.raises(
-            ValueError, match=r"^robot_description requires mode=SessionMode\.REMOTE$"
-        ):
-            TeleopSessionConfig(
-                app_name="RobotStateApp",
-                pipeline=_Pipeline(),
-                mode=mode,
-                mcap_config=MagicMock() if mode == SessionMode.REPLAY else None,
-                robot_description=DESCRIPTION,
-            )
+    def test_it_is_accepted_in_live_and_replay(self, mode):
+        config = TeleopSessionConfig(
+            app_name="RobotStateApp",
+            pipeline=_Pipeline(),
+            mode=mode,
+            mcap_config=MagicMock() if mode == SessionMode.REPLAY else None,
+            robot_description=DESCRIPTION,
+        )
+        assert config.robot_description is DESCRIPTION
 
-    def test_entry_checks_a_mode_changed_afterwards(self):
+    def test_a_mode_changed_to_live_hosts(self, tmp_path_factory, monkeypatch):
+        # The session serves its reader socket under this folder, not the user's own.
+        runtime_dir = tmp_path_factory.mktemp("rt")
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+        socket_path = default_socket_path()
+        assert socket_path.startswith(str(runtime_dir))
         config = _config(robot_description=DESCRIPTION)
         session = TeleopSession(config)
         config.mode = SessionMode.LIVE
         config.remote_endpoint = None
-        with pytest.raises(ValueError, match="robot_description requires"):
-            session.__enter__()
+        with _fake(_Session()) as fake, session:
+            assert session.robot_state_active
+            assert session.publish_robot_state("arm", [0.0, 0.0, 0.0])
+            assert os.path.exists(socket_path)
+        assert fake.events == []
+        assert not session.robot_state_active
+        assert not os.path.exists(socket_path)
 
 
 HELLO_FIELDS = {
@@ -220,6 +242,8 @@ class _SessionBefore:
         self.hello = None
         self.ack = _ack() if ack is None else ack
         self.start_errors = []
+        # Raised by wait_hello_ack(): the server's ERROR to the HELLO.
+        self.hello_ack_error = None
         self.tick_age_ns = None
 
     def create(self, trackers, max_tick_age_ns):
@@ -243,6 +267,8 @@ class _SessionBefore:
             raise self.start_errors.pop(0)
 
     def wait_hello_ack(self, timeout_ms):
+        if self.hello_ack_error is not None:
+            raise self.hello_ack_error
         return True
 
     def hello_ack(self):
@@ -555,6 +581,36 @@ class TestWithADescription:
             "exit",
         ]
 
+    def test_a_server_that_refuses_the_robot_ends_the_entry_once(self):
+        """One robot per machine: the server's ERROR to the HELLO is raised, not tried again."""
+        fake = _Session(_ack(**AGREED))
+        fake.hello_ack_error = RuntimeError(SERVER_TAKEN)
+        session = TeleopSession(_config(robot_description=DESCRIPTION))
+        with _fake(fake), patch.object(_remote, "CONNECT_RETRY_S", 0.0):
+            with pytest.raises(RuntimeError) as raised:
+                session.__enter__()
+        assert raised.value is fake.hello_ack_error
+        assert str(raised.value) == SERVER_TAKEN
+        # One connection, closed again; no robot state started or sent.
+        assert fake.events == ["create", "set_robot_state", "start", "exit"]
+        assert fake.published == []
+        assert not fake.robot_state_active
+        assert not session.robot_state_active
+        with pytest.raises(RuntimeError, match=NOT_ACTIVE):
+            session.publish_robot_state("arm", [0.0, 0.0, 0.0])
+
+        # The other program left the server's machine: the same session enters.
+        fake.hello_ack_error = None
+        with _fake(fake), session:
+            assert session.robot_state_active
+            assert session.publish_robot_state("arm", [0.0, 0.0, 0.0])
+        assert fake.events[4:8] == [
+            "create",
+            "set_robot_state",
+            "start",
+            "start_robot_state",
+        ]
+
     def test_a_session_entered_again_declares_again(self):
         first, second = _Session(_ack(**AGREED)), _Session(_ack())
         session = TeleopSession(_config(robot_description=DESCRIPTION))
@@ -614,6 +670,39 @@ class _MiniServer:
             raise self.error
 
 
+class _RefusingServer:
+    """Answers every robot app's HELLO with ERROR `text`, on a thread, and counts them."""
+
+    def __init__(self, text):
+        self.listener = RemoteSessionListener("127.0.0.1", 0)
+        self.endpoint = f"tcp://127.0.0.1:{self.listener.port}"
+        self.text = text
+        self.hellos = []
+        self.error = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        try:
+            while not self._stop.is_set():
+                accepted = self.listener.accept(20)
+                if accepted is None:
+                    continue
+                with RemoteSessionHost.adopt(accepted[0], False) as host:
+                    self.hellos.append(host.wait_hello(WAIT_MS))
+                    host.send_error(self.text)
+        except Exception as e:  # reported by stop()
+            self.error = e
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join(timeout=10)
+        assert not self._thread.is_alive()
+        if self.error is not None:
+            raise self.error
+
+
 def _wait_for(predicate, timeout_s=5.0):
     deadline = time.monotonic() + timeout_s
     while not predicate():
@@ -621,6 +710,11 @@ def _wait_for(predicate, timeout_s=5.0):
             return False
         time.sleep(0.005)
     return True
+
+
+def _open_files():
+    """How many file descriptors this process holds."""
+    return len(os.listdir("/proc/self/fd"))
 
 
 def _loopback_config(server, **kwargs):
@@ -716,6 +810,38 @@ class TestLoopback:
                 f"The Teleop Session Server at {server.endpoint} does not take robot "
                 "state; none is sent"
             ]
+        finally:
+            server.stop()
+
+    def test_a_robot_app_the_server_refuses_raises_its_text_and_leaves_nothing_open(
+        self,
+    ):
+        """One robot per machine: the server answers the HELLO of a second robot with ERROR."""
+        server = _RefusingServer(SERVER_TAKEN)
+        try:
+            config = _loopback_config(server, robot_description=DESCRIPTION)
+            session = TeleopSession(config)
+            for count in (1, 2):
+                files, threads = _open_files(), threading.active_count()
+                start = time.monotonic()
+                with pytest.raises(RuntimeError) as raised:
+                    session.__enter__()
+                # The answer, long before remote_connect_timeout_s.
+                assert time.monotonic() - start < 5.0
+                assert type(raised.value) is RuntimeError
+                assert str(raised.value) == SERVER_TAKEN
+                assert not session.robot_state_active
+                with pytest.raises(RuntimeError, match=NOT_ACTIVE):
+                    session.publish_robot_state("arm", [0.0, 0.0, 0.0])
+                # Raised once: no connection is made again.
+                time.sleep(3 * _remote.CONNECT_RETRY_S)
+                assert len(server.hellos) == count
+                if count == 2:
+                    # The first entry loaded what a process loads once; the second left
+                    # no connection and no thread.
+                    assert _wait_for(lambda files=files: _open_files() == files)
+                    assert threading.active_count() == threads
+            assert json.loads(server.hellos[0])["robot_state"] == {"version": 1}
         finally:
             server.stop()
 
