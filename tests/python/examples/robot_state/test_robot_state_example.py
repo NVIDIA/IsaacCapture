@@ -5,9 +5,13 @@
 
 A Teleop Session Server subprocess (--placeholder-openxr, --no-launch-cloudxr-runtime, a port
 the system picks, its reader socket under a temporary folder), the example's stand-in robot
-through a remote teleop session, and a reader of isaaccapture.robot_state.
+through a remote teleop session, and a reader of isaaccapture.robot_state. Other tests run the
+stand-in robot in a local session, with the OpenXR session replaced or with no CloudXR
+environment.
 """
 
+import ctypes
+import logging
 import os
 import re
 import signal
@@ -18,10 +22,18 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
-from isaaccapture.robot_state import RobotState, load_robot_description, records
+from isaaccapture import oxr
+from isaaccapture.robot_state import (
+    RobotState,
+    default_socket_path,
+    load_robot_description,
+    records,
+)
 from isaaccapture_examples.robot_state import stand_in_robot
 
 needs_server = pytest.mark.skipif(
@@ -35,6 +47,44 @@ SWEEP = range(stand_in_robot.SWEEP_RECORDS)
 FLOAT32 = {"rel": 1e-6, "abs": 1e-6}
 # The folder `python -m isaaccapture_examples.robot_state` is importable from.
 EXAMPLE_PYTHON = Path(stand_in_robot.__file__).resolve().parents[2]
+# How oxr.OpenXRSession(wait_for_system=False) fails with no headset at the runtime (oxr_session.cpp).
+NO_HEADSET_AT_OPENXR = (
+    "Failed to get OpenXR system: XR_ERROR_FORM_FACTOR_UNAVAILABLE (-35). The OpenXR runtime "
+    "is up but no headset is connected to it, and this session asked for wait_for_system=false "
+    "rather than waiting for one. Connect the headset, or check NV_DEVICE_PROFILE matches it. "
+    "See docs/source/references/cloudxr.rst, Troubleshooting."
+)
+# The thread of a local session that waits for a headset.
+HEADSET_WAIT_THREAD = "isaaccapture-headset-wait"
+# What a remote session says to an endpoint that is empty.
+NO_REMOTE_ENDPOINT = "remote_endpoint is required when mode is SessionMode.REMOTE"
+# How a local session fails in a terminal without the CloudXR environment (oxr_session.cpp).
+NO_CLOUDXR_ENVIRONMENT = "Environment variable NV_CXR_RUNTIME_DIR is not set"
+# How long the reader program waits for an answer, and how long the stand-in tracker start takes.
+READER_TIMEOUT_S = 0.3
+LATE_STEP_S = 1.2
+# A reader program: one line for each refresh, until the file named last exists.
+READER = """
+import os, sys, time
+from isaaccapture.robot_state import RobotState
+
+timeout_s, stop = float(sys.argv[1]), sys.argv[2]
+with RobotState.connect(timeout_s=timeout_s, auto_refresh=False) as robot:
+    while not os.path.exists(stop):
+        began = time.monotonic()
+        answered = robot.refresh()
+        took = time.monotonic() - began
+        what = robot.description()
+        arm = robot.joints("arm") if what is not None else None
+        print(
+            int(answered),
+            f"{took:.3f}",
+            "-" if what is None else what.robot,
+            "-" if arm is None else arm.sequence,
+            flush=True,
+        )
+        time.sleep(0.02)
+"""
 
 
 def _wait_for(predicate, timeout_s=10.0):
@@ -125,6 +175,15 @@ class _Server:
         assert code == 0, self.log()
 
 
+class _NoServer:
+    """What `_stand_in_robot` asks of a server, for a stand-in robot in a local session."""
+
+    endpoint = None
+
+    def log(self):
+        return ""
+
+
 @pytest.fixture
 def server(tmp_path_factory):
     # A short folder name: a Unix socket path holds about a hundred bytes.
@@ -170,6 +229,19 @@ def _stand_in_robot(server, name, *, loses_link=False):
         return
     assert "error" not in outcome, f"{outcome['error']!r}\n{server.log()}"
     assert outcome["published"] > 0
+
+
+@contextmanager
+def _signal_handlers_kept():
+    """Put back the SIGINT and SIGTERM handlers that the example's main() replaces."""
+    handlers = {
+        number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        yield
+    finally:
+        for number, handler in handlers.items():
+            signal.signal(number, handler)
 
 
 def _running(pid):
@@ -465,6 +537,251 @@ def test_a_reader_follows_a_server_that_stops_and_runs_again(tmp_path_factory, s
             _check_robot_left(robot, description)
     finally:
         server.close()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="robot state is served over a Unix socket"
+)
+def test_the_stand_in_robot_runs_a_local_session_without_an_endpoint(
+    tmp_path_factory, monkeypatch
+):
+    # The session serves its reader socket under this folder, not the user's own.
+    runtime_dir = tmp_path_factory.mktemp("rt")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    assert default_socket_path().startswith(str(runtime_dir))
+
+    with patch(
+        "isaaccapture.oxr.OpenXRSession",
+        side_effect=RuntimeError(NO_HEADSET_AT_OPENXR),
+    ) as oxr_cls:
+        with RobotState.connect() as robot:
+            assert not robot.server_reachable
+            with _stand_in_robot(_NoServer(), "six_joint_arm"):
+                _check_robot(robot, "six_joint_arm")
+                # The session waits for a headset in the background; no server is asked.
+                assert oxr_cls.call_args_list[0].args[0] == "StandInRobot"
+                assert oxr_cls.call_args_list[0].kwargs == {"wait_for_system": False}
+                assert [
+                    thread.name
+                    for thread in threading.enumerate()
+                    if thread.name == HEADSET_WAIT_THREAD
+                ] == [HEADSET_WAIT_THREAD]
+            # The robot app left: its reader socket went with it.
+            assert _wait_for(lambda: not robot.server_reachable, 5.0)
+            assert robot.description() is None
+    assert not [
+        thread for thread in threading.enumerate() if thread.name == HEADSET_WAIT_THREAD
+    ]
+
+    # The command line needs no --endpoint: main() hands None to run().
+    with _signal_handlers_kept():
+        with patch.object(stand_in_robot, "run", return_value=0) as run:
+            assert stand_in_robot.main([]) == 0
+    assert run.call_args.args == (
+        None,
+        stand_in_robot.description_path("six_joint_arm"),
+    )
+
+
+def test_an_empty_endpoint_is_a_missing_address_and_no_local_session(
+    tmp_path_factory, monkeypatch, caplog
+):
+    # What `--endpoint "$SERVER"` gives with the variable unset.
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path_factory.mktemp("rt")))
+    with patch("isaaccapture.oxr.OpenXRSession") as oxr_cls:
+        with pytest.raises(ValueError) as raised:
+            stand_in_robot.run(
+                "", stand_in_robot.description_path("six_joint_arm"), records=1
+            )
+        assert str(raised.value) == NO_REMOTE_ENDPOINT
+
+        with (
+            _signal_handlers_kept(),
+            caplog.at_level(logging.ERROR, logger="isaaccapture"),
+        ):
+            assert stand_in_robot.main(["--endpoint", ""]) == 1
+        assert caplog.messages == [NO_REMOTE_ENDPOINT]
+    oxr_cls.assert_not_called()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="robot state is served over a Unix socket"
+)
+def test_a_local_session_without_the_cloudxr_environment_names_the_variable(
+    tmp_path_factory, monkeypatch
+):
+    # The README's local command in a terminal that has not loaded cloudxr.env. The OpenXR
+    # constructor is the real one: it raises before it asks for a runtime.
+    runtime_dir = tmp_path_factory.mktemp("rt")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    monkeypatch.delenv("NV_CXR_RUNTIME_DIR", raising=False)
+    monkeypatch.delenv("ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS", raising=False)
+    monkeypatch.setenv("XR_RUNTIME_JSON", str(runtime_dir / "no_openxr_runtime.json"))
+
+    with pytest.raises(RuntimeError) as raised:
+        stand_in_robot.run(
+            None, stand_in_robot.description_path("six_joint_arm"), records=1
+        )
+    assert str(raised.value) == NO_CLOUDXR_ENVIRONMENT
+    # Entry is rolled back: nothing serves robot state and no thread waits for a headset.
+    with RobotState.connect() as robot:
+        assert not robot.server_reachable
+    assert not [
+        thread for thread in threading.enumerate() if thread.name == HEADSET_WAIT_THREAD
+    ]
+
+
+class _HeadsetLater:
+    """Stands in for the oxr.OpenXRSession constructor: no headset until `headset` is set."""
+
+    def __init__(self):
+        self.headset = threading.Event()
+        self.sessions = []
+
+    def __call__(self, *args, **kwargs):
+        if not self.headset.is_set():
+            raise RuntimeError(NO_HEADSET_AT_OPENXR)
+        session = _UntrackedOpenXR()
+        self.sessions.append(session)
+        return session
+
+
+class _UntrackedOpenXR:
+    """Stands in for an open oxr.OpenXRSession whose headset is not tracked."""
+
+    closed = False
+
+    def get_handles(self):
+        return object()
+
+    def get_provider_snapshot(self):
+        return SimpleNamespace(
+            state=oxr.OpenXRProviderState.AVAILABLE,
+            headset_state=oxr.OpenXRHeadsetState.DISCONNECTED,
+            reason=oxr.OpenXRProviderReason.TRACKING_UNAVAILABLE,
+            result_code=None,
+            error="",
+        )
+
+    def close(self):
+        self.closed = True
+
+
+class _NoTrackers:
+    """Stands in for the DeviceIOSession of a session without trackers."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def update(self):
+        pass
+
+
+def _reader_lines(path):
+    """What the reader program printed, one entry for each refresh."""
+    text = path.read_text()
+    lines = []
+    for line in text[: text.rfind("\n") + 1].splitlines():
+        answered, took, robot, sequence = line.split()
+        lines.append(
+            SimpleNamespace(
+                answered=answered == "1",
+                took=float(took),
+                robot=None if robot == "-" else robot,
+                sequence=None if sequence == "-" else int(sequence),
+            )
+        )
+    return lines
+
+
+def _sequences(lines):
+    return [line.sequence for line in lines if line.sequence is not None]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="robot state is served over a Unix socket"
+)
+def test_a_reader_gets_no_answer_during_the_late_step_and_reads_again(
+    tmp_path_factory, monkeypatch
+):
+    runtime_dir = tmp_path_factory.mktemp("rt")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime_dir))
+    assert default_socket_path().startswith(str(runtime_dir))
+    monkeypatch.setattr(
+        "isaaccapture.teleop_session_manager._headset_wait.RETRY_S", 0.05
+    )
+    runtime = _HeadsetLater()
+
+    def start_trackers(*args, **kwargs):
+        # As the real tracker start: a native call that keeps Python's interpreter lock, so
+        # every thread of the robot app stands still, the one that answers readers included.
+        ctypes.PyDLL(None).usleep(int(LATE_STEP_S * 1e6))
+        return _NoTrackers()
+
+    output, stop = runtime_dir / "reader.out", runtime_dir / "reader.stop"
+    before = 0
+
+    def read_again_after_no_answer():
+        lines = _reader_lines(output)[before:]
+        silent = [index for index, line in enumerate(lines) if not line.answered]
+        return bool(silent) and bool(_sequences(lines[silent[-1] + 1 :]))
+
+    with (
+        patch("isaaccapture.oxr.OpenXRSession", new=runtime),
+        patch(
+            "isaaccapture.deviceio.DeviceIOSession.run", side_effect=start_trackers
+        ) as run,
+        open(output, "wb") as out,
+        open(runtime_dir / "reader.err", "wb") as err,
+    ):
+        # A program of its own: a reader in this process would stand still with the robot app.
+        reader = subprocess.Popen(
+            [sys.executable, "-c", READER, str(READER_TIMEOUT_S), str(stop)],
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=err,
+            env=_child_environment(runtime_dir),
+        )
+        try:
+            with _stand_in_robot(_NoServer(), "six_joint_arm"):
+                assert _wait_for(lambda: _sequences(_reader_lines(output))), (
+                    output.read_text()
+                )
+                run.assert_not_called()
+                before = len(_reader_lines(output))
+                runtime.headset.set()
+                assert _wait_for(read_again_after_no_answer, 30.0), output.read_text()
+                stop.touch()
+                assert reader.wait(timeout=30) == 0
+        finally:
+            if reader.poll() is None:
+                reader.kill()
+                reader.wait()
+
+    lines = _reader_lines(output)
+    silent = [
+        index
+        for index, line in enumerate(lines)
+        if index >= before and not line.answered
+    ]
+    text = output.read_text()
+    # Each refresh that got no answer waited the reader's timeout, and nothing stayed readable.
+    for index in silent:
+        assert lines[index].took >= 0.9 * READER_TIMEOUT_S, text
+        assert lines[index].robot is None and lines[index].sequence is None, text
+    # The reader reads again by itself: the same robot, and readings newer than before.
+    later = lines[silent[-1] + 1 :]
+    assert {line.robot for line in later if line.answered} == {"rebot_b601"}, text
+    assert max(_sequences(later)) > max(_sequences(lines[:before])), text
+    # One late step, on the session the background thread opened; it is closed at exit.
+    assert run.call_count == 1
+    assert [session.closed for session in runtime.sessions] == [True]
+    assert not [
+        thread for thread in threading.enumerate() if thread.name == HEADSET_WAIT_THREAD
+    ]
 
 
 @needs_server

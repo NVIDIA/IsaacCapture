@@ -128,16 +128,36 @@ stopping it stay in the application.
 
 ## The same robot app in a local session
 
-The stand-in robot always uses a remote session. A robot app of your own runs
-the same publish calls without a Teleop Session Server; it names its mode in
-one place:
+A local session (`SessionMode.LIVE`) needs no Teleop Session Server: the robot
+app reads the headset through the OpenXR runtime of its own machine. The
+OpenXR runtime is the program that serves headsets, here CloudXR. The stand-in
+robot runs a local session when `--endpoint` is left out. It does not start
+CloudXR: start the CloudXR service first, and load its environment in the
+stand-in robot's terminal (`docs/source/references/cloudxr.rst`, "Load
+CloudXR environment variables"):
+
+```bash
+source ~/.cloudxr/run/cloudxr.env
+python -m isaaccapture_examples.robot_state.stand_in_robot
+```
+
+Without that environment entering the session raises `RuntimeError`:
+`Environment variable NV_CXR_RUNTIME_DIR is not set`. The harness needs no
+CloudXR environment; start it in a second terminal, as the same user:
+
+```bash
+python -m isaaccapture_examples.robot_state.stand_in_harness
+```
+
+The stand-in robot names its mode in one place, and so does a robot app of
+your own; the publish calls are the same:
 
 ```python
 endpoint = None                       # or "tcp://<server>:<port>" for a remote session
 config = TeleopSessionConfig(
     app_name="MyRobot",
     pipeline=pipeline,
-    mode=SessionMode.REMOTE if endpoint else SessionMode.LIVE,
+    mode=SessionMode.LIVE if endpoint is None else SessionMode.REMOTE,
     remote_endpoint=endpoint,
     robot_description="six_joint_arm.toml",
     wait_for_headset=False,
@@ -145,11 +165,24 @@ config = TeleopSessionConfig(
 ```
 
 In a local session the robot app serves its robot state itself, and the
-harness runs unchanged on the robot app's machine, as the same user. A local
-session with `wait_for_headset=False` starts only when a headset has reached
-the OpenXR runtime of that machine since the runtime started; with no headset
-at all, run a Teleop Session Server on that machine and use a remote session
-to `127.0.0.1`. The user page lists the limits.
+harness runs unchanged on the robot app's machine, as the same user. With
+`wait_for_headset=False` the session starts with no headset and publishes at
+once. The OpenXR runtime must be running on that machine when the robot app
+starts, with its environment loaded as above; without it entering the session
+raises the OpenXR error.
+
+Until a headset has connected to the runtime, the session's trackers report
+no data, and plugins and recording are not started. The first `step()` after
+one has connected starts them and returns late once. The harness gets no
+answer during that step: when the step takes longer than a second the
+harness prints `nothing serves robot state here yet` until the step has
+returned, then reads again by itself. If the trackers or a plugin cannot be
+started, that `step()` and every later one raise `RuntimeError`; the stand-in
+robot then logs the error and exits, where a real robot app would stop
+calling `step()` and keep publishing, and leave the session once a publish
+call returns False. That one rule serves a local and a remote session. The
+user page lists these limits. This local start is tested with a stand-in for
+the OpenXR session only; it has not been run on a real OpenXR runtime.
 
 ## One robot per machine
 

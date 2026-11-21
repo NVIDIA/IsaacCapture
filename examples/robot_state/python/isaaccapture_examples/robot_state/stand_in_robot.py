@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""A stand-in robot app: publishes moving joint angles through a remote teleop session.
+"""A stand-in robot app: publishes moving joint angles through a remote or a local teleop session.
 
 The robot is whatever its description file says. Every value is a function of the record
 number, so a reader can check what it reads against what was published.
@@ -169,7 +169,7 @@ class _NoHumanInput:
 
 
 def run(
-    endpoint: str,
+    endpoint: str | None,
     description_file: str | Path,
     *,
     rate_hz: float = RATE_HZ,
@@ -179,8 +179,8 @@ def run(
 ) -> int:
     """Publish until `stop` is set or `records` are published; the number published.
 
-    Publishing starts once the server has answered; no headset is needed. A lost link raises
-    from `session.step()`.
+    `endpoint` None runs a local session. Publishing starts once the server has answered
+    (remote) or at once (local); no headset is needed. A lost link raises from `session.step()`.
     """
     if rate_hz <= 0.0:
         raise ValueError("rate_hz must be above zero")
@@ -189,7 +189,7 @@ def run(
     config = TeleopSessionConfig(
         app_name="StandInRobot",
         pipeline=_NoHumanInput(),
-        mode=SessionMode.REMOTE,
+        mode=SessionMode.LIVE if endpoint is None else SessionMode.REMOTE,
         remote_endpoint=endpoint,
         remote_connect_timeout_s=connect_timeout_s,
         robot_description=description,
@@ -218,14 +218,17 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m isaaccapture_examples.robot_state.stand_in_robot",
         description=(
             "Stand-in robot app: publishes the data series of a robot description "
-            "through a remote teleop session until Ctrl+C."
+            "through a remote or a local teleop session until Ctrl+C."
         ),
     )
     parser.add_argument(
         "--endpoint",
-        required=True,
+        default=None,
         metavar="tcp://HOST:PORT",
-        help="Address of the Teleop Session Server.",
+        help=(
+            "Address of the Teleop Session Server. Without it the stand-in robot runs a "
+            "local session and needs the OpenXR runtime on this machine."
+        ),
     )
     parser.add_argument(
         "--description",
