@@ -29,6 +29,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
@@ -55,9 +56,20 @@ namespace
 
 std::string get_temp_mcap_path()
 {
+#ifndef _WIN32
+    auto pattern = (fs::temp_directory_path() / "test_replay_XXXXXX").string();
+    if (::mkdtemp(pattern.data()) == nullptr)
+    {
+        throw std::runtime_error("Failed to create private replay test directory");
+    }
+    // Keep the recording below an atomically created owner-only directory;
+    // McapWriter may safely create and reopen its predictable child name.
+    return (fs::path(pattern) / "recording.mcap").string();
+#else
     static std::atomic<int> cnt{ 0 };
     auto fn = "test_replay_" + std::to_string(GET_PID()) + "_" + std::to_string(cnt++) + ".mcap";
     return (fs::temp_directory_path() / fn).string();
+#endif
 }
 
 struct TempFileCleanup
@@ -69,7 +81,13 @@ struct TempFileCleanup
     ~TempFileCleanup() noexcept
     {
         std::error_code ec;
+#ifndef _WIN32
         fs::remove(path, ec);
+        // Remove only an empty container; never recurse from a supplied filename.
+        fs::remove(fs::path(path).parent_path(), ec);
+#else
+        fs::remove(path, ec);
+#endif
     }
     TempFileCleanup(const TempFileCleanup&) = delete;
     TempFileCleanup& operator=(const TempFileCleanup&) = delete;

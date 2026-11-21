@@ -8,6 +8,9 @@
 #include "sink_config.hpp"
 
 #include "inc/log_bridge/logger.hpp"
+#ifndef _WIN32
+#    include "posix_secure_directory.hpp"
+#endif
 #include "socket_sink.hpp"
 
 #include <spdlog/common.h>
@@ -33,7 +36,6 @@
 
 #    include <fcntl.h>
 #    include <unistd.h>
-#    include <vector>
 #else
 #    include <process.h>
 #endif
@@ -358,28 +360,13 @@ const std::vector<spdlog::sink_ptr>& local_sinks()
 
         auto dir = log_dir();
 #ifndef _WIN32
-        // Track newly created components for owner-only permissions.
-        std::vector<std::filesystem::path> missing;
+        if (!ensure_secure_directory(dir))
         {
-            std::error_code exists_ec;
-            std::filesystem::path probe = dir;
-            while (!probe.empty() && probe != probe.parent_path() && !std::filesystem::exists(probe, exists_ec))
-            {
-                missing.push_back(probe);
-                probe = probe.parent_path();
-            }
+            return std::vector<spdlog::sink_ptr>{ console };
         }
-#endif
+#else
         std::error_code dir_ec;
         std::filesystem::create_directories(dir, dir_ec);
-#ifndef _WIN32
-        // Preserve permissions on existing operator-provided directories.
-        for (const auto& component : missing)
-        {
-            std::error_code perms_ec;
-            std::filesystem::permissions(
-                component, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, perms_ec);
-        }
 #endif
 
         // Give each C++ writer a timestamped, PID-qualified path.

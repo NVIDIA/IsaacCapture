@@ -4,6 +4,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,15 @@ class TemporaryDirectory
 public:
     TemporaryDirectory()
     {
+#ifndef _WIN32
+        auto pattern = (std::filesystem::temp_directory_path() / "isaacteleop_plugin_manager_XXXXXX").string();
+        if (::mkdtemp(pattern.data()) == nullptr)
+        {
+            throw std::runtime_error("Failed to create temporary test directory");
+        }
+        // mkdtemp creates the directory atomically with owner-only access.
+        m_path = pattern;
+#else
         const auto seed = std::chrono::steady_clock::now().time_since_epoch().count();
         for (int suffix = 0; suffix < 100; ++suffix)
         {
@@ -25,6 +35,7 @@ public:
             }
         }
         throw std::runtime_error("Failed to create temporary test directory");
+#endif
     }
 
     ~TemporaryDirectory()

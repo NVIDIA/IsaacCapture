@@ -7,9 +7,11 @@
 
 #include <sys/stat.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 
@@ -20,8 +22,18 @@ class FakeDevices
 {
 public:
     FakeDevices()
-        : root_(std::filesystem::temp_directory_path() / ("spacemouse_test_" + std::to_string(std::random_device{}())))
     {
+#ifndef _WIN32
+        auto pattern = (std::filesystem::temp_directory_path() / "spacemouse_test_XXXXXX").string();
+        if (::mkdtemp(pattern.data()) == nullptr)
+        {
+            throw std::runtime_error("Failed to create temporary SpaceMouse test directory");
+        }
+        // mkdtemp prevents another user from pre-creating the test root.
+        root_ = pattern;
+#else
+        root_ = std::filesystem::temp_directory_path() / ("spacemouse_test_" + std::to_string(std::random_device{}()));
+#endif
         std::filesystem::create_directories(class_dir());
         std::filesystem::create_directories(dev_dir());
     }
