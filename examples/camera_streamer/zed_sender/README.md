@@ -67,10 +67,81 @@ receiver metadata adjustment in this branch labels a missing Tegra clock
 as unavailable; older receivers can still display the ZED stream, but may retain
 the old `sender_clock` label. AVS1 hardware timestamp validity bits remain clear.
 
+## Several cameras
+
+One sender streams every camera listed in its config over one TCP port.
+`configs/zed_multi.yaml` is the starting point: top-level `eye`, `capture`, and
+`output` are defaults, and each `cameras` entry may override them.
+
+```yaml
+eye: left                      # left | right | both
+capture: { width: 1280, height: 720, fps: 15 }
+output: { fps: 15, gop: 15 }
+cameras:
+  - serial: "<ZED 2i serial>"
+    output: { width: 320, height: 180, bitrate_kbps: 500 }
+  - enabled: false             # not opened, not sent
+    serial: "<ZED 2i serial>"
+    output: { width: 320, height: 180, bitrate_kbps: 500 }
+  - serial: "<ZED Mini serial>"
+    output: { width: 640, height: 360, bitrate_kbps: 1500 }
+```
+
+```bash
+./zed_sender/run.sh --list-devices    # video node, model, and unit serial
+./zed_sender/run.sh --config zed_sender/configs/zed_multi.yaml
+```
+
+Select cameras by `serial`. Units of one model report the same serial on their
+video interface, so `/dev/v4l/by-id` cannot tell them apart; the sender reads the
+unit serial from the camera's USB HID device instead. `device: <path>` is also
+accepted, for example a `/dev/v4l/by-path/...-video-index0` port path.
+
+`eye: left` or `right` encodes that eye alone as a mono stream; `both` encodes
+two HEVC sessions as a stereo stream. Streams are named by list position (`cam0`,
+`cam1`, ...), which each sample carries in its AVS1 device index, so disabling a
+camera does not rename the others.
+
+Each camera's frame is sent as its own AVS1 bundle as soon as it is encoded;
+cameras never wait for each other. Every bundle still describes all enabled
+cameras, so a receiver sees a camera that has not delivered a frame. A camera
+that is not attached or fails is reported as `CAMERA UNAVAILABLE` on stderr and
+retried every `runtime.camera_retry_ms` while the others keep streaming.
+
+Verify a multi-camera setup with the opt-in hardware test, which reports each
+configured stream and can require named ones to deliver:
+
+```bash
+python3 zed_sender/tests/hardware_multi.py --config <config> --require cam0,cam2
+```
+
+On the development Thor (2026-11-20), a ZED 2i at 320x180 and a ZED Mini at
+640x360, left eye, 15 FPS, sharing one USB 3 hub, each delivered 15.1 FPS with
+no source sequence gaps and about 2 ms mean capture-ready to loopback receive,
+while a third configured camera was absent. With the 60 FPS capture mode on that
+hub, each camera delivered 15 FPS with three of every four source frames
+missing, including when streaming alone; test your USB topology before relying
+on 60 FPS. Unplugging a camera during a session has not been tested.
+
+On the workstation, run the receiver in discovery mode; it needs no stream list
+and follows whatever this sender's config enables. The consumer shows every
+stream in one window, with a `NO SIGNAL` tile for a camera that is not delivering.
+
+```bash
+./camera_receiver/run.sh camera_receiver/configs/receiver_auto.yaml --host <thor-ip> --port 5000
+./cuda_ipc_consumer/run.sh
+```
+
+Add `--latency-csv <file>` to the receiver for each frame's sender send time and
+receiver receive time. `tests/hardware_zed_receiver.py` checks this sender
+against the receiver's discovery on a Thor without a CUDA Python stack; it uses
+stand-ins for CuPy and the decoder, so it verifies layout, delivery and the CSV,
+not decoded pixels.
+
 ## Configuration
 
 All YAML widths and heights are **per eye**. The USB image contains both eyes
-side by side. Capture dimensions/FPS select an exact supported camera mode;
+side by side, whichever eyes are sent. Capture dimensions/FPS select an exact supported camera mode;
 unsupported modes fail instead of silently changing settings. Output dimensions
 may be smaller, with the same aspect ratio and even dimensions. Output FPS may
 be any integer up to capture FPS; the sender skips complete stereo pairs before
@@ -90,7 +161,7 @@ Select the second profile with:
 Copy/select its matching receiver profile in the same way as above. After editing
 output width/height, update receiver width/height to match. After editing FPS,
 adjust `receive_fps_warning_threshold` in the receiver profile. Bitrate is a CBR
-**target per eye**, so budget roughly twice that plus transport overhead; actual
+**target per eye**, set as `bitrate_mbps` or `bitrate_kbps`, so budget roughly twice that plus transport overhead; actual
 rates depend on picture content and encoder rate control. Change `output.gop` to
 control the IDR interval in output frames, and `output.rotation` for 0/180-degree
 receiver display rotation. The default GOP is one second.
@@ -120,7 +191,8 @@ Useful checks, from the camera_streamer directory:
 
 `auto` requires exactly one accessible ZED image node and excludes metadata nodes.
 A `/dev/v4l/by-id/...-video-index0` path is also accepted for explicit selection.
-`--frames N` exits after sending N stereo bundles; zero means continuous operation.
+`--frames N` exits after sending N bundles in total across cameras; zero means
+continuous operation. `--device` applies to a config with one enabled camera.
 
 ## Capture, encoding, and timing
 

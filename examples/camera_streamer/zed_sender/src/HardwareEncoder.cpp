@@ -97,8 +97,18 @@ struct HardwareEncoder::Impl
             NvBufSurfaceDestroy(input);
     }
 
-    void initialize(uint32_t iw, uint32_t ih, uint32_t ow, uint32_t oh, uint32_t fps, uint32_t mbps, uint32_t gop)
+    void initialize(uint32_t iw,
+                    uint32_t ih,
+                    uint32_t ow,
+                    uint32_t oh,
+                    uint32_t fps,
+                    uint32_t kbps,
+                    uint32_t gop,
+                    bool encodeLeft,
+                    bool encodeRight)
     {
+        if (!encodeLeft && !encodeRight)
+            throw std::logic_error("no eye selected for encoding");
         inputWidth = iw;
         inputHeight = ih;
         width = ow;
@@ -116,6 +126,8 @@ struct HardwareEncoder::Impl
         rgbaDevice = static_cast<uint8_t*>(cudaBuffer->dataPtr);
         for (size_t index = 0; index < eyes.size(); ++index)
         {
+            if (!(index ? encodeRight : encodeLeft))
+                continue;
             auto& eye = eyes[index];
             // The UVC camera reports BT.601 limited range; VIC converts to the receiver's BT.709 convention.
             eye.output = surface(ow, oh, NVBUF_COLOR_FORMAT_NV12_709, NVBUF_LAYOUT_BLOCK_LINEAR);
@@ -125,7 +137,7 @@ struct HardwareEncoder::Impl
             auto& e = *eye.encoder;
             check(e.setCapturePlaneFormat(V4L2_PIX_FMT_H265, ow, oh, 16 * 1024 * 1024), "capture format");
             check(e.setOutputPlaneFormat(V4L2_PIX_FMT_NV12M, ow, oh, V4L2_COLORSPACE_REC709, false), "output format");
-            check(e.setBitrate(mbps * 1000000), "bitrate");
+            check(e.setBitrate(kbps * 1000), "bitrate");
             check(e.setProfile(V4L2_MPEG_VIDEO_H265_PROFILE_MAIN), "profile");
             check(e.setRateControlMode(V4L2_MPEG_VIDEO_BITRATE_MODE_CBR), "CBR");
             check(e.setFrameRate(fps, 1), "FPS");
@@ -160,6 +172,8 @@ struct HardwareEncoder::Impl
         configureVic();
         for (size_t i = 0; i < eyes.size(); ++i)
         {
+            if (!eyes[i].encoder)
+                continue;
             NvBufSurfTransformRect src{}, dst{};
             src.left = uint32_t(i) * inputWidth / 2;
             src.width = inputWidth / 2;
@@ -227,11 +241,19 @@ void HardwareEncoder::close() noexcept
 {
     impl.reset();
 }
-void HardwareEncoder::open(uint32_t iw, uint32_t ih, uint32_t ow, uint32_t oh, uint32_t fps, uint32_t mbps, uint32_t gop)
+void HardwareEncoder::open(uint32_t iw,
+                           uint32_t ih,
+                           uint32_t ow,
+                           uint32_t oh,
+                           uint32_t fps,
+                           uint32_t kbps,
+                           uint32_t gop,
+                           bool encodeLeft,
+                           bool encodeRight)
 {
     close();
     std::unique_ptr<Impl> candidate(new Impl);
-    candidate->initialize(iw, ih, ow, oh, fps, mbps, gop);
+    candidate->initialize(iw, ih, ow, oh, fps, kbps, gop, encodeLeft, encodeRight);
     impl = std::move(candidate);
 }
 EncodedStereo HardwareEncoder::encode(const uint8_t* data, size_t bytes, size_t stride)
@@ -241,11 +263,18 @@ EncodedStereo HardwareEncoder::encode(const uint8_t* data, size_t bytes, size_t 
     try
     {
         impl->convert(data, bytes, stride);
-        impl->submit(impl->eyes[0]);
-        impl->submit(impl->eyes[1]);
-        EncodedStereo pair{ impl->collect(impl->eyes[0]), impl->collect(impl->eyes[1]) };
-        impl->release(impl->eyes[0]);
-        impl->release(impl->eyes[1]);
+        // Submit every selected eye before collecting so their encodes overlap.
+        for (auto& eye : impl->eyes)
+            if (eye.encoder)
+                impl->submit(eye);
+        EncodedStereo pair;
+        if (impl->eyes[0].encoder)
+            pair.left = impl->collect(impl->eyes[0]);
+        if (impl->eyes[1].encoder)
+            pair.right = impl->collect(impl->eyes[1]);
+        for (auto& eye : impl->eyes)
+            if (eye.encoder)
+                impl->release(eye);
         return pair;
     }
     catch (...)

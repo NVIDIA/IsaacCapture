@@ -9,6 +9,7 @@
 
 namespace zed_sender
 {
+// An eye that was not selected at open() stays empty.
 struct EncodedStereo
 {
     std::vector<uint8_t> left, right;
@@ -26,8 +27,10 @@ public:
               uint32_t outputWidth,
               uint32_t outputHeight,
               uint32_t fps,
-              uint32_t bitrateMbps,
-              uint32_t gop);
+              uint32_t bitrateKbps,
+              uint32_t gop,
+              bool encodeLeft = true,
+              bool encodeRight = true);
     EncodedStereo encode(const uint8_t* yuyv, size_t bytes, size_t stride);
     void close() noexcept;
 

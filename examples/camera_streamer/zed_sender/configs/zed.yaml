@@ -9,6 +9,8 @@ network:
 runtime:
   frames: 0
   log_interval_s: 5
+# Both eyes as one stereo stream, matching receiver_zed.yaml.
+eye: both
 capture:
   device: auto
   # All widths here are per eye; USB capture contains both eyes side by side.

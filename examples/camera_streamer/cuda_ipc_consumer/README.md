@@ -40,14 +40,28 @@ cd ../camera_receiver
 Run the consumer from this directory:
 
 ```bash
-./run.sh --scale 0.35
+./run.sh
 ```
 
 Subscribe to only a subset of streams:
 
 ```bash
-./run.sh --streams head.left,head.right --scale 0.35
+./run.sh --streams head.left,head.right
 ```
+
+All subscribed streams share one window, one tile per stream in the receiver's
+order. `--columns N` sets the tiles per row; the default is a near-square grid.
+Without `--scale`, streams are shown at native size when every stream is at most
+1280 pixels wide, and at 0.35 otherwise. `--no-labels` hides the stream names.
+
+A stream with no frame for `--stale-after` seconds (default 1) is drawn as a
+`NO SIGNAL` tile of its own size instead of its last image, so a stopped camera
+cannot be mistaken for live video. A stream the receiver announced that never
+delivered gets the same tile. The image returns when frames resume.
+
+With a receiver in [discovery mode](../camera_receiver/README.md#stream-discovery)
+the consumer may start before the sender: it shows `WAITING FOR STREAMS`, then
+follows the receiver's `streams` messages as the layout appears or changes.
 
 For a headless smoke test:
 

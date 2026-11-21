@@ -7,6 +7,8 @@ network:
 runtime:
   frames: 0
   log_interval_s: 5
+# Both eyes as one stereo stream, matching receiver_zed_low_bandwidth.yaml.
+eye: both
 capture:
   device: auto
   width: 1280

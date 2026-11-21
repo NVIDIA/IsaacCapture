@@ -10,6 +10,7 @@ import base64
 import csv
 import json
 import logging
+import math
 import select
 import signal
 import socket
@@ -18,6 +19,12 @@ from dataclasses import dataclass
 from typing import Optional
 
 logger = logging.getLogger("isaaccapture.camera_streamer.consumer")
+
+# Streams up to this width are shown at native size unless --scale is given.
+_NATIVE_SCALE_MAX_WIDTH = 1280
+_LARGE_STREAM_SCALE = 0.35
+_WAITING_TILE_SIZE = (640, 360)
+_REDRAW_INTERVAL_S = 0.25
 
 
 @dataclass
@@ -144,13 +151,33 @@ class CudaIpcClient:
         return line
 
     def _open_streams(self, subscribed: dict) -> None:
+        self.apply_streams(subscribed.get("streams", []))
+
+    def _close_stream(self, name: str) -> None:
+        for key in [key for key in self.slots if key[0] == name]:
+            self.slots.pop(key).owner.close()
+        self.stream_info.pop(name, None)
+
+    def apply_streams(self, streams: list[dict]) -> set[str]:
+        """Match the publisher's current streams. Returns the names that were
+        opened, reopened after a change, or removed."""
         import cupy as cp
 
-        for stream in subscribed.get("streams", []):
+        changed: set[str] = set()
+        names = [str(stream["name"]) for stream in streams]
+        for name in [name for name in self.stream_order if name not in names]:
+            self._close_stream(name)
+            changed.add(name)
+        self.stream_order = names
+        for stream in streams:
             name = str(stream["name"])
+            known = self.stream_info.get(name)
+            # A publisher bumps the epoch when it registers a name again.
+            if known is not None and known.get("epoch") == stream.get("epoch"):
+                continue
+            self._close_stream(name)
+            changed.add(name)
             gpu_id = int(stream.get("gpu_id", 0))
-            if name not in self.stream_order:
-                self.stream_order.append(name)
             self.stream_info[name] = dict(stream)
             with cp.cuda.Device(gpu_id):
                 for slot in stream["slots"]:
@@ -170,6 +197,7 @@ class CudaIpcClient:
                     self.slots[(name, int(slot["slot"]))] = IpcSlot(
                         stream=name, slot=int(slot["slot"]), array=arr, owner=owner
                     )
+        return changed
 
 
 def _to_bgr_cpu(array, stream_info: dict):
@@ -216,6 +244,138 @@ def _compose_canvas(images: list[object]):
             )
         padded.append(img)
     return cv2.hconcat(padded)
+
+
+def _display_scale(requested: Optional[float], stream_info: dict[str, dict]) -> float:
+    if requested is not None:
+        return requested
+    widest = max(
+        (int(info.get("width", 0)) for info in stream_info.values()), default=0
+    )
+    return 1.0 if widest <= _NATIVE_SCALE_MAX_WIDTH else _LARGE_STREAM_SCALE
+
+
+def _draw_label(img, text: str):
+    import cv2
+
+    for color, thickness in (((0, 0, 0), 3), ((255, 255, 255), 1)):
+        cv2.putText(
+            img,
+            text,
+            (6, 16),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            color,
+            thickness,
+            cv2.LINE_AA,
+        )
+    return img
+
+
+def _placeholder_tile(width: int, height: int, lines: list[str]):
+    """A tile that cannot be mistaken for live video."""
+    import cv2
+    import numpy as np
+
+    tile = np.full((height, width, 3), 32, dtype=np.uint8)
+    cv2.rectangle(tile, (0, 0), (width - 1, height - 1), (0, 0, 200), 2)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = max(0.3, min(width / 420.0, height / 240.0))
+    line_height = int(28 * scale) + 4
+    y = (height - line_height * len(lines)) // 2 + line_height - 4
+    for index, text in enumerate(lines):
+        (text_width, _), _ = cv2.getTextSize(text, font, scale, 1)
+        color = (0, 0, 255) if index == 1 else (220, 220, 220)
+        cv2.putText(
+            tile,
+            text,
+            (max(2, (width - text_width) // 2), y),
+            font,
+            scale,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
+        y += line_height
+    return tile
+
+
+def _compose_grid(tiles: list[object], columns: int = 0):
+    """Rows of up to `columns` tiles; 0 picks a near-square grid."""
+    if not tiles:
+        return None
+    import cv2
+
+    columns = columns if columns > 0 else math.ceil(math.sqrt(len(tiles)))
+    rows = [
+        _compose_canvas(tiles[start : start + columns])
+        for start in range(0, len(tiles), columns)
+    ]
+    if len(rows) == 1:
+        return rows[0]
+    width = max(int(row.shape[1]) for row in rows)
+    padded = [
+        cv2.copyMakeBorder(
+            row,
+            0,
+            0,
+            0,
+            width - int(row.shape[1]),
+            cv2.BORDER_CONSTANT,
+            value=(0, 0, 0),
+        )
+        for row in rows
+    ]
+    return cv2.vconcat(padded)
+
+
+def _stream_tiles(
+    stream_order: list[str],
+    stream_info: dict[str, dict],
+    latest_cpu: dict[str, object],
+    last_frame_at: dict[str, float],
+    now: float,
+    scale: float,
+    stale_after_s: float,
+    labels: bool,
+) -> list[object]:
+    """One tile per stream: the live image, or a placeholder once it goes quiet."""
+    if not stream_order:
+        return [
+            _placeholder_tile(
+                *_WAITING_TILE_SIZE,
+                [
+                    "camera_receiver",
+                    "WAITING FOR STREAMS",
+                    "no layout from a sender yet",
+                ],
+            )
+        ]
+    tiles = []
+    for name in stream_order:
+        seen_at = last_frame_at.get(name)
+        if (
+            name in latest_cpu
+            and seen_at is not None
+            and now - seen_at <= stale_after_s
+        ):
+            tile = _resize_for_display(latest_cpu[name], scale)
+            tiles.append(_draw_label(tile.copy(), name) if labels else tile)
+            continue
+        info = stream_info.get(name, {})
+        width = max(96, round(int(info.get("width", _WAITING_TILE_SIZE[0])) * scale))
+        height = max(54, round(int(info.get("height", _WAITING_TILE_SIZE[1])) * scale))
+        quiet = (
+            "no frames received"
+            if seen_at is None
+            else f"no frames for {now - seen_at:.0f} s"
+        )
+        tiles.append(
+            _placeholder_tile(
+                width, height, [name, "NO SIGNAL", quiet, "check sender log"]
+            )
+        )
+    return tiles
 
 
 def _format_ns(value: object, signed: bool = False) -> str:
@@ -477,13 +637,19 @@ def run(args: argparse.Namespace) -> int:
 
     handshake = client.connect()
     subscribed = handshake["subscribed"]
+
+    def describe(streams: list[dict]) -> str:
+        return (
+            ", ".join(
+                f"{s['name']} {s['width']}x{s['height']} "
+                f"{s.get('pixel_format', 'unknown')} slots={len(s['slots'])}"
+                for s in streams
+            )
+            or "no streams yet"
+        )
+
     print(
-        f"connected to {args.socket}: "
-        + ", ".join(
-            f"{s['name']} {s['width']}x{s['height']} "
-            f"{s.get('pixel_format', 'unknown')} slots={len(s['slots'])}"
-            for s in subscribed.get("streams", [])
-        ),
+        f"connected to {args.socket}: {describe(subscribed.get('streams', []))}",
         flush=True,
     )
 
@@ -501,6 +667,8 @@ def run(args: argparse.Namespace) -> int:
     latest_cpu: dict[str, object] = {}
     latest_metadata_by_stream: dict[str, dict] = {}
     latest_generation_by_slot: dict[tuple[str, int], int] = {}
+    last_frame_at: dict[str, float] = {}
+    last_draw = 0.0
     counts: dict[str, int] = dict.fromkeys(client.stream_order, 0)
     stats_interval = max(1, args.stats_every)
     last_report = time.monotonic()
@@ -523,10 +691,26 @@ def run(args: argparse.Namespace) -> int:
             latest_msg_by_stream: dict[str, dict] = {}
             sampled_messages: list[dict] = []
             for msg in messages:
+                if msg.get("type") == "streams":
+                    # The receiver's layout changed; forget what the old rings held.
+                    for name in client.apply_streams(msg.get("streams", [])):
+                        latest_cpu.pop(name, None)
+                        latest_msg_by_stream.pop(name, None)
+                        latest_metadata_by_stream.pop(name, None)
+                        last_frame_at.pop(name, None)
+                        for key in [
+                            k for k in latest_generation_by_slot if k[0] == name
+                        ]:
+                            del latest_generation_by_slot[key]
+                    for name in client.stream_order:
+                        counts.setdefault(name, 0)
+                    print(f"streams: {describe(msg.get('streams', []))}", flush=True)
+                    continue
                 if msg.get("type") != "frame":
                     continue
                 msg = _annotate_consumer_receive(msg)
                 stream = str(msg["stream"])
+                last_frame_at[stream] = time.monotonic()
                 slot_id = int(msg["slot"])
                 generation = int(msg.get("slot_generation", 0))
                 key = (stream, slot_id)
@@ -581,16 +765,25 @@ def run(args: argparse.Namespace) -> int:
                     )
 
             if cv2 is not None:
-                if updated_display:
-                    images = [
-                        _resize_for_display(latest_cpu[name], args.scale)
-                        for name in client.stream_order
-                        if name in latest_cpu
-                    ]
-                    if images:
-                        canvas = _compose_canvas(images)
-                        if canvas is not None:
-                            cv2.imshow(args.window_name, canvas)
+                # Also redraw on a timer so a stream that stops turns into a placeholder.
+                draw_now = time.monotonic()
+                if updated_display or draw_now - last_draw >= _REDRAW_INTERVAL_S:
+                    canvas = _compose_grid(
+                        _stream_tiles(
+                            client.stream_order,
+                            client.stream_info,
+                            latest_cpu,
+                            last_frame_at,
+                            draw_now,
+                            _display_scale(args.scale, client.stream_info),
+                            args.stale_after,
+                            not args.no_labels,
+                        ),
+                        args.columns,
+                    )
+                    if canvas is not None:
+                        cv2.imshow(args.window_name, canvas)
+                    last_draw = draw_now
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):
                     break
@@ -635,7 +828,29 @@ def main() -> int:
         "--streams",
         help="comma-separated IPC stream names to subscribe to; default subscribes to all",
     )
-    ap.add_argument("--scale", type=float, default=0.35, help="OpenCV display scale")
+    ap.add_argument(
+        "--scale",
+        type=float,
+        help=(
+            "display scale; default 1 when every stream is at most "
+            f"{_NATIVE_SCALE_MAX_WIDTH} wide, otherwise {_LARGE_STREAM_SCALE}"
+        ),
+    )
+    ap.add_argument(
+        "--columns",
+        type=int,
+        default=0,
+        help="tiles per row; 0 picks a near-square grid",
+    )
+    ap.add_argument(
+        "--stale-after",
+        type=float,
+        default=1.0,
+        help="seconds without a frame before a stream shows NO SIGNAL",
+    )
+    ap.add_argument(
+        "--no-labels", action="store_true", help="do not draw stream names on tiles"
+    )
     ap.add_argument("--window-name", default="camera_receiver CUDA IPC")
     ap.add_argument("--no-display", action="store_true", help="print stats only")
     ap.add_argument(

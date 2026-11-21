@@ -36,7 +36,7 @@ int main(int argc, char** argv)
         if (!left || !right)
             throw std::runtime_error("cannot create output files");
         zed_sender::HardwareEncoder encoder;
-        encoder.open(width * 2, height, outputWidth, outputHeight, 30, 6, 30);
+        encoder.open(width * 2, height, outputWidth, outputHeight, 30, 6000, 30);
         for (unsigned frame = 0; frame < 8; ++frame)
         {
             for (uint32_t y = 0; y < height; ++y)

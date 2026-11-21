@@ -15,6 +15,7 @@ consumers.
 from __future__ import annotations
 
 import argparse
+import csv
 import logging
 import math
 import os
@@ -26,7 +27,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 import yaml
 
@@ -65,6 +66,10 @@ _CONNECT_WAIT_LOG_INTERVAL_S = 5.0
 _DEFAULT_MAX_RECORD_BYTES = 256 * 1024 * 1024
 _DEFAULT_STATS_LOG_INTERVAL_S = 5.0
 _DEFAULT_RECEIVE_FPS_WARNING_INTERVAL_S = 10.0
+# AVS1 device index a sender writes when it has no camera identity to report.
+_UNSPECIFIED_DEVICE_INDEX = 0xFFFFFFFF
+_DEFAULT_RING_DEPTH = 6
+_LATENCY_CSV_FLUSH_INTERVAL_S = 1.0
 _OUTPUT_RGBA8 = "rgba8"
 _OUTPUT_NV12 = "nv12"
 _NV12_TO_RGBA_SRC = r"""
@@ -154,10 +159,12 @@ def _parse_stats_log_interval_s(
 class ReceiveFpsWarningConfig:
     threshold_fps: float
     interval_s: float
+    # For discovered streams: warn below this fraction of each stream's own rate.
+    fraction: float = 0.0
 
     @property
     def enabled(self) -> bool:
-        return self.threshold_fps > 0
+        return self.threshold_fps > 0 or self.fraction > 0
 
 
 def _resolve_receive_fps_warning_config(
@@ -174,14 +181,21 @@ def _resolve_receive_fps_warning_config(
         ),
         "receiver.receive_fps_warning_interval_s",
     )
-    if threshold_fps > 0 and interval_s <= 0:
+    fraction = _parse_stats_log_interval_s(
+        receiver_cfg.get("receive_fps_warning_fraction", 0.0),
+        "receiver.receive_fps_warning_fraction",
+    )
+    if fraction > 1:
+        raise ValueError("receiver.receive_fps_warning_fraction must be 0..1")
+    if (threshold_fps > 0 or fraction > 0) and interval_s <= 0:
         raise ValueError(
             "receiver.receive_fps_warning_interval_s must be > 0 when "
-            "receive_fps_warning_threshold is enabled"
+            "a receive FPS warning is enabled"
         )
     return ReceiveFpsWarningConfig(
         threshold_fps=threshold_fps,
         interval_s=interval_s,
+        fraction=fraction,
     )
 
 
@@ -302,6 +316,7 @@ class ReceiveFpsMonitor:
         stream_names: Iterable[str],
         config: ReceiveFpsWarningConfig,
         clock: Callable[[], float] = time.monotonic,
+        thresholds: Optional[Mapping[str, float]] = None,
     ) -> None:
         if not config.enabled or config.interval_s <= 0:
             raise ValueError("ReceiveFpsMonitor requires an enabled config")
@@ -310,6 +325,8 @@ class ReceiveFpsMonitor:
             raise ValueError("ReceiveFpsMonitor requires at least one stream")
         self._stream_names = names
         self._threshold_fps = config.threshold_fps
+        # Per-stream targets, for streams whose rates differ.
+        self._thresholds = dict(thresholds) if thresholds is not None else None
         self._interval_s = config.interval_s
         self._clock = clock
         self._active = False
@@ -344,6 +361,18 @@ class ReceiveFpsMonitor:
         if elapsed < self._interval_s:
             return
         rates = {name: self._counts[name] / elapsed for name in self._stream_names}
+        if self._thresholds is not None:
+            details = " ".join(
+                f"{name}={fps:.1f}fps(target {self._thresholds[name]:.1f})"
+                for name, fps in rates.items()
+                if fps < self._thresholds.get(name, 0.0)
+            )
+            if details:
+                logger.warning(
+                    "AVS1 receive FPS below target over %.1fs: %s", elapsed, details
+                )
+            self._reset(now)
+            return
         low_rates = {
             name: fps for name, fps in rates.items() if fps < self._threshold_fps
         }
@@ -381,6 +410,101 @@ class StreamConfig:
     ring_depth: int
     ipc_names: tuple[str, ...]
     full_range: bool = False
+
+
+def discovered_stream_configs(
+    streams: Iterable[Avs1Stream],
+    output_format: str = _OUTPUT_NV12,
+    ring_depth: int = _DEFAULT_RING_DEPTH,
+) -> list[StreamConfig]:
+    """Stream configs for a sender layout, taken from one bundle's descriptors.
+
+    A sender that reports each camera's config position in the AVS1 device index
+    gets names that survive a disabled camera (cam0, cam2); otherwise names
+    follow the wire index.
+    """
+    streams = list(streams)
+    positions = [stream.samples[0].device_index for stream in streams]
+    by_position = _UNSPECIFIED_DEVICE_INDEX not in positions and len(
+        set(positions)
+    ) == len(positions)
+    configs = []
+    for stream, position in zip(streams, positions):
+        name = f"cam{position}" if by_position else f"stream{stream.index}"
+        configs.append(
+            StreamConfig(
+                index=stream.index,
+                name=name,
+                stereo=stream.stereo,
+                width=stream.width,
+                height=stream.height,
+                output_format=output_format,
+                ring_depth=ring_depth,
+                ipc_names=(f"{name}.left", f"{name}.right")
+                if stream.stereo
+                else (name,),
+            )
+        )
+    return configs
+
+
+class LatencyCsv:
+    """One row per received stream frame: sender send time, receiver receive time.
+
+    The two times come from different machines' clocks; their difference is a
+    latency only while those clocks are synchronized.
+    """
+
+    FIELDS = (
+        "stream",
+        "session_id",
+        "bundle_sequence",
+        "stream_sequence",
+        "frame_number",
+        "sender_send_ns",
+        "receiver_receive_ns",
+        "receive_minus_send_ms",
+        "sender_clock",
+        "receiver_clock",
+    )
+
+    def __init__(self, path: Path) -> None:
+        self._file = path.open("w", newline="", encoding="utf-8")
+        self._writer = csv.writer(self._file)
+        self._writer.writerow(self.FIELDS)
+        self._last_flush = time.monotonic()
+
+    def write(
+        self,
+        name: str,
+        bundle: Avs1Bundle,
+        stream: Avs1Stream,
+        received: ReceivedRecord,
+    ) -> None:
+        send_ns = bundle.sender_tcp_enqueue_ns
+        receive_ns = received.receiver_rx_payload_done_ns
+        delta_ms = _ns_delta_ms(receive_ns, send_ns)
+        self._writer.writerow(
+            (
+                name,
+                bundle.session_id,
+                bundle.sequence,
+                stream.sequence,
+                stream.samples[0].frame_number,
+                "" if send_ns is None else send_ns,
+                receive_ns,
+                "" if delta_ms is None else f"{delta_ms:.3f}",
+                bundle.sender_clock_domain or "",
+                received.receiver_clock_domain,
+            )
+        )
+        now = time.monotonic()
+        if now - self._last_flush >= _LATENCY_CSV_FLUSH_INTERVAL_S:
+            self._file.flush()
+            self._last_flush = now
+
+    def close(self) -> None:
+        self._file.close()
 
 
 class _StreamRuntime:
@@ -472,6 +596,8 @@ class Avs1TcpReceiver:
         receive_fps_warning: ReceiveFpsWarningConfig,
         ipc_publisher: CudaIpcFramePublisher,
         streams: list[StreamConfig],
+        discover: bool = False,
+        latency_csv: Optional[LatencyCsv] = None,
     ) -> None:
         try:
             import cupy as cp
@@ -479,7 +605,9 @@ class Avs1TcpReceiver:
             raise RuntimeError(
                 "camera_receiver requires CuPy. Run ./setup.sh from camera_receiver."
             ) from e
-        if not streams:
+        if discover and streams:
+            raise ValueError("stream discovery takes no configured streams")
+        if not discover and not streams:
             raise ValueError("camera_receiver requires at least one AVS stream")
         indices = [stream.index for stream in streams]
         if len(indices) != len(set(indices)):
@@ -513,27 +641,115 @@ class Avs1TcpReceiver:
                 "decode[avs1]",
                 interval_s=stats_log_interval_s,
             )
+        self._receive_fps_warning = receive_fps_warning
         self._receive_fps_monitor = None
-        if receive_fps_warning.enabled:
+        if receive_fps_warning.threshold_fps > 0 and self._runtimes:
             self._receive_fps_monitor = ReceiveFpsMonitor(
                 (runtime.config.name for runtime in self._runtimes.values()),
                 receive_fps_warning,
             )
         self._session_id: Optional[int] = None
+        self._discover = bool(discover)
+        self._layout_key: Optional[tuple] = None
+        # Rings of streams that left the layout. Consumers may still hold their
+        # exported handles, so the memory is never freed while this process runs.
+        self._retired: list[_StreamRuntime] = []
+        self._latency_csv = latency_csv
 
         for runtime in self._runtimes.values():
-            cfg = runtime.config
-            layout = _ipc_layout(cfg.output_format, cfg.width, cfg.height)
-            for camera_index, ipc_name in enumerate(cfg.ipc_names):
-                self._ipc_publisher.register_stream(
-                    name=ipc_name,
-                    width=cfg.width,
-                    height=cfg.height,
-                    pixel_format=cfg.output_format,
-                    gpu_id=self._gpu_device_id,
-                    buffers=runtime.output_buffers[camera_index],
-                    layout=layout,
-                )
+            self._register_runtime(runtime)
+
+    def _register_runtime(self, runtime: _StreamRuntime) -> None:
+        cfg = runtime.config
+        layout = _ipc_layout(cfg.output_format, cfg.width, cfg.height)
+        for camera_index, ipc_name in enumerate(cfg.ipc_names):
+            self._ipc_publisher.register_stream(
+                name=ipc_name,
+                width=cfg.width,
+                height=cfg.height,
+                pixel_format=cfg.output_format,
+                gpu_id=self._gpu_device_id,
+                buffers=runtime.output_buffers[camera_index],
+                layout=layout,
+            )
+
+    def _resize_sample_pool(self) -> None:
+        workers = sum(runtime.camera_count for runtime in self._runtimes.values())
+        previous = self._sample_pool
+        self._sample_pool = ThreadPoolExecutor(
+            max_workers=max(1, workers),
+            thread_name_prefix="camera_receiver_sample",
+        )
+        if previous is not None:
+            previous.shutdown(wait=True)
+
+    def _apply_discovered_layout(self, bundle: Avs1Bundle) -> None:
+        """Build or rebuild the stream runtimes to match the sender's layout."""
+        configs = discovered_stream_configs(bundle.streams)
+        key = tuple((c.index, c.name, c.stereo, c.width, c.height) for c in configs)
+        if key == self._layout_key:
+            return
+        # Only this thread submits stream work, so once each queue drains nothing
+        # is using the sample pool or the runtimes being replaced.
+        for runtime in self._runtimes.values():
+            runtime.executor.submit(lambda: None).result()
+
+        def identity(cfg: StreamConfig) -> tuple:
+            return (cfg.name, cfg.stereo, cfg.width, cfg.height)
+
+        reusable = {identity(rt.config): rt for rt in self._runtimes.values()}
+        runtimes: dict[int, _StreamRuntime] = {}
+        created: list[_StreamRuntime] = []
+        for cfg in configs:
+            runtime = reusable.pop(identity(cfg), None)
+            if runtime is None:
+                runtime = _StreamRuntime(cfg, self._gpu_device_id)
+                created.append(runtime)
+            else:
+                # Same stream, possibly at a new wire index.
+                runtime.config = cfg
+            runtimes[cfg.index] = runtime
+        # Unregister before registering: a stream that changed size keeps its name.
+        for runtime in reusable.values():
+            runtime.shutdown()
+            for ipc_name in runtime.config.ipc_names:
+                self._ipc_publisher.unregister_stream(ipc_name)
+            self._retired.append(runtime)
+        for runtime in created:
+            self._register_runtime(runtime)
+        self._runtimes = runtimes
+        self._layout_key = key
+        self._resize_sample_pool()
+
+        if self._receive_fps_monitor is not None:
+            self._receive_fps_monitor.stop()
+            self._receive_fps_monitor = None
+        warning = self._receive_fps_warning
+        if warning.enabled:
+            rates = {
+                cfg.name: stream.fps_numerator / stream.fps_denominator
+                for cfg, stream in zip(configs, bundle.streams)
+            }
+            self._receive_fps_monitor = ReceiveFpsMonitor(
+                rates,
+                warning,
+                thresholds={
+                    name: max(warning.threshold_fps, warning.fraction * fps)
+                    for name, fps in rates.items()
+                },
+            )
+            self._receive_fps_monitor.start()
+        self._ipc_publisher.streams_changed(
+            order=[name for cfg in configs for name in cfg.ipc_names]
+        )
+        logger.info(
+            "AVS1 layout from sender: %s",
+            ", ".join(
+                f"{cfg.name} {'stereo' if cfg.stereo else 'mono'} "
+                f"{cfg.width}x{cfg.height}"
+                for cfg in configs
+            ),
+        )
 
     @property
     def host(self) -> str:
@@ -550,13 +766,7 @@ class Avs1TcpReceiver:
     def start(self) -> None:
         if self._thread is not None:
             return
-        sample_workers = sum(
-            runtime.camera_count for runtime in self._runtimes.values()
-        )
-        self._sample_pool = ThreadPoolExecutor(
-            max_workers=max(1, sample_workers),
-            thread_name_prefix="camera_receiver_sample",
-        )
+        self._resize_sample_pool()
         self._ipc_publisher.start()
         self._stop.clear()
         self._thread = threading.Thread(
@@ -587,6 +797,8 @@ class Avs1TcpReceiver:
             self._sample_pool.shutdown(wait=False)
             self._sample_pool = None
         self._ipc_publisher.stop()
+        if self._latency_csv is not None:
+            self._latency_csv.close()
 
     def wait(self, stop_event: threading.Event) -> None:
         while not stop_event.is_set():
@@ -717,12 +929,16 @@ class Avs1TcpReceiver:
                     runtime.executor.submit(runtime.reset_decoders)
             self._session_id = bundle.session_id
 
+        if self._discover:
+            self._apply_discovered_layout(bundle)
         dispatch_items: list[tuple[Avs1Stream, _StreamRuntime]] = []
         for stream in bundle.streams:
             runtime = self._runtimes.get(stream.index)
             if runtime is None or not stream.present:
                 continue
             dispatch_items.append((stream, runtime))
+            if self._latency_csv is not None:
+                self._latency_csv.write(runtime.config.name, bundle, stream, received)
         if self._receive_fps_monitor is not None:
             self._receive_fps_monitor.observe(
                 runtime.config.name for _, runtime in dispatch_items
@@ -1223,16 +1439,27 @@ def _parse_stream_config(raw: dict[str, Any]) -> StreamConfig:
     )
 
 
-def _build_receiver(cfg: dict, args: argparse.Namespace) -> Avs1TcpReceiver:
-    receiver_cfg = cfg.get("receiver", {})
-    ipc_cfg = cfg.get("ipc", {})
+def _configured_streams(cfg: dict) -> list[StreamConfig]:
+    """The config's streams; an absent list means discover them from the sender."""
     streams_raw = cfg.get("streams")
+    if streams_raw is None:
+        return []
     if not isinstance(streams_raw, list) or not streams_raw:
-        raise ValueError("config must include a non-empty streams list")
+        raise ValueError(
+            "streams must be a non-empty list; omit it to discover streams "
+            "from the sender"
+        )
     streams = [_parse_stream_config(raw) for raw in streams_raw]
     ipc_names = [name for stream in streams for name in stream.ipc_names]
     if len(ipc_names) != len(set(ipc_names)):
         raise ValueError("CUDA IPC stream names must be unique")
+    return streams
+
+
+def _build_receiver(cfg: dict, args: argparse.Namespace) -> Avs1TcpReceiver:
+    receiver_cfg = cfg.get("receiver", {})
+    ipc_cfg = cfg.get("ipc", {})
+    streams = _configured_streams(cfg)
 
     env_host = os.environ.get("CAMERA_RECEIVER_HOST") or None
     env_port = os.environ.get("CAMERA_RECEIVER_PORT") or None
@@ -1254,6 +1481,7 @@ def _build_receiver(cfg: dict, args: argparse.Namespace) -> Avs1TcpReceiver:
         socket_path=socket_path,
         owner_name=str(ipc_cfg.get("owner_name", "camera_receiver_avs1")),
         queue_size=int(ipc_cfg.get("queue_size", 1024)),
+        dynamic_streams=not streams,
     )
     return Avs1TcpReceiver(
         host=host,
@@ -1269,6 +1497,8 @@ def _build_receiver(cfg: dict, args: argparse.Namespace) -> Avs1TcpReceiver:
         receive_fps_warning=_resolve_receive_fps_warning_config(receiver_cfg),
         ipc_publisher=publisher,
         streams=streams,
+        discover=not streams,
+        latency_csv=LatencyCsv(Path(args.latency_csv)) if args.latency_csv else None,
     )
 
 
@@ -1285,13 +1515,7 @@ def _dry_run_summary(
 ]:
     receiver_cfg = cfg.get("receiver", {})
     ipc_cfg = cfg.get("ipc", {})
-    streams_raw = cfg.get("streams")
-    if not isinstance(streams_raw, list) or not streams_raw:
-        raise ValueError("config must include a non-empty streams list")
-    streams = [_parse_stream_config(raw) for raw in streams_raw]
-    ipc_names = [name for stream in streams for name in stream.ipc_names]
-    if len(ipc_names) != len(set(ipc_names)):
-        raise ValueError("CUDA IPC stream names must be unique")
+    streams = _configured_streams(cfg)
     env_host = os.environ.get("CAMERA_RECEIVER_HOST") or None
     env_port = os.environ.get("CAMERA_RECEIVER_PORT") or None
     host = str(args.host or env_host or receiver_cfg.get("host", "127.0.0.1"))
@@ -1345,6 +1569,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--dry-run", action="store_true", help="parse and instantiate only"
     )
+    parser.add_argument(
+        "--latency-csv",
+        help="write each stream frame's sender send and receiver receive time",
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
 
@@ -1372,14 +1600,20 @@ def main(argv: Optional[list[str]] = None) -> int:
             "disabled"
             if not receive_fps_warning.enabled
             else (
-                f"below {receive_fps_warning.threshold_fps:g}fps "
-                f"every {receive_fps_warning.interval_s:g}s"
+                (
+                    f"below {receive_fps_warning.fraction:g} of each stream's rate "
+                    if not streams and receive_fps_warning.fraction > 0
+                    else f"below {receive_fps_warning.threshold_fps:g}fps "
+                )
+                + f"every {receive_fps_warning.interval_s:g}s"
             )
         )
         print(
             "camera_receiver: config ok; "
             f"sender={host}:{port}, socket={socket_path}, "
-            f"streams={','.join(stream.name for stream in streams)}, "
+            "streams="
+            + (",".join(stream.name for stream in streams) or "discovered from sender")
+            + ", "
             f"periodic_stats={stats_summary}, "
             f"receive_fps_warning={fps_warning_summary}",
             flush=True,

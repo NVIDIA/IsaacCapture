@@ -19,3 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 
 - ZED USB capture uses V4L2 independently of Argus. Preserve atomic stereo pairs, bounded capture queues, and the existing AVS1 layout. Do not label USB timestamps as Tegra SOF; absent hardware timing stays unavailable.
 - Keep ZED development in a named repository branch; standalone sender directories are deployment exports. Record the upstream base when creating an export.
+- Multi-camera ZED sending is one bundle per camera, sent when that camera's frame is encoded. Do not pair or tile frames across cameras: USB cameras are unsynchronized, so waiting adds up to a frame period.
+- Every ZED bundle describes all enabled cameras and marks the others absent; receivers rely on that to see a camera that has not delivered. One camera failing must not end the session for the rest.
+- ZED stream names come from the camera's position in the sender config, carried in the AVS1 sample device index. Keep that position stable when a camera is disabled.
+- Identify ZED units by the HID serial, not `/dev/v4l/by-id`: the video interface serial is shared across units of a model.
+- A receiver config without a `streams` list discovers its layout from the wire. Keep discovery and configured streams as the two modes of one code path; do not add a per-setup receiver profile that restates a sender config.
+- Do not free a replaced stream's ring while the receiver runs: consumers may still hold its CUDA IPC handles.
+- After the handshake, only the IPC broadcast thread writes to consumer sockets, so a `streams` update always precedes the first frame of a new stream. Send layout changes through `streams_changed()`, not directly.
+- The viewer draws a quiet stream as a placeholder, never its last image: a frozen frame reads as live video.
+- Unix socket paths are limited to about 100 characters; tests take the IPC socket path separately from their output directory.

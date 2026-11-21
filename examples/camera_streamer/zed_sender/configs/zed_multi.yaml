@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Several cameras from one sender; receiver profile receiver_auto.yaml.
+#
+# Find each attached camera's serial (run from the camera_streamer directory):
+#   ./zed_sender/run.sh --list-devices
+# prints one line per camera, for example:
+#   /dev/video0  ZED 2i  serial 12345678
+# Check this file after editing it:
+#   ./zed_sender/run.sh --config zed_sender/configs/zed_multi.yaml --check-config
+version: 1
+network:
+  bind: 0.0.0.0
+  port: 5000
+runtime:
+  frames: 0
+  log_interval_s: 5
+  # A missing camera is retried at this interval while the others keep streaming.
+  camera_retry_ms: 2000
+
+# Defaults for every camera. Any camera below may set its own eye, capture
+# (width, height, fps, timeout_ms) and output (width, height, fps, gop, rotation,
+# bitrate_kbps or bitrate_mbps); what it leaves out comes from here.
+eye: left  # left | right | both
+capture:
+  # Per eye. 320x180 and 640x360 are exact scales of this mode.
+  width: 1280
+  height: 720
+  fps: 15
+output:
+  fps: 15
+  gop: 15
+
+cameras:
+  # Names follow list position (cam0, cam1, ...), also when an entry is disabled.
+  - enabled: true
+    serial: "39440370"  # ZED 2i serial from ./zed_sender/run.sh  --list-devices.
+    output:
+      width: 320
+      height: 180
+      bitrate_kbps: 500
+  - enabled: true
+    serial: "00000002"  # ZED 2i serial from ./zed_sender/run.sh  --list-devices.
+    output:
+      width: 320
+      height: 180
+      bitrate_kbps: 500
+  - enabled: true
+    serial: "12357280"  # ZED Mini serial from ./zed_sender/run.sh  --list-devices.
+    # Per-camera overrides, for example:
+    # eye: both
+    # capture: { fps: 30 }
+    # output: { fps: 30, gop: 30 }
+    output:
+      width: 640
+      height: 360
+      bitrate_kbps: 1500

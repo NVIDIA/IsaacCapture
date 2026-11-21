@@ -150,9 +150,10 @@ commands. Component tests stay under `argus_sender/tests/` and
 From the example root, run the Python checks with pytest and PyYAML installed:
 
 ```bash
-python3 -m pytest argus_sender/tests camera_receiver/tests tests -q
+python3 -m pytest argus_sender/tests camera_receiver/tests cuda_ipc_consumer/tests tests -q
 ```
 
+The consumer layout tests need OpenCV and are skipped without it.
 These tests cover configuration and protocol behavior; live capture,
 NVENC/NVDEC, and CUDA IPC still require the target NVIDIA hardware and driver.
 

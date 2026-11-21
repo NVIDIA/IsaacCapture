@@ -105,6 +105,45 @@ into color conversion, so neither path adds a second full-frame pass.
 notifications include `slot_generation`; consumers can detect if a slot was
 overwritten before they consumed it.
 
+## Stream discovery
+
+A config without a `streams` list, such as `configs/receiver_auto.yaml`, takes
+the layout from the sender. Every AVS1 bundle describes all of the sender's
+streams, so the receiver creates its decoders and IPC rings from the first
+bundle, including for a stream that has not delivered a frame yet.
+
+```bash
+./run.sh configs/receiver_auto.yaml --host <sender-ip> --port 5000
+```
+
+Streams are named from the camera position the sender writes in the AVS1 device
+index: `cam0`, `cam1`, and `camN.left` / `camN.right` for a stereo stream. A
+sender that reports no position gets `stream<wire index>` names. Output is NV12.
+
+When the sender reconnects with a different layout, streams whose name, type
+and size are unchanged keep their rings; the rest are replaced and consumers are
+sent a `streams` message with the current list. Rings of replaced streams are
+not freed while the receiver runs, because a consumer may still hold their
+handles; restart the receiver to reclaim that memory after many layout changes.
+
+`receive_fps_warning_fraction` warns when a discovered stream arrives below that
+fraction of the rate its sender advertises, which also reports a configured
+camera that is not delivering.
+
+## Send and receive timestamps
+
+`--latency-csv PATH` writes one row per received stream frame, in either mode:
+
+```bash
+./run.sh configs/receiver_auto.yaml --host <sender-ip> --latency-csv /tmp/receiver_latency.csv
+```
+
+`sender_send_ns` is when the sender handed the encoded frame to TCP, on the
+sender's clock. `receiver_receive_ns` is when this receiver had read the complete
+bundle, on this host's clock. `receive_minus_send_ms` is meaningful only while
+the two clocks are synchronized. Rows also carry the stream name, session,
+bundle and stream sequence, and source frame number.
+
 ## Downstream consumers
 
 Consumers subscribe to the GPU rings through the local Unix socket. The
@@ -209,3 +248,6 @@ python3 -m pytest tests -q
 ```
 
 These tests require neither a GPU nor the sender or consumer source folders.
+The discovery tests run the receiver with the NumPy stand-ins in
+`tests/fake_gpu.py`, so they cover stream bookkeeping and IPC control messages,
+not decoded pixels.

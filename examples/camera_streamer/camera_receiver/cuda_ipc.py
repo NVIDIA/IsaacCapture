@@ -25,7 +25,7 @@ import socket
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 logger = logging.getLogger("isaaccapture.camera_streamer.ipc")
 
@@ -54,12 +54,16 @@ class _StreamInfo:
     gpu_id: int
     layout: dict[str, Any]
     slots: tuple[_SlotInfo, ...]
+    # Changes whenever a name is registered again, so consumers reopen its handles.
+    epoch: int = 0
 
 
 @dataclass
 class _ClientState:
     sock: socket.socket
     streams: frozenset[str]
+    # Names the consumer asked for; empty means every stream.
+    requested: tuple[str, ...] = ()
 
 
 class CudaIpcFramePublisher:
@@ -70,9 +74,15 @@ class CudaIpcFramePublisher:
         socket_path: str = "/tmp/camera_receiver_cuda_ipc.sock",
         owner_name: str = "camera_receiver",
         queue_size: int = 512,
+        dynamic_streams: bool = False,
     ) -> None:
         self._socket_path = str(socket_path)
         self._owner_name = owner_name
+        # With dynamic streams the catalog changes after start: consumers may
+        # subscribe to names that do not exist yet and are sent "streams" updates.
+        self._dynamic_streams = bool(dynamic_streams)
+        self._catalog_dirty = threading.Event()
+        self._next_epoch = 1
         self._queue: "queue.Queue[dict[str, Any]]" = queue.Queue(maxsize=queue_size)
         self._streams: dict[str, _StreamInfo] = {}
         self._clients: list[_ClientState] = []
@@ -141,7 +151,9 @@ class CudaIpcFramePublisher:
                 gpu_id=int(gpu_id),
                 layout=dict(layout or {}),
                 slots=tuple(slots),
+                epoch=self._next_epoch,
             )
+            self._next_epoch += 1
         logger.info(
             "CUDA IPC: registered stream '%s' %s with %d slots on GPU %d",
             name,
@@ -149,6 +161,29 @@ class CudaIpcFramePublisher:
             len(slots),
             gpu_id,
         )
+
+    def unregister_stream(self, name: str) -> None:
+        """Drop a stream from the catalog. The caller keeps its buffers alive:
+        consumers may still hold the exported handles."""
+        with self._lock:
+            self._streams.pop(name, None)
+        logger.info("CUDA IPC: unregistered stream '%s'", name)
+
+    def streams_changed(self, order: Optional[Iterable[str]] = None) -> None:
+        """Tell connected consumers about streams registered or removed since start.
+
+        `order` lists stream names in the order consumers should see them.
+        """
+        if order is not None:
+            rank = {name: index for index, name in enumerate(order)}
+            with self._lock:
+                self._streams = dict(
+                    sorted(
+                        self._streams.items(),
+                        key=lambda item: rank.get(item[0], len(rank)),
+                    )
+                )
+        self._catalog_dirty.set()
 
     def start(self) -> None:
         with self._lock:
@@ -280,6 +315,7 @@ class CudaIpcFramePublisher:
             "gpu_id": stream.gpu_id,
             "slot_count": len(stream.slots),
             "layout": stream.layout,
+            "epoch": stream.epoch,
         }
 
     def _stream_with_slots(self, stream: _StreamInfo) -> dict[str, Any]:
@@ -309,6 +345,7 @@ class CudaIpcFramePublisher:
                 "latency_metadata",
                 "slot_generation",
                 "nv12",
+                *(["dynamic_streams"] if self._dynamic_streams else []),
             ],
             "owner": self._owner_name,
             "socket_path": self._socket_path,
@@ -320,22 +357,64 @@ class CudaIpcFramePublisher:
     ) -> tuple[dict[str, Any], frozenset[str]]:
         with self._lock:
             all_streams = dict(self._streams)
-        selected_names = requested or list(all_streams)
-        unknown = [name for name in selected_names if name not in all_streams]
-        if unknown:
+        unknown = [name for name in requested if name not in all_streams]
+        if unknown and not self._dynamic_streams:
             raise ValueError(f"unknown CUDA IPC stream(s): {', '.join(unknown)}")
-        selected = frozenset(selected_names)
+        return self._catalog_message("subscribed", requested, all_streams)
+
+    def _catalog_message(
+        self,
+        message_type: str,
+        requested: Iterable[str],
+        all_streams: dict[str, _StreamInfo],
+    ) -> tuple[dict[str, Any], frozenset[str]]:
+        """The streams a consumer currently receives, with their slot handles."""
+        requested = list(requested)
+        selected_names = [
+            name for name in (requested or all_streams) if name in all_streams
+        ]
         return (
             {
-                "type": "subscribed",
+                "type": message_type,
                 "version": 2,
                 "streams": [
                     self._stream_with_slots(all_streams[name])
                     for name in selected_names
                 ],
             },
-            selected,
+            frozenset(selected_names),
         )
+
+    def _send_catalogs(self) -> None:
+        with self._lock:
+            clients = list(self._clients)
+            all_streams = dict(self._streams)
+        dead: list[_ClientState] = []
+        for client in clients:
+            msg, selected = self._catalog_message(
+                "streams", client.requested, all_streams
+            )
+            client.streams = selected
+            try:
+                self._send_json(client.sock, msg)
+            except OSError as e:
+                logger.info("CUDA IPC: consumer disconnected (%s)", e)
+                dead.append(client)
+        self._drop_clients(dead)
+
+    def _drop_clients(self, dead: list[_ClientState]) -> None:
+        if not dead:
+            return
+        with self._lock:
+            self._clients = [c for c in self._clients if c not in dead]
+        for client in dead:
+            try:
+                client.sock.close()
+            except Exception:
+                logger.debug(
+                    "CUDA IPC: failed to close disconnected consumer socket",
+                    exc_info=True,
+                )
 
     def _accept_loop(self) -> None:
         assert self._server is not None
@@ -371,7 +450,10 @@ class CudaIpcFramePublisher:
                 client.close()
                 continue
             with self._lock:
-                self._clients.append(_ClientState(client, selected))
+                self._clients.append(_ClientState(client, selected, tuple(requested)))
+            if self._dynamic_streams:
+                # The catalog may have changed between the reply and this append.
+                self._catalog_dirty.set()
             logger.info(
                 "CUDA IPC: consumer connected (%s)",
                 ", ".join(sorted(selected)) if selected else "no streams",
@@ -380,8 +462,15 @@ class CudaIpcFramePublisher:
     def _broadcast_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                msg = self._queue.get(timeout=0.5)
+                msg = self._queue.get(timeout=0.2)
             except queue.Empty:
+                msg = None
+            # Only this thread writes to consumer sockets after the handshake, so a
+            # catalog update always precedes the first frame of a new stream.
+            if self._catalog_dirty.is_set():
+                self._catalog_dirty.clear()
+                self._send_catalogs()
+            if msg is None:
                 continue
             stream_name = str(msg.get("stream", ""))
             with self._lock:
@@ -402,17 +491,7 @@ class CudaIpcFramePublisher:
                 except OSError as e:
                     logger.info("CUDA IPC: consumer disconnected (%s)", e)
                     dead.append(client)
-            if dead:
-                with self._lock:
-                    self._clients = [c for c in self._clients if c not in dead]
-                for client in dead:
-                    try:
-                        client.sock.close()
-                    except Exception:
-                        logger.debug(
-                            "CUDA IPC: failed to close disconnected consumer socket",
-                            exc_info=True,
-                        )
+            self._drop_clients(dead)
 
     @staticmethod
     def _send_json(sock: socket.socket, msg: dict[str, Any]) -> None:
