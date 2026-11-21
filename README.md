@@ -3,29 +3,37 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-![Isaac Teleop](docs/source/_static/isaac-teleop-hero.jpg)
-
-# Isaac Teleop
+# NVIDIA Isaac Capture
 
 <div align="center">
 
-**The unified framework for high-fidelity ego-centric and robotics data collection.**
+**Shared capture infrastructure for teleoperation and egocentric data.**
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Isaac Lab](https://img.shields.io/badge/Isaac%20Lab-3.0.0-orange.svg)](https://isaac-sim.github.io/IsaacLab/develop)
 [![numpy](https://img.shields.io/badge/numpy-1.23%2B-lightgrey.svg)](https://numpy.org/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
+[![Default: Apache-2.0](https://img.shields.io/badge/Default-Apache--2.0-blue.svg)](LICENSE.md)
+[![EgoPost: OpenMDW-1.1](https://img.shields.io/badge/EgoPost-OpenMDW--1.1-blue.svg)](LICENSES/LicenseRef-OpenMDW-1.1.txt)
 
 
 </div>
 
 ---
 
+<!-- Keep one overview image, below the title and badges and immediately before Overview. -->
+![Isaac Capture architecture: Isaac Teleop and Ego Pipeline share device plugins, retargeters, and data utilities, with integrations into simulation and real-robot environments](docs/source/_static/isaac-capture-architecture.png)
+
 ## Overview
 
-**Isaac Teleop**: The unified standard for high-fidelity egocentric and robot data collection.
-It is designed to address the data bottleneck in robot learning by streamlining device integration;
-standardizing high-fidelity human demo data collection; and foster device & data interoperability.
+**Isaac Capture** provides shared infrastructure for collecting human and robot demonstration data.
+It brings together two components:
+
+- **Isaac Teleop** supports robot-in-the-loop capture through teleoperation, including Teleop Session and Remote Assist.
+- **Ego Pipeline** supports human and egocentric data capture through Ego Capture and Ego Post Processing.
+
+Both components use a shared core of device plugins, retargeters, and data utilities for recording,
+replaying, and converting data. Isaac Teleop remains a component of Isaac Capture, with its existing
+functionality preserved.
 
 ## Key Features
 
@@ -33,19 +41,24 @@ standardizing high-fidelity human demo data collection; and foster device & data
 - Standardized device interface
 - Flexible retargeting framework
 
-### Teleoperation Use Cases
+### Isaac Teleop
 
 - Currently supported use cases
   - Use XR headsets for gripper / tri-finger hand manipulation
   - Use XR headsets with gloves for dex-hand manipulation
   - Seated full body loco-manipulation (Homie)
   - Tracking based full body loco-manipulation with GR00T-WholeBodyControl (SONIC)
-  - Egocentric data collection (aka “no-robot”)
 - Upcoming use cases
   - Teleoperate using only non-XR devices (e.g. gamepad, Gello, haply, etc.)
   - Teleoperate cloud based robotics simulations
   - Remote teleoperation with camera streaming to the desktop
   - Remote teleoperation with immersive camera streaming to XR headsets
+
+### Ego Pipeline
+
+- Capture egocentric data without a robot in the loop.
+- Reconstruct hand and camera poses from egocentric video with the
+  [Ego Post Processing pipeline](https://nvidia.github.io/IsaacCapture/main/ego_post_processing/egohand.html).
 
 ## Quick Start
 
@@ -56,10 +69,39 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 - [Architecture](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html)
 - [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
 - [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
+- [OVXR installation](docs/source/getting_started/ovxr.rst)
 
+### Check a Device Integration
+
+The CTS records one scripted take from a hand-tracking or full-body device and checks it against the data a retargeter needs; start with the [hand](src/python/isaaccapture/cts/hand/README.md) or [full-body](src/python/isaaccapture/cts/full_body/README.md) guide.
+
+
+### Synthetic XR Teleoperation (Preview)
+
+Try desktop controller input without an XR headset using the [Synthetic XR example](examples/synthetic_xr/README.md). Build this checkout's WebXR client to enable the controls. Host CloudXR requirements still apply.
 
 ### Install & Run Isaac Lab
 
-Isaac Teleop is design to work side by side with [NVIDIA Isaac Lab](https://github.com/isaac-sim/IsaacLab) starting with Isaac Lab [3.0 Beta release](https://github.com/isaac-sim/IsaacLab/releases/tag/v3.0.0-beta).
+The latest [NVIDIA Isaac Lab](https://github.com/isaac-sim/IsaacLab) release, [3.0.0 EA](https://github.com/isaac-sim/IsaacLab/releases/tag/v3.0.0-EA), includes Isaac Capture, previously released as Isaac Teleop.
 
 To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.github.io/IsaacLab/develop/source/setup/installation/index.html) guide for more details. Then follow the [CloudXR teleoperation in Isaac Lab](https://isaac-sim.github.io/IsaacLab/develop/source/how-to/cloudxr_teleoperation.html) to get started with Teleoperation in Sim.
+
+## Licensing
+
+The default license is [Apache-2.0](LICENSE.md).
+EgoPost is licensed under [OpenMDW-1.1](LICENSES/LicenseRef-OpenMDW-1.1.txt).
+Third-party materials may carry their own licenses.
+
+### Separately retrieved optional materials
+
+The optional `isaaccapture[ovxr]` extra retrieves OVXR and its OVRTX/OVStage
+dependencies. The separate `isaaccapture[desktop-mirror]` extra retrieves OVUI.
+These packages are downloaded separately, rather than bundled in the Isaac Capture
+wheel. Their licenses apply independently of Isaac Capture's Apache-2.0 license.
+OVXR, OVRTX and OVStage are NVIDIA proprietary software. OVUI is Apache-2.0.
+See [package sources and license details](docs/source/getting_started/ovxr.rst#optional-packages-and-licenses).
+Review the applicable package licenses and terms before installing or using these
+optional dependencies.
+
+Existing CloudXR native libraries are bundled in Isaac Capture wheels and remain subject
+to their separate NVIDIA license and EULA acceptance.

@@ -17,7 +17,7 @@ dependencies = [
     "msgpack",
     "msgpack-numpy",
     # The ROS node installs pink_ik and dexpilot together. Require nlopt>=2.8 so
-    # dex-retargeting resolves to 0.5.x, keeping the env on NumPy 2 / Pinocchio 3.
+    # dex-retargeting resolves to 0.5.x, keeping the env on NumPy 2 / Pinocchio 4.
     "nlopt>=2.8.0",
 ]
 
@@ -33,6 +33,8 @@ testpaths = ["../../tests/python/examples/teleop_ros2"]
 # must stay without an __init__.py. `only-include` + `sources`, not `packages`:
 # the latter keeps only the last path component and would root the wheel at a
 # bare top-level `teleop_ros2/`.
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/teleop_ros2"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]

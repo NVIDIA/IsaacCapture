@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soma-sequence-fit"
+version = "0.1.0"
+description = "Fit frame-aligned 21-point hand sequences and video to native SOMA/MHR parameters"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "OpenMDW-1.1"}
+dependencies = [
+  "py-soma-x==0.3.0",
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "torch>=2.13.0",
+  "torchvision>=0.28.0",
+  "transformers==5.18.0",
+  "opencv-python-headless>=4.9",
+  "Pillow>=10",
+  "tqdm>=4.66",
+  "huggingface-hub>=0.25",
+  "warp-lang>=1.15",
+  "usd-core>=25",
+  "trimesh>=4",
+  "rtree>=1.4.1",
+  "imageio-ffmpeg>=0.6",
+]
+
+[project.optional-dependencies]
+cuda = ["triton>=3.0"]
+test = ["pytest>=8"]
+
+[project.scripts]
+soma-sequence-fit = "soma_sequence_fit.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["soma_sequence_fit*"]
+
+[tool.setuptools.package-data]
+soma_sequence_fit = ["assets.json"]

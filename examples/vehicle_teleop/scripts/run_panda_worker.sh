@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+set -euo pipefail
+
+EXAMPLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="${EXAMPLE_ROOT}/.venv/bin/python"
+
+if [[ ! -x "${PYTHON}" ]]; then
+    echo "Missing example virtual environment: ${EXAMPLE_ROOT}/.venv" >&2
+    echo "Set it up as in Setup in ${EXAMPLE_ROOT}/README.md" >&2
+    exit 1
+fi
+
+export PYTHONPATH="${EXAMPLE_ROOT}/python:${EXAMPLE_ROOT}/thirdparty/opendbc:${EXAMPLE_ROOT}/thirdparty/panda${PYTHONPATH:+:${PYTHONPATH}}"
+
+exec "${PYTHON}" -m isaaccapture_examples.vehicle_teleop.panda_worker \
+    "$@"

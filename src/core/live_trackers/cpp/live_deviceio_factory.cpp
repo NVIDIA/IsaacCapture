@@ -5,12 +5,14 @@
 
 #include "generated_live_includes.inc"
 #include "live_controller_tracker_impl.hpp"
+#include "live_full_body_tracker_jmex_impl.hpp"
 #include "live_full_body_tracker_noitom_impl.hpp"
 #include "live_full_body_tracker_pico_impl.hpp"
 #include "live_full_body_tracker_xsens_impl.hpp"
 #include "live_hand_tracker_impl.hpp"
 #include "live_haptic_command_reader_tracker_impl.hpp"
 #include "live_head_tracker_impl.hpp"
+#include "live_keyboard_tracker_impl.hpp"
 #include "live_message_channel_tracker_impl.hpp"
 #include "live_tensor_push_tracker_impl.hpp"
 
@@ -19,6 +21,7 @@
 #include <deviceio_trackers/hand_tracker.hpp>
 #include <deviceio_trackers/haptic_command_reader_tracker.hpp>
 #include <deviceio_trackers/head_tracker.hpp>
+#include <deviceio_trackers/keyboard_tracker.hpp>
 #include <deviceio_trackers/message_channel_tracker.hpp>
 #include <deviceio_trackers/tensor_push_tracker.hpp>
 #include <oxr_utils/oxr_time.hpp>
@@ -99,6 +102,12 @@ std::unique_ptr<ITrackerImpl> try_create_full_body_xsens_impl(LiveDeviceIOFactor
     return typed ? factory.create_full_body_tracker_xsens_impl(typed) : nullptr;
 }
 
+std::unique_ptr<ITrackerImpl> try_create_full_body_jmex_impl(LiveDeviceIOFactory& factory, const ITracker& tracker)
+{
+    auto* typed = dynamic_cast<const FullBodyTracker*>(&tracker);
+    return typed ? factory.create_full_body_tracker_jmex_impl(typed) : nullptr;
+}
+
 std::unique_ptr<ITrackerImpl> try_create_tensor_push_impl(LiveDeviceIOFactory& factory, const ITracker& tracker)
 {
     auto* typed = dynamic_cast<const TensorPushTracker*>(&tracker);
@@ -109,6 +118,12 @@ std::unique_ptr<ITrackerImpl> try_create_haptic_command_reader_impl(LiveDeviceIO
 {
     auto* typed = dynamic_cast<const HapticCommandReaderTracker*>(&tracker);
     return typed ? factory.create_haptic_command_reader_tracker_impl(typed) : nullptr;
+}
+
+std::unique_ptr<ITrackerImpl> try_create_keyboard_impl(LiveDeviceIOFactory& factory, const ITracker& tracker)
+{
+    auto* typed = dynamic_cast<const KeyboardTracker*>(&tracker);
+    return typed ? factory.create_keyboard_tracker_impl(typed) : nullptr;
 }
 
 #include "generated_live_try_create.inc"
@@ -153,9 +168,12 @@ inline const TrackerDispatchEntry k_tracker_dispatch[] = {
         &try_create_full_body_noitom_impl, LiveFullBodyTrackerNoitomImpl::VENDOR_ID),
     make_dispatch_entry<FullBodyTracker, LiveFullBodyTrackerXsensImpl>(
         &try_create_full_body_xsens_impl, LiveFullBodyTrackerXsensImpl::VENDOR_ID),
+    make_dispatch_entry<FullBodyTracker, LiveFullBodyTrackerJmexImpl>(
+        &try_create_full_body_jmex_impl, LiveFullBodyTrackerJmexImpl::VENDOR_ID),
     make_dispatch_entry<TensorPushTracker, LiveTensorPushTrackerImpl>(&try_create_tensor_push_impl),
     make_dispatch_entry<HapticCommandReaderTracker, LiveHapticCommandReaderTrackerImpl>(
         &try_create_haptic_command_reader_impl),
+    make_dispatch_entry<KeyboardTracker, LiveKeyboardTrackerImpl>(&try_create_keyboard_impl),
 // Manifest trackers are single-vendor, so their rows can sit last as a block.
 #include "generated_live_dispatch_rows.inc"
 };
@@ -288,6 +306,10 @@ void validate_vendor_selections(const std::vector<std::pair<const ITracker*, Tra
         else if (vendor.id == LiveFullBodyTrackerXsensImpl::VENDOR_ID)
         {
             LiveFullBodyTrackerXsensImpl::validate_vendor(vendor);
+        }
+        else if (vendor.id == LiveFullBodyTrackerJmexImpl::VENDOR_ID)
+        {
+            LiveFullBodyTrackerJmexImpl::validate_vendor(vendor);
         }
         else if (!vendor.params.empty())
         {
@@ -479,6 +501,19 @@ std::unique_ptr<IFullBodyTrackerImpl> LiveDeviceIOFactory::create_full_body_trac
     return std::make_unique<LiveFullBodyTrackerXsensImpl>(handles_, *vendor, std::move(channels));
 }
 
+std::unique_ptr<IFullBodyTrackerImpl> LiveDeviceIOFactory::create_full_body_tracker_jmex_impl(const FullBodyTracker* tracker)
+{
+    std::unique_ptr<FullBodyMcapChannels> channels;
+    if (should_record(tracker))
+    {
+        channels = LiveFullBodyTrackerPicoImpl::create_mcap_channels(*writer_, get_name(tracker));
+    }
+
+    const TrackerVendor* vendor = find_vendor(tracker);
+    assert(vendor && vendor->id == LiveFullBodyTrackerJmexImpl::VENDOR_ID);
+    return std::make_unique<LiveFullBodyTrackerJmexImpl>(handles_, *vendor, std::move(channels));
+}
+
 std::unique_ptr<ITensorPushTrackerImpl> LiveDeviceIOFactory::create_tensor_push_tracker_impl(const TensorPushTracker* tracker)
 {
     return std::make_unique<LiveTensorPushTrackerImpl>(handles_, tracker);
@@ -488,6 +523,16 @@ std::unique_ptr<IHapticCommandReaderTrackerImpl> LiveDeviceIOFactory::create_hap
     const HapticCommandReaderTracker* tracker)
 {
     return std::make_unique<LiveHapticCommandReaderTrackerImpl>(handles_, tracker);
+}
+
+std::unique_ptr<IKeyboardTrackerImpl> LiveDeviceIOFactory::create_keyboard_tracker_impl(const KeyboardTracker* tracker)
+{
+    std::unique_ptr<KeyboardMcapChannels> channels;
+    if (should_record(tracker))
+    {
+        channels = LiveKeyboardTrackerImpl::create_mcap_channels(*writer_, get_name(tracker));
+    }
+    return std::make_unique<LiveKeyboardTrackerImpl>(tracker->input_state(), std::move(channels));
 }
 
 #include "generated_live_factory_methods.inc"

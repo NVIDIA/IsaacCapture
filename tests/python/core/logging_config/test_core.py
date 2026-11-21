@@ -38,9 +38,6 @@ class TestLevelVocabulary:
     def test_resolve_level_accepts_the_six_names(self, name, expected):
         assert logging_config._core.resolve_level(name) == expected
 
-    def test_resolve_level_passes_integers_through(self):
-        assert _core.resolve_level(23) == 23
-
     @pytest.mark.parametrize("name", ["warn", "err", "banana", ""])
     def test_resolve_level_rejects_anything_else(self, name):
         # "warn"/"err" are spdlog's spellings, deliberately absent here.
@@ -76,7 +73,7 @@ class TestLevelVocabulary:
 
 
 class TestLineFormat:
-    """The shape log_bridge's kPattern is written to reproduce."""
+    """The shape log_bridge's kFilePattern is written to reproduce."""
 
     def _render(self, level: int, message: str, args) -> str:
         record = logging.LogRecord(

@@ -10,7 +10,7 @@ cylinder kept feeding the hidden quad and the feed went black.
 
 from __future__ import annotations
 
-from pipeline.runner import VizRunner
+from isaaccapture_examples.camera_viz.pipeline.runner import VizRunner
 
 
 class FakeLayer:
@@ -115,7 +115,7 @@ def test_the_panel_is_drawn_off_the_submit_thread():
     that stops the video feed, so the panel gets its own thread."""
     import inspect
 
-    from pipeline.runner import VizRunner
+    from isaaccapture_examples.camera_viz.pipeline.runner import VizRunner
 
     submit_src = inspect.getsource(VizRunner._submit_loop_inner)
     assert "_print_stats" not in submit_src
@@ -127,7 +127,7 @@ def test_a_broken_panel_write_does_not_kill_the_stats_thread(monkeypatch):
     panel is decoration; losing it must not take the stats thread with it."""
     import threading
 
-    from pipeline import runner as runner_mod
+    from isaaccapture_examples.camera_viz.pipeline import runner as runner_mod
 
     monkeypatch.setattr(runner_mod, "LIVE_STATS_PERIOD_S", 0.005)
 

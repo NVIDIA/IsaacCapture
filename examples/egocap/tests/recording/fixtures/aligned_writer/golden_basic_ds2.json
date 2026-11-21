@@ -1,0 +1,1373 @@
+{
+ "entries": [
+  {
+   "path": "config.yaml",
+   "kind": "file",
+   "size": 288,
+   "sha256": "e4142ea4adc900fb4870b4c31a465f0bf885ea925ee762f8aa688db5cfa82fbb"
+  },
+  {
+   "path": "episode_0/head_camera.mp4",
+   "kind": "file",
+   "size": 544,
+   "sha256": "9f2ff969f02f9dd114ead58b074424d237b6a2109790434998549c09f6eaae36"
+  },
+  {
+   "path": "episode_0/wrist_camera.mp4",
+   "kind": "file",
+   "size": 560,
+   "sha256": "140f5fa6e646b0bc7ac525867ac191a2b8ea76ccc17b46c702daa36e619be6d6"
+  },
+  {
+   "path": "episode_1/head_camera.mp4",
+   "kind": "file",
+   "size": 544,
+   "sha256": "520464427520ebe79e6c809f6632ca024236bb44f540a604f1068d5c63ea1fd4"
+  },
+  {
+   "path": "episode_1/wrist_camera.mp4",
+   "kind": "file",
+   "size": 560,
+   "sha256": "fc228cf71fa912a8e41b9840c11fad07f032a8d671a008b42b6d90b38020745a"
+  },
+  {
+   "path": "zarr.json",
+   "kind": "root_json",
+   "zarr_format": 3,
+   "node_type": "group",
+   "attributes": {
+    "index_source": "head_camera"
+   }
+  },
+  {
+   "path": "episode_0",
+   "kind": "group",
+   "attributes": {
+    "task_description": "episode task",
+    "timing": {
+     "clock": "monotonic",
+     "offset_s": 0.25
+    }
+   }
+  },
+  {
+   "path": "episode_0/glove",
+   "kind": "group",
+   "attributes": {}
+  },
+  {
+   "path": "episode_0/glove/capture_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    54
+   ],
+   "attributes": {},
+   "npz_key": "a0",
+   "info_chunks": [
+    54
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/glove/left_hand_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    5,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a1",
+   "info_chunks": [
+    18,
+    5,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/glove/left_sensor_count_interp",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a2",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/glove/left_sensor_rotation_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a3",
+   "info_chunks": [
+    18,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/glove/receive_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    54
+   ],
+   "attributes": {},
+   "npz_key": "a4",
+   "info_chunks": [
+    54
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/glove/right_hand_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    5,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a5",
+   "info_chunks": [
+    18,
+    5,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/head_camera",
+   "kind": "group",
+   "attributes": {}
+  },
+  {
+   "path": "episode_0/head_camera/aligned_frame_indices",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a6",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/head_camera/capture_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    36
+   ],
+   "attributes": {},
+   "npz_key": "a7",
+   "info_chunks": [
+    36
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/head_camera/frame_id",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    36
+   ],
+   "attributes": {},
+   "npz_key": "a8",
+   "info_chunks": [
+    36
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/head_camera/pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a9",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/head_camera/receive_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    36
+   ],
+   "attributes": {},
+   "npz_key": "a10",
+   "info_chunks": [
+    36
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller",
+   "kind": "group",
+   "attributes": {
+    "handedness": "both"
+   }
+  },
+  {
+   "path": "episode_0/pico_controller/a_button",
+   "kind": "array",
+   "dtype": "bool",
+   "shape": [
+    56
+   ],
+   "attributes": {},
+   "npz_key": "a11",
+   "info_chunks": [
+    56
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller/body_joints_valid",
+   "kind": "array",
+   "dtype": "bool",
+   "shape": [
+    56
+   ],
+   "attributes": {},
+   "npz_key": "a12",
+   "info_chunks": [
+    56
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller/capture_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    56
+   ],
+   "attributes": {},
+   "npz_key": "a13",
+   "info_chunks": [
+    56
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller/head_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a14",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller/left_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a15",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller/left_trigger_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a16",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller/receive_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    56
+   ],
+   "attributes": {},
+   "npz_key": "a17",
+   "info_chunks": [
+    56
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller/right_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a18",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/pico_controller/right_trigger_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a19",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/wrist_camera",
+   "kind": "group",
+   "attributes": {}
+  },
+  {
+   "path": "episode_0/wrist_camera/aligned_frame_indices",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a20",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/wrist_camera/capture_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a21",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/wrist_camera/frame_id",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a22",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/wrist_camera/pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a23",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/wrist_camera/receive_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a24",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/valid_indices",
+   "kind": "array",
+   "dtype": "bool",
+   "shape": [
+    36
+   ],
+   "attributes": {},
+   "npz_key": "a25",
+   "info_chunks": [
+    36
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_0/valid_timestamps",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a26",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1",
+   "kind": "group",
+   "attributes": {
+    "task_description": "episode task",
+    "timing": {
+     "clock": "monotonic",
+     "offset_s": 0.25
+    }
+   }
+  },
+  {
+   "path": "episode_1/glove",
+   "kind": "group",
+   "attributes": {}
+  },
+  {
+   "path": "episode_1/glove/capture_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    54
+   ],
+   "attributes": {},
+   "npz_key": "a27",
+   "info_chunks": [
+    54
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/glove/left_hand_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    5,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a28",
+   "info_chunks": [
+    18,
+    5,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/glove/left_sensor_count_interp",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a29",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/glove/left_sensor_rotation_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a30",
+   "info_chunks": [
+    18,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/glove/receive_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    54
+   ],
+   "attributes": {},
+   "npz_key": "a31",
+   "info_chunks": [
+    54
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/glove/right_hand_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    5,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a32",
+   "info_chunks": [
+    18,
+    5,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/head_camera",
+   "kind": "group",
+   "attributes": {}
+  },
+  {
+   "path": "episode_1/head_camera/aligned_frame_indices",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a33",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/head_camera/capture_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    36
+   ],
+   "attributes": {},
+   "npz_key": "a34",
+   "info_chunks": [
+    36
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/head_camera/frame_id",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    36
+   ],
+   "attributes": {},
+   "npz_key": "a35",
+   "info_chunks": [
+    36
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/head_camera/pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a36",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/head_camera/receive_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    36
+   ],
+   "attributes": {},
+   "npz_key": "a37",
+   "info_chunks": [
+    36
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller",
+   "kind": "group",
+   "attributes": {
+    "handedness": "both"
+   }
+  },
+  {
+   "path": "episode_1/pico_controller/a_button",
+   "kind": "array",
+   "dtype": "bool",
+   "shape": [
+    56
+   ],
+   "attributes": {},
+   "npz_key": "a38",
+   "info_chunks": [
+    56
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller/body_joints_valid",
+   "kind": "array",
+   "dtype": "bool",
+   "shape": [
+    56
+   ],
+   "attributes": {},
+   "npz_key": "a39",
+   "info_chunks": [
+    56
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller/capture_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    56
+   ],
+   "attributes": {},
+   "npz_key": "a40",
+   "info_chunks": [
+    56
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller/head_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a41",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller/left_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a42",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller/left_trigger_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a43",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller/receive_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    56
+   ],
+   "attributes": {},
+   "npz_key": "a44",
+   "info_chunks": [
+    56
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller/right_pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a45",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/pico_controller/right_trigger_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a46",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/wrist_camera",
+   "kind": "group",
+   "attributes": {}
+  },
+  {
+   "path": "episode_1/wrist_camera/aligned_frame_indices",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a47",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/wrist_camera/capture_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a48",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/wrist_camera/frame_id",
+   "kind": "array",
+   "dtype": "int64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a49",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/wrist_camera/pose_interp",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18,
+    4,
+    4
+   ],
+   "attributes": {},
+   "npz_key": "a50",
+   "info_chunks": [
+    18,
+    4,
+    4
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/wrist_camera/receive_time",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a51",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/valid_indices",
+   "kind": "array",
+   "dtype": "bool",
+   "shape": [
+    36
+   ],
+   "attributes": {},
+   "npz_key": "a52",
+   "info_chunks": [
+    36
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  },
+  {
+   "path": "episode_1/valid_timestamps",
+   "kind": "array",
+   "dtype": "float64",
+   "shape": [
+    18
+   ],
+   "attributes": {},
+   "npz_key": "a53",
+   "info_chunks": [
+    18
+   ],
+   "info_codecs": [
+    "BytesCodec",
+    "ZstdCodec"
+   ]
+  }
+ ],
+ "expected_tree_listing": [
+  "config.yaml",
+  "episode_0",
+  "episode_0/glove",
+  "episode_0/glove/capture_time",
+  "episode_0/glove/capture_time/c",
+  "episode_0/glove/capture_time/c/0",
+  "episode_0/glove/capture_time/zarr.json",
+  "episode_0/glove/left_hand_pose_interp",
+  "episode_0/glove/left_hand_pose_interp/c",
+  "episode_0/glove/left_hand_pose_interp/c/0",
+  "episode_0/glove/left_hand_pose_interp/c/0/0",
+  "episode_0/glove/left_hand_pose_interp/c/0/0/0",
+  "episode_0/glove/left_hand_pose_interp/c/0/0/0/0",
+  "episode_0/glove/left_hand_pose_interp/zarr.json",
+  "episode_0/glove/left_sensor_count_interp",
+  "episode_0/glove/left_sensor_count_interp/c",
+  "episode_0/glove/left_sensor_count_interp/c/0",
+  "episode_0/glove/left_sensor_count_interp/zarr.json",
+  "episode_0/glove/left_sensor_rotation_interp",
+  "episode_0/glove/left_sensor_rotation_interp/c",
+  "episode_0/glove/left_sensor_rotation_interp/c/0",
+  "episode_0/glove/left_sensor_rotation_interp/c/0/0",
+  "episode_0/glove/left_sensor_rotation_interp/zarr.json",
+  "episode_0/glove/receive_time",
+  "episode_0/glove/receive_time/c",
+  "episode_0/glove/receive_time/c/0",
+  "episode_0/glove/receive_time/zarr.json",
+  "episode_0/glove/right_hand_pose_interp",
+  "episode_0/glove/right_hand_pose_interp/c",
+  "episode_0/glove/right_hand_pose_interp/c/0",
+  "episode_0/glove/right_hand_pose_interp/c/0/0",
+  "episode_0/glove/right_hand_pose_interp/c/0/0/0",
+  "episode_0/glove/right_hand_pose_interp/c/0/0/0/0",
+  "episode_0/glove/right_hand_pose_interp/zarr.json",
+  "episode_0/glove/zarr.json",
+  "episode_0/head_camera",
+  "episode_0/head_camera.mp4",
+  "episode_0/head_camera/aligned_frame_indices",
+  "episode_0/head_camera/aligned_frame_indices/c",
+  "episode_0/head_camera/aligned_frame_indices/c/0",
+  "episode_0/head_camera/aligned_frame_indices/zarr.json",
+  "episode_0/head_camera/capture_time",
+  "episode_0/head_camera/capture_time/c",
+  "episode_0/head_camera/capture_time/c/0",
+  "episode_0/head_camera/capture_time/zarr.json",
+  "episode_0/head_camera/frame_id",
+  "episode_0/head_camera/frame_id/c",
+  "episode_0/head_camera/frame_id/c/0",
+  "episode_0/head_camera/frame_id/zarr.json",
+  "episode_0/head_camera/pose_interp",
+  "episode_0/head_camera/pose_interp/c",
+  "episode_0/head_camera/pose_interp/c/0",
+  "episode_0/head_camera/pose_interp/c/0/0",
+  "episode_0/head_camera/pose_interp/c/0/0/0",
+  "episode_0/head_camera/pose_interp/zarr.json",
+  "episode_0/head_camera/receive_time",
+  "episode_0/head_camera/receive_time/c",
+  "episode_0/head_camera/receive_time/c/0",
+  "episode_0/head_camera/receive_time/zarr.json",
+  "episode_0/head_camera/zarr.json",
+  "episode_0/pico_controller",
+  "episode_0/pico_controller/a_button",
+  "episode_0/pico_controller/a_button/c",
+  "episode_0/pico_controller/a_button/c/0",
+  "episode_0/pico_controller/a_button/zarr.json",
+  "episode_0/pico_controller/body_joints_valid",
+  "episode_0/pico_controller/body_joints_valid/c",
+  "episode_0/pico_controller/body_joints_valid/c/0",
+  "episode_0/pico_controller/body_joints_valid/zarr.json",
+  "episode_0/pico_controller/capture_time",
+  "episode_0/pico_controller/capture_time/c",
+  "episode_0/pico_controller/capture_time/c/0",
+  "episode_0/pico_controller/capture_time/zarr.json",
+  "episode_0/pico_controller/head_pose_interp",
+  "episode_0/pico_controller/head_pose_interp/c",
+  "episode_0/pico_controller/head_pose_interp/c/0",
+  "episode_0/pico_controller/head_pose_interp/c/0/0",
+  "episode_0/pico_controller/head_pose_interp/c/0/0/0",
+  "episode_0/pico_controller/head_pose_interp/zarr.json",
+  "episode_0/pico_controller/left_pose_interp",
+  "episode_0/pico_controller/left_pose_interp/c",
+  "episode_0/pico_controller/left_pose_interp/c/0",
+  "episode_0/pico_controller/left_pose_interp/c/0/0",
+  "episode_0/pico_controller/left_pose_interp/c/0/0/0",
+  "episode_0/pico_controller/left_pose_interp/zarr.json",
+  "episode_0/pico_controller/left_trigger_interp",
+  "episode_0/pico_controller/left_trigger_interp/c",
+  "episode_0/pico_controller/left_trigger_interp/c/0",
+  "episode_0/pico_controller/left_trigger_interp/zarr.json",
+  "episode_0/pico_controller/receive_time",
+  "episode_0/pico_controller/receive_time/c",
+  "episode_0/pico_controller/receive_time/c/0",
+  "episode_0/pico_controller/receive_time/zarr.json",
+  "episode_0/pico_controller/right_pose_interp",
+  "episode_0/pico_controller/right_pose_interp/c",
+  "episode_0/pico_controller/right_pose_interp/c/0",
+  "episode_0/pico_controller/right_pose_interp/c/0/0",
+  "episode_0/pico_controller/right_pose_interp/c/0/0/0",
+  "episode_0/pico_controller/right_pose_interp/zarr.json",
+  "episode_0/pico_controller/right_trigger_interp",
+  "episode_0/pico_controller/right_trigger_interp/c",
+  "episode_0/pico_controller/right_trigger_interp/c/0",
+  "episode_0/pico_controller/right_trigger_interp/zarr.json",
+  "episode_0/pico_controller/zarr.json",
+  "episode_0/valid_indices",
+  "episode_0/valid_indices/c",
+  "episode_0/valid_indices/c/0",
+  "episode_0/valid_indices/zarr.json",
+  "episode_0/valid_timestamps",
+  "episode_0/valid_timestamps/c",
+  "episode_0/valid_timestamps/c/0",
+  "episode_0/valid_timestamps/zarr.json",
+  "episode_0/wrist_camera",
+  "episode_0/wrist_camera.mp4",
+  "episode_0/wrist_camera/aligned_frame_indices",
+  "episode_0/wrist_camera/aligned_frame_indices/c",
+  "episode_0/wrist_camera/aligned_frame_indices/c/0",
+  "episode_0/wrist_camera/aligned_frame_indices/zarr.json",
+  "episode_0/wrist_camera/capture_time",
+  "episode_0/wrist_camera/capture_time/c",
+  "episode_0/wrist_camera/capture_time/c/0",
+  "episode_0/wrist_camera/capture_time/zarr.json",
+  "episode_0/wrist_camera/frame_id",
+  "episode_0/wrist_camera/frame_id/c",
+  "episode_0/wrist_camera/frame_id/c/0",
+  "episode_0/wrist_camera/frame_id/zarr.json",
+  "episode_0/wrist_camera/pose_interp",
+  "episode_0/wrist_camera/pose_interp/c",
+  "episode_0/wrist_camera/pose_interp/c/0",
+  "episode_0/wrist_camera/pose_interp/c/0/0",
+  "episode_0/wrist_camera/pose_interp/c/0/0/0",
+  "episode_0/wrist_camera/pose_interp/zarr.json",
+  "episode_0/wrist_camera/receive_time",
+  "episode_0/wrist_camera/receive_time/c",
+  "episode_0/wrist_camera/receive_time/c/0",
+  "episode_0/wrist_camera/receive_time/zarr.json",
+  "episode_0/wrist_camera/zarr.json",
+  "episode_0/zarr.json",
+  "episode_1",
+  "episode_1/glove",
+  "episode_1/glove/capture_time",
+  "episode_1/glove/capture_time/c",
+  "episode_1/glove/capture_time/c/0",
+  "episode_1/glove/capture_time/zarr.json",
+  "episode_1/glove/left_hand_pose_interp",
+  "episode_1/glove/left_hand_pose_interp/c",
+  "episode_1/glove/left_hand_pose_interp/c/0",
+  "episode_1/glove/left_hand_pose_interp/c/0/0",
+  "episode_1/glove/left_hand_pose_interp/c/0/0/0",
+  "episode_1/glove/left_hand_pose_interp/c/0/0/0/0",
+  "episode_1/glove/left_hand_pose_interp/zarr.json",
+  "episode_1/glove/left_sensor_count_interp",
+  "episode_1/glove/left_sensor_count_interp/c",
+  "episode_1/glove/left_sensor_count_interp/c/0",
+  "episode_1/glove/left_sensor_count_interp/zarr.json",
+  "episode_1/glove/left_sensor_rotation_interp",
+  "episode_1/glove/left_sensor_rotation_interp/c",
+  "episode_1/glove/left_sensor_rotation_interp/c/0",
+  "episode_1/glove/left_sensor_rotation_interp/c/0/0",
+  "episode_1/glove/left_sensor_rotation_interp/zarr.json",
+  "episode_1/glove/receive_time",
+  "episode_1/glove/receive_time/c",
+  "episode_1/glove/receive_time/c/0",
+  "episode_1/glove/receive_time/zarr.json",
+  "episode_1/glove/right_hand_pose_interp",
+  "episode_1/glove/right_hand_pose_interp/c",
+  "episode_1/glove/right_hand_pose_interp/c/0",
+  "episode_1/glove/right_hand_pose_interp/c/0/0",
+  "episode_1/glove/right_hand_pose_interp/c/0/0/0",
+  "episode_1/glove/right_hand_pose_interp/c/0/0/0/0",
+  "episode_1/glove/right_hand_pose_interp/zarr.json",
+  "episode_1/glove/zarr.json",
+  "episode_1/head_camera",
+  "episode_1/head_camera.mp4",
+  "episode_1/head_camera/aligned_frame_indices",
+  "episode_1/head_camera/aligned_frame_indices/c",
+  "episode_1/head_camera/aligned_frame_indices/c/0",
+  "episode_1/head_camera/aligned_frame_indices/zarr.json",
+  "episode_1/head_camera/capture_time",
+  "episode_1/head_camera/capture_time/c",
+  "episode_1/head_camera/capture_time/c/0",
+  "episode_1/head_camera/capture_time/zarr.json",
+  "episode_1/head_camera/frame_id",
+  "episode_1/head_camera/frame_id/c",
+  "episode_1/head_camera/frame_id/c/0",
+  "episode_1/head_camera/frame_id/zarr.json",
+  "episode_1/head_camera/pose_interp",
+  "episode_1/head_camera/pose_interp/c",
+  "episode_1/head_camera/pose_interp/c/0",
+  "episode_1/head_camera/pose_interp/c/0/0",
+  "episode_1/head_camera/pose_interp/c/0/0/0",
+  "episode_1/head_camera/pose_interp/zarr.json",
+  "episode_1/head_camera/receive_time",
+  "episode_1/head_camera/receive_time/c",
+  "episode_1/head_camera/receive_time/c/0",
+  "episode_1/head_camera/receive_time/zarr.json",
+  "episode_1/head_camera/zarr.json",
+  "episode_1/pico_controller",
+  "episode_1/pico_controller/a_button",
+  "episode_1/pico_controller/a_button/c",
+  "episode_1/pico_controller/a_button/c/0",
+  "episode_1/pico_controller/a_button/zarr.json",
+  "episode_1/pico_controller/body_joints_valid",
+  "episode_1/pico_controller/body_joints_valid/c",
+  "episode_1/pico_controller/body_joints_valid/c/0",
+  "episode_1/pico_controller/body_joints_valid/zarr.json",
+  "episode_1/pico_controller/capture_time",
+  "episode_1/pico_controller/capture_time/c",
+  "episode_1/pico_controller/capture_time/c/0",
+  "episode_1/pico_controller/capture_time/zarr.json",
+  "episode_1/pico_controller/head_pose_interp",
+  "episode_1/pico_controller/head_pose_interp/c",
+  "episode_1/pico_controller/head_pose_interp/c/0",
+  "episode_1/pico_controller/head_pose_interp/c/0/0",
+  "episode_1/pico_controller/head_pose_interp/c/0/0/0",
+  "episode_1/pico_controller/head_pose_interp/zarr.json",
+  "episode_1/pico_controller/left_pose_interp",
+  "episode_1/pico_controller/left_pose_interp/c",
+  "episode_1/pico_controller/left_pose_interp/c/0",
+  "episode_1/pico_controller/left_pose_interp/c/0/0",
+  "episode_1/pico_controller/left_pose_interp/c/0/0/0",
+  "episode_1/pico_controller/left_pose_interp/zarr.json",
+  "episode_1/pico_controller/left_trigger_interp",
+  "episode_1/pico_controller/left_trigger_interp/c",
+  "episode_1/pico_controller/left_trigger_interp/c/0",
+  "episode_1/pico_controller/left_trigger_interp/zarr.json",
+  "episode_1/pico_controller/receive_time",
+  "episode_1/pico_controller/receive_time/c",
+  "episode_1/pico_controller/receive_time/c/0",
+  "episode_1/pico_controller/receive_time/zarr.json",
+  "episode_1/pico_controller/right_pose_interp",
+  "episode_1/pico_controller/right_pose_interp/c",
+  "episode_1/pico_controller/right_pose_interp/c/0",
+  "episode_1/pico_controller/right_pose_interp/c/0/0",
+  "episode_1/pico_controller/right_pose_interp/c/0/0/0",
+  "episode_1/pico_controller/right_pose_interp/zarr.json",
+  "episode_1/pico_controller/right_trigger_interp",
+  "episode_1/pico_controller/right_trigger_interp/c",
+  "episode_1/pico_controller/right_trigger_interp/c/0",
+  "episode_1/pico_controller/right_trigger_interp/zarr.json",
+  "episode_1/pico_controller/zarr.json",
+  "episode_1/valid_indices",
+  "episode_1/valid_indices/c",
+  "episode_1/valid_indices/c/0",
+  "episode_1/valid_indices/zarr.json",
+  "episode_1/valid_timestamps",
+  "episode_1/valid_timestamps/c",
+  "episode_1/valid_timestamps/c/0",
+  "episode_1/valid_timestamps/zarr.json",
+  "episode_1/wrist_camera",
+  "episode_1/wrist_camera.mp4",
+  "episode_1/wrist_camera/aligned_frame_indices",
+  "episode_1/wrist_camera/aligned_frame_indices/c",
+  "episode_1/wrist_camera/aligned_frame_indices/c/0",
+  "episode_1/wrist_camera/aligned_frame_indices/zarr.json",
+  "episode_1/wrist_camera/capture_time",
+  "episode_1/wrist_camera/capture_time/c",
+  "episode_1/wrist_camera/capture_time/c/0",
+  "episode_1/wrist_camera/capture_time/zarr.json",
+  "episode_1/wrist_camera/frame_id",
+  "episode_1/wrist_camera/frame_id/c",
+  "episode_1/wrist_camera/frame_id/c/0",
+  "episode_1/wrist_camera/frame_id/zarr.json",
+  "episode_1/wrist_camera/pose_interp",
+  "episode_1/wrist_camera/pose_interp/c",
+  "episode_1/wrist_camera/pose_interp/c/0",
+  "episode_1/wrist_camera/pose_interp/c/0/0",
+  "episode_1/wrist_camera/pose_interp/c/0/0/0",
+  "episode_1/wrist_camera/pose_interp/zarr.json",
+  "episode_1/wrist_camera/receive_time",
+  "episode_1/wrist_camera/receive_time/c",
+  "episode_1/wrist_camera/receive_time/c/0",
+  "episode_1/wrist_camera/receive_time/zarr.json",
+  "episode_1/wrist_camera/zarr.json",
+  "episode_1/zarr.json",
+  "zarr.json"
+ ]
+}

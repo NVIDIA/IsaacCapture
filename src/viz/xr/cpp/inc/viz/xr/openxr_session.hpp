@@ -189,6 +189,12 @@ public:
         return changed;
     }
 
+    // Ends a running session the way the spec requires: xrRequestExitSession, then poll until the
+    // runtime reports STOPPING (poll_events() issues xrEndSession). Returns true once the session
+    // is no longer running, including when it never ran; false on a failed request or timeout.
+    // Idempotent; the destructor calls it. Same-thread rule as poll_events.
+    bool end_session(std::chrono::milliseconds timeout = std::chrono::milliseconds(2000));
+
     // Throws on hard XR failures. XR_FRAME_DISCARDED on begin_frame is
     // non-fatal — pair with end_frame to keep the protocol balanced.
     bool wait_frame(XrFrameState* out_state);

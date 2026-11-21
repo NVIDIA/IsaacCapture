@@ -39,7 +39,23 @@ namespace core
 template <typename T>
 py::class_<Serialized<T>> serialized_class(py::module& m, const char* name, const char* doc)
 {
-    return py::class_<Serialized<T>>(m, name, doc);
+    return py::class_<Serialized<T>>(m, name, doc)
+        .def(
+            "to_bytes",
+            [](const Serialized<T>& self)
+            {
+                auto encoded = self;
+                // A nested view's owner may be a Record, not a buffer rooted at T.
+                if (encoded.buffer().empty())
+                {
+                    typename T::NativeTableType native;
+                    self->UnPackTo(&native);
+                    encoded = pack<T>(native);
+                }
+                const auto bytes = encoded.buffer();
+                return py::bytes(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            },
+            "Copy this table into standalone FlatBuffer bytes, including when read from a record.");
 }
 
 /*!

@@ -28,10 +28,11 @@ so packet sizes are never hardcoded (wire spec: the OGLO firmware packed12-v5 pa
 
 ## Build
 
-Linux only (BlueZ). Prerequisite:
+Linux only (BlueZ). Complete the [source-build prerequisites](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)
+first, then:
 
 ```bash
-sudo apt install libdbus-1-dev pkg-config
+sudo apt install libdbus-1-dev
 ```
 
 ```bash

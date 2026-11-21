@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 j-mex. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "jmex-example-tests"
+version = "0.0.0"  # Internal tests - not versioned
+description = "Tests for the j-mex G1 retargeting example"
+requires-python = ">=3.11,<3.14"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "numpy",
+    "scipy",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+norecursedirs = [".git", ".venv", "build", "dist", "*.egg", "__pycache__"]

@@ -22,11 +22,11 @@ from collections.abc import Iterator
 from typing import TextIO
 
 from ._core import (
-    ROOT_LOGGER_NAME,
     TRACE,
     _move_above_std,
     ensure_log_dir,
     logging_enabled,
+    root_logger,
 )
 
 _CAPTURED_FDS = (1, 2)
@@ -75,7 +75,7 @@ def _no_sink(reason: str) -> None:
     if _sink_warned:
         return
     _sink_warned = True
-    logging.getLogger(ROOT_LOGGER_NAME).warning(
+    root_logger.warning(
         "Native output capture disabled: %s. Lines written straight to fd 1 or "
         "fd 2 -- the OpenXR runtime's and the vendor SDKs' own diagnostics -- "
         "will not be recorded. Set ISAACCAPTURE_LOG_DIR to a directory you can "

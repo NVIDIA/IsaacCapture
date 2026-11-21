@@ -39,6 +39,9 @@ const SERVER_SCRIPT = path.join(
   'oob_hub_test_server.py'
 );
 
+// Must match TEST_CONTROL_TOKEN in oob_hub_test_server.py.
+const HUB_TOKEN = 'oob-hub-test-token';
+
 // Safety net for afterEach cleanup: every hub PID spawned goes in here and comes out once
 // confirmed exited. If a test's afterEach is ever skipped (a Jest hook-ordering edge case,
 // not something this file's own control flow can prevent), this file's own `exit` handler
@@ -156,6 +159,7 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
 
     channel = new HeadsetControlChannel({
       url: `ws://127.0.0.1:${hub.port}`,
+      token: HUB_TOKEN,
       deviceLabel: 'jest-test',
       onConfig: (config, configVersion) => {
         configs.push({ config, version: configVersion });
@@ -193,6 +197,7 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
 
     channel = new HeadsetControlChannel({
       url: `ws://127.0.0.1:${hub.port}`,
+      token: HUB_TOKEN,
       onConfig: () => {},
     });
     channel.connect();
@@ -216,6 +221,7 @@ describe('HeadsetControlChannel <-> OOBControlHub (real instances, real WebSocke
 
     channel = new HeadsetControlChannel({
       url: `ws://127.0.0.1:${hub.port}`,
+      token: HUB_TOKEN,
       onConfig: () => {},
       metricsIntervalMs: 20,
       getMetricsSnapshot: () => [{ cadence: 'frame', metrics: { StreamingFramerate: 72.5 } }],

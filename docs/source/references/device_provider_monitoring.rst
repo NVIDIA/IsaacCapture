@@ -17,11 +17,12 @@ Reading status
 --------------
 
 The getters return cached immutable values and perform no device, process, or
-OpenXR I/O:
+OpenXR I/O. ``config`` is a ``TeleopSessionConfig`` as built in
+:doc:`/teleop/teleop_session`:
 
 .. code-block:: python
 
-   from isaaccapture.teleop_session_manager import DeviceState
+   from isaaccapture.teleop_session_manager import DeviceState, TeleopSession
 
    with TeleopSession(config) as session:
        while True:
@@ -45,7 +46,8 @@ Identity and inventory
 - A monitored plugin device ID is
   ``<plugin_root_id><manifest device path>``.
 - The live OpenXR provider is ``openxr/runtime`` and owns
-  ``openxr/headset``.
+  ``openxr/headset``. When a controller input source is configured, it also
+  owns ``openxr/controller/left`` and ``openxr/controller/right``.
 - Replay sessions expose neither a live OpenXR provider nor configured plugin
   providers.
 
@@ -146,12 +148,22 @@ behavior.
 OpenXR ownership
 ----------------
 
-For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-availability. Runtime or session loss fails the provider; form-factor
-unavailability disconnects the headset while leaving the runtime provider
-available.
+For an owned OpenXR session, Isaac Teleop polls lifecycle events before each
+input update. ``XR_SESSION_STATE_STOPPING`` ends the running session, clears
+current head, hand, controller and body samples, and pauses input queries and
+controller haptics. ``XR_SESSION_STATE_READY`` begins the same session again
+so input can recover without restarting the application. Startup still requires
+the runtime to make the session ready before the synchronous initial begin.
+
+Isaac Teleop also polls HMD tracking. Runtime or session loss fails the provider;
+sustained loss of active head tracking disconnects the headset while leaving the
+runtime provider available.
 
 For externally supplied ``oxr_handles``, Isaac Teleop does not consume the
 external owner's event queue. The provider is available after setup and the
 headset remains ``UNKNOWN`` unless the owner supplies health through another
 integration.
+
+Native consumers must rebuild together: ``OpenXRSessionHandles`` includes optional
+shared lifecycle state. Externally supplied handles without this state keep
+caller-managed lifecycle behavior.

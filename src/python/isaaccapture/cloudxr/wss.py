@@ -15,13 +15,17 @@ import ssl
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from inspect import isawaitable
 from pathlib import Path
 
 from ..logging_config._core import DATE_FORMAT, LINE_FORMAT, logging_enabled
 from .env_config import get_env_config
 from .oob_teleop_env import (
     client_ui_fields_from_env,
+    control_token_is_generated,
     default_initial_stream_config,
+    redact_control_token,
+    resolve_control_token,
     wss_proxy_port,
 )
 from .oob_teleop_hub import OOB_WS_PATH
@@ -34,41 +38,17 @@ try:
     from websockets.http11 import Response
 except ImportError:
     sys.exit(
-        "Missing dependency: websockets >= 14\n"
-        "Install with: uv pip install --find-links=install/wheels 'isaaccapture[cloudxr]'"
+        "Missing dependency: websockets >= 17.3\n"
+        f"Install with: uv pip install --python {sys.executable} 'websockets>=17.3'"
     )
 
 
-def _patch_request_parser_for_cors():
-    """Allow HTTP OPTIONS through the websockets request parser.
-
-    ``websockets >= 14`` rejects non-GET methods in ``Request.parse`` before
-    ``process_request`` fires.  This wraps the parser so that OPTIONS requests
-    (CORS preflight) are surfaced as a normal ``Request`` — the existing
-    ``process_request`` hook in ``_make_http_handler`` already returns the
-    correct 200 + CORS-headers response for them.
-    """
-    from websockets.http11 import Request, parse_headers
-
-    _orig_parse = Request.parse.__func__
-
-    @classmethod
-    def _cors_aware_parse(cls, read_line):
-        """Monkey-patched ``Request.parse`` that maps OPTIONS requests to a synthetic CORS path."""
-        try:
-            return (yield from _orig_parse(cls, read_line))
-        except ValueError as exc:
-            if "got OPTIONS" not in str(exc):
-                raise
-            headers = yield from parse_headers(read_line)
-            return cls("/__cors_preflight__", headers)
-
-    Request.parse = _cors_aware_parse
-
-
-_patch_request_parser_for_cors()
-
 log = logging.getLogger("isaaccapture.cloudxr.wss")
+
+
+class _WssSessionFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_control_token(super().format(record))
 
 
 @dataclass(frozen=True)
@@ -230,6 +210,7 @@ def _is_oob_hub_http_path(path: str) -> bool:
     return path in (
         "/api/oob/v1/state",
         "/api/oob/v1/config",
+        "/api/oob/v1/connect",
     )
 
 
@@ -287,17 +268,23 @@ def _oob_token(request, q: dict[str, str]) -> str | None:
 
 
 def _json_response(status: int, phrase: str, body: dict) -> Response:
-    """Build a JSON :class:`Response` with CORS headers."""
+    """Build a JSON :class:`Response` for the OOB hub API (no CORS headers)."""
     return Response(
         status,
         phrase,
-        Headers({"Content-Type": "application/json", **CORS_HEADERS}),
+        Headers({"Content-Type": "application/json"}),
         json.dumps(body).encode(),
     )
 
 
-def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
-    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, cert page)."""
+def _make_http_handler(
+    backend_host, backend_port, hub=None, static_dir=None, connect_requested=None
+):
+    """Return the WSS HTTP request handler (OOB hub API, static ``/client/``, cert page).
+
+    *connect_requested* is the gate a service started with ``defer_oob_connect``
+    holds headset setup behind; ``/api/oob/v1/connect`` opens it.
+    """
 
     async def handle_http_request(connection, request):
         """Dispatch non-WebSocket HTTP: CORS preflight, OOB APIs, static client, or cert HTML."""
@@ -327,7 +314,7 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                 return Response(
                     200,
                     "OK",
-                    Headers({"Content-Type": "application/json", **CORS_HEADERS}),
+                    Headers({"Content-Type": "application/json"}),
                     json.dumps(snapshot).encode(),
                 )
 
@@ -353,11 +340,33 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
                 }.get(status, "Error")
                 return _json_response(status, phrase, body)
 
+            if path == "/api/oob/v1/connect":
+                if not hub.check_token(token):
+                    return _json_response(
+                        401, "Unauthorized", {"error": "Unauthorized"}
+                    )
+                # No gate: headset setup already began with the service.
+                if connect_requested is None:
+                    return _json_response(
+                        409,
+                        "Conflict",
+                        {"error": "headset setup is not deferred on this service"},
+                    )
+                already = connect_requested.is_set()
+                if not already:
+                    log.info("OOB headset setup released by /api/oob/v1/connect")
+                connect_requested.set()
+                return _json_response(
+                    200,
+                    "OK",
+                    {"connectRequested": True, "alreadyRequested": already},
+                )
+
         if hub is None and _is_oob_hub_http_path(path):
             return Response(
                 404,
                 "Not Found",
-                Headers({"Content-Type": "text/plain", **CORS_HEADERS}),
+                Headers({"Content-Type": "text/plain"}),
                 b"Not found",
             )
 
@@ -429,7 +438,12 @@ def _make_http_handler(backend_host, backend_port, hub=None, static_dir=None):
 
 
 def add_cors_headers(connection, request, response):
-    """``process_response`` hook: inject CORS headers into every WebSocket upgrade response."""
+    """``process_response`` hook: inject CORS headers into every response except hub API ones."""
+    # websockets runs this hook on process_request responses too. The hub API
+    # returns headset state, so it must not be readable cross-origin; the web
+    # client only needs CORS for the cert page and static files.
+    if _is_oob_hub_http_path(_normalize_request_path(request.path or "/")):
+        return
     response.headers.update(CORS_HEADERS)
 
 
@@ -559,6 +573,22 @@ def default_cert_paths() -> CertPaths:
     return cert_paths_from_dir(Path(get_env_config().openxr_run_dir()).parent / "certs")
 
 
+async def _wait_for_connect(
+    requested: asyncio.Event | None, stop_future: asyncio.Future
+) -> bool:
+    """Gate headset automation without holding shutdown behind application startup."""
+    if requested is not None and not stop_future.done():
+        waiter = asyncio.create_task(requested.wait())
+        try:
+            await asyncio.wait(
+                (waiter, stop_future), return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+    return not stop_future.done()
+
+
 async def run(
     log_file_path: str | Path | None,
     stop_future: asyncio.Future,
@@ -571,7 +601,8 @@ async def run(
     on_listening: Callable[[], None] | None = None,
     recovery_config=None,
     on_oob_status: Callable[[dict], object] | None = None,
-    on_oob_fatal: Callable[[Exception], None] | None = None,
+    on_oob_fatal: Callable[[Exception], object] | None = None,
+    connect_requested: asyncio.Event | None = None,
 ) -> None:
     """Start the WSS proxy server and run until *stop_future* is resolved.
 
@@ -590,8 +621,13 @@ async def run(
         _handler = logging.FileHandler(log_file_path, mode="a", encoding="utf-8")
     elif not logging_enabled():
         _handler = logging.StreamHandler(sys.stderr)
+    failure_log = log
     if _handler is not None:
-        _handler.setFormatter(logging.Formatter(LINE_FORMAT, datefmt=DATE_FORMAT))
+        _handler.setFormatter(_WssSessionFormatter(LINE_FORMAT, datefmt=DATE_FORMAT))
+        if log_file_path is not None:
+            failure_log = logging.getLogger(f"{__name__}.session_failure")
+            failure_log.setLevel(logging.ERROR)
+            failure_log.propagate = False
         # Tracked so the finally below can detach it from every logger it was
         # attached to, not just this module's: a logger still holding a closed
         # FileHandler reopens the file on its next record, and a second run()
@@ -604,15 +640,30 @@ async def run(
             logging.getLogger("isaaccapture.cloudxr.oob_teleop_hub"),
             logging.getLogger("isaaccapture.cloudxr.oob_teleop_lifecycle"),
         ]
+        if failure_log is not log:
+            _handler_loggers.append(failure_log)
         for _attached_log in _handler_loggers:
             if not logging_enabled():
                 _attached_log.setLevel(logging.INFO)
                 _attached_log.propagate = False
             _attached_log.addHandler(_handler)
 
+    async def report_fatal(error: Exception, circumstance: str) -> None:
+        if on_oob_fatal is None:
+            return
+        try:
+            reported = on_oob_fatal(error)
+            if isawaitable(reported):
+                await reported
+        except Exception:
+            log.exception("OOB fatal callback failed while reporting %s", circumstance)
+
+    was_listening = False
+    failure_logged = False
     try:
         resolved_port = wss_proxy_port() if proxy_port is None else proxy_port
 
+        # Wire DEBUG logs include headers and query strings containing tokens.
         logging.getLogger("websockets").setLevel(logging.WARNING)
         cert_paths = default_cert_paths()
 
@@ -623,7 +674,7 @@ async def run(
         if setup_oob:
             from .oob_teleop_hub import OOBControlHub  # noqa: PLC0415
 
-            control_token = os.environ.get("CONTROL_TOKEN") or None
+            control_token = resolve_control_token()
             initial = {
                 **default_initial_stream_config(resolved_port),
                 **client_ui_fields_from_env(),
@@ -631,18 +682,32 @@ async def run(
             hub = OOBControlHub(control_token=control_token, initial_config=initial)
             log.info(
                 "Teleop control hub enabled (token=%s) OOB_WS=%s initial_stream=%s",
-                "set" if control_token else "none",
+                "generated" if control_token_is_generated() else "set",
                 OOB_WS_PATH,
                 initial,
             )
 
-        def handler(ws):
-            """Route an incoming WebSocket to the OOB hub or the backend proxy."""
+        async def handler(ws) -> None:
+            """Route to the hub or proxy; WebSocket handlers do not return a value."""
             if hub is not None:
                 path = _normalize_request_path(ws.request.path or "/")
                 if path == OOB_WS_PATH:
-                    return hub.handle_connection(ws)
-            return proxy_handler(ws, backend_host, backend_port)
+                    await hub.handle_connection(ws)
+                    return
+            # An already-open headset page may reconnect before ADB automation.
+            ready = asyncio.create_task(
+                _wait_for_connect(connect_requested, stop_future)
+            )
+            closed = asyncio.create_task(ws.wait_closed())
+            try:
+                await asyncio.wait((ready, closed), return_when=asyncio.FIRST_COMPLETED)
+                # Disconnected clients must not forward queued offers when the gate opens.
+                if not closed.done() and ready.result():
+                    await proxy_handler(ws, backend_host, backend_port)
+            finally:
+                ready.cancel()
+                closed.cancel()
+                await asyncio.gather(ready, closed, return_exceptions=True)
 
         # /client/ on this WSS port for --host-client and --usb-local (same
         # files; USB-local reaches them via adb reverse of PROXY_PORT).
@@ -655,7 +720,11 @@ async def run(
             )
 
         http_handler = _make_http_handler(
-            backend_host, backend_port, hub=hub, static_dir=_host_client_static_dir
+            backend_host,
+            backend_port,
+            hub=hub,
+            static_dir=_host_client_static_dir,
+            connect_requested=connect_requested,
         )
 
         async with ws_serve(
@@ -682,7 +751,12 @@ async def run(
                 log.info("WSS proxy listening on port %d", resolved_port)
                 if on_listening is not None:
                     on_listening()
-                if setup_oob and not os.getenv("TELEOP_OOB_HUB_ONLY"):
+                was_listening = True
+                if (
+                    setup_oob
+                    and not os.getenv("TELEOP_OOB_HUB_ONLY")
+                    and await _wait_for_connect(connect_requested, stop_future)
+                ):
                     from .oob_teleop_env import resolve_oob_recovery_config
 
                     lifecycle = OobLifecycle(
@@ -693,6 +767,12 @@ async def run(
                         turn_port=usb_turn_port() if usb_local else None,
                         config=recovery_config or resolve_oob_recovery_config(),
                         on_status=on_oob_status,
+                        usb_health_logs_dir=(
+                            Path(log_file_path).parent
+                            if log_file_path is not None
+                            else None
+                        ),
+                        web_client_static_dir=_host_client_static_dir,
                     )
                     lifecycle_task = asyncio.create_task(
                         lifecycle.run(), name="cloudxr-oob-lifecycle"
@@ -701,20 +781,31 @@ async def run(
                         (stop_future, lifecycle_task),
                         return_when=asyncio.FIRST_COMPLETED,
                     )
-                    if lifecycle_task in done:
+                    if lifecycle_task in done and stop_future not in done:
                         try:
                             await lifecycle_task
-                        except asyncio.CancelledError:
-                            raise
+                        except asyncio.CancelledError as exc:
+                            error = RuntimeError(
+                                "OOB lifecycle worker was cancelled unexpectedly"
+                            )
+                            failure_log.exception("OOB lifecycle worker failed")
+                            failure_logged = True
+                            await report_fatal(error, "lifecycle cancellation")
+                            raise error from exc
                         except Exception as exc:
-                            if on_oob_fatal is not None:
-                                try:
-                                    on_oob_fatal(exc)
-                                except Exception:
-                                    log.exception(
-                                        "OOB fatal callback failed while reporting lifecycle failure"
-                                    )
+                            # Keep the traceback in the per-session file, not the console.
+                            failure_log.exception("OOB lifecycle worker failed")
+                            failure_logged = True
+                            await report_fatal(exc, "lifecycle failure")
                             raise
+                        else:
+                            exc = RuntimeError(
+                                "OOB lifecycle worker exited unexpectedly"
+                            )
+                            failure_log.error("%s", exc)
+                            failure_logged = True
+                            await report_fatal(exc, "lifecycle exit")
+                            raise exc
                 else:
                     await stop_future
             finally:
@@ -727,11 +818,17 @@ async def run(
 
             log.info("Shutting down ...")
     except OSError as e:
+        if was_listening and not failure_logged:
+            failure_log.exception("WSS proxy failed after listening")
         if e.errno == errno.EADDRINUSE:
             raise RuntimeError(
                 f"WSS proxy port {resolved_port} is already in use. "
                 f"Set PROXY_PORT to a different port or stop the process using {resolved_port}."
             ) from e
+        raise
+    except Exception:
+        if was_listening and not failure_logged:
+            failure_log.exception("WSS proxy failed after listening")
         raise
     finally:
         for _attached_log in _handler_loggers:

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Helpers for exposing fixed-size FlatBuffers struct arrays to Python as NumPy views.
+// Helpers for exposing FlatBuffers struct arrays and vectors to Python as NumPy views.
 //
 // A FlatBuffers struct array is interleaved (array of structs), so a field is exposed as a
 // strided view rather than a packed buffer; NumPy and DLPack both carry strides natively,
@@ -27,6 +27,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace py = pybind11;
 
@@ -113,6 +114,39 @@ inline py::array_t<T> strided_field_view(
         return py::array_t<T>({ count, width }, { stride, static_cast<py::ssize_t>(sizeof(T)) }, first, owner);
     }
     return py::array_t<T>({ count }, { stride }, first, owner);
+}
+
+// (count, Width) view over a FlatBuffers vector of structs that are exactly Width packed T
+// (Point as 3 floats, say). FlatBuffers omits an empty vector, so absent reads as (0, Width).
+template <typename T, py::ssize_t Width, typename StructT>
+inline py::array_t<T> struct_vector_view(py::object owner, const ::flatbuffers::Vector<const StructT*>* values)
+{
+    static_assert(sizeof(StructT) == sizeof(T) * Width, "struct must be exactly Width packed elements");
+    if (values == nullptr || values->size() == 0)
+    {
+        return py::array_t<T>(std::vector<py::ssize_t>{ 0, Width });
+    }
+    return strided_field_view<T>(owner, reinterpret_cast<const T*>(values->Data()),
+                                 static_cast<py::ssize_t>(sizeof(StructT)), values->size(), Width);
+}
+
+// Rows of a (count, Width) array as structs that are exactly Width packed T, for a table
+// constructor. Raises ValueError naming `field` on any other shape.
+template <typename StructT, typename T, py::ssize_t Width>
+inline std::vector<StructT> structs_from_rows(const py::array_t<T, py::array::c_style | py::array::forcecast>& rows,
+                                              const char* field)
+{
+    static_assert(sizeof(StructT) == sizeof(T) * Width, "struct must be exactly Width packed elements");
+    if (rows.ndim() != 2 || rows.shape(1) != Width)
+    {
+        throw py::value_error(std::string(field) + ": expected an (N, " + std::to_string(Width) + ") array");
+    }
+    std::vector<StructT> out(static_cast<size_t>(rows.shape(0)));
+    if (!out.empty())
+    {
+        std::memcpy(static_cast<void*>(out.data()), rows.data(), out.size() * sizeof(StructT));
+    }
+    return out;
 }
 
 } // namespace core

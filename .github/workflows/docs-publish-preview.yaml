@@ -1,0 +1,161 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Publish static artifacts for docs-changing PRs, including forks. Never run PR code here.
+# /preview-docs remains a maintainer-only retry, including for non-docs changes.
+name: Publish docs PR preview
+
+on:
+  workflow_run:
+    workflows: ["Build docs and deploy production"]
+    types: [completed]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  preview:
+    name: Deploy preview
+    if: >-
+      github.repository_id == '1092046207'
+      && ((github.event_name == 'workflow_run'
+           && github.event.workflow_run.event == 'pull_request'
+           && github.event.workflow_run.conclusion == 'success')
+          || (github.event_name == 'issue_comment'
+              && github.event.issue.pull_request != null
+              && (github.event.comment.body == '/preview-docs'
+                  || startsWith(github.event.comment.body, '/preview-docs '))))
+    runs-on: ubuntu-latest
+    concurrency:
+      group: docs-gh-pages
+      cancel-in-progress: false
+      queue: max
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout trusted publisher
+        uses: actions/checkout@v6
+        with:
+          # Both triggers resolve github.sha to the default branch, never the PR head.
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Select eligible PR and artifacts
+        id: preview
+        run: python3 .github/scripts/docs_preview.py
+
+      - name: Acknowledge manual retry
+        if: github.event_name == 'issue_comment' && steps.preview.outputs.publish == 'true'
+        env:
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: gh api --method POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content='eyes' > /dev/null
+
+      # Fork PR runs belong to the base repo; artifacts bridge separate runner filesystems.
+      - name: Download docs artifact
+        if: steps.preview.outputs.publish == 'true' && steps.preview.outputs.docs_id != ''
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ steps.preview.outputs.docs_id }}
+          path: ${{ runner.temp }}/docs-preview/docs
+          run-id: ${{ steps.preview.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download optional web client
+        if: steps.preview.outputs.publish == 'true' && steps.preview.outputs.webapp_id != ''
+        uses: actions/download-artifact@v7
+        with:
+          artifact-ids: ${{ steps.preview.outputs.webapp_id }}
+          path: ${{ runner.temp }}/docs-preview/webapp
+          run-id: ${{ steps.preview.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare static preview
+        if: steps.preview.outputs.publish == 'true'
+        env:
+          HAS_DOCS: ${{ steps.preview.outputs.docs_id != '' }}
+          HAS_WEBAPP: ${{ steps.preview.outputs.webapp_id != '' }}
+        run: |
+          set -euo pipefail
+          preview="$RUNNER_TEMP/docs-preview"
+          # Artifacts are untrusted data: reject links and Git metadata before copying.
+          if [[ -n "$(find "$preview" -type l -print -quit)" || -n "$(find "$preview" -iname .git -print -quit)" ]]; then
+            echo '::error::Preview artifacts contain links or Git metadata.'
+            exit 1
+          fi
+          if [[ "$HAS_DOCS" == 'true' ]]; then
+            test -f "$preview/docs/current/index.html"
+          fi
+          if [[ "$HAS_WEBAPP" == 'true' ]]; then
+            test -f "$preview/webapp/index.html"
+            mkdir -p "$preview/docs/current/client"
+            cp -r "$preview/webapp/." "$preview/docs/current/client/"
+          fi
+
+      - name: Recheck PR before publishing
+        if: steps.preview.outputs.publish == 'true'
+        id: current
+        env:
+          PR: ${{ steps.preview.outputs.number }}
+          HEAD_SHA: ${{ steps.preview.outputs.head_sha }}
+          HEAD_REPO_ID: ${{ steps.preview.outputs.head_repo_id }}
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/$REPO/pulls/$PR")
+          valid=$(jq --arg sha "$HEAD_SHA" --argjson repo "$HEAD_REPO_ID" \
+            '.state == "open" and .head.sha == $sha and .head.repo.id == $repo' <<< "$current")
+          echo "publish=$valid" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy preview to gh-pages
+        if: steps.current.outputs.publish == 'true'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ${{ runner.temp }}/docs-preview/docs/current
+          destination_dir: preview/pr-${{ steps.preview.outputs.number }}
+          keep_files: true
+
+      # Successful publication must be visible in the PR, not only the Actions summary.
+      - name: Post or update preview link
+        if: steps.current.outputs.publish == 'true'
+        env:
+          PR: ${{ steps.preview.outputs.number }}
+          HEAD_SHA: ${{ steps.preview.outputs.head_sha }}
+          DOCS_ID: ${{ steps.preview.outputs.docs_id }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          set -euo pipefail
+          base="https://${REPO%%/*}.github.io/${REPO#*/}/preview/pr-$PR/"
+          if [[ -z "$DOCS_ID" ]]; then base="${base}client/"; fi
+          body="$(cat <<EOF
+          <!-- docs-preview -->
+          ✅ Preview deployed: $base
+
+          Built from commit $HEAD_SHA. It may take a minute for the updated preview to appear.
+          EOF
+          )"
+          # gh forbids combining --slurp with --jq; filter the pages separately.
+          comment_id=$(gh api --paginate --slurp "repos/$REPO/issues/$PR/comments" \
+            | jq -r '[.[][] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- docs-preview -->")))][0].id // empty')
+          if [[ -n "$comment_id" ]]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$comment_id" -f body="$body" > /dev/null
+          else
+            gh api --method POST "repos/$REPO/issues/$PR/comments" -f body="$body" > /dev/null
+          fi
+          if [[ -n "$COMMENT_ID" ]]; then
+            gh api --method POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content='+1' > /dev/null
+          fi
+          echo "$body" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report failed manual retry
+        if: failure() && github.event_name == 'issue_comment'
+        env:
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: gh api --method POST "repos/$REPO/issues/comments/$COMMENT_ID/reactions" -f content='-1' > /dev/null

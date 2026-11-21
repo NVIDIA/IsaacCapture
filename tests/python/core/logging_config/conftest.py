@@ -47,6 +47,12 @@ LINE_RE = re.compile(
     r"\[(?P<level>[A-Z]+ *)\] \[(?P<name>[^]]+)\] \[pid:(?P<pid>\d+)\] (?P<message>.*)$"
 )
 
+#: A C++ console line: ``LINE_FORMAT`` without the date, which only files keep.
+CPP_CONSOLE_LINE_RE = re.compile(
+    r"^\[(?P<time>\d{2}:\d{2}:\d{2})\.(?P<msecs>\d{3})\] "
+    r"\[(?P<level>[A-Z]+ *)\] \[(?P<name>[^]]+)\] \[pid:(?P<pid>\d+)\] (?P<message>.*)$"
+)
+
 _EMITTER = os.environ.get("LOG_BRIDGE_TEST_EMITTER", "")
 
 #: The standalone C++ emitter is built by tests/cpp/core/log_bridge and located

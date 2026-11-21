@@ -38,9 +38,36 @@ from ._schema import (
     # Pedals-related types.
     Generic3AxisPedalOutput,
     Generic3AxisPedalOutputRecord,
+    # Steering wheel types.
+    SteeringWheelOutput,
+    SteeringWheelOutputRecord,
+    # SpaceMouse types.
+    SpaceMouseOutput,
+    SpaceMouseOutputRecord,
+    # Gamepad types.
+    GamepadInputState,
+    GamepadSnapshot,
+    GamepadSnapshotRecord,
+    # Keyboard types (held keys plus ordered key events).
+    KeyAction,
+    KeyEvent,
+    KeyboardOutput,
+    KeyboardOutputRecord,
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
+    # Tactile types.
+    TactileDataArray,
+    TactileDataArrayRecord,
+    TactileMetadata,
+    HandSkeletonRef,
+    SegmentSource,
+    AlgorithmSource,
+    LBS,
+    # Tracker metadata, for producers of a tracker's metadata.
+    TRACKER_METADATA_MAX_SIZE,
+    TRACKER_METADATA_TENSOR_IDENTIFIER,
+    tracker_metadata_collection_id,
     # Joint-state types (generic joint-space devices: leader arms, exoskeletons, ...).
     JointState,
     JointStateOutput,
@@ -76,6 +103,26 @@ from ._schema import (
     BodyJoints,
     FullBodyPose,
     FullBodyPoseRecord,
+    # Shared SOMA types.
+    SomaHandSide,
+    # SOMA body joint-rotation types.
+    SomaBodyJoint,
+    SomaBodyJointRotation,
+    SomaBodyJointRotations,
+    SomaBodyJointRotationsRecord,
+    # SOMA evaluated body joint-pose types.
+    SomaBodyJointPose,
+    SomaBodyJointPoses,
+    SomaBodyJointPosesRecord,
+    # SOMA hand joint-rotation types.
+    SomaHandJoint,
+    SomaHandJointRotation,
+    SomaHandJointRotations,
+    SomaHandJointRotationsRecord,
+    # SOMA evaluated hand joint-pose types.
+    SomaHandJointPose,
+    SomaHandJointPoses,
+    SomaHandJointPosesRecord,
 )
 
 # Deprecated aliases, resolved lazily via __getattr__ so accessing them emits a
@@ -135,9 +182,36 @@ __all__ = [
     # Pedals types.
     "Generic3AxisPedalOutput",
     "Generic3AxisPedalOutputRecord",
+    # Steering wheel types.
+    "SteeringWheelOutput",
+    "SteeringWheelOutputRecord",
+    # SpaceMouse types.
+    "SpaceMouseOutput",
+    "SpaceMouseOutputRecord",
+    # Gamepad types.
+    "GamepadInputState",
+    "GamepadSnapshot",
+    "GamepadSnapshotRecord",
+    # Keyboard types (held keys plus ordered key events).
+    "KeyAction",
+    "KeyEvent",
+    "KeyboardOutput",
+    "KeyboardOutputRecord",
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",
+    # Tactile types.
+    "TactileDataArray",
+    "TactileDataArrayRecord",
+    "TactileMetadata",
+    "HandSkeletonRef",
+    "SegmentSource",
+    "AlgorithmSource",
+    "LBS",
+    # Tracker metadata.
+    "TRACKER_METADATA_MAX_SIZE",
+    "TRACKER_METADATA_TENSOR_IDENTIFIER",
+    "tracker_metadata_collection_id",
     # Joint-state types (generic joint-space devices).
     "JointState",
     "JointStateOutput",
@@ -173,4 +247,24 @@ __all__ = [
     "BodyJoints",
     "FullBodyPose",
     "FullBodyPoseRecord",
+    # Shared SOMA types.
+    "SomaHandSide",
+    # SOMA body joint-rotation types.
+    "SomaBodyJoint",
+    "SomaBodyJointRotation",
+    "SomaBodyJointRotations",
+    "SomaBodyJointRotationsRecord",
+    # SOMA evaluated body joint-pose types.
+    "SomaBodyJointPose",
+    "SomaBodyJointPoses",
+    "SomaBodyJointPosesRecord",
+    # SOMA hand joint-rotation types.
+    "SomaHandJoint",
+    "SomaHandJointRotation",
+    "SomaHandJointRotations",
+    "SomaHandJointRotationsRecord",
+    # SOMA evaluated hand joint-pose types.
+    "SomaHandJointPose",
+    "SomaHandJointPoses",
+    "SomaHandJointPosesRecord",
 ]

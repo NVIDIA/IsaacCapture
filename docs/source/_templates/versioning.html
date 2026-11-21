@@ -7,7 +7,7 @@
 <label class="version-switcher">
   <span class="version-switcher__label">Version</span>
   <select class="version-switcher__select" onchange="location = this.value;">
-    {%- for item in versions.branches %}
+    {%- for item in sort_doc_branches(versions.branches) %}
     <option value="{{ item.url }}" {% if item == current_version %}selected{% endif %}>{{ item.name }}</option>
     {%- endfor %}
     {%- for item in versions.tags|reverse %}

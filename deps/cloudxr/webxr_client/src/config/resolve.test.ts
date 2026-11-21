@@ -153,6 +153,12 @@ function sampleValid(key: string): string {
     'streamTestDurationSeconds',
     'reconnectMaxAttempts',
     'reconnectDelayMs',
+    'streamAttachTimeoutMs',
+    'warmupBeginTimeoutMs',
+    'warmupEndTimeoutMs',
+    'controlPanelDistance',
+    'controlPanelHeight',
+    'controlPanelAngleDegrees',
   ]);
   if (numeric.has(key)) return '1';
   const enums: Record<string, string> = {
@@ -173,6 +179,7 @@ function sampleValid(key: string): string {
     headless: 'true',
     streamTestMode: 'warn',
     reconnectEnabled: 'true',
+    controlPanelTrackHeadset: 'true',
   };
   return enums[key] ?? 'x';
 }

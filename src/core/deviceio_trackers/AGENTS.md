@@ -16,8 +16,9 @@ in **[`trackers.toml`](trackers.toml)** and generated at configure time by
 [`../codegen/generate_trackers.py`](../codegen/generate_trackers.py); the facade `.hpp`/`.cpp` land
 under `${CMAKE_BINARY_DIR}/generated/trackers/`, **not** in `cpp/`.
 
-- **Adding one is a manifest edit**, not a new source file: `name` and `table` are required, every
-  other key has a default in [`defaults.toml`](defaults.toml) — most derive from `name` through
+- **Adding one is a manifest edit**, not a new source file: `name` and `table` are required, the
+  optional `header` and `metadata` have no default, and every other key has one in
+  [`defaults.toml`](defaults.toml) — most derive from `name` through
   `%placeholder%` substitution, a few (`direction`, `record`, `max_flatbuffer_size`, …) are plain
   constants. Override a key only
   where the convention genuinely does not hold (`se3_tracker` sets `class`; `generic_3axis_pedal`
@@ -37,8 +38,10 @@ under `${CMAKE_BINARY_DIR}/generated/trackers/`, **not** in `cpp/`.
 
 **Still hand-written:** the `.fbs` schema and its `schema/python/*_bindings.h` pybind file (codegen
 starts at the tracker layer, not the schema layer); `head`, `hand`, `controller`, `full_body`,
-`message_channel`, and `HapticCommandReaderTracker` (multi-sample bucketing by
-`HapticCommand.endpoint` on one push-tensor collection).
+`message_channel`, `HapticCommandReaderTracker` (multi-sample bucketing by
+`HapticCommand.endpoint` on one push-tensor collection), and `keyboard` (in-process: the facade
+owns `KeyboardInputState` that host-side `KeyboardProvider`s feed, and the live impl uses no
+OpenXR extension; neither fits a generated shape).
 
 ## No OpenXR dependency
 

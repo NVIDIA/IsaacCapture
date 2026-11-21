@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Live visualization of Sharpa Avatar gloves through TeleopSession.
+"""Live visualization of Sharpa AvatarExo Gloves through TeleopSession.
 
 Starts CloudXR and ``avatar_hand_plugin`` unless you opt out. Pinch a fingertip
 toward the thumb to vibrate that finger. Does not import plugin C++ classes or
@@ -157,8 +157,6 @@ HAND_BONES = (
         HandJointIndex.WRIST,
         HandJointIndex.LITTLE_METACARPAL,
         HandJointIndex.LITTLE_PROXIMAL,
-        HandJointIndex.LITTLE_INTERMEDIATE,
-        HandJointIndex.LITTLE_DISTAL,
         HandJointIndex.LITTLE_TIP,
     )
 )
@@ -388,6 +386,21 @@ def _fmt_optional(group, *, kind: str, hand_input_index) -> str:
         return f"error:{type(exc).__name__}"
 
 
+def _print_health_changes(snapshot, previous: dict[str, tuple]) -> None:
+    for device in snapshot.devices:
+        if not device.id.startswith(f"{PLUGIN_ROOT_ID}/"):
+            continue
+        current = (device.status, device.reason, device.error)
+        if previous.get(device.id) == current:
+            continue
+        previous[device.id] = current
+        detail = f": {device.error}" if device.error else ""
+        print(
+            f"[HEALTH] {device.id}: {device.status.value} "
+            f"({device.reason.value}){detail}"
+        )
+
+
 def _build_haptic_pipeline(hands, mapping, sinks, hands_source_cls) -> None:
     from isaaccapture.haptic_devices.glove import haptic_glove_device
     from isaaccapture.retargeters.tactile_retargeters import (
@@ -490,6 +503,11 @@ def main() -> int:
         help="Terminal status rate. 0 silences prints.",
     )
     parser.add_argument(
+        "--print-health",
+        action="store_true",
+        help="Print Sharpa device health initially and whenever it changes.",
+    )
+    parser.add_argument(
         "--haptic",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -542,7 +560,7 @@ def main() -> int:
     search_paths = args.plugin_search_path or plugin_search_paths()
     if args.launch_plugin and not _plugin_installed(search_paths):
         _die(
-            "Sharpa Avatar plugin binary was not found under "
+            "Sharpa AE Glove plugin binary was not found under "
             f"{PLUGIN_ROOT_ID}/{PLUGIN_NAME}.\n"
             "  Build it with the top-level CMake workflow and "
             "-DBUILD_PLUGIN_SHARPA_AVATAR=ON.\n"
@@ -621,10 +639,11 @@ def main() -> int:
     print_period = (1.0 / args.print_hz) if args.print_hz > 0 else None
     next_print = time.monotonic()
     last_offline_hint = 0.0
+    previous_health: dict[str, tuple] = {}
     upright = not args.world_frame
 
     print("=" * 72)
-    print("Sharpa Avatar sample (TeleopSession + viser)")
+    print("Sharpa AE Glove sample (TeleopSession + viser)")
     print("  hands:   /hand/left, /hand/right")
     print(
         f"  raw:     {AVATAR_RAW_LEFT_COLLECTION_ID}, {AVATAR_RAW_RIGHT_COLLECTION_ID}"
@@ -644,13 +663,21 @@ def main() -> int:
         print(f"  viser:   http://{args.host}:{args.port}  (Ctrl+C to exit)")
     else:
         print("  viser:   off (--no-viz); terminal + haptic only. Ctrl+C to exit.")
+    print(f"  health:  {'changes' if args.print_health else 'off'}")
     print("=" * 72)
 
     with CloudXRLauncher.launch_context(args), TeleopSession(config) as session:
         if args.viz:
             _server, viz_left, viz_right = _start_viser(args)
         while True:
-            result = session.step()
+            try:
+                result = session.step()
+            except Exception:
+                if args.print_health:
+                    _print_health_changes(session.get_status(), previous_health)
+                raise
+            if args.print_health:
+                _print_health_changes(session.get_status(), previous_health)
             n_l = n_r = 0
             if viz_left is not None and viz_right is not None:
                 pts, mask, n_l = _hand_points(

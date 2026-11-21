@@ -167,6 +167,7 @@ def _run_synthetic(mjcf_path: str) -> int:
     cfg = SharpaHandRetargeterConfig(
         robot_asset_path=mjcf_path,
         hand_side="right",
+        input_convention="mano",
         max_iter=100,
         frequency=200.0,
     )

@@ -5,7 +5,7 @@
 
 Not a general scene-graph or viewer API. The scene backend sits behind
 :class:`RobotTwin`, and only :mod:`.scene` and :mod:`.frames` reach it; everything else
-is numpy and duck typing. Those two are the wheel's only compiled scene code and their
+uses numpy and duck typing, with the CUDA guide loaded only when rendering. The scene
 backend is Linux-only (its OpenGL context is EGL), so they resolve lazily -- this package
 still imports on a Windows Televiz build, and asking for :class:`SceneTwin` there raises.
 """

@@ -224,6 +224,7 @@ std::shared_ptr<core::HeadPoseT> make_head_sample(int frame)
     auto sample = std::make_shared<core::HeadPoseT>();
     sample->pose = std::make_shared<core::Pose>(core::Point(0.0f, kHeadHeightM, -0.10f - delta), identity_quaternion());
     sample->is_valid = true;
+    sample->is_tracked = true;
     return sample;
 }
 
@@ -300,7 +301,7 @@ void write_fixture(const std::filesystem::path& output_path, int frame_count)
         hand_channels.write(1, core::pack_record<core::HandPoseRecord>(make_hand_sample(false, frame).get(), timestamp));
         head_channels.write(0, core::pack_record<core::HeadPoseRecord>(make_head_sample(frame).get(), timestamp));
         pedal_channels.write(
-            0, core::pack_record<core::Generic3AxisPedalOutputRecord>(make_pedal_sample(frame).get(), timestamp));
+            1, core::pack_record<core::Generic3AxisPedalOutputRecord>(make_pedal_sample(frame).get(), timestamp));
         full_body_channels.write(
             0, core::pack_record<core::FullBodyPoseRecord>(make_full_body_sample(frame).get(), timestamp));
     }

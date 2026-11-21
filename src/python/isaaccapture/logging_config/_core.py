@@ -13,7 +13,7 @@ from pathlib import Path
 # Guard POSIX-only APIs because Windows builds import this module.
 _POSIX = os.name == "posix"
 
-ROOT_LOGGER_NAME = "isaaccapture"
+root_logger = logging.getLogger("isaaccapture")
 
 
 def logging_enabled() -> bool:
@@ -67,16 +67,14 @@ def _move_above_std(fd: int) -> int:
     return fd
 
 
-def resolve_level(level: int | str) -> int:
-    """Accept either a stdlib level int or one of the names in ``_LEVEL_NAMES``."""
-    if isinstance(level, str):
-        try:
-            return _LEVEL_NAMES[level.lower()]
-        except KeyError:
-            raise ValueError(
-                f"Unknown log level {level!r}; expected one of {sorted(_LEVEL_NAMES)}"
-            ) from None
-    return level
+def resolve_level(level: str) -> int:
+    """Map one of the names in ``_LEVEL_NAMES``, in any case, to its level."""
+    try:
+        return _LEVEL_NAMES[level.lower()]
+    except KeyError:
+        raise ValueError(
+            f"Unknown log level {level!r}; expected one of {sorted(_LEVEL_NAMES)}"
+        ) from None
 
 
 def env_console_level() -> int:

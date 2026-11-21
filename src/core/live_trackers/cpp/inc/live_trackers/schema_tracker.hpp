@@ -65,12 +65,13 @@ public:
      * @param out Receives the final sample of this tick when any were read; left
      *            untouched when the collection is present but produced nothing (the
      *            last-known sample is retained); emptied when the collection is absent.
+     * @param record False reads the samples without writing them to MCAP.
      * @throws std::runtime_error On critical OpenXR/tensor API failures propagated
      *         from SchemaTrackerBase.
      * @note Missing collection, temporary collection loss, and "no new sample"
      *       are treated as common non-fatal conditions and do not throw.
      */
-    void update(Serialized<DataTableT>& out)
+    void update(Serialized<DataTableT>& out, bool record = true)
     {
         samples_.clear();
         bool present = read_all_samples(samples_);
@@ -84,7 +85,7 @@ public:
             return;
         }
 
-        if (mcap_channels_)
+        if (mcap_channels_ && record)
         {
             Serialized<RecordT> last_record;
             for (const auto& sample : samples_)

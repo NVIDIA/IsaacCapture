@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import copy
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import threading
 import time
 from collections.abc import Callable
@@ -38,6 +38,7 @@ class StepRequest:
     graph_time: GraphTime | None
     execution_events: ExecutionEvents | None
     submitted_time_s: float
+    reset_requested: bool = False
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class RetargetFrame:
     started_time_s: float
     completed_time_s: float
     compute_duration_s: float
+    reset_generation: int = 0
 
 
 class AsyncRetargetWorkerError(RuntimeError):
@@ -152,6 +154,8 @@ class AsyncRetargetRunner:
         self._cond = threading.Condition()
         self._pending: StepRequest | None = None
         self._published: RetargetFrame | None = None
+        self._reset_generation = 0
+        self._acknowledged_reset_generation = 0
         self._dropped_submissions = 0
         self._last_submission_time_s: float | None = None
         self._submission_count = 0
@@ -277,6 +281,13 @@ class AsyncRetargetRunner:
             if self._pending is not None:
                 dropped = 1
                 self._dropped_submissions += 1
+                if self._pending.reset_requested or (
+                    self._pending.execution_events is not None
+                    and self._pending.execution_events.reset
+                ):
+                    # Reset is an idempotent edge, not replaceable latest state.
+                    # Do not override the new request's live control decoding.
+                    request = replace(request, reset_requested=True)
             self._pending = request
             self._record_submission_locked(request.submitted_time_s)
             self._cond.notify_all()
@@ -290,7 +301,31 @@ class AsyncRetargetRunner:
 
         with self._cond:
             self._raise_if_failed_locked()
-            return self._published
+            if self._published is None:
+                return None
+            context = snapshot_compute_context(self._published.context)
+            context.execution_events.reset = (
+                self._reset_generation > self._acknowledged_reset_generation
+            )
+            return replace(
+                self._published,
+                context=context,
+                reset_generation=self._reset_generation,
+            )
+
+    def acknowledge_reset(self, generation: int) -> None:
+        """Acknowledge delivered resets, without clearing a concurrently newer edge.
+
+        Latest state may replace completed outputs. Pending reset pulses collapse
+        to one idempotent reset, but remain visible until the application has
+        successfully copied the returned frame. Observers do not acknowledge it.
+        """
+        with self._cond:
+            if not 0 <= generation <= self._reset_generation:
+                raise ValueError("Unknown reset generation")
+            self._acknowledged_reset_generation = max(
+                self._acknowledged_reset_generation, generation
+            )
 
     def wait_for_frame(
         self,
@@ -355,6 +390,8 @@ class AsyncRetargetRunner:
 
             with self._cond:
                 self._record_compute_duration_locked(frame.compute_duration_s)
+                if frame.context.execution_events.reset:
+                    self._reset_generation += 1
                 self._published = frame
                 self._cond.notify_all()
 

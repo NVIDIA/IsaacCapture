@@ -9,6 +9,7 @@
 #include <schema/timestamp_generated.h>
 
 #include <XR_NVX1_tensor_data.h>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -89,6 +90,15 @@ public:
         DeviceDataTimestamp timestamp;
     };
 
+    //! Prefer producer time for age checks, falling back to runtime arrival time.
+    static bool timestamp_is_fresh(const DeviceDataTimestamp& timestamp,
+                                   int64_t monotonic_time_ns,
+                                   std::optional<std::chrono::nanoseconds> max_sample_age) noexcept;
+
+    static bool sample_is_fresh(const SampleResult& sample,
+                                int64_t monotonic_time_ns,
+                                std::optional<std::chrono::nanoseconds> max_sample_age) noexcept;
+
     /*!
      * @brief Read ALL pending samples from the tensor collection.
      *
@@ -115,6 +125,17 @@ public:
      */
     const SchemaTrackerConfig& config() const;
 
+protected:
+    //! Runtime identity of the discovered collection, distinct from its reusable list index.
+    std::optional<XrTensorCollectionIDNV> collection_instance_id() const
+    {
+        if (!m_target_collection)
+        {
+            return std::nullopt;
+        }
+        return m_target_collection->id;
+    }
+
 private:
     void initialize_tensor_data_functions();
     void create_tensor_list();
@@ -136,7 +157,12 @@ private:
     PFN_xrUpdateTensorListNV m_update_list_fn{ nullptr };
     PFN_xrDestroyTensorListNV m_destroy_list_fn{ nullptr };
 
-    std::optional<uint32_t> m_target_collection_index;
+    struct TargetCollection
+    {
+        uint32_t index;
+        XrTensorCollectionIDNV id;
+    };
+    std::optional<TargetCollection> m_target_collection;
     uint32_t m_sample_batch_stride{ 0 };
     uint32_t m_sample_size{ 0 };
 

@@ -10,7 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Layout
 
-All pytest and Catch2/CTest suites live under this tree:
+Pytest and Catch2/CTest suites generally live under this tree:
 
 ```text
 tests/
@@ -47,6 +47,11 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
   multiline layout.
 - Format changed Python tests before staging; if pre-commit rewrites a file,
   restage the result and rerun the full hook set.
+- Changes to OOB wake/recovery policy must run the full CloudXR test leaf;
+  USB health tests also cover preserved-browser recovery.
+- Use raw strings for regular-expression patterns passed to
+  ``pytest.raises(..., match=...)``; Ruff rejects escaped metacharacters in
+  ordinary strings.
 - CTest runs one `pytest` invocation per `test_*.py` with `WORKING_DIRECTORY`
   set to that leaf.
 - Use [`repo_paths.py`](python/repo_paths.py) for paths into `src/python/` or
@@ -54,6 +59,12 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
 - If CMake under `examples/` reads a file under `tests/`, guard it on the
   in-tree configure: standalone wheel builds use the example as `CMAKE_SOURCE_DIR`,
   not the repo root.
+- A stand-in child process must stay alive on its own (`python -m <builtin>`
+  exits at once), and `Popen()` can return while the child's
+  `/proc/<pid>/cmdline` still reads empty or the parent's argv: wait for the
+  child's own argv before any check, including one that expects no match,
+  which either stale value passes without testing anything
+  (`python/core/cloudxr/test_background.py` does both).
 
 ## Adding tests
 
@@ -63,8 +74,15 @@ Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
    as before (e.g. viz tests require `BUILD_VIZ`).
 4. Do **not** colocate new pytest/Catch2 trees under `src/` or `examples/`.
 
+- FlatBuffers generated `VT_*` constants are vtable offsets, not schema field
+  IDs. Compare them with `(field_id + 2) * 2`, as the existing schema tests do.
+
 ## Out of scope here
 
+- Vehicle teleop worker tests belong in `examples/vehicle_teleop/tests/`, alongside the example they exercise.
 - `src/core/codegen/test_*.py` — unittest, co-located with the generator.
-- `examples/oxr/python/test_*.py` — standalone scripts for CloudXR GPU CI.
+- `tests/python/xr_runtime/` — standalone scripts for CloudXR GPU CI, not pytest:
+  no `pyproject.toml` or CTest wiring. `scripts/run_tests_with_cloudxr.sh` lists
+  the ones CI runs.
 - ROS2 Docker integration helpers under `examples/teleop_ros2/.../integration_tests/`.
+- `scripts/sbom/tests/` — the SBOM collector's tests, run from its own uv project.

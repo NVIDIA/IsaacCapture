@@ -8,12 +8,14 @@ import contextlib
 import logging
 import os
 import sys
+import time
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from conftest import mock_service_deps
+from isaaccapture.cloudxr.background import AlreadyServingError
 from isaaccapture.cloudxr.launcher import (
     DEFAULT_DEVICE_PROFILE,
     CloudXRLauncher,
@@ -139,6 +141,32 @@ class TestAttach:
         mocks["from_args"].assert_not_called()
         mocks["popen"].assert_not_called()
 
+    @pytest.mark.parametrize(
+        "options", [{}, {"run_embedded": True}, {"setup_oob": True}]
+    )
+    def test_deferred_connect_requires_an_owned_oob_service(self, options):
+        with pytest.raises(ValueError, match="defer_oob_connect requires"):
+            CloudXRLauncher(defer_oob_connect=True, **options)
+
+    def test_deferred_connect_delegates_to_embedded_service(self):
+        with (
+            _live(False),
+            patch("isaaccapture.cloudxr.launcher.CloudXRService") as service,
+        ):
+            launcher = CloudXRLauncher(
+                run_embedded=True, setup_oob=True, defer_oob_connect=True
+            )
+            assert service.call_args.kwargs["defer_oob_connect"] is True
+            launcher.connect_headset()
+            service.return_value.connect_headset.assert_called_once_with()
+
+    def test_connect_cannot_control_a_borrowed_service(self, tmp_path):
+        install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
+        with _live():
+            launcher = CloudXRLauncher(install_dir=install)
+        with pytest.raises(RuntimeError, match="embedded"):
+            launcher.connect_headset()
+
     def test_stop_does_not_touch_a_borrowed_runtime(self, tmp_path):
         install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
         with _live():
@@ -163,6 +191,66 @@ class TestAttach:
         with _live():
             with pytest.raises(RuntimeError, match="environment file is missing"):
                 CloudXRLauncher(install_dir=str(tmp_path))
+
+    @pytest.mark.parametrize(
+        ("requested_oob", "requested_usb", "flags", "expected"),
+        [
+            (True, False, [], "running without OOB"),
+            (True, False, ["--setup-oob", "--usb-local"], "running USB-local OOB"),
+            (True, True, ["--setup-oob"], "running OOB without USB-local"),
+            (True, True, ["--setup-oob", "--usb-local"], None),
+            (True, False, ["--setup-oob"], None),
+        ],
+    )
+    def test_requested_oob_mode_matches_existing_runtime(
+        self, tmp_path, monkeypatch, requested_oob, requested_usb, flags, expected
+    ):
+        install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
+        monkeypatch.delenv("XR_RUNTIME_JSON", raising=False)
+        with (
+            _live(),
+            patch("isaaccapture.cloudxr.background.read_pid", return_value=42),
+            patch("isaaccapture.cloudxr.background.read_run_flags", return_value=flags),
+        ):
+            if expected:
+                with pytest.raises(RuntimeError, match=expected) as error:
+                    CloudXRLauncher(
+                        install_dir=install,
+                        setup_oob=requested_oob,
+                        usb_local=requested_usb,
+                    )
+                assert "service stop --cloudxr-install-dir" in str(error.value)
+                assert os.environ.get("XR_RUNTIME_JSON") != "/x/openxr.json"
+            else:
+                CloudXRLauncher(
+                    install_dir=install,
+                    setup_oob=requested_oob,
+                    usb_local=requested_usb,
+                )
+
+    def test_requested_oob_mode_fails_when_service_flags_are_unknown(self, tmp_path):
+        install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
+        with (
+            _live(),
+            patch("isaaccapture.cloudxr.background.read_pid", return_value=None),
+        ):
+            with pytest.raises(RuntimeError, match=r"Cannot verify.*OOB/USB mode"):
+                CloudXRLauncher(install_dir=install, setup_oob=True)
+
+    def test_startup_race_validates_winning_runtime_mode(self, tmp_path):
+        install = _env_file(tmp_path, XR_RUNTIME_JSON="/x/openxr.json")
+        with (
+            _live(False),
+            patch("isaaccapture.cloudxr.launcher.check_eula"),
+            patch(
+                "isaaccapture.cloudxr.background.start_and_wait",
+                side_effect=AlreadyServingError(),
+            ),
+            patch("isaaccapture.cloudxr.background.read_pid", return_value=42),
+            patch("isaaccapture.cloudxr.background.read_run_flags", return_value=[]),
+        ):
+            with pytest.raises(RuntimeError, match="running without OOB"):
+                CloudXRLauncher(install_dir=install, setup_oob=True)
 
 
 class TestDivergenceWarnings:
@@ -879,3 +967,97 @@ class TestEnvConfigLauncherDefaults:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_wait_for_oob_stage_rejects_stale_or_fatal_status():
+    launcher = object.__new__(CloudXRLauncher)
+    with (
+        patch.object(
+            launcher,
+            "oob_status",
+            side_effect=[
+                {"health": "degraded", "readinessStage": "transportReady"},
+                {
+                    "health": "active",
+                    "streamConfirmed": True,
+                    "readinessStage": "streamConfirmed",
+                    "updatedAt": time.time(),
+                    "lastMetricsAt": int(time.time() * 1000),
+                },
+            ],
+        ),
+        patch.object(launcher, "health_check") as health,
+        patch("isaaccapture.cloudxr.launcher.time.sleep"),
+    ):
+        status = launcher.wait_for_oob_stage(timeout_sec=1)
+    assert status["streamConfirmed"] is True
+    assert health.call_count == 2
+
+    with (
+        patch.object(
+            launcher,
+            "oob_status",
+            return_value={
+                "health": "fatal",
+                "reason": "OOB worker exited",
+            },
+        ),
+        patch.object(launcher, "health_check") as health,
+    ):
+        with pytest.raises(RuntimeError, match="OOB worker exited"):
+            launcher.wait_for_oob_stage(timeout_sec=1)
+        health.assert_not_called()
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf")])
+def test_wait_for_oob_stage_rejects_invalid_timeout(timeout):
+    launcher = object.__new__(CloudXRLauncher)
+    with pytest.raises(ValueError, match="positive and finite"):
+        launcher.wait_for_oob_stage(timeout_sec=timeout)
+
+
+def test_wait_for_oob_stage_times_out_with_last_stage():
+    launcher = object.__new__(CloudXRLauncher)
+    with (
+        patch.object(
+            launcher,
+            "oob_status",
+            return_value={
+                "health": "degraded",
+                "readinessStage": "clientLoaded",
+                "reason": "Waiting for stream",
+            },
+        ),
+        patch.object(launcher, "health_check"),
+    ):
+        with pytest.raises(TimeoutError, match="stage=clientLoaded"):
+            launcher.wait_for_oob_stage(timeout_sec=0.01)
+
+
+@pytest.mark.parametrize(
+    "status_age, metrics_age",
+    [(20, 20), (0, 10), (0, None)],
+)
+def test_wait_for_oob_stage_rejects_old_success_snapshot(status_age, metrics_age):
+    launcher = object.__new__(CloudXRLauncher)
+    with (
+        patch.object(
+            launcher,
+            "oob_status",
+            return_value={
+                "health": "active",
+                "readinessStage": "streamConfirmed",
+                "streamConfirmed": True,
+                "updatedAt": time.time() - status_age,
+                "lastMetricsAt": (
+                    int((time.time() - metrics_age) * 1000)
+                    if metrics_age is not None
+                    else None
+                ),
+                "reason": "Previous stream report",
+            },
+        ),
+        patch.object(launcher, "health_check"),
+    ):
+        with pytest.raises(TimeoutError, match="stage=streamConfirmed"):
+            launcher.wait_for_oob_stage(timeout_sec=0.01)

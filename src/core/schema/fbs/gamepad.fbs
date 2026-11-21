@@ -1,0 +1,55 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// Inputs every standard gamepad has, the same set as OpenXR's xbox_controller profile: a generic
+// controller split in two (see ControllerInputState). Face buttons are named by position, so they
+// mean the same on every pad: south is A on an Xbox pad, Cross on a PlayStation pad and B on a
+// Nintendo pad. Pad-specific extras (guide, paddles, touchpad) are left out so every source can
+// fill every field.
+struct GamepadInputState {
+    // Button states. `*_click` is OpenXR's input component name for a button's boolean state, as in
+    // ControllerInputState: true for as long as the button is held, not a press-and-release event.
+    south_click: bool;
+    east_click: bool;
+    west_click: bool;
+    north_click: bool;
+    view_click: bool;
+    menu_click: bool;
+    shoulder_left_click: bool;
+    shoulder_right_click: bool;
+    thumbstick_left_click: bool;
+    thumbstick_right_click: bool;
+    dpad_up_click: bool;
+    dpad_down_click: bool;
+    dpad_left_click: bool;
+    dpad_right_click: bool;
+
+    // Thumbsticks in [-1, 1] with right and up positive, as OpenXR's thumbstick x and y are.
+    thumbstick_left_x: float32;
+    thumbstick_left_y: float32;
+    thumbstick_right_x: float32;
+    thumbstick_right_y: float32;
+
+    // Triggers in [0, 1].
+    trigger_left_value: float32;
+    trigger_right_value: float32;
+}
+
+// A gamepad, pushed by the gamepad plugin in the layout above, whatever the pad's own numbering.
+table GamepadSnapshot {
+    // Absent while the plugin has no pad open, so a reader never keeps the last input of a pad that
+    // went away.
+    inputs: GamepadInputState (id: 0);
+}
+
+// MCAP recording wrapper for GamepadSnapshot.
+table GamepadSnapshotRecord {
+    data: GamepadSnapshot (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type GamepadSnapshotRecord;

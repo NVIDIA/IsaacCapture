@@ -4,8 +4,8 @@
 Ecosystem
 =========
 
-The Isaac Teleop ecosystem brings together the input devices, data services, and cloud
-platforms that work seamlessly with the unified teleoperation stack. Browse every entry and
+The Isaac Capture ecosystem brings together the input devices, data services, and cloud
+platforms used with the shared capture infrastructure. Browse every entry and
 follow the link straight to its landing page, integration guide, or acquisition channel.
 
 - **Devices** — Headsets, controllers, gloves, pedals, and master manipulators.
@@ -52,17 +52,17 @@ datasets.
 Cloud Infrastructure :device-count:`cloud`
 ------------------------------------------
 
-Cloud platforms available for running Isaac Teleop workloads.
+Cloud platforms available for running Isaac Capture workloads.
 
 .. device-matrix::
    :section: cloud
 
 .. rst-class:: eco-section
 
-Become Part of Isaac Teleop
----------------------------
+Become Part of Isaac Capture
+----------------------------
 
-Two ways in, both on `GitHub <https://github.com/NVIDIA/IsaacTeleop>`_: bring a device to the
+Two ways in, both on `GitHub <https://github.com/NVIDIA/IsaacCapture>`_: bring a device to the
 stack, or build on the stack itself.
 
 .. eco-block:: eco-paths
@@ -88,7 +88,7 @@ stack, or build on the stack itself.
 
       .. eco-block:: eco-path-action
 
-         :doc:`Quick Start </getting_started/quick_start>`
+         :doc:`Quick Start </teleop/quick_start>`
 
 .. eco-block:: eco-cta
 

@@ -39,6 +39,11 @@ static PluginInfo parse_plugin_yaml(const std::string& path)
                 info.args.push_back(arg_node.as<std::string>());
             }
         }
+        if (config["shutdown_timeout_seconds"])
+        {
+            info.shutdown_timeout_seconds = config["shutdown_timeout_seconds"].as<double>();
+            validate_plugin_shutdown_timeout(info.shutdown_timeout_seconds);
+        }
 
         // Parse devices list
         if (config["devices"] && config["devices"].IsSequence())
@@ -171,7 +176,7 @@ std::unique_ptr<Plugin> PluginManager::start(const std::string& plugin_name,
     const auto& info = it->second;
     std::vector<std::string> args = info.args;
     args.insert(args.end(), plugin_args.begin(), plugin_args.end());
-    return std::make_unique<Plugin>(info.command, info.working_dir, plugin_root_id, args);
+    return std::make_unique<Plugin>(info.command, info.working_dir, plugin_root_id, args, info.shutdown_timeout_seconds);
 }
 
 } // namespace core

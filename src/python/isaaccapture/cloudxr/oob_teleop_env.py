@@ -9,18 +9,51 @@ import logging
 import math
 import os
 import re
+import secrets
 import socket
 import subprocess
 import sys
+import threading
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.error import URLError
 from urllib.parse import urlencode, urljoin
 from urllib.request import Request, urlopen
 
+from ..logging_config._core import logging_enabled
 from .oob_teleop_hub import OOB_WS_PATH
 
 log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env")
+
+_generated_control_token: str | None = None
+_generated_control_token_lock = threading.Lock()
+
+
+def control_token_is_generated() -> bool:
+    """``True`` when ``CONTROL_TOKEN`` is unset and the hub uses a random token."""
+    return not os.environ.get("CONTROL_TOKEN")
+
+
+def resolve_control_token() -> str:
+    """Return the hub control token: ``CONTROL_TOKEN``, else a per-process random one.
+
+    The hub never runs unauthenticated. Every reader (hub, headset URL, banner)
+    must call this so they agree; it does not modify ``os.environ``.
+    """
+    global _generated_control_token
+    # An empty CONTROL_TOKEN counts as unset: it must never mean "no auth".
+    configured = os.environ.get("CONTROL_TOKEN")
+    if configured:
+        return configured
+    # The proxy runs on a thread, so the lazy generation is lock-guarded to
+    # keep the hub, headset URL and banner on the same token.
+    with _generated_control_token_lock:
+        if _generated_control_token is None:
+            _generated_control_token = secrets.token_urlsafe(32)
+        return _generated_control_token
+
+
+progress_log = logging.getLogger("isaaccapture.cloudxr.oob_teleop_env.oob-progress")
 
 WSS_PROXY_DEFAULT_PORT = 48322
 
@@ -33,24 +66,16 @@ WEB_CLIENT_BASE = "https://nvidia.github.io/IsaacCapture/client/"
 # Origin used when the installed version can't be resolved (dev trees, tests).
 FALLBACK_WEB_CLIENT_ORIGIN = urljoin(WEB_CLIENT_BASE, "main/")
 
-CLIENT_RECONNECT_DEFAULT_ENABLED = True
+# OOB's own retry (relaunching the tab) is unconditional. The browser's own in-component
+# reconnect loop is a separate, client-owned concern: OOB never sets reconnectEnabled in the
+# generated URL at all (enabling it is left to the client's own default or a URL param the
+# user types directly), so there is deliberately no default-enabled constant here either.
 CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS = 10
 CLIENT_RECONNECT_DEFAULT_DELAY_MS = 3000
 
 
 def client_reconnect_config_from_env() -> dict:
     """Return validated WebXR retry settings shared by the URL and host lifecycle."""
-
-    def boolean(name: str, default: bool) -> bool:
-        raw = os.environ.get(name)
-        if raw is None:
-            return default
-        value = raw.strip().lower()
-        if value in {"1", "true", "yes", "on"}:
-            return True
-        if value in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"{name} must be a boolean")
 
     def nonnegative_int(name: str, default: int) -> int:
         raw = os.environ.get(name)
@@ -63,9 +88,6 @@ def client_reconnect_config_from_env() -> dict:
         return value
 
     return {
-        "reconnectEnabled": boolean(
-            "TELEOP_CLIENT_RECONNECT_ENABLED", CLIENT_RECONNECT_DEFAULT_ENABLED
-        ),
         "reconnectMaxAttempts": nonnegative_int(
             "TELEOP_CLIENT_RECONNECT_MAX_ATTEMPTS",
             CLIENT_RECONNECT_DEFAULT_MAX_ATTEMPTS,
@@ -94,7 +116,6 @@ def resolve_oob_recovery_config():
     return RecoveryConfig(
         timeout_sec=positive("TELEOP_OOB_RECOVERY_TIMEOUT_SEC", 60.0),
         interval_sec=positive("TELEOP_OOB_RETRY_INTERVAL_SEC", 5.0),
-        client_reconnect_enabled=reconnect["reconnectEnabled"],
         client_reconnect_max_attempts=reconnect["reconnectMaxAttempts"],
         client_reconnect_delay_ms=reconnect["reconnectDelayMs"],
     )
@@ -337,10 +358,15 @@ def print_hosted_client_line(
     prefix: str = "web client:        ",
     file=None,
 ) -> None:
-    """Print ``prefix`` + *url* (cyan when *file* is a TTY)."""
+    """Print ``prefix`` + a credential-safe *url* (cyan when *file* is a TTY)."""
     out = sys.stdout if file is None else file
     use_color = bool(getattr(out, "isatty", lambda: False)())
-    left = f"{prefix}\033[36m{url}\033[0m" if use_color else f"{prefix}{url}"
+    display_url = redact_control_token(url)
+    left = (
+        f"{prefix}\033[36m{display_url}\033[0m"
+        if use_color
+        else f"{prefix}{display_url}"
+    )
     print(left, file=out)
 
 
@@ -411,8 +437,13 @@ def default_initial_stream_config(resolved_proxy_port: int) -> dict:
 def client_ui_fields_from_env() -> dict:
     """Optional WebXR client UI defaults merged into hub ``config`` and bookmarks.
 
-    Keys match query params the WebXR client reads on page load, including
-    codec, panel visibility, and bounded stream-reconnect policy.
+    Keys match query params the WebXR client reads on page load
+    (``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``,
+    ``immersiveMode``, ``referenceSpace``, ``replayPacing``,
+    ``showRecordingControls``, ``reconnectMaxAttempts``, ``reconnectDelayMs``,
+    ``streamAttachTimeoutMs``, ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs``).
+    Deliberately excludes ``reconnectEnabled`` - OOB never sets it; the client's
+    own reconnect loop is opt-in via a URL param the user supplies directly.
     """
     out: dict = {}
     out.update(client_reconnect_config_from_env())
@@ -424,7 +455,41 @@ def client_ui_fields_from_env() -> dict:
         out["panelHiddenAtStart"] = True
     elif ph in ("0", "false", "no", "off"):
         out["panelHiddenAtStart"] = False
+    # Passed through like codec; the client validates the value.
+    for env_name, key in (
+        ("TELEOP_CLIENT_IMMERSIVE_MODE", "immersiveMode"),
+        ("TELEOP_CLIENT_REFERENCE_SPACE", "referenceSpace"),
+        ("TELEOP_CLIENT_REPLAY_PACING", "replayPacing"),
+    ):
+        val = os.environ.get(env_name, "").strip()
+        if val:
+            out[key] = val
+    rc = os.environ.get("TELEOP_CLIENT_SHOW_RECORDING_CONTROLS", "").strip().lower()
+    if rc in ("1", "true", "yes", "on"):
+        out["showRecordingControls"] = True
+    elif rc in ("0", "false", "no", "off"):
+        out["showRecordingControls"] = False
+    # reconnectMaxAttempts/reconnectDelayMs are already set above by
+    # client_reconnect_config_from_env(), which validates them and raises on bad input - do not
+    # re-parse them here with this loop's silent-skip-on-ValueError semantics.
+    for env_name, key in (
+        ("TELEOP_CLIENT_STREAM_ATTACH_TIMEOUT_MS", "streamAttachTimeoutMs"),
+        ("TELEOP_CLIENT_WARMUP_BEGIN_TIMEOUT_MS", "warmupBeginTimeoutMs"),
+        ("TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS", "warmupEndTimeoutMs"),
+    ):
+        raw = os.environ.get(env_name, "").strip()
+        if not raw:
+            continue
+        try:
+            out[key] = int(raw)
+        except ValueError:
+            continue
     return out
+
+
+def oob_replay_recording_from_env() -> str:
+    """``TELEOP_OOB_RECORDING``: host path or ``latest``, or ``""`` when unset."""
+    return os.environ.get("TELEOP_OOB_RECORDING", "").strip()
 
 
 def teleop_client_route_from_env() -> str:
@@ -460,10 +525,13 @@ def build_headset_bookmark_url(
 
     Set *oob_enable* to ``False`` to omit ``oobEnable`` (and the control token,
     which only authenticates hub operations).  The remaining params —
-    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart`` — are plain form
-    overrides the client honours either way, so the headset still lands with
-    the right streaming target pre-filled.  Callers must not disable OOB while
-    the control hub is down: without a hub, ``/oob/v1/ws`` is proxied to the
+    ``serverIP``, ``port``, ``codec``, ``panelHiddenAtStart``, ``immersiveMode``,
+    ``referenceSpace``, ``replayPacing``, ``showRecordingControls``, ``reconnectEnabled``,
+    ``reconnectMaxAttempts``, ``reconnectDelayMs``, ``streamAttachTimeoutMs``,
+    ``warmupBeginTimeoutMs``, ``warmupEndTimeoutMs`` — are plain form overrides
+    the client honours either way, so the headset still lands with the right
+    streaming target pre-filled.  Callers must not disable OOB while the
+    control hub is down: without a hub, ``/oob/v1/ws`` is proxied to the
     CloudXR streaming backend rather than refused.
 
     A HashRouter fragment is appended at the end when ``TELEOP_CLIENT_ROUTE``
@@ -488,12 +556,27 @@ def build_headset_bookmark_url(
     v = cfg.get("panelHiddenAtStart")
     if isinstance(v, bool):
         params["panelHiddenAtStart"] = "true" if v else "false"
+    for key in ("immersiveMode", "referenceSpace", "replayPacing"):
+        v = cfg.get(key)
+        if v is not None and str(v).strip() != "":
+            params[key] = str(v).strip()
+    v = cfg.get("showRecordingControls")
+    if isinstance(v, bool):
+        params["showRecordingControls"] = "true" if v else "false"
     v = cfg.get("reconnectEnabled")
     if isinstance(v, bool):
         params["reconnectEnabled"] = "true" if v else "false"
-    for key in ("reconnectMaxAttempts", "reconnectDelayMs"):
+    for key in (
+        "reconnectMaxAttempts",
+        "reconnectDelayMs",
+        "streamAttachTimeoutMs",
+        "warmupBeginTimeoutMs",
+        "warmupEndTimeoutMs",
+    ):
         v = cfg.get(key)
-        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+        if isinstance(v, bool):
+            continue  # bool is an int subclass; exclude it from the numeric fields above.
+        if isinstance(v, int):
             params[key] = str(v)
     v = cfg.get("turnServer")
     if v is not None and str(v).strip() != "":
@@ -517,13 +600,17 @@ def build_headset_bookmark_url(
 
 
 def redact_control_token(text: str) -> str:
-    """Mask ``controlToken`` values in *text* for display or logging.
+    """Mask credential query values in display or log text.
 
-    Shared by every path that surfaces a bookmark URL — the startup banner,
-    the ``am start`` log line, and the standalone opener — so a token can
-    never reach a terminal or log file through one of them.
+    Shared by every path that surfaces a credential-bearing URL, including
+    the OOB WSS failure log and service status diagnostic.
     """
-    return re.sub(r"(controlToken=)[^&\s'\"]+", r"\1<REDACTED>", text)
+    return re.sub(
+        r"(?<![\w])((?:controlToken|turnCredential|token)=)[^&\s'\"#]+",
+        r"\1<REDACTED>",
+        text,
+        flags=re.IGNORECASE,
+    )
 
 
 def resolve_lan_host_for_oob() -> str:
@@ -538,17 +625,15 @@ def resolve_lan_host_for_oob() -> str:
     return h
 
 
-def oob_progress(stage: str, msg: str) -> None:
-    """One-line progress update for ``--setup-oob`` / ``--usb-local`` steps.
+def oob_progress(stage: str, msg: str, *, level: int = logging.INFO) -> None:
+    """Log OOB progress on its own filterable logger at the requested level.
 
-    Goes to stderr in dim cyan so the operator can see *where* the launcher
-    is in its sequence of steps without these lines competing with the
-    success banner (stdout) or error prints (red).
-
-    This stays a print so progress remains visible when the console log level
-    is set to warning.
+    With logging off, retain operator messages on stderr but omit DEBUG detail.
     """
-    print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
+    if logging_enabled():
+        progress_log.log(level, "[%s] %s", stage, msg)
+    elif level >= logging.INFO:
+        print(f"\033[36m[{stage}]\033[0m {msg}", file=sys.stderr, flush=True)
 
 
 def print_oob_hub_startup_banner(
@@ -572,7 +657,7 @@ def print_oob_hub_startup_banner(
     port = wss_proxy_port()
     backend_port = usb_backend_port()
     turn_port = usb_turn_port()
-    token = os.environ.get("CONTROL_TOKEN") or None
+    token = resolve_control_token()
 
     if not lan_host:
         lan_host = resolve_lan_host_for_oob() if not usb_local else "127.0.0.1"
@@ -611,9 +696,8 @@ def print_oob_hub_startup_banner(
         control_token=None,
     )
     if token:
-        bookmark_display = redact_control_token(
-            f"{bookmark_display}&controlToken={token}"
-        )
+        bookmark_display = f"{bookmark_display}&controlToken={token}"
+    bookmark_display = redact_control_token(bookmark_display)
     wss_primary = f"wss://{primary_host}:{port}{OOB_WS_PATH}"
 
     bar = "=" * 72
@@ -704,11 +788,10 @@ def print_oob_hub_startup_banner(
     )
     print(f"  State:  {primary_base}/api/oob/v1/state")
     print(f"  Config: {primary_base}/api/oob/v1/config?{cfg_q}")
-    if token:
-        print()
-        print(
-            "  CONTROL_TOKEN is set: add ?token=... or header X-Control-Token on OOB HTTP requests."
-        )
+    print()
+    print("  Add header X-Control-Token (or ?token=...) on OOB HTTP requests.")
+    if control_token_is_generated():
+        print(f"  CONTROL_TOKEN was not set; this session's token is: {token}")
     print(bar)
     print()
 
@@ -792,7 +875,9 @@ def ss_listeners_on_port(port: int) -> list[str]:
     return out
 
 
-def print_host_preflight_warnings(*, usb_local: bool) -> None:
+def print_host_preflight_warnings(
+    *, usb_local: bool, emit_console: bool = True
+) -> None:
     """Best-effort host preflight (port conflicts + ufw).
 
     In ``--usb-local`` mode this is fail-fast: a port conflict on any of
@@ -805,6 +890,8 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
     ufw findings are always warn-only (best-effort: ``status`` parsing
     can yield false positives on permissive rulesets), and ufw is only
     checked in WiFi mode (USB-local is loopback, not firewalled).
+    Shared service callers use ``emit_console=False`` to avoid duplicating
+    logger warnings in embedded operator terminals.
 
     The WSS proxy binds the wildcard address (``host=""`` in
     :mod:`websockets`, i.e. ``0.0.0.0``), but we probe via loopback
@@ -835,19 +922,21 @@ def print_host_preflight_warnings(*, usb_local: bool) -> None:
                 "then retry."
             )
         log.warning("preflight: port(s) already in use: %s", busy)
-        print(
-            f"\n\033[33m[preflight] port(s) {busy} already in use; kill the "
-            f"holder (`ss -tulpn | grep -E '{ports_re}'`) or override via "
-            "PROXY_PORT.\033[0m\n"
-        )
+        if emit_console:
+            print(
+                f"\n\033[33m[preflight] port(s) {busy} already in use; kill the "
+                f"holder (`ss -tulpn | grep -E '{ports_re}'`) or override via "
+                "PROXY_PORT.\033[0m\n"
+            )
     # ufw is only meaningful in WiFi mode (USB-local is loopback, not firewalled).
     if not usb_local:
         unallowed = _ufw_unallowed_ports([wss_proxy_port()])
         if unallowed:
             cmd = "; ".join(f"sudo ufw allow {p}/tcp" for p in unallowed)
             log.warning("preflight: ufw blocks port(s) %s", unallowed)
-            print(
-                f"\n\033[33m[preflight] ufw is active and may block port(s) "
-                f"{unallowed} from reaching the headset. Allow with: {cmd}"
-                "\033[0m\n"
-            )
+            if emit_console:
+                print(
+                    f"\n\033[33m[preflight] ufw is active and may block port(s) "
+                    f"{unallowed} from reaching the headset. Allow with: {cmd}"
+                    "\033[0m\n"
+                )

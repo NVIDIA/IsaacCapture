@@ -9,7 +9,9 @@
 # Defaults match the ZED Mini's UVC HD720 side-by-side mode at
 # /dev/video0 (2560x720 YUYV @ 30fps; cv2 negotiates YUYV→BGR on CPU,
 # GPU then channel-swaps BGR→RGBA). For a regular UVC webcam, edit
-# device/width/height/fps per ``v4l2-ctl --list-formats-ext``.
+# device/width/height/fps per ``v4l2-ctl --list-formats-ext``. A camera
+# that lacks this mode fails to open ("requested 2560x720, got 640x480"),
+# so use the config that matches the camera: realsense.yaml for a RealSense.
 
 source: local                   # local | rtp
 streaming:

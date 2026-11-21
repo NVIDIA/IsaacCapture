@@ -23,7 +23,11 @@ file(GLOB_RECURSE ISAAC_TELEOP_PYTHON_SOURCES
     CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/isaaccapture/*.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/isaaccapture/*.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/isaaccapture/viz/robot/*.png"
 )
+
+# cts/ is the CTS tooling, run in place from the source tree and never shipped.
+list(FILTER ISAAC_TELEOP_PYTHON_SOURCES EXCLUDE REGEX "^isaaccapture/cts/")
 
 # viz/__init__.py does a top-level `from ._viz import ...`, so without _viz it is
 # unimportable -- and packages.find would enumerate it into a BUILD_VIZ=OFF wheel.

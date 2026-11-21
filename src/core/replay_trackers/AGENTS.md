@@ -13,7 +13,7 @@ Replay impls for trackers declared in
 [`../deviceio_trackers/trackers.toml`](../deviceio_trackers/trackers.toml) are emitted into
 `${CMAKE_BINARY_DIR}/generated/trackers/replay_trackers/`. Only the hand-written trackers
 (`head`, `hand`, `controller`, `full_body`, `message_channel`, `haptic_command_reader`,
-`TensorPushTracker`) have `.cpp` files in this directory.
+`TensorPushTracker`, `keyboard`) have `.cpp` files in this directory.
 
 - `replay_deviceio_factory.{hpp,cpp}` stays hand-written but `#include`s generated `.inc` fragments
   for the manifest trackers' forward decls, try-create thunks, dispatch rows, and factory methods.

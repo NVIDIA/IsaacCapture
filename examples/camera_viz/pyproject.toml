@@ -7,8 +7,14 @@
 # ``camera_viz.sh setup``; pass ``setup --wheel <path>`` to use a locally
 # built wheel instead.
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "camera-viz"
+# The dist name mirrors the import path, so an installed example claims no bare
+# top-level name in site-packages.
+name = "isaaccapture-examples-camera-viz"
 version = "0.0.0"
 description = "Televiz camera-feed visualizer"
 requires-python = ">=3.11,<3.14"
@@ -25,10 +31,11 @@ dependencies = [
 # Vendor-SDK deps are optional. ``./camera_viz.sh setup`` installs all
 # extras by default; pass ``--no-<extra>`` to skip.
 [project.optional-dependencies]
-v4l2 = ["opencv-python>=4.5"]
+# OpenCV 5.0 wheels on aarch64 omit V4L2; keep camera installs on 4.x.
+v4l2 = ["opencv-python>=4.5,<5"]
 # type: video (file replay) decodes via OpenCV's FFmpeg backend — same
 # wheel as v4l2, listed separately so --no-v4l2 setups can still ask for it.
-video = ["opencv-python>=4.5"]
+video = ["opencv-python>=4.5,<5"]
 oakd = ["depthai>=3.0"]
 # pyzed isn't on PyPI — the ZED SDK's bundled ``get_python_api.py``
 # produces a Python-version-specific wheel. ``camera_viz.sh setup --with-zed``
@@ -38,13 +45,33 @@ rtp = [
     # setup script apt-installs them and uses --system-site-packages),
     # not pip — PyGObject from PyPI requires a source-build with cairo
     # + girepository dev headers. pybind11 stays in the venv as a build-
-    # time dep for the codec at ./codec/.
+    # time dep for the native codec.
     "pybind11>=2.11",
 ]
+# The viewer imports isaaccapture and Pillow; the sender must run without
+# isaaccapture, so they are not base dependencies.
+viewer = ["isaaccapture[cloudxr]", "pillow>=10.0"]
 
-# Native NVENC/NVDEC codec lives in ./codec/. Build with
-# ``codec/build.sh``; ``./camera_viz.sh setup`` does this automatically.
+# Native NVENC/NVDEC codec lives in ./python/isaaccapture_examples/camera_viz/codec/.
+# Build with its build.sh; ``./camera_viz.sh setup`` does this automatically.
 # Requires CUDA toolkit + NVIDIA driver (libnvidia-encode + libnvcuvid).
+
+# `only-include` + `sources`, not `packages`, and no __init__.py above
+# camera_viz -- see the packaging rules in examples/README.md.
+#
+# The native codec's .so is built in place by codec/build.sh, so it is picked up
+# from the source tree rather than shipped by this build. Hatchling reads only
+# this directory's .gitignore, so the codec build tree is excluded here.
+[tool.hatch.build]
+only-include = ["python/isaaccapture_examples/camera_viz"]
+exclude = [
+    "/python/isaaccapture_examples/camera_viz/codec/build",
+    "/python/isaaccapture_examples/camera_viz/argus/build",
+    "*.so",
+]
+
+[tool.hatch.build.targets.wheel]
+sources = ["python"]
 
 [tool.uv]
 python-preference = "only-managed"

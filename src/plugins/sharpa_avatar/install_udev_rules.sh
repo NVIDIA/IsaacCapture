@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Install the Sharpa Avatar glove udev rules on the host.
+# Install the Sharpa AvatarExo Glove udev rules on the host.
 
 set -euo pipefail
 
@@ -22,7 +22,7 @@ require_command() {
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "Usage: $0"
-  echo "Installs and reloads the Sharpa Avatar glove udev rules on the host."
+  echo "Installs and reloads the Sharpa AvatarExo Glove udev rules on the host."
   exit 0
 fi
 [[ $# -eq 0 ]] || die "Unknown argument: $1"
@@ -45,7 +45,7 @@ if [[ "$EUID" -ne 0 ]]; then
   sudo_cmd=(sudo)
 fi
 
-echo "==> Installing Sharpa Avatar glove udev rules"
+echo "==> Installing Sharpa AvatarExo Glove udev rules"
 "${sudo_cmd[@]}" install -m 0644 "$rule_source" "$rule_destination"
 "${sudo_cmd[@]}" cmp -s "$rule_source" "$rule_destination" || die "Installed rules differ from $rule_source."
 

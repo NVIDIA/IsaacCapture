@@ -9,16 +9,26 @@ Rules that the docs tree cannot state for itself. Anything that describes how a 
 currently put together belongs next to it instead — in the `.rst`, in the YAML header, in
 the CSS — where it moves when the code moves.
 
+Keep small API-option updates to purpose, prerequisites, and usage; avoid
+example wrappers and lifecycle walkthroughs unless needed to use the option.
+
 ## Build the way CI does
 
 `make current-docs` wipes `build/current` and runs `sphinx-build -W --keep-going`, which
 is what CI runs, so a new warning fails the build. Check a docs change with that target
 rather than a bare `sphinx-build`.
 
+During a merge, `check-merge-conflict` can mistake seven-character RST heading
+underlines for conflict markers. Verify that no unmerged paths remain, finish
+the merge commit, then rerun all hooks; preserve valid headings.
+
 `make multi-docs` is the other half, and it constrains how extensions are written:
 sphinx-multiversion builds every whitelisted ref with `-c` pointing at the checkout that
 invoked it, so `app.confdir` is that checkout while `app.srcdir` is the ref being built.
 Resolve paths from one of those two, never from the working directory or the repo root.
+
+Keep badge versions explicit in `_VERSION_ICON_MAP` for supported release branches.
+The single CloudXR badge shows the major version, `6`.
 
 The config is therefore a site-wide input, not a per-version one: the deploy job takes
 `docs/` from `main` before building, or a release or tag push renders main's pages with an
@@ -30,7 +40,9 @@ Images follow `.gitattributes` like everything else, Git LFS included. A checkou
 LFS holds pointer text and Sphinx copies it into the site verbatim, so a page that looks
 right locally can still ship broken artwork. Commit artwork together with the page or data
 that references it. Stage new artwork with a plain `git add` before running pre-commit:
-`git add -N` bypasses the LFS filter, and `check-lfs-pointers` rejects the raw blob.
+`git add -N` bypasses the LFS filter, and `check-lfs-pointers` rejects the raw blob. A clone
+whose hooks pre-commit installed has no LFS pre-push hook, so GitHub declines a push that
+adds artwork; run `git lfs push origin <branch>` first.
 
 ## Device pages stand alone
 
@@ -62,7 +74,7 @@ for non-HTML builders.
 
 ## The external marker follows the target, not the record
 
-The docs site and the IsaacTeleop repository are both this project, so a link into either
+The docs site and the IsaacCapture repository are both this project, so a link into either
 renders with no arrow and no screen-reader "(external)" — tracking links included. Only
 third-party domains get the marker, and other GitHub organizations (`isaac-sim`) count as
 third-party. `ecosystem_grid.PROJECT_REPO` is the one place that boundary is written down.
@@ -93,7 +105,43 @@ device page documents it, links belong in the Details panel, and the sentence it
 dropped. The build keeps `company` that narrow by rejecting every field but `name`, `logo`,
 and `logo_dark`.
 
+## Conformance pages name no device maker
+
+`source/conformance/` and its media are vendor-neutral: no glove, suit or tracker company
+or product appears in prose, cards, commands, take names or plugin names, because a named
+example reads as an endorsement. Use a fictional device (Glove X with `glove_x_plugin`,
+Suit X with `body.suit-x`) and say it is a placeholder. Headsets (PICO, Quest) are the
+exception: every take runs on one.
+
 ## Removing cache overrides
 
 Keep cache-removal documentation focused on migration impact. Omit asset-fetch
 implementation walkthroughs and alternative override instructions.
+
+## RST restructuring
+
+When moving a guide, keep its setup content until any deferred replacement pages
+exist. Preserve old URLs with compatibility pages and retain explicit labels in
+the destination. Recompute RST heading underlines when renaming their text.
+Device metadata containing docnames must come from `app.srcdir` so a multiversion
+build uses paths that exist in that ref, even when `conf.py` comes from the deploy
+checkout.
+
+Reuse the README architecture image in the RST overview so both entry points
+share one maintained diagram.
+
+Group vendor device guides under category toctrees in the Devices navigation;
+folder placement alone does not create sidebar nesting.
+
+The sidebar's top layer is a root toctree `:caption:` in `index.rst`; pages and
+their own toctrees nest below it. When a request names a sidebar layer, change
+that layer: do not add a landing page where a caption was asked for.
+
+## Synthetic XR preview narrative
+
+Lead with the automated robot task and show where human and generated input
+join the same native path. Keep the phase-one guide to one main page; defer
+manual controller and recording walkthroughs rather than adding reference pages.
+
+Keep input-reuse explanations under “Bring your own task logic” brief. Put
+adapter contracts in the source example, retaining stacking as the main tutorial.

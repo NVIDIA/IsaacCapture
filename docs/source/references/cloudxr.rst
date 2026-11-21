@@ -66,7 +66,7 @@ You should see output similar to:
 
    ``python -m isaaccapture.cloudxr`` still works and is equivalent to
    ``python -m isaaccapture.cloudxr.service run``. It warns on startup and is
-   removed in Isaac Teleop 1.7.
+   removed in Isaac Capture 1.7.
 
 Take note of the ``source ~/.cloudxr/run/cloudxr.env`` path in the output. You
 will need it in :ref:`load-cloudxr-environment-variables`.
@@ -135,6 +135,36 @@ control how the headset connects and how the web client is delivered.
 prints a banner as it comes up, so ``run`` is often the more useful command
 while setting those modes up for the first time.
 
+USB-local startup checks
+------------------------
+
+On a clean ``--usb-local`` start, the service records the selected headset's
+negotiated USB speed, hub and controller path, and evidence of faster USB
+root hubs on the same controller. After its existing adb reverse rules are
+ready, it measures three seconds of host-to-headset transfer using the
+already served ``/client/bundle.js`` over HTTPS. This finishes before the
+browser is opened. The selected headset must first report
+``mWakefulness=Awake``; if that cannot be confirmed, no transfer or browser
+launch occurs and the JSON report records the incomplete check. If the headset
+lacks a usable curl or timer, the service uses a three-second ADB-only transfer
+and labels the narrower coverage in the result.
+
+One JSON report is saved under ``<CloudXR install dir>/logs/usb-health/`` for
+each USB-local start. It begins before ADB selection, records partial results
+when device preparation or a check fails, and refreshes link topology after
+a preserved browser reconnect without repeating the active transfer. It
+uses a hashed device serial, and keeps at most 20 reports or 14 days of
+history. A link below 5000 Mb/s or an incomplete transfer is logged as a
+warning and startup continues. ``hostToHeadsetMbps`` is the completed bytes
+divided by the full three-second wall-clock interval. Each curl request opens
+a new connection, so this includes request and TLS setup. The optional
+``hostToHeadsetResponseBodyMbps`` instead divides those same completed bytes
+by the sum of curl's ``time_total - time_starttransfer`` intervals. It excludes
+setup and gaps between requests; it is a response-body estimate, not sustained
+goodput or USB line rate. Neither metric measures headset-to-host traffic or
+CloudXR stream throughput. A faster root hub is a topology clue, not proof
+that an accessible physical port is free.
+
 Re-open the client on the headset
 ---------------------------------
 
@@ -183,13 +213,15 @@ for themselves and need no sourcing.
 Run teleop examples against the service
 ---------------------------------------
 
-Nothing to pass. The examples under ``examples/teleop/python/`` attach to
-whatever runtime is serving, so with a service running they use it:
+Nothing to pass. The examples under ``examples/teleop`` attach to
+whatever runtime is serving, so with a service running they use it. Install
+them once from the repository root, as in :ref:`run-teleop-example`:
 
 .. code-block:: bash
 
+   uv pip install -e ./examples/teleop
    python -m isaaccapture.cloudxr.service start --accept-eula
-   python examples/teleop/python/gripper_retargeting_example_simple.py
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple
 
 The example leaves the service running when it exits, so the headset stays
 connected and the next run reattaches to the same session.
@@ -204,10 +236,15 @@ related environment variables unchanged. Use this when another runtime is alread
 configured (for example Monado) or when a host singleton must not be duplicated
 (see ``examples/robot_viz/README.md`` and ``--no-launch-cloudxr-runtime`` there).
 
+``OpenXRSession`` refuses to start unless ``NV_CXR_RUNTIME_DIR`` and ``XR_RUNTIME_JSON``
+are both set; ``ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS`` skips that check for a runtime
+other than CloudXR:
+
 .. code-block:: bash
 
    export XR_RUNTIME_JSON=/path/to/your/openxr.json
-   python examples/teleop/python/gripper_retargeting_example_simple.py --no-launch-cloudxr-runtime
+   export ISAAC_TELEOP_DISABLE_CXR_ENV_CHECKS=1
+   python -m isaaccapture_examples.teleop.gripper_retargeting_example_simple --no-launch-cloudxr-runtime
 
 Run the service in a container or CI
 ------------------------------------
@@ -246,6 +283,19 @@ container that way.
 Setting ``CI`` skips the interactive pause described under `Configuration`_,
 alongside the check for a non-interactive stdin, so automated runs never wait.
 
+.. _cloudxr-deferred-oob-connect:
+
+Connect the OOB headset after application startup
+-------------------------------------------------
+
+Set ``defer_oob_connect=True`` on ``CloudXRService`` or ``CloudXRLauncher``
+to delay OOB automation and WebSocket signaling. Call ``connect_headset()``
+after the OpenXR session and renderer are ready.
+
+Requires ``setup_oob=True`` and a fixed ``NV_DEVICE_PROFILE`` (not ``auto*``).
+For ``CloudXRLauncher``, also set ``run_embedded=True``. The default ``False``
+keeps immediate connection.
+
 Configuration
 -------------
 
@@ -270,6 +320,14 @@ detached service flags from its command line and reports a mismatch when the
 running hosting differs. A foreground service leaves no recoverable flags, so
 that case stays quiet. Restart the service to change the hosting.
 
+A launcher requesting ``--setup-oob`` or ``--usb-local`` checks the mode of an
+already running detached service before attaching. A mismatch fails with a
+stop-and-restart instruction; the launcher cannot enable OOB or USB-local mode
+on a service that is already running. A foreground service has no recoverable
+launch flags, so a requested OOB/USB mode also fails until the service is
+restarted in a verifiable mode. Plain attaches without a requested OOB/USB
+mode continue to use the running service.
+
 .. code-block:: text
 
    ./custom.env is ignored: the CloudXR runtime already serving this host was started with its own configuration.
@@ -289,7 +347,7 @@ could be watching — a non-interactive stdin, or ``CI`` set — so container
 entrypoints and automated runs continue immediately rather than waiting.
 
 On Jetson Orin the service already selects the experimental runtime package
-and main-thread join. The following are Isaac Teleop launcher overrides only
+and main-thread join. The following are Isaac Capture launcher overrides only
 (not CloudXR native settings). Export them in the process environment, or add
 them to ``--cloudxr-env-config`` if you need them:
 
@@ -321,6 +379,31 @@ To inspect the active settings after startup:
 
 Troubleshooting
 ---------------
+
+.. _cloudxr-web-client-refresh:
+
+PICO 4 Ultra keeps failing when retrying a connection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+After a failed connection, the PICO browser can require a page refresh before
+another attempt works. Clicking **Connect** again without refreshing can keep
+failing.
+
+In the web client's **Troubleshooting** settings, **Auto Refresh on Session End**
+defaults to **Refresh on any session end (including errors)** for the **Pico 4
+Ultra** device profile. This reloads the page after a clean disconnect or a
+connection failure, once any automatic reconnect attempts have been exhausted.
+Other device profiles default to **Never refresh**. You can also choose
+**Refresh on clean session end** to reload only after a clean disconnect.
+Changing this setting switches the device profile to **Custom** and saves your
+choice; selecting a named device profile again restores that profile's defaults.
+Selecting **Custom** preserves the current settings.
+
+The last error message, including its hexadecimal error code when supplied by
+CloudXR, remains visible after automatic or manual refreshes in the same browser
+tab. It clears when a stream connects successfully. This requires browser session
+storage to be available. A restored error does not itself trigger another refresh;
+click **Connect** to retry from the refreshed page.
 
 .. _cloudxr-form-factor-unavailable:
 
