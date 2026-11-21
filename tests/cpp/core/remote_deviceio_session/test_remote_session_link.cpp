@@ -1024,6 +1024,181 @@ TEST_CASE("RemoteSessionClient: tcp:// on a WebSocket port is malformed data, no
     CHECK(text == "Remote session ended before HELLO_ACK: receive failed: malformed data");
 }
 
+namespace
+{
+
+//! A RemoteSessionHost and the client of `stream` on the two ends of a socket pair, after HELLO and HELLO_ACK. The
+//! host's transport records the SAMPLES it sends. The test thread runs both ends.
+struct HostOnSocketPair
+{
+    explicit HostOnSocketPair(const std::shared_ptr<core::TrackerSampleStreamReader>& stream)
+    {
+        int fds[2];
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) == 0);
+        auto holdable =
+            std::make_unique<HoldableTransport>(std::make_unique<core::TcpTransport>(core::TcpSocket(fds[1])));
+        link = holdable.get();
+        host = core::RemoteSessionHost::adopt(std::move(holdable));
+        std::jthread handshake(
+            [this]
+            {
+                try
+                {
+                    if (host->wait_hello(kWait))
+                    {
+                        host->send_hello_ack(kHelloAck);
+                    }
+                }
+                catch (const std::exception&)
+                {
+                }
+            });
+        client = core::RemoteSessionClient::connect(
+            std::make_unique<core::TcpTransport>(core::TcpSocket(fds[0])), kHello, stream, kWait);
+    }
+
+    //! Waits until the newest SAMPLES sent is the one of tick `tick_seq`.
+    bool sent_up_to(uint64_t tick_seq) const
+    {
+        return wait_until(
+            [&]
+            {
+                const auto sent = link->samples_sent();
+                return !sent.empty() && sent.back() == tick_seq;
+            });
+    }
+
+    HoldableTransport* link = nullptr;
+    std::unique_ptr<core::RemoteSessionHost> host;
+    std::unique_ptr<core::RemoteSessionClient> client;
+};
+
+} // namespace
+
+TEST_CASE("RemoteSessionHost: stop_session ends the trackers, keeps the link, and start_session streams again",
+          "[remote][session][network]")
+{
+    Robot robot;
+    HostOnSocketPair pair(robot.stream);
+    core::RemoteSessionHost& host = *pair.host;
+    auto keyboard = std::make_shared<core::KeyboardTracker>();
+    const auto provider = keyboard->create_provider();
+    provider->key_down(KEY_W);
+    const auto start = [&]
+    { host.start_session({ keyboard }, { { keyboard.get(), "0" } }, placeholder_handles(), {}, robot.topics()); };
+    uint64_t ticks = 0;
+    // Ticks until the robot reads `keys` from fresh samples.
+    const auto robot_reads = [&](const std::vector<uint16_t>& keys)
+    {
+        return wait_until(
+            [&]
+            {
+                host.tick();
+                ++ticks;
+                robot.session->update();
+                return robot.session->is_fresh() && held_keys(*robot.keyboards[0], *robot.session) == keys;
+            });
+    };
+
+    start();
+    REQUIRE(robot_reads({ KEY_W }));
+    REQUIRE(pair.sent_up_to(ticks));
+    const std::vector<uint64_t> sent = pair.link->samples_sent();
+
+    host.stop_session();
+    CHECK_THROWS_AS(host.tick(), std::logic_error);
+    // Without new SAMPLES the stream goes stale, and the keyboard reports no data.
+    REQUIRE(wait_until(
+        [&]
+        {
+            robot.session->update();
+            return !robot.session->is_fresh();
+        }));
+    CHECK_FALSE(held_keys(*robot.keyboards[0], *robot.session));
+    CHECK_FALSE(robot.session->tick_age_ns().has_value());
+    // The stop sent no SAMPLES: one would make the keyboard's last record fresh again.
+    CHECK(pair.link->samples_sent() == sent);
+    CHECK(host.alive());
+    CHECK(pair.client->alive());
+    CHECK_NOTHROW(pair.client->throw_if_failed());
+
+    provider->key_up(KEY_W);
+    provider->key_down(KEY_A);
+    start();
+    // The tick numbering goes on where it stopped.
+    host.tick();
+    ++ticks;
+    REQUIRE(pair.sent_up_to(ticks));
+    CHECK(pair.link->samples_sent().size() == sent.size() + 1);
+    REQUIRE(robot_reads({ KEY_A }));
+    CHECK(robot.stream->dropped_messages() == 0);
+    CHECK(pair.client->alive());
+}
+
+TEST_CASE("RemoteSessionHost: stop_session does nothing without a session, twice, and after a failed start",
+          "[remote][session][network]")
+{
+    Robot robot;
+    HostOnSocketPair pair(robot.stream);
+    core::RemoteSessionHost& host = *pair.host;
+    auto keyboard = std::make_shared<core::KeyboardTracker>();
+    const auto provider = keyboard->create_provider();
+    provider->key_down(KEY_W);
+    const auto start = [&]
+    { host.start_session({ keyboard }, { { keyboard.get(), "0" } }, placeholder_handles(), {}, robot.topics()); };
+    uint64_t ticks = 0;
+    const auto robot_reads_w = [&]
+    {
+        return wait_until(
+            [&]
+            {
+                host.tick();
+                ++ticks;
+                robot.session->update();
+                return robot.session->is_fresh() &&
+                       held_keys(*robot.keyboards[0], *robot.session) == std::vector<uint16_t>{ KEY_W };
+            });
+    };
+
+    std::vector<uint64_t> sent;
+    SECTION("without a session")
+    {
+        host.stop_session();
+        host.stop_session();
+    }
+    SECTION("twice")
+    {
+        start();
+        REQUIRE(robot_reads_w());
+        REQUIRE(pair.sent_up_to(ticks));
+        sent = pair.link->samples_sent();
+        host.stop_session();
+        host.stop_session();
+    }
+    SECTION("after a failed start")
+    {
+        // The null tracker is refused after the session opened its recording.
+        const std::vector<std::shared_ptr<core::ITracker>> trackers{ keyboard, nullptr };
+        CHECK_THROWS_AS(
+            host.start_session(trackers, { { keyboard.get(), "0" } }, placeholder_handles(), {}, robot.topics()),
+            std::invalid_argument);
+        CHECK_THROWS_AS(host.tick(), std::logic_error);
+        host.stop_session();
+        host.stop_session();
+    }
+    // Long enough for the link to send a SAMPLES, had a stop queued one.
+    std::this_thread::sleep_for(50ms);
+    CHECK(pair.link->samples_sent() == sent);
+    CHECK(host.alive());
+    CHECK(pair.client->alive());
+
+    start();
+    REQUIRE(robot_reads_w());
+    // No stop took a tick number.
+    CHECK(pair.sent_up_to(ticks));
+    CHECK(robot.stream->dropped_messages() == 0);
+}
+
 #if defined(XR_USE_TIMESPEC)
 
 namespace
@@ -1177,6 +1352,75 @@ TEST_CASE("RemoteSessionHost: a plugin tracker reads no data once its device goe
 
     server.stop();
     CHECK(server.error().empty());
+}
+
+TEST_CASE("RemoteSessionHost: stop_session reports a plugin tracker without data before it ends the session",
+          "[remote][session][network]")
+{
+    PluginTrackerCase c = GENERATE(0, 1) == 0 ? pedal_case() : noitom_case();
+    CAPTURE(c.collection);
+
+    // Declared first: the host's trackers call into the runtime until their session ends.
+    FakeTensorRuntime runtime;
+    auto stream = std::make_shared<core::TrackerSampleStreamReader>();
+    // A generous tick age limit: the robot reads the last SAMPLES of the stopped session however late it looks.
+    auto session = core::RemoteSession::run({ stream, { { c.robot_tracker.get(), "0" } }, 5'000'000'000 });
+    const std::vector<std::string> topics = stream->subscribed_topics();
+    HostOnSocketPair pair(stream);
+    core::RemoteSessionHost& host = *pair.host;
+    const std::vector<std::pair<const core::ITracker*, std::string>> names{ { c.server_tracker.get(), "0" } };
+    const auto start = [&] { host.start_session({ c.server_tracker }, names, runtime.handles(), c.vendors, topics); };
+    uint64_t ticks = 0;
+    // Updates the robot's session: whether it reads fresh samples in which the tracker has, or has no, data.
+    const auto robot_reads = [&](bool data)
+    {
+        session->update();
+        return session->is_fresh() && c.has_data(*c.robot_tracker, *session) == data;
+    };
+    // The same, with a tick before every update.
+    const auto ticks_until_robot_reads = [&](bool data)
+    {
+        return wait_until(
+            [&]
+            {
+                host.tick();
+                ++ticks;
+                return robot_reads(data);
+            });
+    };
+
+    start();
+    CHECK(ticks_until_robot_reads(false));
+    runtime.create(c.collection, c.sample_size);
+    runtime.push(c.collection, c.payload, core::os_monotonic_now_ns());
+    REQUIRE(ticks_until_robot_reads(true));
+    REQUIRE(pair.sent_up_to(ticks));
+    const size_t sent = pair.link->samples_sent().size();
+
+    // One last SAMPLES, numbered as the next tick, carries the record without data. Nothing ticks, so only that
+    // SAMPLES can change what the robot reads.
+    host.stop_session();
+    ++ticks;
+    REQUIRE(pair.sent_up_to(ticks));
+    CHECK(pair.link->samples_sent().size() == sent + 1);
+    REQUIRE(wait_until([&] { return robot_reads(false); }));
+    CHECK_THROWS_AS(host.tick(), std::logic_error);
+
+    // The plugin went away meanwhile, so the new session records nothing for the tracker.
+    runtime.destroy(c.collection);
+    const std::optional<int64_t> last_tick_time_ns = stream->newest_tick_time_ns();
+    start();
+    host.tick();
+    ++ticks;
+    REQUIRE(pair.sent_up_to(ticks));
+    REQUIRE(wait_until([&] { return stream->newest_tick_time_ns() != last_tick_time_ns; }));
+    CHECK(robot_reads(false));
+
+    runtime.create(c.collection, c.sample_size);
+    runtime.push(c.collection, c.payload, core::os_monotonic_now_ns());
+    CHECK(ticks_until_robot_reads(true));
+    CHECK(stream->dropped_messages() == 0);
+    CHECK(pair.client->alive());
 }
 
 #endif

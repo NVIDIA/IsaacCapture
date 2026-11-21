@@ -469,6 +469,7 @@ def test_command_line_defaults():
     assert args.ws_listen is None
     assert args.verbose is False
     assert args.placeholder_openxr is False
+    assert args.no_headset is False
     assert args.launch_cloudxr_runtime is True
     assert args.accept_eula is False
     assert args.host_client is True
@@ -480,6 +481,7 @@ def test_command_line_defaults():
         "--cloudxr-device-profile",
         "--cloudxr-env-config",
         "--no-host-client",
+        "--no-headset",
     ):
         assert option in help_text
     for option in ("--placeholder-openxr", "--launch-wss-proxy", "--plugin-dir"):

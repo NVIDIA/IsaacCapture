@@ -4,7 +4,8 @@
 """One robot app's connection to the Teleop Session Server: its HELLO, then its trackers.
 
 The server's loop steps a :class:`RobotConnection`. Its trackers read through the server's OpenXR
-session, which outlives the connection; READY goes out once the headset has stayed connected.
+session and are stopped before that session is closed; the connection is kept while no trackers
+run. READY goes out once the headset has stayed connected.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ from isaaccapture.teleop_session_manager._remote import (
     ROBOT_STATE_VERSION,
     has_metadata,
 )
+
+from ._common import Backoff
 
 logger = logging.getLogger("isaaccapture.teleop_session_server.session")
 
@@ -55,8 +58,9 @@ PLUGINS_ON_SERVER = (
 
 # Before the robot app's trackers run; it reads the headset entry from READY on.
 _NO_HEADSET = {"state": "", "headset_state": "", "reason": ""}
-# --placeholder-openxr has no OpenXR runtime, so no headset is ever tracked: what an OpenXR
-# session reports without head tracking, which the robot app shows as headset DISCONNECTED.
+# What an OpenXR session reports without head tracking, which the robot app shows as headset
+# DISCONNECTED. Sent with --placeholder-openxr, which has no OpenXR runtime, and from READY on
+# while no trackers run.
 UNTRACKED_HEADSET = {
     "state": "AVAILABLE",
     "headset_state": "DISCONNECTED",
@@ -138,6 +142,10 @@ def served_extensions() -> list[str]:
 
 class HelloError(ValueError):
     """The robot app's HELLO cannot be served; its text goes back to the robot app as ERROR."""
+
+
+class TrackerUpdateError(RuntimeError):
+    """A tick failed. The trackers are stopped and the connection is kept."""
 
 
 @dataclass
@@ -391,17 +399,29 @@ class RobotConnection:
         self._streaming = False
         self._ready = False
         self._connected_since: float | None = None
+        # The text of the trackers' last failure; None once they run.
+        self._trackers_error: str | None = None
+        # time.monotonic() before which the trackers are not started again.
+        self._retry_trackers_at = -math.inf
+        self._backoff = Backoff()
         self._last_status: tuple | None = None
         self._last_status_time = -math.inf
         # time.monotonic() at which step() next has work.
         self.next_step = time.monotonic()
         self.ended = False
 
-    def step(self, handles: Any, headset: Callable[[], tuple[dict, bool]]) -> None:
-        """Do what is due. ``handles`` are the OpenXR session's, None while it does not exist.
+    def step(
+        self,
+        handles: Any,
+        headset: Callable[[], tuple[dict, bool]],
+        waiting: str = WAITING_FOR_HEADSET,
+    ) -> None:
+        """Do what is due. ``handles`` are the OpenXR session's, None while it does not exist;
+        ``waiting`` is then the STATUS message.
 
-        ``headset()`` gives the STATUS headset entry and whether the headset is connected. What it
-        raises, and any unexpected failure, propagates to the server.
+        ``headset()`` gives the STATUS headset entry and whether the headset is connected. Raises
+        :class:`TrackerUpdateError` when a tick fails; any unexpected failure propagates to the
+        server too.
         """
         if self._request is None:
             self._wait_for_hello()
@@ -411,9 +431,31 @@ class RobotConnection:
             )
             self.ended = True
         elif not self._streaming:
-            self._start(handles)
+            self._start(handles, waiting)
         else:
             self._tick(headset)
+
+    def stop_trackers(self) -> None:
+        """Stop the trackers and keep the connection; a later step() starts them again.
+
+        The server calls it before it closes the OpenXR session the trackers read through.
+        Trackers that cannot be stopped end the connection, which stops them in close().
+        """
+        if self._streaming:
+            self._streaming = False
+            try:
+                self.host.stop_session()
+            except Exception as error:
+                logger.error(
+                    "Robot app at %s: the trackers could not be stopped",
+                    self.peer,
+                    exc_info=error,
+                )
+                self._send_error(_failure_text(error))
+        # READY needs a headset that stays connected on the next OpenXR session too.
+        self._connected_since = None
+        self._retry_trackers_at = -math.inf
+        self.next_step = time.monotonic()
 
     def fail(self, error: Exception) -> None:
         """Log an unexpected failure and send it as ERROR: the robot app retries a bare close."""
@@ -488,11 +530,12 @@ class RobotConnection:
                 "Robot app %r at %s sends robot state", request.app_name, self.peer
             )
 
-    def _start(self, handles: Any) -> None:
-        """Start the trackers once the OpenXR session exists."""
-        if handles is None:
-            self._send_status("connecting_openxr", WAITING_FOR_HEADSET)
-            self.next_step = time.monotonic() + WAIT_SLICE_S
+    def _start(self, handles: Any, waiting: str) -> None:
+        """Start the trackers once the OpenXR session exists and no retry is pending."""
+        now = time.monotonic()
+        if handles is None or now < self._retry_trackers_at:
+            self._send_no_trackers(waiting if handles is None else self._trackers_error)
+            self.next_step = now + WAIT_SLICE_S
             return
         request = self._request
         try:
@@ -500,10 +543,21 @@ class RobotConnection:
                 request.trackers, handles, VendorConfig(request.vendors), request.topics
             )
         except Exception as error:
-            self._drop(
-                f"The Teleop Session Server could not start the trackers: {error}"
-            )
+            text = f"The Teleop Session Server could not start the trackers: {error}"
+            if text != self._trackers_error:
+                logger.error(
+                    "Robot app at %s: %s. It stays connected without tracker data; the "
+                    "server starts the trackers again by itself",
+                    self.peer,
+                    text,
+                )
+            self._trackers_failed(text)
+            self._send_no_trackers(text)
+            self.next_step = now + WAIT_SLICE_S
             return
+        if self._trackers_error is not None:
+            self._trackers_error = None
+            logger.info("The trackers of the robot app at %s run again", self.peer)
         self._streaming = True
         self._period = 1.0 / request.tick_rate_hz
         self.next_step = time.monotonic()
@@ -513,11 +567,15 @@ class RobotConnection:
         try:
             self.host.tick()
         except Exception as error:
-            self._drop(
-                f"The Teleop Session Server could not update the trackers: {error}"
-            )
-            return
+            text = f"The Teleop Session Server could not update the trackers: {error}"
+            # A tracker update that fails is final for its DeviceIOSession.
+            self.stop_trackers()
+            self._trackers_failed(text)
+            raise TrackerUpdateError(text) from error
         entry, connected = headset()
+        if not self._streaming:
+            # headset() found the OpenXR session lost, and the server stopped the trackers.
+            return
         now = time.monotonic()
         if not connected:
             self._connected_since = None
@@ -553,10 +611,18 @@ class RobotConnection:
         logger.warning("Refused the robot app at %s: %s", self.peer, text)
         self._send_error(text)
 
-    def _drop(self, text: str) -> None:
-        """End the connection over a failure of its trackers."""
-        logger.error("Robot app at %s: %s", self.peer, text)
-        self._send_error(text)
+    def _trackers_failed(self, text: str) -> None:
+        """Remember the failure and when the trackers are next started."""
+        now = time.monotonic()
+        self._trackers_error = text
+        self._retry_trackers_at = now + self._backoff.delay(text, now)
+
+    def _send_no_trackers(self, message: str) -> None:
+        """STATUS while no trackers run: a headset that is not tracked once READY was sent."""
+        if self._ready:
+            self._send_status("running", message, UNTRACKED_HEADSET, periodic=True)
+        else:
+            self._send_status("connecting_openxr", message)
 
     def _send_error(self, text: str) -> None:
         self.host.send_error(text)

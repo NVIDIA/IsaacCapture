@@ -6,7 +6,8 @@ opened is tried again.
 
 The server runs in process (``placeholder=True``, no OpenXR runtime) on a free loopback port;
 its reader socket is in a temporary folder. The other programs that serve the path are
-processes the test starts and ends, or services of this process.
+processes the test starts and ends, or services of this process. One test runs the server
+without a headset (``headset=False``, no CloudXR stand-in).
 """
 
 import json
@@ -130,17 +131,19 @@ class _Launcher:
         pass
 
 
-def _server(socket_path):
+def _server(socket_path, headset=True):
+    """A server with placeholder trackers, or with ``headset=False`` one without a headset."""
     listening = server_main._Listening(
         RemoteSessionListener("127.0.0.1", 0), False, "tcp://127.0.0.1"
     )
     stop = server_main._StopRequest()
     server = server_main._Server(
         [listening],
-        _Launcher(),
+        _Launcher() if headset else None,
         stop,
-        placeholder=True,
+        placeholder=headset,
         robot_state_socket=socket_path,
+        headset=headset,
     )
     return server, stop, listening.listener.port
 
@@ -148,8 +151,8 @@ def _server(socket_path):
 class _Running:
     """A _Server running on a thread until the block ends."""
 
-    def __init__(self, socket_path):
-        self.server, self._stop, self.port = _server(socket_path)
+    def __init__(self, socket_path, headset=True):
+        self.server, self._stop, self.port = _server(socket_path, headset)
         self.code = None
         self._thread = threading.Thread(target=self._run)
 
@@ -709,3 +712,38 @@ def test_a_robot_app_without_robot_state_makes_no_socket_and_no_lock_file(
     assert starts == []
     assert os.listdir(Path(socket_path).parent) == []
     assert warnings() == []
+
+
+def test_the_reader_socket_is_retried_without_a_headset(socket_path, starts, warnings):
+    """A server without a headset has no CloudXR to check, and still tries its reader socket."""
+    # Not another program: a file that is no socket lies at the path.
+    Path(socket_path).write_text("notes")
+    reason = f"{socket_path} exists and is not a socket"
+    with _Running(socket_path, headset=False) as running:
+        with RemoteSession.create([]) as session:
+            _send_robot_state(session, running.port)
+            hosted = server_package.hosted_robot_state()
+            assert _wait_for(lambda: hosted.joints("arm"))
+            assert warnings() == [NO_READERS.format(reason=reason)]
+            # Tried again every period, said once.
+            tried = len(starts)
+            assert _wait_for(lambda: len(starts) >= tried + 2)
+            assert warnings() == [NO_READERS.format(reason=reason)]
+            assert running.server._robot_state_service is None
+
+            # The file is gone: the server opens its socket within a period.
+            Path(socket_path).unlink()
+            with RobotState.connect(socket_path, robot="test_arm") as reader:
+                assert _wait_for(lambda: reader.connected)
+                assert reader.description() == DESCRIPTION
+                _publish_arm(session, 0.25)
+                assert _wait_for(
+                    lambda: (
+                        (arm := reader.joints("arm")) is not None
+                        and arm["joint1"].position == 0.25
+                    )
+                )
+            assert running.server._robot_state_service is starts[-1]
+    assert running.code == 0
+    assert warnings() == [NO_READERS.format(reason=reason)]
+    assert not os.path.exists(socket_path)

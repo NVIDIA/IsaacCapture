@@ -3,8 +3,10 @@
 
 """Teleop Session Server: CloudXR, the listeners, one OpenXR session and one robot app at a time.
 
-The OpenXR session lives as long as the server; each robot app's trackers read through it while
-that robot app is connected. Plugins are started on this machine by hand or with a script.
+Each robot app's trackers read through the OpenXR session while that robot app is connected.
+While CloudXR or the OpenXR session is missing the server serves robot apps without headset
+data and opens a new OpenXR session by itself. Plugins are started on this machine by hand or
+with a script.
 """
 
 from __future__ import annotations
@@ -29,18 +31,22 @@ from isaaccapture.deviceio_session import RemoteSessionHost, RemoteSessionListen
 from isaaccapture.logging_config._native_api import capture_native_output
 from isaaccapture.robot_state import RobotStateStore
 
-from . import _session
+from . import _cloudxr, _session
 from ._common import (
     BUSY_MESSAGE,
     DEFAULT_TCP_PORT,
     DEFAULT_WS_PORT,
+    RETRY_S,
     SHUTDOWN_MESSAGE,
+    Backoff,
     configure_logging,
 )
 from ._session import (
     UNTRACKED_HEADSET,
+    WAITING_FOR_HEADSET,
     HelloError,
     RobotConnection,
+    TrackerUpdateError,
     headset_status,
     served_extensions,
 )
@@ -68,6 +74,13 @@ ROBOT_STATE_TAKEN_MESSAGE = (
     "Another program on the Teleop Session Server's machine already serves a robot's state "
     "at {path}. One robot per machine is served; stop that program, or connect this robot "
     "app without a robot description."
+)
+# The STATUS message of a server started with --no-headset.
+NO_HEADSET_MESSAGE = "this Teleop Session Server runs without a headset (--no-headset)"
+# Follows the reason in the warning about a headset side that cannot be used.
+_KEEPS_SERVING = (
+    "Robot apps are served without headset data until this is fixed; the Teleop Session "
+    "Server keeps checking and needs no restart"
 )
 
 
@@ -144,6 +157,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "Its directory must belong to this user and be closed to group and others."
         ),
     )
+    parser.add_argument(
+        "--no-headset",
+        action="store_true",
+        help=(
+            "Serve robot apps and their robot state without a headset: CloudXR is not "
+            "started or attached and OpenXR is never called, so robot apps get no head, "
+            "hand, controller or plugin data."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Log debug output.")
     cloudxr = parser.add_argument_group("CloudXR")
     CloudXRLauncher.add_cloudxr_install_dir_argument(cloudxr)
@@ -191,14 +213,6 @@ class _StopRequest:
         self.signal = signum
 
 
-class _ServerFailure(Exception):
-    """Stops the server with exit code 1; ``robot_text`` goes to the robot app as ERROR."""
-
-    def __init__(self, text: str, robot_text: str | None = None) -> None:
-        super().__init__(text)
-        self.robot_text = text if robot_text is None else robot_text
-
-
 @dataclass
 class _Pending:
     """A robot app that connected while another is served; its connection is not read yet."""
@@ -218,7 +232,12 @@ def _reject(fd: int, websocket: bool, peer: str, text: str) -> None:
 
 
 class _Server:
-    """The loop: accepts robot apps, keeps the OpenXR session and steps the robot app it serves."""
+    """The loop: accepts robot apps, keeps the OpenXR session and steps the robot app it serves.
+
+    ``launcher`` is CloudXR: anything with ``health_check()``, which raises while CloudXR cannot
+    be used; the warning names its ``start_command`` when it has one. With ``headset=False`` it
+    may be None: CloudXR and OpenXR are never called.
+    """
 
     def __init__(
         self,
@@ -228,11 +247,14 @@ class _Server:
         *,
         placeholder: bool = False,
         robot_state_socket: str | None = None,
+        headset: bool = True,
     ) -> None:
         self._listening = list(listening)
         self._launcher = launcher
         self._stop = stop
         self._placeholder = placeholder
+        # False with --no-headset.
+        self._headset_enabled = headset
         # Robot state of the robot app served, kept across robot apps for the server's life.
         self._robot_state = RobotStateStore()
         _session.set_hosted_robot_state(self._robot_state)
@@ -255,11 +277,15 @@ class _Server:
         self._refusals: list[threading.Thread] = []
         self._next_health_check = -math.inf
         self._next_openxr_attempt = -math.inf
-        self._waiting_for_headset = False
+        # Why there is no OpenXR session, as robot apps read it in STATUS: "" before the first
+        # try, None while the session is open.
+        self._no_headset: str | None = "" if headset else NO_HEADSET_MESSAGE
+        # Why CloudXR cannot be used, from the last check; None while it can.
+        self._cloudxr_error: str | None = None
+        self._backoff = Backoff()
 
     def run(self) -> int:
-        """Serve until stopped by a signal (0), or until CloudXR or OpenXR fails (1)."""
-        robot_error, code = SHUTDOWN_MESSAGE, 0
+        """Serve until stopped by a signal; returns 0. A failing CloudXR or OpenXR does not stop it."""
         try:
             while self._stop.signal is None:
                 self._check_health()
@@ -270,12 +296,9 @@ class _Server:
                 "Received %s; stopping the Teleop Session Server",
                 signal.Signals(self._stop.signal).name,
             )
-        except _ServerFailure as failure:
-            logger.error("%s; stopping the Teleop Session Server", failure)
-            robot_error, code = failure.robot_text, 1
         finally:
-            self._shut_down(robot_error)
-        return code
+            self._shut_down(SHUTDOWN_MESSAGE)
+        return 0
 
     def _check_health(self) -> None:
         """Every HEALTH_CHECK_PERIOD_S: CloudXR, the OpenXR session between ticks, and the
@@ -284,52 +307,176 @@ class _Server:
         if now < self._next_health_check:
             return
         self._next_health_check = now + HEALTH_CHECK_PERIOD_S
-        try:
-            self._launcher.health_check()
-        except RuntimeError as error:
-            raise _ServerFailure(str(error), SHUTDOWN_MESSAGE) from error
-        if self._openxr is not None:
-            # Also takes in the runtime's events while no robot app ticks.
-            self._headset()
+        if self._headset_enabled:
+            self._check_cloudxr()
+            if self._openxr is not None:
+                # Also takes in the runtime's events while no robot app ticks.
+                self._headset()
         if self._robot_state_wanted:
             self._serve_robot_state(retry=True)
 
-    def _open_openxr(self) -> None:
-        """Open the OpenXR session, retried every OPENXR_RETRY_S while no headset is connected."""
-        now = time.monotonic()
-        if self._handles is not None or now < self._next_openxr_attempt:
+    def _check_cloudxr(self) -> None:
+        """Ask whether CloudXR can be used; take the headset side down when it stops."""
+        try:
+            self._launcher.health_check()
+            error = None
+        except Exception as failure:
+            error = str(failure) or type(failure).__name__
+        if error == self._cloudxr_error:
             return
-        self._next_openxr_attempt = now + OPENXR_RETRY_S
+        self._cloudxr_error = error
+        if self._placeholder:
+            # Its trackers read through no OpenXR session.
+            if error is not None:
+                logger.warning(
+                    "%s; --placeholder-openxr serves on without CloudXR", error
+                )
+        elif error is not None:
+            # The check's result changed, so this stop is a new one.
+            self._headset_down(error, log_always=True)
+        else:
+            logger.info("CloudXR is available again")
+            self._next_openxr_attempt = time.monotonic()
+
+    def _open_openxr(self) -> None:
+        """Open the OpenXR session when a try is due; a failure sets the reason and the next try.
+
+        Tried every OPENXR_RETRY_S while no headset is connected, and not at all while CloudXR
+        cannot be used.
+        """
+        now = time.monotonic()
+        if (
+            not self._headset_enabled
+            or self._handles is not None
+            or self._cloudxr_error is not None
+            or now < self._next_openxr_attempt
+        ):
+            return
+        session = None
         try:
             session = oxr.OpenXRSession(
                 OPENXR_APP_NAME, self._extensions, wait_for_system=False
             )
-        except RuntimeError as error:
-            if not str(error).startswith(_NO_HEADSET_ERROR):
-                raise _ServerFailure(
-                    f"The Teleop Session Server could not open an OpenXR session: {error}"
-                ) from error
-            if not self._waiting_for_headset:
-                self._waiting_for_headset = True
-                logger.info("No headset is connected to CloudXR; waiting for one")
+            handles = session.get_handles()
+        except Exception as error:
+            if session is not None:
+                self._openxr = session
+                self._close_openxr()
+            if isinstance(error, RuntimeError) and str(error).startswith(
+                _NO_HEADSET_ERROR
+            ):
+                self._next_openxr_attempt = now + OPENXR_RETRY_S
+                self._report(WAITING_FOR_HEADSET)
+            else:
+                reason = f"The Teleop Session Server could not open an OpenXR session: {error}"
+                self._next_openxr_attempt = now + self._backoff.delay(reason, now)
+                self._report(reason)
             return
         self._openxr = session
-        self._handles = session.get_handles()
-        logger.info("Opened the OpenXR session")
+        self._handles = handles
+        self._report(None)
         logger.debug("OpenXR extensions: %s", self._extensions)
 
+    def _report(self, reason: str | None, *, log: bool = True) -> None:
+        """Record why there is no OpenXR session (None: it is open); log each change once."""
+        if reason == self._no_headset:
+            return
+        self._no_headset = reason
+        if not log:
+            return
+        if reason is None:
+            logger.info("Opened the OpenXR session")
+        elif reason == WAITING_FOR_HEADSET:
+            logger.info("No headset is connected to CloudXR; waiting for one")
+        else:
+            hint = ""
+            # The command helps only while CloudXR is what is missing.
+            if self._cloudxr_error is not None:
+                command = getattr(
+                    self._launcher, "start_command", _cloudxr.START_COMMAND
+                )
+                hint = f". Start CloudXR with: {command}"
+            logger.warning("%s. %s%s", reason.rstrip("."), _KEEPS_SERVING, hint)
+
     def _headset(self) -> tuple[dict, bool]:
-        """The STATUS headset entry and whether the headset is connected."""
+        """The STATUS headset entry and whether the headset is connected.
+
+        An OpenXR session that reports a failure is taken down; never raises.
+        """
         if self._openxr is None:
             return UNTRACKED_HEADSET, False
-        snapshot = self._openxr.get_provider_snapshot()
+        try:
+            snapshot = self._openxr.get_provider_snapshot()
+        except Exception as error:
+            self._openxr_lost(
+                f"The OpenXR session on the Teleop Session Server failed: {error}"
+            )
+            return UNTRACKED_HEADSET, False
         if snapshot.state == oxr.OpenXRProviderState.FAILED:
-            raise _ServerFailure(
+            self._openxr_lost(
                 "The OpenXR session on the Teleop Session Server failed "
                 f"({snapshot.reason.name}): {snapshot.error}"
             )
+            return UNTRACKED_HEADSET, False
         connected = snapshot.headset_state == oxr.OpenXRHeadsetState.CONNECTED
         return headset_status(snapshot), connected
+
+    def _headset_down(self, reason: str, *, log_always: bool = False) -> None:
+        """Stop the robot app's trackers, then close the OpenXR session they read through.
+
+        The trackers call into the OpenXR runtime's library, which is unloaded when the session
+        closes, so they go first. The robot app stays connected and is told ``reason`` in
+        STATUS. Never raises.
+        """
+        robot = self._robot
+        if robot is not None:
+            try:
+                robot.stop_trackers()
+            except Exception as error:
+                logger.error(
+                    "Robot app at %s: the trackers could not be stopped",
+                    robot.peer,
+                    exc_info=error,
+                )
+                robot.ended = True
+            if robot.ended:
+                # Its trackers could not be stopped; closing the connection ends them.
+                self._robot = None
+                try:
+                    robot.close()
+                except Exception as error:
+                    logger.warning(
+                        "Closing the robot app at %s failed: %s", robot.peer, error
+                    )
+        self._handles = None
+        self._close_openxr()
+        now = time.monotonic()
+        delay = self._backoff.delay(reason, now)
+        self._next_openxr_attempt = now + delay
+        # A failure that repeats is logged the first time only; a stop of CloudXR every time.
+        self._report(reason, log=log_always or delay == RETRY_S)
+
+    def _openxr_lost(self, reason: str) -> None:
+        """The OpenXR session failed or a tick through it did: take the headset side down.
+
+        A stopped CloudXR is the usual cause and the clearer reason, so it is checked first.
+        """
+        self._check_cloudxr()
+        if self._openxr is not None:
+            self._headset_down(reason)
+
+    def _trackers_lost(self, robot: RobotConnection, text: str) -> None:
+        """A tick failed and the robot app's trackers are stopped."""
+        if self._openxr is None:
+            # --placeholder-openxr: only the trackers are started again.
+            logger.error(
+                "Robot app at %s: %s. It stays connected without tracker data; the "
+                "server starts the trackers again by itself",
+                robot.peer,
+                text,
+            )
+        else:
+            self._openxr_lost(text)
 
     def _step_robot(self) -> None:
         """Step the robot app when due; serve or refuse the pending one."""
@@ -344,12 +491,17 @@ class _Server:
             )
         ):
             try:
-                robot.step(self._handles, self._headset)
-            except _ServerFailure:
-                raise
+                robot.step(
+                    self._handles,
+                    self._headset,
+                    self._no_headset or WAITING_FOR_HEADSET,
+                )
+            except TrackerUpdateError as failure:
+                self._trackers_lost(robot, str(failure))
             except Exception as error:
                 robot.fail(error)
-            if robot.ended:
+            # A robot app whose trackers could not be stopped is closed in _headset_down().
+            if robot.ended and self._robot is robot:
                 self._robot = None
                 robot.close()
         if pending is None:
@@ -368,7 +520,11 @@ class _Server:
 
     def _next_due(self) -> float:
         due = [self._next_health_check]
-        if self._handles is None:
+        if (
+            self._headset_enabled
+            and self._handles is None
+            and self._cloudxr_error is None
+        ):
             due.append(self._next_openxr_attempt)
         if self._robot is not None:
             due.append(self._robot.next_step)
@@ -517,8 +673,12 @@ class _Server:
 
     def _close_openxr(self) -> None:
         openxr, self._openxr = self._openxr, None
-        if openxr is not None:
+        if openxr is None:
+            return
+        try:
             openxr.close()
+        except Exception as error:
+            logger.warning("Closing the OpenXR session failed: %s", error)
 
     def _join_refusals(self) -> None:
         for thread in self._refusals:
@@ -527,7 +687,10 @@ class _Server:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.no_headset and args.placeholder_openxr:
+        parser.error("--no-headset cannot be combined with --placeholder-openxr")
     configure_logging(args.verbose)
     if not sys.platform.startswith("linux"):
         logger.error("The Teleop Session Server runs on Linux only")
@@ -542,23 +705,27 @@ def main(argv: list[str] | None = None) -> int:
             "--placeholder-openxr: no OpenXR session; only KeyboardTracker works"
         )
 
-    try:
-        launcher = CloudXRLauncher.launch_context(args)
-    except (RuntimeError, ValueError) as error:
-        logger.error("CloudXR is not available: %s", error)
-        for item in listening:
-            item.listener.close()
-        return 1
+    if args.no_headset:
+        logger.info(
+            "--no-headset: no headset is served; CloudXR and OpenXR are not used"
+        )
+        cloudxr = None
+    else:
+        # A CloudXR that cannot be started does not stop the server.
+        cloudxr = _cloudxr.start(args)
     stop = _StopRequest()
     previous = {sig: signal.signal(sig, stop) for sig in _STOP_SIGNALS}
     try:
-        with launcher:
+        with ExitStack() as stack:
+            if cloudxr is not None:
+                stack.enter_context(cloudxr)
             server = _Server(
                 listening,
-                launcher,
+                cloudxr,
                 stop,
                 placeholder=args.placeholder_openxr,
                 robot_state_socket=args.robot_state_socket,
+                headset=not args.no_headset,
             )
             for item in listening:
                 print(f"Teleop Session Server listening on {item.url}", flush=True)

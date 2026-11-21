@@ -34,8 +34,8 @@ std::vector<uint8_t> merge_samples_payloads(std::vector<uint8_t> older, std::vec
  *
  * tick() records one DeviceIOSession update and sends it as one SAMPLES link message; one the link could not send
  * yet is merged into the next one. Robot-state link messages from the robot go into an attached RobotStateStore and
- * are dropped without one. Call start_session(), tick() and close() from one thread; the other methods are
- * thread-safe.
+ * are dropped without one. Call start_session(), tick(), stop_session() and close() from one thread; the other
+ * methods are thread-safe.
  */
 class RemoteSessionHost
 {
@@ -75,6 +75,15 @@ public:
     //! A plugin-fed tracker whose output went away during the update also gets a record without data, which the
     //! session does not write. Sends nothing once the link is down. Throws what update() throws.
     void tick();
+
+    /*!
+     * @brief Ends the DeviceIOSession and its stream. The link, the robot-state store and the tick numbering stay,
+     *        and start_session() may be called again.
+     *
+     * A plugin-fed tracker that had data first gets a record without data, sent as one last SAMPLES link message;
+     * nothing is sent otherwise. Does nothing without a session. Does not throw.
+     */
+    void stop_session();
 
     /*!
      * @brief Robot-state link messages go into `store` from now on, after store->begin_session(); nullptr detaches.

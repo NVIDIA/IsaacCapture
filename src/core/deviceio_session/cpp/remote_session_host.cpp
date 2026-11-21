@@ -342,6 +342,53 @@ void RemoteSessionHost::tick()
                        merge_samples_payloads);
 }
 
+void RemoteSessionHost::stop_session()
+{
+    if (!session_)
+    {
+        // A start_session() that threw leaves its writer.
+        writer_.reset();
+        return;
+    }
+    const auto logger = isaaccapture::Logger::get("isaaccapture.core.RemoteSessionHost");
+    try
+    {
+        // Records of a tick that threw belong to no tick.
+        writer_->take_samples();
+        const int64_t tick_time_ns = os_monotonic_now_ns();
+        bool reported = false;
+        // The robot keeps a topic's last record, which would read as fresh again once a later session ticks.
+        for (const WatchedOutput& watched : watched_)
+        {
+            if (watched.had_output)
+            {
+                reported |= writer_->add_record(
+                    watched.topic, watched.watch->no_data_record(tick_time_ns), static_cast<uint64_t>(tick_time_ns));
+            }
+        }
+        if (reported)
+        {
+            std::vector<uint8_t> setup = writer_->take_setup();
+            if (!setup.empty())
+            {
+                link_->send_reliable(LinkMessageType::Setup, std::move(setup));
+            }
+            const std::vector<uint8_t> records = writer_->take_samples();
+            link_->send_latest(LinkMessageType::Samples,
+                               encode_samples_payload(SamplesPrefix{ next_tick_seq_++, tick_time_ns }, records),
+                               merge_samples_payloads);
+        }
+    }
+    catch (const std::exception& error)
+    {
+        logger->error("RemoteSessionHost: stop_session() could not report a tracker without data: {}", error.what());
+    }
+    watched_.clear();
+    session_.reset();
+    writer_.reset();
+    logger->info("RemoteSessionHost: stopped streaming");
+}
+
 bool RemoteSessionHost::alive() const
 {
     return link_->alive();

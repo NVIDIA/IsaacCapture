@@ -233,9 +233,14 @@ Then point the robot app at it:
     with the ``busy`` error unless the other robot app left in that time.
   - When the time is up, it raises ``TimeoutError`` naming the stage it was
     stuck at: ``server did not answer`` (followed by the last error if the last
-    attempt did not connect or was closed), ``connecting_openxr`` (no headset
-    is connected to CloudXR yet) or ``waiting_for_headset`` (the headset is
-    not tracked).
+    attempt did not connect or was closed), ``connecting_openxr`` (the server
+    has no OpenXR session, or cannot start the trackers) or
+    ``waiting_for_headset`` (the headset is not tracked). After
+    ``connecting_openxr`` the error gives the server's reason in brackets:
+    ``waiting for the headset to connect to CloudXR`` while no headset is
+    connected to CloudXR yet, otherwise what keeps headset data away, for
+    example ``CloudXR is not started: the NVIDIA CloudXR EULA is not
+    accepted`` (see `Teleop Session Server`_, **Failures**).
   - With ``remote_connect_timeout_s=None`` the wait has no limit. If the server
     machine disappears after accepting the connection but before answering,
     nothing tells the robot app until TCP gives up on the connection, which
@@ -270,10 +275,10 @@ Then point the robot app at it:
     every tracker reports no data and ``remote_tick_age_s`` is ``None``.
     ``step()`` logs ``Teleop Session Server at <endpoint> is ready`` once,
     when the server reports READY. A refused request is still raised by
-    entering; a tracker the server cannot start once a headset has arrived
-    (``RuntimeError("The Teleop Session Server could not start the trackers:
-    ...")``, which ends the connection) and an incompatible schema are raised
-    by ``step()``.
+    entering, and an incompatible schema by ``step()``. A tracker the server
+    cannot start once a headset has arrived does not end the session: it
+    goes on without tracker data, and the server starts the trackers again by
+    itself (see `Teleop Session Server`_, **Failures**).
 
 - **Ticks.** The server ticks ``remote_tick_rate_hz`` times per second (90 by
   default; it clamps to 1-240): each tick reads every tracker once and sends
@@ -300,19 +305,22 @@ Then point the robot app at it:
   ``openxr/runtime`` provider and the headset as ``openxr/headset``, as in live
   mode. ``openxr/headset`` is ``CONNECTED`` while CloudXR reports a tracked
   head pose and turns ``DISCONNECTED`` after about a second without one, for
-  example when the headset goes to sleep or disconnects from CloudXR. A
-  headset taken off but still awake, for example on a desk or a charger, stays
-  ``CONNECTED`` until it sleeps. With a controller input source,
+  example when the headset goes to sleep or disconnects from CloudXR. It is
+  also ``DISCONNECTED`` while the server has no CloudXR or no OpenXR session
+  after READY; the reason is then in the server's log, not in the status (see
+  `Teleop Session Server`_, **Failures**). A headset taken off but still
+  awake, for example on a desk or a charger, stays ``CONNECTED`` until it
+  sleeps. With a controller input source,
   ``openxr/controller/left`` and ``openxr/controller/right`` follow the
   controller data, as in live mode. Plugins do not appear in it. With
   ``wait_for_headset=False``, before the server's OpenXR session exists
   ``openxr/runtime`` is ``AVAILABLE`` and ``openxr/headset`` is
-  ``DISCONNECTED``, with the server's stage in its error text: ``Teleop
-  Session Server: connecting_openxr (waiting for the headset to connect to
-  CloudXR)``. ``openxr/headset`` is for display: it shows what the server
-  reported last. Neither READY nor these states show that an operator is
-  present: move the robot only on tracker data present in this step together
-  with a deliberate operator input, such as a held grip or the
+  ``DISCONNECTED``, with the server's stage and reason in its error text, for
+  example ``Teleop Session Server: connecting_openxr (waiting for the headset
+  to connect to CloudXR)``. ``openxr/headset`` is for display: it shows what
+  the server reported last. Neither READY nor these states show that an
+  operator is present: move the robot only on tracker data present in this
+  step together with a deliberate operator input, such as a held grip or the
   ``DefaultTeleopStateManager`` buttons (see :doc:`control_state_machine`),
   also at the start of a session. Tracker data is present in a step when the
   output of its source node is not absent (``is_none``);
@@ -375,15 +383,28 @@ a time:
   sends robot state and keeps it until it stops. A second server on one
   machine needs another path here, and its readers the same path (see **One
   robot per machine** below). See :doc:`robot_state`.
+- ``--no-headset``: serve robot apps and their robot state without a headset.
+  The server then does not start or attach to CloudXR and never calls OpenXR,
+  so its machine needs neither; the CloudXR options are accepted and ignored.
+  Use it for runs with nobody in a headset, for example an agent that drives
+  the robot. A robot app gets the server's answer and no head, hand,
+  controller or plugin data: the server never reports READY and sends no
+  samples, so the robot app enters with ``wait_for_headset=False`` and can
+  publish robot state (see :doc:`robot_state`, **With Nobody in the
+  Headset**). A robot app that waits for a headset raises ``TimeoutError``
+  after ``remote_connect_timeout_s``, naming ``connecting_openxr (this Teleop
+  Session Server runs without a headset (--no-headset))``.
 - ``--verbose``: debug logging.
 
 It prints ``Teleop Session Server listening on <address>`` for each address
 once it accepts connections. The server is one process with one OpenXR
-session: it opens the session as soon as a headset is connected to CloudXR,
-tries again every second until one is, and keeps it for as long as it runs.
-Each robot app's trackers read through that session while the robot app is
-connected. The server does not start plugins: start them on the same machine,
-by hand or with a script.
+session at a time: it opens the session as soon as a headset is connected to
+CloudXR, tries again every second until one is, and keeps it while CloudXR
+runs and the session works. Each robot app's trackers read through that
+session while the robot app is connected. The server also runs while CloudXR
+is missing or stopped: it then serves robot apps without headset data and
+still takes their robot state (see **Failures** below). The server does not
+start plugins: start them on the same machine, by hand or with a script.
 
 - **Headset settings.** The server sends no video to the headset. Start
   CloudXR with ``TELEOP_CLIENT_WARMUP_END_TIMEOUT_MS=0``; otherwise the web
@@ -439,15 +460,57 @@ by hand or with a script.
   it sends nothing: the robot app it serves raises
   ``RuntimeError("Remote session lost: ...")``, and robot apps waiting for an
   answer see their connection close and keep trying.
-- **Failures.** The server exits with code 1 when the CloudXR runtime it
-  started or attached to stops, or when its OpenXR session fails or cannot be
-  opened for a reason other than a missing headset; the robot app it serves
-  gets ``shutting down`` or the OpenXR error first. Run the server under a
-  supervisor, a program that restarts it when it exits, such as a systemd
-  service or a shell script. When starting or reading a robot app's trackers
-  fails, the server ends that robot app's connection with the error and keeps
-  serving. While the server is not running, no robot state reaches the server
-  machine (see :doc:`robot_state`).
+- **Failures.** The server keeps running, and keeps the robot app it serves,
+  when CloudXR is not installed or cannot be started, when the CloudXR EULA
+  is not accepted and standard input is not a terminal, when CloudXR stops,
+  when its OpenXR session fails or cannot be opened, and when a robot app's
+  trackers cannot be started or updated:
+
+  - The robot app stays connected and its ``step()`` does not raise. The
+    server sends no samples, so every tracker reports no data, and
+    ``openxr/headset`` is ``DISCONNECTED``, as for a headset that is not
+    tracked. Robot state keeps reaching the server machine (see
+    :doc:`robot_state`).
+  - The server logs a warning with the reason: ``<reason>. Robot apps are
+    served without headset data until this is fixed; the Teleop Session
+    Server keeps checking and needs no restart``, followed, while CloudXR is
+    what is missing, by ``. Start CloudXR with: python -m
+    isaaccapture.cloudxr.service start``. A server started with
+    ``--cloudxr-install-dir`` for a folder other than ``~/.cloudxr`` names
+    that folder, by its full path, in the command: ``python -m
+    isaaccapture.cloudxr.service start --cloudxr-install-dir <folder>``.
+    The warning is logged when CloudXR is missing at the server's start and
+    again each time CloudXR stops; any other reason is logged once while the
+    same failure repeats. Trackers that cannot be started are logged as one
+    error instead: ``Robot app at <address>: The Teleop Session Server could
+    not start the trackers: <error>. It stays connected without tracker
+    data; the server starts the trackers again by itself``.
+  - After its own start the server does not start CloudXR. A person, or the
+    program that supervises the machine, starts it with that command. The
+    server checks once a second, attaches to the running CloudXR by itself,
+    logs ``CloudXR is available again``, opens a new OpenXR session once a
+    headset is connected and starts the robot app's trackers on it. Tracker
+    data returns in the same session; neither the server nor the robot app
+    is restarted, so the server needs no supervisor for this.
+  - After any other failure the server tries again by itself: the OpenXR
+    session or the trackers after 5 s, then after 10, 20 and 40 s, then
+    every 60 s while the same failure repeats.
+
+  A robot app that waits for a headset (the default) is told the reason and
+  gives up at its ``remote_connect_timeout_s`` (see :ref:`remote-sessions`,
+  **Startup**). The server exits with code 0 on Ctrl-C or ``SIGTERM``, with
+  code 1 when a listen address cannot be bound or a person at a terminal
+  answers no to the CloudXR EULA question, and with code 2 when it is not
+  run on Linux or the command line is wrong. While the server is not
+  running, no robot state reaches the server machine.
+- **A CloudXR that does not answer.** A CloudXR that runs but does not answer
+  is not covered by **Failures**: the server's loop can stand still inside
+  an OpenXR call. The server then sends no samples and does not react to
+  Ctrl-C or ``SIGTERM`` until the call returns, and reader programs can stop
+  getting robot state. For runs with no headset, start the server with
+  ``--no-headset``, which calls neither CloudXR nor OpenXR. None of
+  **Failures** has been run with a real CloudXR yet; it is tested with
+  stand-ins for CloudXR and the OpenXR session.
 
 Tracker vendor selection
 """"""""""""""""""""""""

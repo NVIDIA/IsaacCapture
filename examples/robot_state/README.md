@@ -19,8 +19,8 @@ That one command starts three programs and stops them again on Ctrl+C:
 
 ```text
 stand-in robot                     Teleop Session Server          stand-in harness
-  TeleopSession (REMOTE)             (test mode: no CloudXR,        RobotState.connect()
-    publish_robot_state()  ══════►    no headset)           ────►    description(), joints(),
+  TeleopSession (REMOTE)             (--no-headset: no CloudXR,     RobotState.connect()
+    publish_robot_state()  ══════►    no OpenXR)            ────►    description(), joints(),
                            remote     keeps the newest reading       gripper(), status(), record()
                            teleop     of each data series
                            session
@@ -42,10 +42,13 @@ robot rebot_b601
   gripper gripper: 59 % open
 ```
 
-The server listens on a loopback port the system picks and keeps its reader
-socket in a temporary folder, so the example disturbs nothing else that runs
-on the machine and is not refused beside a robot that runs there (see "One
-robot per machine" below). `--duration-s 10` stops it by itself.
+The server is started with `--no-headset`: it serves robot apps and their
+robot state without a headset, and uses neither CloudXR nor OpenXR, so the
+machine needs neither. It listens on a loopback port the system picks and
+keeps its reader socket in a temporary folder, so the example disturbs nothing
+else that runs on the machine and is not refused beside a robot that runs
+there (see "One robot per machine" below). `--duration-s 10` stops it by
+itself.
 
 ## Two robots, two files
 

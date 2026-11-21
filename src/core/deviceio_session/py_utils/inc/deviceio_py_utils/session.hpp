@@ -563,10 +563,10 @@ private:
 /**
  * @brief Python-facing RemoteSessionHost.
  *
- * wait_hello(), start_session(), tick(), close() and the destructor release the GIL. A mutex keeps start_session(),
- * tick() and close() from overlapping, as RemoteSessionHost requires; it is only ever waited for without the GIL or
- * held without waiting for the GIL, so the two cannot deadlock. attach_robot_state() does not take it: a close() on
- * another thread holds it while it lingers.
+ * wait_hello(), start_session(), tick(), stop_session(), close() and the destructor release the GIL. A mutex keeps
+ * start_session(), tick(), stop_session() and close() from overlapping, as RemoteSessionHost requires; it is only
+ * ever waited for without the GIL or held without waiting for the GIL, so the two cannot deadlock.
+ * attach_robot_state() does not take it: a close() on another thread holds it while it lingers.
  */
 class PyRemoteSessionHost
 {
@@ -648,6 +648,20 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         check_open();
         host_->tick();
+    }
+
+    //! After close() there is nothing left to stop.
+    void stop_session()
+    {
+        {
+            py::gil_scoped_release release;
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (!closed_)
+            {
+                host_->stop_session();
+            }
+        }
+        trackers_.clear();
     }
 
     bool alive() const

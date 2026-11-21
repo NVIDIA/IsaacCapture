@@ -3,9 +3,9 @@
 
 """The robot state example end to end, over loopback.
 
-A Teleop Session Server subprocess (--placeholder-openxr, --no-launch-cloudxr-runtime, a port
-the system picks, its reader socket under a temporary folder), the example's stand-in robot
-through a remote teleop session, and a reader of isaaccapture.robot_state.
+A Teleop Session Server subprocess (--no-headset, a port the system picks, its reader socket
+under a temporary folder), the example's stand-in robot through a remote teleop session, and
+a reader of isaaccapture.robot_state.
 """
 
 import os
@@ -75,8 +75,7 @@ class _Server:
             sys.executable,
             "-m",
             "isaaccapture.teleop_session_server",
-            "--no-launch-cloudxr-runtime",
-            "--placeholder-openxr",
+            "--no-headset",
             "--listen",
             "tcp://127.0.0.1:0",
             "--robot-state-socket",
