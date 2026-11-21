@@ -43,7 +43,9 @@ set(_cf_exclude_patterns
   ".*/node_modules/.*"
   ".*/third_party/.*"
   ".*/venv/.*"
-  ".*/\\.venv/.*"
+  # Skip directories starting with venv or .venv (e.g. .venv-py312, .venv-skbuild).
+  # Names such as env or my-venv remain scanned unless another exclusion matches.
+  ".*/\\.?venv[^/]*/.*"
   ".*/__pycache__/.*"
 )
 
@@ -53,10 +55,12 @@ foreach(dir IN LISTS _cf_glob_dirs)
     foreach(pat IN LISTS _cf_patterns)
       file(GLOB_RECURSE _found FOLLOW_SYMLINKS ${dir}/${pat})
       foreach(f IN LISTS _found)
-        # Exclude patterns
+        # Match only below src/ or examples/; checkout ancestors such as venv-project
+        # must not exclude project sources.
+        file(RELATIVE_PATH _cf_relative_path "${dir}" "${f}")
         set(_skip FALSE)
         foreach(ex IN LISTS _cf_exclude_patterns)
-          if (f MATCHES ${ex})
+          if ("/${_cf_relative_path}" MATCHES "${ex}")
             set(_skip TRUE)
           endif()
         endforeach()
