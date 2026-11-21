@@ -849,11 +849,14 @@ int main()
         applyMappingToTiming(mapAt(10000 * kMs, 10100 * kMs), &timing);
         TEST_CHECK(test, !timing.hasCaptureMonotonic);
         setAnchor(10200 * kMs, 50 * kMs); // A2 agrees with A1
+        // The cutoff is A1's source plus the bracket widened by the slew over it (2000 + 166 ns) and 1 ns, at one tick
+        // per ns: 2167 ticks.
+        const int64_t edge1 = 10100 * kMs + 2167;
         TEST_CHECK(test, notAfterStep(mapAt(10040 * kMs, 10200 * kMs)));
-        TEST_CHECK(test, notAfterStep(mapAt(10070 * kMs, 10200 * kMs)));
         TEST_CHECK(test, notAfterStep(mapAt(10100 * kMs, 10200 * kMs)));
-        TEST_CHECK(test, mapAt(10100 * kMs + 1, 10200 * kMs).valid);
-        TEST_CHECK(test, mapAt(10150 * kMs, 10200 * kMs).valid);
+        TEST_CHECK(test, notAfterStep(mapAt(10100 * kMs + 1, 10200 * kMs)));
+        TEST_CHECK(test, notAfterStep(mapAt(edge1, 10200 * kMs)));
+        TEST_CHECK(test, mapAt(edge1 + 1, 10200 * kMs).valid);
         TEST_CHECK(test, mapAt(10199 * kMs, 10200 * kMs).valid);
         const SensorTimeMapping fresh = mapAt(10200 * kMs, 10200 * kMs);
         TEST_CHECK(test, fresh.valid);
@@ -870,13 +873,55 @@ int main()
         setAnchor(10400 * kMs, 100 * kMs);
         TEST_CHECK(test, notAfterStep(mapAt(10150 * kMs, 10400 * kMs)));
         TEST_CHECK(test, notAfterStep(mapAt(10250 * kMs, 10400 * kMs)));
-        TEST_CHECK(test, notAfterStep(mapAt(10300 * kMs, 10400 * kMs)));
-        TEST_CHECK(test, mapAt(10350 * kMs, 10400 * kMs).valid);
+        TEST_CHECK(test, notAfterStep(mapAt(10300 * kMs + 2167, 10400 * kMs)));
+        TEST_CHECK(test, mapAt(10300 * kMs + 2168, 10400 * kMs).valid);
 
         // reset() clears the cutoff: an event at an old source time maps again from a fresh anchor.
         map.reset();
         setAnchor(10450 * kMs, 100 * kMs);
         TEST_CHECK(test, mapAt(10250 * kMs, 10450 * kMs).valid);
+    }
+
+    // The counter is sampled before the realtime read inside the bracket, so a wall-clock step can follow the sampled
+    // source value by up to the bracket plus the slew allowed over it. Events up to that edge stay invalid; the next
+    // tick is valid. Edge = ceil((bracket + floor(bracket * 83334 ppm) + 1 ns) * Hz / 1e9) ticks.
+    {
+        struct Case
+        {
+            int64_t hz;
+            int64_t bracketNs;
+            int64_t edgeTicks;
+        };
+        const Case cases[] = {
+            { 1000000000, 1000000, 1083335 }, // 1e6 + 83334 + 1 ns, one tick per ns
+            { kHz, 2000, 68 }, // 2167 ns is 67.7 ticks of 32 ns, rounded up
+        };
+        for (const Case& c : cases)
+        {
+            SensorClockMap::Config config = gigahertzConfig();
+            config.counterHz = c.hz;
+            config.refreshNs = 100 * kMs;
+            const int64_t rt = 1700000000LL * 1000000000LL;
+            ClockPair anchor;
+            auto setAnchor = [&](int64_t t, int64_t bracketNs, int64_t realtimeStep)
+            {
+                anchor = pairOf(static_cast<int64_t>(static_cast<__int128>(t) * c.hz / 1000000000LL), t, true,
+                                t + rt + realtimeStep);
+                anchor.bracketNs = bracketNs;
+            };
+            SensorClockMap map = makeAnchorMap(config, &anchor);
+            auto mapAt = [&](int64_t ticks, int64_t now) { return map.map(static_cast<uint64_t>(ticks), now, now); };
+            setAnchor(10000 * kMs, 2000, 0);
+            TEST_CHECK(test, mapAt(anchor.source, 10000 * kMs).valid);
+            setAnchor(10100 * kMs, c.bracketNs, 50 * kMs);
+            const int64_t detectingSource = anchor.source;
+            TEST_CHECK(test, isClockStep(mapAt(detectingSource, 10100 * kMs)));
+            setAnchor(10200 * kMs, 2000, 50 * kMs);
+            const SensorTimeMapping inside = mapAt(detectingSource + c.edgeTicks, 10200 * kMs);
+            TEST_CHECK(test, !inside.valid);
+            TEST_CHECK(test, inside.reason.find("not after a detected clock step") != std::string::npos);
+            TEST_CHECK(test, mapAt(detectingSource + c.edgeTicks + 1, 10200 * kMs).valid);
+        }
     }
 
     // A counter that runs backwards between anchors loses event order: every mapping is refused until reset().
@@ -901,12 +946,16 @@ int main()
         TEST_CHECK(test, mapAt(10240 * kMs, 10250 * kMs).valid);
     }
 
-    // Overflow: caller times at the int64 limits, and an uncertainty already at the limit, must not wrap.
+    // Overflow: caller times at the int64 limits never wrap. A "now" before the anchor's by more than the int64 range
+    // saturates the anchor age; an uncertainty already at the limit stays there once the tick is added.
     {
         ClockPair anchor = pairOf(0, 10000 * kMs);
         SensorClockMap map = makeAnchorMap(gigahertzConfig(), &anchor);
-        map.map(0, 10000 * kMs, INT64_MIN + 1);
-        map.map(0, 10000 * kMs, INT64_MAX);
+        const SensorTimeMapping atMax = map.map(0, 10000 * kMs, INT64_MAX);
+        TEST_CHECK(test, atMax.valid);
+        TEST_CHECK_EQ(test, atMax.anchorAgeNs, static_cast<int64_t>(0));
+        const SensorTimeMapping beforeAnchor = map.map(0, 10000 * kMs, INT64_MIN);
+        TEST_CHECK_EQ(test, beforeAnchor.anchorAgeNs, INT64_MIN);
 
         ClockPair wide = pairOf(0, 10000 * kMs);
         wide.bracketNs = INT64_MAX;
@@ -919,7 +968,8 @@ int main()
                                     return true;
                                 });
         const SensorTimeMapping mapping = mapper.map(0, SensorTimestampUnit::Nanoseconds, 10000 * kMs, 10000 * kMs);
-        TEST_CHECK(test, !mapping.valid || mapping.uncertaintyNs > 0);
+        TEST_CHECK(test, mapping.valid);
+        TEST_CHECK_EQ(test, mapping.uncertaintyNs, INT64_MAX);
     }
 
     TEST_CHECK(test, monotonicNowNs() > 0);

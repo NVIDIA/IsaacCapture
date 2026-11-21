@@ -209,9 +209,16 @@ bool SensorClockMap::refresh(int64_t nowMonotonicNs, std::string* reason)
         if (m_stepped)
         {
             // The step happened somewhere between the previous anchor and this one, so an event up to this anchor may
-            // lie on either side of it. Events up to the first anchor read after the discontinuity stay invalid even
-            // once later anchors agree again.
-            m_cutoffSource = m_haveCutoff ? std::max(m_cutoffSource, next.source) : next.source;
+            // lie on either side of it. The counter is sampled before the realtime read that exposes a wall-clock step,
+            // both inside the bracket, so the step can follow the sampled value by up to the bracket (grown by the
+            // slew allowed over it). Events up to that upper edge stay invalid even once later anchors agree again.
+            const Int128 bracketNs = std::max<int64_t>(next.bracketNs, 0);
+            const Int128 widenedNs =
+                bracketNs + scaledByPpm(next.bracketNs > 0 ? next.bracketNs : 0, m_config.slewPpm) + 1;
+            const Int128 bracketTicks = (widenedNs * m_config.counterHz + 999999999) / 1000000000;
+            const Int128 edge = std::min<Int128>(static_cast<Int128>(next.source) + bracketTicks, kInt64Max);
+            const int64_t edgeSource = static_cast<int64_t>(edge);
+            m_cutoffSource = m_haveCutoff ? std::max(m_cutoffSource, edgeSource) : edgeSource;
             m_haveCutoff = true;
         }
     }
@@ -256,8 +263,8 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
         result.reason = "the sensor timestamp is out of range";
         return result;
     }
-    const int64_t sensorNs = static_cast<int64_t>(sensorTicks);
-    if (m_haveCutoff && sensorNs <= m_cutoffSource)
+    const int64_t eventSource = static_cast<int64_t>(sensorTicks);
+    if (m_haveCutoff && eventSource <= m_cutoffSource)
     {
         result.reason = "the sensor event is not after a detected clock step: its capture time is ambiguous";
         return result;
@@ -268,7 +275,7 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
     int64_t anchorToEventNs = 0;
     int64_t distanceNs = 0;
     int64_t capture = 0;
-    if (__builtin_sub_overflow(sensorNs, m_anchor.source, &sourceDelta) ||
+    if (__builtin_sub_overflow(eventSource, m_anchor.source, &sourceDelta) ||
         !counterTicksToNsChecked(sourceDelta, m_config.counterHz, &anchorToEventNs) ||
         !absChecked(anchorToEventNs, &distanceNs) ||
         __builtin_add_overflow(m_anchor.monotonicNs, anchorToEventNs, &capture))
@@ -285,7 +292,6 @@ SensorTimeMapping SensorClockMap::map(uint64_t sensorTicks, int64_t readyMonoton
             "the sensor event is too far from the anchor for the mapping's uncertainty to stay within the limit";
         return result;
     }
-    result.uncertaintyNs = static_cast<int64_t>(uncertainty);
     if (capture > readyMonotonicNs)
     {
         result.reason = "the sensor timestamp is after the frame was ready: the assumed counter or rate is wrong";
@@ -375,8 +381,7 @@ SensorTimeMapping SensorTimeMapper::map(uint64_t timestamp,
     SensorTimeMapping result = m_map.map(static_cast<uint64_t>(ns), readyMonotonicNs, nowMonotonicNs);
     if (result.valid)
     {
-        // One counter tick is the resolution of the timestamp and of the anchor read.
-        // One tick on top of the map's bound, saturating rather than wrapping.
+        // One counter tick is the resolution of the timestamp and of the anchor read; add it, saturating.
         const int64_t tickNs = (1000000000LL + m_counterHz - 1) / m_counterHz;
         result.uncertaintyNs = result.uncertaintyNs > kInt64Max - tickNs ? kInt64Max : result.uncertaintyNs + tickNs;
     }
