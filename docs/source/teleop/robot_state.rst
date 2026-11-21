@@ -505,7 +505,14 @@ not built.** On a machine where no headset connects at all, run a Teleop
 Session Server on that machine and point the robot app at it with
 ``mode=SessionMode.REMOTE`` and ``remote_endpoint="127.0.0.1:47600"``; the
 limits of a remote session then apply (see :ref:`remote-sessions`, **Not
-available**), and the reader is unchanged.
+available**), and the reader is unchanged. Start that server with
+``--no-headset``: it then serves robot apps and their robot state without
+CloudXR and without an OpenXR runtime on the machine, and sends no tracker
+data:
+
+.. code-block:: bash
+
+   python -m isaaccapture.teleop_session_server --no-headset
 
 In a remote session entered this way:
 
@@ -531,16 +538,20 @@ In a remote session entered this way:
 - **When a headset arrives nothing restarts.** The same session gets tracker
   data, and ``step()`` logs ``Teleop Session Server at <endpoint> is ready``
   once the server reports the headset tracked for about a second.
-- **A headset that arrives late can end the session.** What entering raises
-  by default after the server's answer is raised by a later ``step()``
-  instead. When the server cannot start the robot app's trackers it ends the
-  connection: ``step()`` raises ``RuntimeError("The Teleop Session Server
-  could not start the trackers: ...")``, the publish calls return ``False``
-  and the reader's ``connected`` turns ``False``. Robot state does not outlive
-  that failure. When the server sends tracker data in a schema the robot app
-  cannot read, ``step()`` raises ``RuntimeError("MCAP schema mismatch on
-  '<topic>': ...")``. In both cases bring the robot to a safe state in the
-  robot app's own loop, then enter a new session.
+- **A headset that arrives late never ends the session.** When the server
+  cannot start the robot app's trackers, the robot app stays connected:
+  ``step()`` does not raise, the trackers go on reporting no data, the
+  publish calls work and the reader keeps reading. The server logs ``The
+  Teleop Session Server could not start the trackers: ...`` once and starts
+  the trackers again by itself. The same holds when CloudXR or the server's
+  OpenXR session stops later (see **Failures** under "Teleop Session Server"
+  in :doc:`teleop_session`).
+- **A schema error still ends the session.** What entering raises by default
+  after the server's answer is raised by a later ``step()`` instead: when
+  the server sends tracker data in a schema the robot app cannot read,
+  ``step()`` raises ``RuntimeError("MCAP schema mismatch on '<topic>':
+  ...")``. Bring the robot to a safe state in the robot app's own loop, then
+  enter a new session.
 - **The robot app holds the server's one place.** The server serves one robot
   app at a time, so a robot app left running without a headset keeps every
   other robot app out (``busy``).
@@ -548,10 +559,21 @@ In a remote session entered this way:
   and the server's answer only; ``TimeoutError`` then names ``server did not
   answer``.
 
-This behaviour is tested with a scripted server and a scripted OpenXR session.
-It has not been run with CloudXR, a headset or a real OpenXR runtime, and how
-a Teleop Session Server behaves over hours with CloudXR up and no headset (it
-tries to open its OpenXR session once a second) is not measured.
+This behaviour is tested with a scripted server, a scripted OpenXR session and
+a scripted CloudXR, and with a server started with ``--no-headset`` as a
+program. It has not been run with CloudXR, a headset or a real OpenXR runtime.
+These runs are still to be made:
+
+- on two machines, with a robot app and a reader: a server started with
+  ``--no-headset`` and a server with no OpenXR runtime on its machine, each
+  for 30 minutes, and a server whose CloudXR EULA is not accepted, started
+  without a terminal;
+- a working CloudXR with a headset, to confirm that nothing changed there;
+- CloudXR stopped and started again, CloudXR killed, and CloudXR held so that
+  it does not answer, each while a robot app is served;
+- trackers that cannot start, and a plugin across a restart of CloudXR;
+- a server over hours with CloudXR up and no headset (it tries to open its
+  OpenXR session once a second).
 
 .. _robot-state-no-tracker-data:
 
@@ -969,22 +991,19 @@ When Something Goes Away
        publishes no readings until one is, unless it sets
        ``wait_for_headset=False`` (see `With Nobody in the Headset`_).
    * - With ``wait_for_headset=False`` in a remote session, a headset arrives
-       and the server cannot start the robot app's trackers, or sends data in
-       a schema the robot app cannot read
-     - The robot app's ``step()`` raises ``RuntimeError``. After a tracker
-       failure the server has ended the connection: the publish calls return
-       ``False`` and the reader's ``connected`` turns ``False``. Bring the
-       robot to a safe state in the robot app's own loop, then enter a new
-       session.
-   * - CloudXR crashes
-     - **The Teleop Session Server exits** (see **Failures** under
-       "Teleop Session Server" in :doc:`teleop_session`). Robot state stops
-       reaching the server machine until the server runs again and the robot
-       app has entered a new session, which again needs CloudXR, and by
-       default a tracked headset. Meanwhile the reader's ``server_reachable``
-       is ``False`` and its reads return ``None``. Whether the server should
-       exit in this case is undecided; run the server under a supervisor that
-       restarts it.
+       and the server sends data in a schema the robot app cannot read
+     - The robot app's ``step()`` raises ``RuntimeError``. Bring the robot to
+       a safe state in the robot app's own loop, then enter a new session.
+   * - CloudXR stops or crashes, the server's OpenXR session fails, or the
+       server cannot start or update the robot app's trackers
+     - **The Teleop Session Server keeps running** and the robot app stays
+       connected (see **Failures** under "Teleop Session Server" in
+       :doc:`teleop_session`). Robot state keeps arriving: the reader's
+       ``connected`` and ``server_reachable`` stay ``True`` and its reads go
+       on. Tracker data is absent, and ``openxr/headset`` is
+       ``DISCONNECTED``, until CloudXR runs again and a headset is back;
+       nothing is restarted. A CloudXR that runs but does not answer is the
+       exception: it can hold the server, and with it robot state.
    * - The Teleop Session Server is stopped or restarted
      - As above: ``server_reachable`` is ``False`` and every read, also with
        ``allow_stale=True``, returns ``None`` until the server answers again.
@@ -1055,10 +1074,12 @@ and a stand-in harness prints what it reads.
    python -m isaaccapture_examples.robot_state
    python -m isaaccapture_examples.robot_state --description two_arm_robot
 
-Its server listens on a loopback port the system picks and keeps its reader
-socket in a temporary folder (``--robot-state-socket``), so the example runs
-beside a Teleop Session Server or a robot app on the same machine: it
-disturbs neither, and its stand-in robot is not refused as a second robot.
+Its server is started with ``--no-headset``, so the machine needs no CloudXR
+and no OpenXR runtime. It listens on a loopback port the system picks and
+keeps its reader socket in a temporary folder (``--robot-state-socket``), so
+the example runs beside a Teleop Session Server or a robot app on the same
+machine: it disturbs neither, and its stand-in robot is not refused as a
+second robot.
 
 Not Included
 ------------
@@ -1068,10 +1089,9 @@ agent's commands and their answers, who controls the robot, stop, the handover
 between an agent and a person, and camera pictures.
 
 Not available yet: starting a ``LIVE`` session while no headset has reached
-the OpenXR runtime; robot state that outlives a tracker failure on the server;
-a reader on the robot machine in a remote session; robot state from the server
-to the robot app; a history of readings (the newest of each series is kept); a
-gripper's position in space; more than one robot app at a time; more than one
-robot on a machine, each answering under its own name to a harness that asks
-for a robot by name; recording robot state to MCAP; a C++ call to publish
-from a description file.
+the OpenXR runtime; a reader on the robot machine in a remote session; robot
+state from the server to the robot app; a history of readings (the newest of
+each series is kept); a gripper's position in space; more than one robot app
+at a time; more than one robot on a machine, each answering under its own name
+to a harness that asks for a robot by name; recording robot state to MCAP; a
+C++ call to publish from a description file.
