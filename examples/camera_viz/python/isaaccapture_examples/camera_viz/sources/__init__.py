@@ -19,6 +19,7 @@ from .argus import ArgusSource
 from .oakd import OakdSource
 from .rtp_h264 import RtpH264Source
 from .synthetic import SyntheticSource, SyntheticStereoSource
+from .synthetic_scene import SyntheticSceneSource
 from .v4l2 import V4l2Source
 from .video_file import VideoFileSource
 from .zed import ZedSource, ZedStereoSource
@@ -30,6 +31,7 @@ __all__ = [
     "OakdSource",
     "PairedFrameSource",
     "RtpH264Source",
+    "SyntheticSceneSource",
     "SyntheticSource",
     "SyntheticStereoSource",
     "V4l2Source",
@@ -69,6 +71,9 @@ def build_local_camera(spec: dict) -> List[FrameSource]:
     stereo = bool(spec.get("stereo", False))
     name = spec["name"]
     if kind == "synthetic":
+        if spec.get("scene") is not None:
+            _kind, _name, arguments = _stereo_arguments(spec)
+            return [SyntheticSceneSource(name=name, **arguments)]
         if stereo:
             return [
                 SyntheticStereoSource(
@@ -248,6 +253,30 @@ def _video_stereo_arguments(spec: dict, name: str) -> dict:
         ) from exc
 
 
+#: The scenes ``type: synthetic`` can draw for a stereo camera.
+_SCENES = ("room",)
+
+
+def _synthetic_scene_arguments(spec: dict, name: str) -> dict:
+    """What a ``type: synthetic`` entry with a ``scene`` passes to its
+    source, checked."""
+    scene = spec.get("scene")
+    if scene not in _SCENES:
+        raise ValueError(
+            f"camera {name!r}: unknown scene {scene!r} (scenes: {', '.join(_SCENES)})"
+        )
+    try:
+        return {
+            "width": int(spec["width"]),
+            "height": int(spec["height"]),
+            "fps": float(spec.get("fps", 30.0)),
+        }
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"camera {name!r}: width, height and fps are numbers ({exc})"
+        ) from exc
+
+
 def _stereo_arguments(spec: dict) -> tuple:
     """``(type, name, arguments)`` of a stereo camera entry. Raises
     ValueError, with the reason, for any other entry."""
@@ -279,11 +308,14 @@ def _stereo_arguments(spec: dict) -> tuple:
         return kind, name, _video_stereo_arguments(spec, name)
     if kind == "synthetic":
         if not stereo:
-            refuse("it is one view")
-        refuse(
-            "the test pattern is one drawing shifted between the eyes, with "
-            "nothing behind it"
-        )
+            refuse("it is one view; a drawn stereo camera sets `stereo: true`")
+        if spec.get("scene") is None:
+            refuse(
+                "the test pattern is one drawing shifted between the eyes, with "
+                "nothing behind it; `scene: room` draws a room for two eyes"
+            )
+        require("width", "height")
+        return kind, name, _synthetic_scene_arguments(spec, name)
     if kind == "v4l2":
         refuse("a v4l2 camera gives one image")
     if kind == "argus":
@@ -296,7 +328,8 @@ def _stereo_arguments(spec: dict) -> tuple:
     if kind == "oakd":
         refuse("an oakd camera is not offered as a stereo camera yet")
     raise ValueError(
-        f"camera {name!r}: unknown camera type {kind!r} (stereo cameras: zed, video)"
+        f"camera {name!r}: unknown camera type {kind!r} "
+        "(stereo cameras: zed, video, synthetic with a scene)"
     )
 
 
@@ -326,8 +359,8 @@ def describe_stereo_camera(spec: dict) -> StereoCameraTraits:
     one. Opens nothing."""
     kind, _name, _arguments = _stereo_arguments(spec)
     return StereoCameraTraits(
-        calibrated=kind == "zed",
-        rectified=kind == "zed",
+        calibrated=kind in ("zed", "synthetic"),
+        rectified=kind in ("zed", "synthetic"),
     )
 
 
@@ -349,5 +382,7 @@ def build_stereo_camera(spec: dict, *, imu: bool = False) -> FrameSource:
     kind, name, arguments = _stereo_arguments(spec)
     if kind == "zed":
         return ZedStereoSource.build(name=name, imu=imu, **arguments)
+    if kind == "synthetic":
+        return SyntheticSceneSource(name=name, **arguments)
     # video: a side-by-side file already emits both eyes in one frame.
     return VideoFileSource(name=name, stereo=True, **arguments)

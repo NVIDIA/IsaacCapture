@@ -25,10 +25,20 @@ from isaaccapture_examples.camera_viz.sources import (
     check_stereo_camera,
     describe_stereo_camera,
 )
+from isaaccapture_examples.camera_viz.sources import synthetic_scene as scene
 from isaaccapture_examples.camera_viz.sources import zed as zed_source
 from isaaccapture_examples.camera_viz.sources._helpers import CaptureMailbox
 
 ZED = {"name": "head", "type": "zed", "stereo": True, "width": 1280, "height": 720}
+ROOM = {
+    "name": "room",
+    "type": "synthetic",
+    "stereo": True,
+    "scene": "room",
+    "width": 640,
+    "height": 360,
+    "fps": 120,
+}
 
 
 def _cuda_available() -> bool:
@@ -55,6 +65,7 @@ requires_gpu = pytest.mark.skipif(
     [
         ZED,
         {"name": "clip", "type": "video", "stereo": True, "path": "clip.mp4"},
+        ROOM,
     ],
 )
 def test_a_stereo_camera_passes_the_check(entry):
@@ -69,7 +80,7 @@ def test_a_stereo_camera_passes_the_check(entry):
         ({"name": "cam", "type": "v4l2"}, r"gives one image"),
         (
             {"name": "bars", "type": "synthetic", "width": 64, "height": 48},
-            r"it is one view",
+            r"a drawn stereo camera sets `stereo: true`",
         ),
         (
             {
@@ -79,7 +90,7 @@ def test_a_stereo_camera_passes_the_check(entry):
                 "width": 8,
                 "height": 8,
             },
-            r"nothing behind it",
+            r"nothing behind it; `scene: room` draws a room",
         ),
         ({"name": "head", "type": "argus", "stereo": True}, r"`sync_session: true`"),
         (
@@ -118,6 +129,8 @@ def test_an_entry_that_is_not_a_stereo_camera_is_refused_with_the_reason(entry, 
         ({**ZED, "height": None}, r"'head': width, height, fps and serial_number"),
         ({**ZED, "fps": "fast"}, r"'head': width, height, fps and serial_number"),
         ({**ZED, "bus_type": "pcie"}, r"bus_type is usb or gmsl, got 'pcie'"),
+        ({**ROOM, "scene": "forest"}, r"unknown scene 'forest' \(scenes: room\)"),
+        ({**ROOM, "fps": "fast"}, r"'room': width, height and fps are numbers"),
         (
             {"name": "clip", "type": "video", "stereo": True, "path": "c", "fps": "x"},
             r"'clip': width, height and fps are numbers",
@@ -134,6 +147,7 @@ def test_a_stereo_camera_is_described_before_it_is_opened():
     # (stores its calibration, hands out rectified images)
     for entry, traits in (
         (ZED, (True, True)),
+        (ROOM, (True, True)),
         (clip, (False, False)),
     ):
         described = describe_stereo_camera(entry)
@@ -650,3 +664,120 @@ def test_the_mailbox_never_writes_the_buffer_the_reader_holds():
 def test_the_mailbox_needs_a_buffer_to_publish_one_to_hold_and_one_to_write():
     with pytest.raises(ValueError, match=r"at least three buffers"):
         CaptureMailbox(2)
+
+
+# ── the synthetic scene ─────────────────────────────────────────────
+
+
+def test_the_drawn_camera_holds_still_then_swings_and_nods():
+    np.testing.assert_array_equal(scene.scene_rotation(0.0), np.eye(3))
+    np.testing.assert_array_equal(scene.scene_rotation(scene.STILL_S), np.eye(3))
+    forward = np.array([0.0, 0.0, 1.0])
+    # A quarter of the swing's period in: turned fully to the right.
+    turned = scene.scene_rotation(scene.STILL_S + scene.YAW_PERIOD_S / 4.0) @ forward
+    assert np.degrees(np.arctan2(turned[0], turned[2])) == pytest.approx(scene.YAW_DEG)
+    # A quarter of the nod's period in: tilted fully up, which is -y.
+    nodded = scene.scene_rotation(scene.STILL_S + scene.PITCH_PERIOD_S / 4.0) @ forward
+    assert np.degrees(np.arcsin(-nodded[1])) == pytest.approx(scene.PITCH_DEG)
+    rotation = scene.scene_rotation(scene.STILL_S + 3.3)
+    np.testing.assert_allclose(rotation @ rotation.T, np.eye(3), atol=1e-12)
+
+
+#: Where the wall ahead fills a 1280x720 picture while the camera is at
+#: rest: clear of the floor, the side walls and what stands in the room.
+WALL_AHEAD = (slice(300, 420), slice(320, 920))
+
+
+def _shift_px(left, right, search=40):
+    """How many pixels to the left the wall ahead in ``left`` sits in
+    ``right``, by the best match."""
+    rows, columns = WALL_AHEAD
+    a = left[rows, columns.start : columns.stop + search, :3].astype(np.int32)
+    b = right[rows, columns, :3].astype(np.int32)
+    width = b.shape[1]
+    costs = [np.abs(a[:, s : s + width] - b).mean() for s in range(search)]
+    return int(np.argmin(costs))
+
+
+@requires_gpu
+def test_the_two_eyes_see_the_wall_ahead_with_the_disparity_of_its_distance():
+    source = build_stereo_camera({**ROOM, "width": 1280, "height": 720})
+    calibration = source.calibration()
+    fx = calibration.left_K[0, 0]
+    assert calibration.rectified and fx == scene.FOCAL_PER_WIDTH * 1280
+    assert calibration.left_K[0, 2] == 639.5 and calibration.left_K[1, 2] == 359.5
+    np.testing.assert_array_equal(calibration.T, [-scene.BASELINE_M, 0.0, 0.0])
+    source.start()
+    try:
+        frame = _read_any(source)  # the camera is still at rest
+        left, right = frame.image.get(), frame.image_right.get()
+        np.testing.assert_array_equal(source.rotation_at(frame.timestamp_ns), np.eye(3))
+    finally:
+        source.stop()
+    # The wall ahead is ROOM_MAX_M[2] away: disparity = f * baseline / depth.
+    expected = fx * scene.BASELINE_M / scene.ROOM_MAX_M[2]
+    assert abs(_shift_px(left, right) - expected) <= 1.0
+    assert (left[..., 3] == 255).all() and left[..., :3].std() > 15.0  # painted
+
+
+@requires_gpu
+def test_the_picture_moves_as_the_drawn_camera_turns():
+    source = scene.SyntheticSceneSource("room", 1280, 720, fps=120.0, still_s=0.0)
+    source.start()
+    try:
+        first = _read_any(source)
+        early, early_ns = first.image.get(), first.timestamp_ns
+        time.sleep(0.08)
+        later = _read_any(source)
+        late, late_ns = later.image.get(), later.timestamp_ns
+        right_eye = later.image_right.get()
+    finally:
+        source.stop()
+    forward = np.array([0.0, 0.0, 1.0])
+    yaws = [
+        np.arctan2(*(source.rotation_at(ns) @ forward)[[0, 2]])
+        for ns in (early_ns, late_ns)
+    ]
+    assert late_ns > early_ns and yaws[1] > yaws[0] > -1e-9
+    # Turning right moves what is ahead to the left, by about f * the turn.
+    # About, because the camera nods a little at the same time.
+    expected = scene.FOCAL_PER_WIDTH * 1280 * (yaws[1] - yaws[0])
+    assert 10.0 < expected < 120.0
+    moved = _shift_px(early, late, search=160)
+    assert 0.75 * expected <= moved <= 1.25 * expected
+    # Both eyes of the later frame are of that one instant.
+    disparity = scene.FOCAL_PER_WIDTH * 1280 * scene.BASELINE_M / scene.ROOM_MAX_M[2]
+    assert abs(_shift_px(late, right_eye) - disparity) <= 3.0
+
+
+@requires_gpu
+def test_a_drawn_frame_stays_intact_while_the_reader_holds_it():
+    # Turning from the start: every drawing differs from the one before.
+    source = scene.SyntheticSceneSource("room", 640, 360, fps=120.0, still_s=0.0)
+    source.start()
+    try:
+        held = _read_any(source)
+        before = held.image.get(), held.image_right.get()
+        time.sleep(0.1)  # a dozen drawings later
+        np.testing.assert_array_equal(held.image.get(), before[0])
+        np.testing.assert_array_equal(held.image_right.get(), before[1])
+        later = _read_any(source)
+        assert later.timestamp_ns > held.timestamp_ns
+        assert (later.image.get() != before[0]).any()
+        assert source.dropped_captures > 0
+    finally:
+        source.stop()
+
+
+@requires_gpu
+def test_the_viewing_builder_draws_the_scene_too():
+    (source,) = build_local_camera(ROOM)
+    assert isinstance(source, scene.SyntheticSceneSource)
+    source.start()
+    try:
+        frame = _read_any(source)
+        assert frame.image.shape == frame.image_right.shape == (360, 640, 4)
+    finally:
+        source.stop()
+    with pytest.raises(ValueError, match=r"a drawn stereo camera sets `stereo: true`"):
+        build_local_camera({**ROOM, "stereo": False})

@@ -22,6 +22,8 @@ cameras:
     fps: 60
     hue_speed_hz: 0.25
     disparity_px: 20              # horizontal pixel offset between eyes
+    # scene: room                 # in place of the pattern: a furnished room seen
+    #                             # by a slowly turning pair of eyes, with real depth
     rtp:
       port: 5000                  # left eye
       port_right: 5001            # right eye (required when stereo + source: rtp)
