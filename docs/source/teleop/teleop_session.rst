@@ -119,16 +119,29 @@ details.
 ``wait_for_headset`` says whether entering the session waits for a headset.
 With the default, a ``LIVE`` session waits until a headset has reached the
 OpenXR runtime, and a ``REMOTE`` session until the server reports a tracked
-headset (see :ref:`remote-sessions`, **Startup**). With ``False`` entering
-does not wait:
+headset (see :ref:`remote-sessions`, **Startup**). The OpenXR runtime is the
+program that serves headsets, here CloudXR. A headset has reached it once it
+has connected to it since the runtime started; it need not be worn or tracked.
+With ``False`` entering does not wait:
 
 - ``REMOTE``: it returns once the Teleop Session Server has answered; until a
   headset is tracked every tracker reports no data.
-- ``LIVE``: it returns when a headset has reached the OpenXR runtime since
-  that runtime started, and raises ``RuntimeError`` at once when none has.
-  Starting a ``LIVE`` session with no headset at the runtime is not built; a
-  Teleop Session Server on the same machine and ``SessionMode.REMOTE`` to
-  ``127.0.0.1`` is the way that works.
+- ``LIVE``: it returns at once, also while no headset has reached the OpenXR
+  runtime. The runtime itself must be running, or entering raises the OpenXR
+  error as with the default. Until a headset has reached the runtime every
+  tracker reports no data, no plugin is started and nothing is recorded. The
+  first ``step()`` after one has reached it starts the trackers, the plugins
+  and the recording, and the session goes on without a restart. That one
+  ``step()`` returns late (the tracker start plus at least 0.1 s for each
+  plugin), and every Python thread of the robot app waits until it does.
+  Until then ``session.oxr_session`` is ``None`` and
+  ``session.deviceio_session`` is another object than afterwards: read both
+  from the session in each step instead of keeping them. A session with a
+  message channel or a tracker with metadata (``TactileTracker``) still
+  raises ``RuntimeError`` at entry while no headset has reached the runtime.
+  When the runtime stops while the session waits, or the trackers or a
+  plugin cannot start once a headset arrives, that ``step()`` and every later
+  one raise ``RuntimeError``.
 - No effect in ``REPLAY`` and with ``oxr_handles``, ``oxr_session_factory`` or
   ``joint_publisher``.
 
@@ -757,7 +770,9 @@ Properties
 - ``start_time: float`` -- Session start time
 - ``config: TeleopSessionConfig`` -- The configuration object
 - ``oxr_session: Optional[OpenXRSession]`` -- The internal OpenXR session, or
-  ``None`` when using external handles or outside ``LIVE`` mode (read-only)
+  ``None`` when using external handles, outside ``LIVE`` mode, or while a
+  ``LIVE`` session entered with ``wait_for_headset=False`` still waits for a
+  headset (read-only)
 - ``last_context: Optional[ComputeContext]`` -- Context corresponding to the
   most recent returned output
 - ``last_step_info: RetargetingStepInfo`` -- Age and timing metadata for
