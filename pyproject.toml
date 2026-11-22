@@ -148,13 +148,14 @@ cmake.build-type = "Release"
 # collides with a classic `cmake -B build` tree. Both are gitignored.
 build-dir = "build-wheel/{cache_tag}"
 
-# No cmake.define overrides: BUILD_EXAMPLES, BUILD_TESTING, BUILD_PLUGINS and the
-# Linux clang-format gate all stay at their CMake defaults. So a `pip install`
-# builds the full default (ALL) target -- every extension, the staged
+# Formatting is a developer check, not a prerequisite for installing a wheel.
+cmake.define.ENABLE_CLANG_FORMAT_CHECK = "OFF"
+
+# BUILD_EXAMPLES, BUILD_TESTING and BUILD_PLUGINS stay at their CMake defaults,
+# so `pip install` builds the full default (ALL) target -- extensions, the staged
 # python_package, examples, tests, and plugins (plugins without their SDK skip
-# gracefully). It also ENFORCES clang-format: the build fails if clang-format-14
-# is missing or any C++ file is unformatted. The classic python_wheel ALL target
-# is gated to non-SKBUILD (src/core/python/CMakeLists.txt) so ALL doesn't trigger a
+# gracefully). The classic python_wheel ALL target is gated to non-SKBUILD
+# (src/core/python/CMakeLists.txt) so ALL doesn't trigger a
 # nested `uv build`; python_stubs isn't part of ALL, so the pip wheel omits .pyi.
 
 # Install the staged Python tree (isaacteleop_wheel component) plus every built
