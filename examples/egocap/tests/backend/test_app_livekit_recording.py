@@ -269,3 +269,27 @@ def test_config_factory_numeric_sources_carry_their_frame_types(tmp_path):
         "pico_controller": "PicoTrackingFrame",
         "manus_glove": "ManusFrame",
     }
+
+
+def test_config_factory_writes_every_camera_with_the_default_encoder_unless_told_otherwise(tmp_path):
+    camera = SimpleNamespace(name="head", width=8, height=6, fps=15.0)
+    monitor = _monitor([_stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US)])
+    monitor.camera_descriptors = (camera,)
+    config = app_module._recording_config_factory(monitor, None, tmp_path)()
+    assert [(v.name, v.encoder, v.encoder_options) for v in config.video_sources] == [
+        ("head", "ffmpeg_h264", None),
+        ("cam16", "ffmpeg_h264", None),
+    ]
+
+
+def test_config_factory_passes_the_station_encoder_to_native_cameras_and_livekit_streams(tmp_path):
+    camera = SimpleNamespace(name="head", width=8, height=6, fps=15.0)
+    monitor = _monitor([_stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US)])
+    monitor.camera_descriptors = (camera,)
+    config = app_module._recording_config_factory(
+        monitor, None, tmp_path, video_encoder="ffmpeg_h264_nvenc", video_encoder_options={"crf": 12}
+    )()
+    assert [(v.name, v.encoder, v.encoder_options) for v in config.video_sources] == [
+        ("head", "ffmpeg_h264_nvenc", {"crf": 12}),
+        ("cam16", "ffmpeg_h264_nvenc", {"crf": 12}),
+    ]

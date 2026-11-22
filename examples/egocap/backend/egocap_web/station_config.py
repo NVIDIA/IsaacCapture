@@ -31,6 +31,7 @@ from typing import Any
 import yaml
 
 from capture_server import protocol as p
+from egocap.recording.video_writer_backends import resolve_video_encoder_options
 
 STATION_CONFIG_ENV = "EGOCAP_STATION_CONFIG"
 _DEFAULT_FLAT_STATION_ID = "station_01"
@@ -64,6 +65,12 @@ class ResolvedStation:
     latency: dict[str, float]
     #: The camera that sets the timeline for automatic time alignment of kept episodes; None turns it off.
     alignment_index: str | None
+    #: The final writer every recorded camera uses (``recording.video_encoder``); the default software H.264 writer
+    #: when unset.
+    video_encoder: str = "ffmpeg_h264"
+    #: ``recording.video_encoder_options`` (crf, preset, pix_fmt), validated for ``video_encoder``; None keeps the
+    #: writer's defaults.
+    video_encoder_options: dict[str, Any] | None = None
 
 
 class _DuplicateKeyLoader(yaml.SafeLoader):
@@ -175,6 +182,24 @@ def _resolve_alignment_index(station_id: str, entry: dict) -> str | None:
     return _str_field(section, "index_source") or None
 
 
+def _resolve_video_encoder(station_id: str, recording: dict) -> tuple[str, dict[str, Any] | None]:
+    """The final recording writer and its options from the ``recording`` section, validated up front.
+
+    A bad value fails station load rather than the first take. Availability is not probed here: a missing or
+    failing encoder surfaces through the writer's own start and release errors, with no software fallback.
+    """
+    encoder = recording.get("video_encoder", "ffmpeg_h264")
+    options = recording.get("video_encoder_options")
+    if encoder not in ("opencv_mp4v", "ffmpeg_h264", "ffmpeg_h264_nvenc"):
+        raise StationConfigError(f"station {station_id!r}: recording.video_encoder {encoder!r} is not supported")
+    try:
+        resolve_video_encoder_options(encoder, options)
+    except (TypeError, ValueError) as error:
+        # A malformed value (for example a list for preset) can reach the validator as a TypeError.
+        raise StationConfigError(f"station {station_id!r}: recording.video_encoder_options: {error}") from error
+    return encoder, (dict(options) if options else None)
+
+
 def _resolve_one_station(station_id: str, entry: Any, config_dir: Path) -> ResolvedStation:
     """Build a :class:`ResolvedStation` from one station's parsed mapping."""
     if not isinstance(entry, dict):
@@ -196,6 +221,7 @@ def _resolve_one_station(station_id: str, entry: Any, config_dir: Path) -> Resol
         data_dir = candidate if candidate.is_absolute() else (config_dir / candidate)
 
     operator_name = _str_field(meta, "operator_name") or ""
+    video_encoder, video_encoder_options = _resolve_video_encoder(station_id, recording)
 
     return ResolvedStation(
         station_id=station_id,
@@ -209,6 +235,8 @@ def _resolve_one_station(station_id: str, entry: Any, config_dir: Path) -> Resol
         cameras=_resolve_cameras(station_id, entry),
         latency=_resolve_latency(station_id, entry),
         alignment_index=_resolve_alignment_index(station_id, entry),
+        video_encoder=video_encoder,
+        video_encoder_options=video_encoder_options,
     )
 
 

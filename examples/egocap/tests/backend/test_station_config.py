@@ -337,3 +337,34 @@ def test_alignment_is_off_without_an_alignment_section(tmp_path):
 def test_a_non_mapping_alignment_section_is_a_station_config_error(tmp_path, section):
     with pytest.raises(StationConfigError, match="alignment"):
         load_station_config(_write(tmp_path, _CAMERAS + f"alignment: {section}\n"))
+
+
+_NAMED = "meta:\n  egocap_station_name: Bench 7\n"
+
+
+def test_recording_video_encoder_defaults_to_software_h264(tmp_path):
+    resolved = load_station_config(_write(tmp_path, _NAMED))
+    assert (resolved.video_encoder, resolved.video_encoder_options) == ("ffmpeg_h264", None)
+
+
+def test_recording_video_encoder_and_options_resolve_into_the_station(tmp_path):
+    path = _write(
+        tmp_path,
+        _NAMED + "recording:\n  video_encoder: ffmpeg_h264_nvenc\n  video_encoder_options:\n    crf: 12\n",
+    )
+    resolved = load_station_config(path)
+    assert (resolved.video_encoder, resolved.video_encoder_options) == ("ffmpeg_h264_nvenc", {"crf": 12})
+
+
+@pytest.mark.parametrize(
+    "recording",
+    [
+        "video_encoder: x265",
+        "video_encoder: ffmpeg_h264\n  video_encoder_options: {crf: 99}",
+        "video_encoder: opencv_mp4v\n  video_encoder_options: {crf: 20}",
+        "video_encoder: ffmpeg_h264_nvenc\n  video_encoder_options: {preset: []}",
+    ],
+)
+def test_an_invalid_recording_video_encoder_is_a_station_config_error_naming_the_station(tmp_path, recording):
+    with pytest.raises(StationConfigError, match="Bench 7"):
+        load_station_config(_write(tmp_path, _NAMED + f"recording:\n  {recording}\n"))

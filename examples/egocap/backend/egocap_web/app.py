@@ -186,6 +186,8 @@ def _recording_config_factory(
     station_label: str | None | Callable[[], str | None],
     output_root: Path,
     on_video_sources: Callable[[frozenset[str], frozenset[str]], None] | None = None,
+    video_encoder: str = "ffmpeg_h264",
+    video_encoder_options: dict[str, Any] | None = None,
 ):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
     coordinator actually opens/reopens a session (not once at import time)
@@ -199,16 +201,34 @@ def _recording_config_factory(
     the honest choice until that plumbing is added, rather than manufacturing
     calibration values the backend doesn't actually have.
 
+    Every camera is written with ``video_encoder`` / ``video_encoder_options`` (the station's recording writer).
+
     ``station_label`` may be a callable, read at each session open, so a session opened after the operator
     changes the station in use carries the new station's name."""
 
     def factory() -> ServiceConfig:
         video_sources = tuple(
-            VideoSourceSpec(cam.name, cam.width, cam.height, cam.fps, intrinsics=False)
+            VideoSourceSpec(
+                cam.name,
+                cam.width,
+                cam.height,
+                cam.fps,
+                encoder=video_encoder,
+                intrinsics=False,
+                encoder_options=video_encoder_options,
+            )
             for cam in monitor.camera_descriptors
         ) + tuple(
             # LiveKit cameras with a capture-time stamp and a configured size are recorded like any camera.
-            VideoSourceSpec(s.name, s.width, s.height, s.fps, intrinsics=False)
+            VideoSourceSpec(
+                s.name,
+                s.width,
+                s.height,
+                s.fps,
+                encoder=video_encoder,
+                intrinsics=False,
+                encoder_options=video_encoder_options,
+            )
             for s in recordable_livekit_streams(monitor.native.started)
         )
         if on_video_sources is not None:
@@ -555,6 +575,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             lambda: station_service.label(),
             recording_output_root,
             aligner.note_video_sources if aligner is not None else None,
+            video_encoder=resolved_station.video_encoder if resolved_station is not None else "ffmpeg_h264",
+            video_encoder_options=resolved_station.video_encoder_options if resolved_station is not None else None,
         ),
         queue_capacity=_INGRESS_QUEUE_CAPACITY,
         queue_bytes=lambda: _ingress_queue_bytes(monitor.native.started),
