@@ -165,7 +165,8 @@ def test_a_calibration_is_read_only_and_compared_by_identity():
         return StereoCalibration(8, 8, eye, none, eye.copy(), none, eye, np.zeros(3))
 
     one, two = calibration(), calibration()
-    assert one == one and one != two and len({one, two}) == 2
+    same = one
+    assert one == same and one != two and len({one, two}) == 2
     with pytest.raises(ValueError, match=r"read-only"):
         one.left_K[0, 0] = 2.0
 
@@ -614,6 +615,41 @@ def test_a_restarted_source_hands_out_nothing_of_its_last_session(zed_sdk):
     finally:
         source.stop()
     assert frame[1] > last_session, "a capture of the last session was handed out"
+
+
+@requires_gpu
+def test_an_imu_reader_that_outlives_its_stop_adds_nothing_to_the_next_session(
+    zed_sdk, monkeypatch
+):
+    monkeypatch.setattr(zed_source, "_IMU_STOP_S", 0.05)
+    release = threading.Event()
+    read = _Camera.get_sensors_data
+
+    def stuck_in_the_sdk(self, data, reference):
+        # The first camera's reader does not come back from a later call
+        # until it is let go, well after its stop.
+        if self is zed_sdk[0] and self.sensor_reads >= 4:
+            release.wait(5.0)
+        return read(self, data, reference)
+
+    monkeypatch.setattr(_Camera, "get_sensors_data", stuck_in_the_sdk)
+    source = build_stereo_camera(ZED, imu=True)
+    source.start()
+    try:
+        _read(source, 2)
+    finally:
+        source.stop()  # gives up on the reader and leaves it where it is
+    source.start()
+    try:
+        _read(source, 4)
+        release.set()
+        time.sleep(0.05)  # the first reader returns with its old sample
+        samples = source.imu()
+    finally:
+        release.set()
+        source.stop()
+    assert len(zed_sdk) == 2
+    assert (np.diff(samples.timestamps_ns) > 0).all(), "a sample of the last session"
 
 
 @requires_gpu
