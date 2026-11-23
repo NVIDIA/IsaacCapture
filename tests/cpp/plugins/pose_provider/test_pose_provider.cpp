@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // PoseProvider tests on a scripted camera input: the stub adapter for a live run, and a scripted engine for call
-// order, setup resolution, failures and the output, with a recording plugin session in place of OpenXR.
+// order, setup resolution, failures, the output and the run log, with a recording plugin session in place of OpenXR.
 
 #include "fake_camera_input.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <flatbuffers/flatbuffers.h>
+#include <mcap/reader.hpp>
 #include <pose_camera_input/camera_input.hpp>
 #include <pose_engine_api/pose_engine.hpp>
 #include <pose_provider/pose_provider.hpp>
@@ -20,11 +22,15 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
+#include <fcntl.h>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iterator>
@@ -33,7 +39,9 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -538,6 +546,112 @@ const HostImage& image_of(const EngineImageGroup& group, StreamId stream)
                                     [&](const EngineImage& candidate) { return candidate.stream == stream; });
     REQUIRE(image != group.images.end());
     return std::get<HostImage>(image->storage);
+}
+
+// A new empty directory, removed with its contents on destruction.
+class TempDirectory
+{
+public:
+    TempDirectory()
+    {
+        std::string name = (std::filesystem::temp_directory_path() / "pose_provider_test_XXXXXX").string();
+        if (::mkdtemp(name.data()) == nullptr)
+        {
+            throw std::system_error(errno, std::generic_category(), "mkdtemp");
+        }
+        path_ = name;
+    }
+    ~TempDirectory()
+    {
+        std::error_code ignored;
+        std::filesystem::remove_all(path_, ignored);
+    }
+    TempDirectory(const TempDirectory&) = delete;
+    TempDirectory& operator=(const TempDirectory&) = delete;
+
+    const std::filesystem::path& path() const
+    {
+        return path_;
+    }
+
+private:
+    std::filesystem::path path_;
+};
+
+struct RunLogRecord
+{
+    std::string topic;
+    std::string json;
+    int64_t log_time = 0;
+};
+
+// The run log in @p directory, in write order. A file the run log did not finish has no summary section and fails.
+std::vector<RunLogRecord> read_run_log(const std::filesystem::path& directory)
+{
+    mcap::McapReader reader;
+    REQUIRE(reader.open((directory / kRunLogFileName).string()).ok());
+    REQUIRE(reader.readSummary(mcap::ReadSummaryMethod::NoFallbackScan).ok());
+    std::vector<RunLogRecord> records;
+    uint32_t sequence = 0;
+    for (const mcap::MessageView& view : reader.readMessages())
+    {
+        CHECK(view.channel->messageEncoding == "json");
+        CHECK(view.message.sequence == sequence++);
+        records.push_back({ view.channel->topic,
+                            std::string(reinterpret_cast<const char*>(view.message.data), view.message.dataSize),
+                            static_cast<int64_t>(view.message.logTime) });
+    }
+    return records;
+}
+
+std::string json_number(const std::optional<int64_t>& value)
+{
+    return value ? std::to_string(*value) : "null";
+}
+
+std::string times_record(const StreamImage& image)
+{
+    return "{\"local_common_clock_ns\":" + json_number(image.local_common_clock_ns) +
+           ",\"raw_device_clock_ns\":" + json_number(image.raw_device_clock_ns) + "}";
+}
+
+// The frame record the run log writes for @p frame.
+std::string frame_record(const FakeFrame& frame, uint64_t lost_before, std::optional<uint64_t> group_id)
+{
+    const std::string group = group_id ? std::to_string(*group_id) : "null";
+    const std::string fusion = group_id ? json_number(frame.left.local_common_clock_ns) : "null";
+    return "{\"sequence\":" + std::to_string(frame.sequence) + ",\"left\":" + times_record(frame.left) +
+           ",\"right\":" + times_record(frame.right) + ",\"lost_before\":" + std::to_string(lost_before) +
+           ",\"group_id\":" + group + ",\"fusion_time_ns\":" + fusion + "}";
+}
+
+// The integer that follows "key": in @p json.
+int64_t number_after(const std::string& json, const std::string& key)
+{
+    const std::size_t at = json.find("\"" + key + "\":");
+    REQUIRE(at != std::string::npos);
+    return std::stoll(json.substr(at + key.size() + 3));
+}
+
+// Points this process's open descriptor for @p file at @p device: every later write to /dev/full fails with ENOSPC,
+// and /dev/null takes every write but cannot be synced.
+void point_at_device(const std::filesystem::path& file, const char* device)
+{
+    const std::filesystem::path target = std::filesystem::canonical(file);
+    int descriptor = -1;
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator("/proc/self/fd"))
+    {
+        std::error_code ignored;
+        if (std::filesystem::read_symlink(entry.path(), ignored) == target)
+        {
+            descriptor = std::stoi(entry.path().filename().string());
+        }
+    }
+    REQUIRE(descriptor >= 0);
+    const int opened = ::open(device, O_WRONLY | O_CLOEXEC);
+    REQUIRE(opened >= 0);
+    CHECK(::dup2(opened, descriptor) == descriptor);
+    ::close(opened);
 }
 
 } // namespace
@@ -1916,4 +2030,348 @@ TEST_CASE("The device status follows the run under the manifest's device path", 
         check_status(output->statuses.back(), core::PluginDeviceState_FAILED, core::PluginDeviceReason_DEVICE_ERROR,
                      "Engine: engine fatal error: tracker diverged");
     }
+}
+
+TEST_CASE("The run log records the setup, every input decision, each published estimate and the summary",
+          "[unit][pose_provider]")
+{
+    TempDirectory directory;
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    auto output = fake_output(script, camera);
+    ProviderConfig config = output_config();
+    config.episode_dir = directory.path();
+    PoseProvider provider(config, fake_engine(script), std::make_unique<FakeCameraInput>(camera), open_on(output));
+    provider.request_start();
+    // The description arrives after the first update, as from a camera that is still opening.
+    provider.update();
+    camera->push(fake_stereo_description());
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Running);
+
+    // Each eye's times differ, and the right eye's may be absent.
+    FakeFrame first = fake_frame(3);
+    *first.right.local_common_clock_ns += 7;
+    *first.right.raw_device_clock_ns += 5;
+    FakeFrame gap = fake_frame(5);
+    FakeFrame untimed = fake_frame(8);
+    untimed.right.local_common_clock_ns.reset();
+    untimed.right.raw_device_clock_ns.reset();
+    std::vector<std::string> topics{ "setup" };
+    std::vector<std::string> frames{ frame_record(first, 0, 1), frame_record(gap, 1, 2), frame_record(untimed, 0, 3) };
+
+    camera->push(FrameLoss{ 1, 2 }); // Before the first frame, so not counted.
+    camera->push(first);
+    provider.update();
+    script->admission = EnqueueResult::DroppedBackpressure;
+    camera->push(gap);
+    provider.update();
+    script->admission = EnqueueResult::Accepted;
+    camera->push(FrameLoss{ 6, 2 });
+    camera->push(untimed);
+    // Six more accepted groups fill the prepared storage with groups 1 and 3, so the last frame is dropped.
+    for (uint64_t sequence = 9; sequence <= 15; ++sequence)
+    {
+        camera->push(fake_frame(sequence));
+        frames.push_back(
+            frame_record(fake_frame(sequence), 0, sequence < 15 ? std::optional(sequence - 5) : std::nullopt));
+    }
+    provider.update();
+    topics.insert(topics.end(), { "loss", "frame", "admission", "frame", "admission", "loss", "frame", "admission" });
+    for (int i = 0; i < 6; ++i)
+    {
+        topics.insert(topics.end(), { "frame", "admission" });
+    }
+    topics.push_back("frame");
+
+    script->tracking_state = TrackingState::Tracking;
+    script->estimates = { 1 };
+    const int64_t before = now_ns();
+    provider.update();
+    const int64_t after = now_ns();
+    // Published in Draining, as the engine reports drained.
+    script->tracking_state = TrackingState::Lost;
+    script->estimate_when_drained = 3;
+    provider.request_finish();
+    camera->push(fake_frame(16)); // After the cutoff: counted, not recorded.
+    provider.update();
+    REQUIRE(provider.finished());
+    CHECK_FALSE(provider.status().failed);
+    topics.insert(topics.end(), { "estimate", "estimate", "summary" });
+    REQUIRE(output->poses.size() == 2);
+
+    const std::vector<RunLogRecord> records = read_run_log(directory.path());
+    std::vector<std::string> read_topics;
+    for (const RunLogRecord& record : records)
+    {
+        read_topics.push_back(record.topic);
+    }
+    REQUIRE(read_topics == topics);
+
+    const std::string& setup = records[0].json;
+    CHECK_THAT(setup, Catch::Matchers::ContainsSubstring(
+                          "\"source\":{\"backend\":\"oak\",\"device_id\":\"fake-device\",\"session_id\":\"fake-session\","
+                          "\"streams\":[{\"stream_id\":\"fake/left\",\"width\":8,\"height\":4,\"format\":\"Gray8\","
+                          "\"rate_hz\":30,\"shutter\":\"Global\",\"timed_event\":\"ExposureMidpoint\",\"intrinsics\":{"
+                          "\"fx\":100,\"fy\":100,\"cx\":3.5,\"cy\":1.5,\"distortion\":\"None\",\"coefficients\":[]},"
+                          "\"T_rig_camera\":{\"translation_m\":[0,0,0],\"rotation_xyzw\":[0,0,0,1]}},"
+                          "{\"stream_id\":\"fake/right\""));
+    CHECK_THAT(setup, Catch::Matchers::ContainsSubstring("\"T_body_camera\":{\"translation_m\":[0.075,0,0]"));
+    CHECK_THAT(setup, Catch::Matchers::ContainsSubstring("\"undistortion_factor\":1.00000"));
+    CHECK_THAT(setup, Catch::Matchers::ContainsSubstring("\"field_of_view_deg\":[4.581"));
+    CHECK_THAT(setup, Catch::Matchers::ContainsSubstring(
+                          "\"engine\":{\"adapter\":\"fake\",\"adapter_version\":\"1\",\"engine_library\":\"none\","
+                          "\"engine_library_version\":\"none\",\"input_modes\":[\"Stereo\"],\"memory_kinds\":[\"Host\"],"
+                          "\"pixel_formats\":[\"Gray8\"],\"distortion_models\":[\"None\"]},\"prepared_image_groups\":8,"
+                          "\"output_collection\":\"pose/run\",\"startup_timeout_ms\":30000,\"drain_timeout_ms\":5000}"));
+
+    std::vector<std::string> read_frames;
+    std::vector<std::string> admissions;
+    std::vector<std::string> estimates;
+    for (const RunLogRecord& record : records)
+    {
+        if (record.topic == "frame")
+        {
+            read_frames.push_back(record.json);
+        }
+        else if (record.topic == "admission")
+        {
+            admissions.push_back(record.json);
+        }
+        else if (record.topic == "estimate")
+        {
+            estimates.push_back(record.json);
+        }
+    }
+    CHECK(read_frames == frames);
+    CHECK(records[1].json == "{\"first_sequence\":1,\"count\":2,\"counted\":0}");
+    CHECK(records[6].json == "{\"first_sequence\":6,\"count\":2,\"counted\":2}");
+    REQUIRE(admissions.size() == 9);
+    CHECK(admissions[0] == "{\"group_id\":1,\"result\":\"Accepted\"}");
+    CHECK(admissions[1] == "{\"group_id\":2,\"result\":\"DroppedBackpressure\"}");
+
+    REQUIRE(estimates.size() == 2);
+    CHECK_THAT(estimates[0], Catch::Matchers::StartsWith("{\"group_id\":1,\"tracking_state\":\"Tracking\","
+                                                         "\"local_common_clock_ns\":1099999999,"
+                                                         "\"raw_device_clock_ns\":99999999,\"publication_time_ns\":"));
+    CHECK(number_after(estimates[0], "publication_time_ns") >= before);
+    CHECK(number_after(estimates[0], "publication_time_ns") <= after);
+    const RunLogRecord& first_estimate = records[std::find(topics.begin(), topics.end(), "estimate") - topics.begin()];
+    CHECK(first_estimate.log_time >= number_after(estimates[0], "publication_time_ns"));
+    CHECK(first_estimate.log_time <= after);
+    CHECK_THAT(estimates[1], Catch::Matchers::StartsWith("{\"group_id\":3,\"tracking_state\":\"Lost\","
+                                                         "\"local_common_clock_ns\":1266666664,"
+                                                         "\"raw_device_clock_ns\":266666664,"));
+    CHECK(records.back().json ==
+          "{\"outcome\":\"finished\",\"finish_requested\":true,\"failed_component\":null,\"failure_reason\":null,"
+          "\"published_estimates\":2,\"last_published\":{\"group_id\":3,\"local_common_clock_ns\":1266666664,"
+          "\"raw_device_clock_ns\":266666664},\"frames_lost\":3,\"frames_dropped\":1,\"next_sequence\":16,"
+          "\"frames_after_cutoff\":1,\"engine_health\":{\"dropped_image_groups\":0,\"dropped_imu_samples\":0,"
+          "\"imu_gaps\":0,\"invalid_input_rejections\":0,\"not_running_rejections\":0,\"output_stalls\":0,"
+          "\"fatal_error\":false,\"fatal_reason\":\"\"}}");
+}
+
+TEST_CASE("The run log's summary has the run's final outcome", "[unit][pose_provider]")
+{
+    TempDirectory directory;
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    ProviderConfig config;
+    config.episode_dir = directory.path();
+    std::string summary_start;
+
+    SECTION("a setup the engine rejects leaves only the summary, its reason escaped")
+    {
+        script->validation_error = "unsupported \"rate\" \\ 30\nHz";
+        PoseProvider provider(config, fake_engine(script), ready_input(camera));
+        provider.request_start();
+        provider.update();
+        REQUIRE(provider.finished());
+        summary_start =
+            R"({"outcome":"failed","finish_requested":false,"failed_component":"Setup",)"
+            R"("failure_reason":"the engine rejected the setup: unsupported \"rate\" \\ 30\u000aHz",)"
+            R"("published_estimates":0,"last_published":null,"frames_lost":0,"frames_dropped":0,"next_sequence":null,)";
+    }
+    SECTION("a plugin session that cannot open")
+    {
+        auto output = fake_output(script, camera);
+        output->failing_session = true;
+        config.output_collection = kPoseCollection;
+        PoseProvider provider(config, fake_engine(script), ready_input(camera), open_on(output));
+        provider.update();
+        REQUIRE(provider.finished());
+        summary_start = R"({"outcome":"failed","finish_requested":false,"failed_component":"Output",)"
+                        R"("failure_reason":"the plugin session or the device status could not open: )"
+                        R"(cannot open the plugin session",)";
+    }
+    SECTION("a camera input that fails while running, read after the engine turned fatal")
+    {
+        PoseProvider provider(config, fake_engine(script), ready_input(camera));
+        provider.request_start();
+        provider.update();
+        script->fatal_reason = "tracker diverged";
+        camera->push(InputFailed{ "no such device" });
+        provider.update();
+        REQUIRE(provider.finished());
+        summary_start = R"({"outcome":"failed","finish_requested":false,"failed_component":"CameraInput",)"
+                        R"("failure_reason":"the camera input failed: no such device",)"
+                        R"("published_estimates":0,"last_published":null,"frames_lost":0,"frames_dropped":0,)"
+                        R"("next_sequence":null,"frames_after_cutoff":0,"engine_health":{"dropped_image_groups":0,)"
+                        R"("dropped_imu_samples":0,"imu_gaps":0,"invalid_input_rejections":0,"not_running_rejections":0,)"
+                        R"("output_stalls":0,"fatal_error":true,"fatal_reason":"tracker diverged"}})";
+    }
+    SECTION("a stop() that throws after a clean drain")
+    {
+        script->throwing = { "stop" };
+        PoseProvider provider(config, fake_engine(script), ready_input(camera));
+        provider.request_start();
+        provider.update();
+        provider.request_finish();
+        provider.update();
+        REQUIRE(provider.finished());
+        summary_start = R"({"outcome":"failed","finish_requested":true,"failed_component":"Engine",)"
+                        R"("failure_reason":"stop: stop failed",)";
+    }
+
+    const std::vector<RunLogRecord> records = read_run_log(directory.path());
+    REQUIRE_FALSE(records.empty());
+    CHECK(records.size() == (script->initialized ? 2 : 1));
+    CHECK(records.back().topic == "summary");
+    CHECK_THAT(records.back().json, Catch::Matchers::StartsWith(summary_start));
+}
+
+TEST_CASE("A run log that cannot be created or written fails the run with RunLog; published poses stand",
+          "[unit][pose_provider]")
+{
+    TempDirectory directory;
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    auto output = fake_output(script, camera);
+    ProviderConfig config = output_config();
+    config.episode_dir = directory.path();
+    const std::string file = (directory.path() / kRunLogFileName).string();
+
+    SECTION("the directory does not exist")
+    {
+        config.episode_dir = directory.path() / "missing";
+        PoseProvider provider(config, fake_engine(script), std::make_unique<FakeCameraInput>(camera), open_on(output));
+        provider.update();
+        const std::string reason = "run log '" + (directory.path() / "missing" / kRunLogFileName).string() +
+                                   "' could not be created: No such file or directory";
+        CHECK(provider.status().failed_component == ProviderComponent::RunLog);
+        CHECK(provider.status().failure_reason == reason);
+        // Before the session and the engine, so no device status reports it.
+        CHECK(script->calls == Calls{ "stop" });
+        CHECK(output->statuses.empty());
+        CHECK_FALSE(std::filesystem::exists(directory.path() / "missing"));
+    }
+    SECTION("an earlier run log is there")
+    {
+        std::ofstream(file) << "an earlier run";
+        PoseProvider provider(config, fake_engine(script), std::make_unique<FakeCameraInput>(camera), open_on(output));
+        provider.update();
+        CHECK(provider.status().failed_component == ProviderComponent::RunLog);
+        CHECK(provider.status().failure_reason == "run log '" + file + "' could not be created: File exists");
+        CHECK(read_file(file.c_str()) == "an earlier run");
+    }
+    SECTION("writing fails at the close")
+    {
+        PoseProvider provider(config, fake_engine(script), ready_input(camera), open_on(output));
+        provider.request_start();
+        provider.update();
+        point_at_device(file, "/dev/full");
+        camera->push(fake_frame(1));
+        provider.update();
+        script->tracking_state = TrackingState::Tracking;
+        script->estimates = { 1 };
+        provider.update();
+        provider.request_finish();
+        provider.update();
+        REQUIRE(provider.finished());
+        CHECK(provider.status().failed_component == ProviderComponent::RunLog);
+        CHECK(provider.status().failure_reason == "run log '" + file + "' could not be written: No space left on device");
+        CHECK(output->poses.size() == 1);
+        REQUIRE_FALSE(output->statuses.empty());
+        check_status(output->statuses.back(), core::PluginDeviceState_FAILED, core::PluginDeviceReason_DEVICE_ERROR,
+                     "RunLog: " + provider.status().failure_reason);
+        CHECK(script->calls.back() == "close pose_root/device_status");
+        CHECK(stop_calls(*script) == 1);
+    }
+    SECTION("syncing fails at the close")
+    {
+        PoseProvider provider(config, fake_engine(script), ready_input(camera), open_on(output));
+        provider.request_start();
+        provider.update();
+        point_at_device(file, "/dev/null");
+        provider.request_finish();
+        provider.update();
+        REQUIRE(provider.finished());
+        CHECK(provider.status().failure_reason == "run log '" + file + "' could not be written: Invalid argument");
+    }
+    SECTION("writing fails while running")
+    {
+        PoseProvider provider(config, fake_engine(script), ready_input(camera), open_on(output));
+        provider.request_start();
+        provider.update();
+        point_at_device(file, "/dev/full");
+        // Frames the engine drops hold no storage. The first full chunk of records reaches the file and fails.
+        script->admission = EnqueueResult::DroppedBackpressure;
+        uint64_t sequence = 0;
+        while (!provider.finished() && sequence < 100'000)
+        {
+            camera->push(fake_frame(++sequence));
+            provider.update();
+        }
+        REQUIRE(provider.finished());
+        CHECK(provider.status().failed_component == ProviderComponent::RunLog);
+        CHECK(provider.status().failure_reason == "run log '" + file + "' could not be written: No space left on device");
+        CHECK(stop_calls(*script) == 1);
+        CHECK(camera->frames_released() == camera->frames_delivered());
+    }
+}
+
+TEST_CASE("The run log records the image group a run fails on", "[unit][pose_provider]")
+{
+    TempDirectory directory;
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    ProviderConfig config;
+    config.episode_dir = directory.path();
+    std::vector<std::string> topics{ "setup", "frame" };
+    SECTION("rejected by the engine")
+    {
+        script->admission = EnqueueResult::RejectedInvalidInput;
+        topics.push_back("admission");
+    }
+    SECTION("offered to an engine that throws")
+    {
+        script->throwing = { "on_image_group" };
+    }
+    topics.push_back("summary");
+    PoseProvider provider(config, fake_engine(script), ready_input(camera));
+    provider.request_start();
+    provider.update();
+    camera->push(fake_frame(1));
+    provider.update();
+    REQUIRE(provider.finished());
+    std::vector<std::string> read_topics;
+    for (const RunLogRecord& record : read_run_log(directory.path()))
+    {
+        read_topics.push_back(record.topic);
+    }
+    CHECK(read_topics == topics);
+}
+
+TEST_CASE("A finish requested before the first update opens no run log", "[unit][pose_provider]")
+{
+    TempDirectory directory;
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    ProviderConfig config;
+    config.episode_dir = directory.path();
+    PoseProvider provider(config, fake_engine(script), ready_input(camera));
+    provider.request_finish();
+    provider.update();
+    REQUIRE(provider.finished());
+    CHECK_FALSE(std::filesystem::exists(directory.path() / kRunLogFileName));
 }

@@ -20,7 +20,7 @@ stream through an interchangeable pose estimation engine.
 | `camera_input/` | `pose_provider::pose_camera_input` | Header-only camera input interface: `ICameraInput`, its events and `StereoFrame`, for one stereo camera source read without blocking |
 | `undistort/` | `pose_provider::pose_undistort` | Undistortion of one camera image to a distortion-free pinhole of the same size and optical frame: the widest valid output calibration, its map and bilinear `Gray8` resampling |
 | `engines/stub/` | `pose_provider::pose_engine_stub` | Adapter of the full contract with no engine library behind it |
-| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, camera input, setup resolution, input preparation, pose output, status and failure handling around one engine adapter; links no adapter |
+| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, camera input, setup resolution, input preparation, pose output, run log, status and failure handling around one engine adapter; links no adapter |
 | `app/` | `pose_provider_plugin` | The plugin executable; links the adapter that `POSE_ENGINE_TARGET` names. Its manifest is [`plugin.yaml`](plugin.yaml) |
 
 ## Build
@@ -40,11 +40,11 @@ To use an engine adapter instead of the stub, also pass
 adapter, or the stub. `pose_provider_tests` checks the stub against the engine contract, a
 scripted camera input against the camera input contract and the undistortion on synthetic
 lenses, and runs `PoseProvider` on a scripted camera input with the stub and with a scripted
-engine, with an output that records what it would publish; the `pose_engine_*` tests check
-adapter registration. The build places `pose_provider_plugin` beside a copy of `plugin.yaml`
-in `build/src/plugins/pose_provider/`, so `build/src/plugins` works as a `PluginManager`
-search path. No target here has install rules, and a pip build with
-`BUILD_PLUGIN_POSE_PROVIDER` on stops at configuration.
+engine, with an output that records what it would publish and a run log it reads back; the
+`pose_engine_*` tests check adapter registration. The build places `pose_provider_plugin`
+beside a copy of `plugin.yaml` in `build/src/plugins/pose_provider/`, so `build/src/plugins`
+works as a `PluginManager` search path. No target here has install rules, and a pip build
+with `BUILD_PLUGIN_POSE_PROVIDER` on stops at configuration.
 
 ## Run
 
@@ -55,6 +55,7 @@ as soon as the engine is ready; an application cannot start it separately.
 | Option | Meaning |
 | --- | --- |
 | `--output-collection=<id>` | Required. The `se3_tracker` collection that receives the poses, 1 to 255 bytes; use a new one for each run. See [Output](#output) |
+| `--episode-dir=<dir>` | An existing directory, as an absolute path, in which the run creates its run log; use a new one for each run. See [Run log](#run-log) |
 | `--startup-timeout=<seconds>` | Time allowed from launch for the camera input to become ready and the run to start; engine initialization is not interrupted |
 | `--drain-timeout=<seconds>` | Time allowed from a finish request until the camera input has ended and the engine has processed its accepted input |
 | `--plugin-root-id=<id>` | Set by the plugin launcher; the plugin's device status is published under it |
@@ -65,10 +66,11 @@ when it failed (the log gives the reason) and 2 for a usage error.
 
 After its SIGINT, `PluginManager` waits `shutdown_timeout_seconds` from
 [`plugin.yaml`](plugin.yaml) and then sends SIGKILL. Keep that value above the longest
-finish: `--drain-timeout` plus the engine's stop time, the camera input's release and the
-output's close, plus the rest of engine initialization and start if a stop can arrive while
-the engine initializes. When `PluginManager` stops the plugin itself, it reports the plugin
-as stopped and drops its exit status; the plugin's last log line still gives the outcome.
+finish: `--drain-timeout` plus the engine's stop time, the camera input's release, the
+output's close and the run log's close, plus the rest of engine initialization and start if
+a stop can arrive while the engine initializes. When `PluginManager` stops the plugin
+itself, it reports the plugin as stopped and drops its exit status; the plugin's last log
+line still gives the outcome.
 
 The plugin executable creates no camera input, so it waits in Preparing until it is stopped
 or the startup timeout fails it.
@@ -96,6 +98,36 @@ runtime has a headset system, as `TeleopSession` does by creating its own sessio
 the session or a collection cannot open, which includes a missing runtime or one without a
 system, or if a pose cannot be published, the run fails with `Output`. A device status that
 cannot be published is logged once and no longer sent, without failing the run.
+
+## Run log
+
+With `--episode-dir=<dir>`, the plugin creates the run log `pose_metadata.mcap` in that
+directory as it starts, before it opens its OpenXR session. The directory must exist and
+must not hold a run log already. The path must be absolute, because the plugin launcher
+starts the plugin in its own directory. Without the option, no file is written.
+
+The run log is an MCAP file of JSON messages, one topic per kind of record. It holds
+metadata only, no images or poses: a recorded pose matches its `estimate` record by the
+output collection and its device-clock time.
+
+| Topic | Written | Contents |
+| --- | --- | --- |
+| `setup` | Once, when the run becomes Ready | The camera's description as delivered: device, session, and each stream's size, rate, timed event, lens and pose in the rig. The setup the engine receives: each stream's undistorted calibration, undistortion factor and field of view. The engine's identity and capabilities, the prepared storage size, the output collection and the timeouts |
+| `frame` | For each frame taken while running, before the engine sees it | Capture number; both streams' common-clock and device-clock times, `null` when absent; the captures lost just before it; its image group and fusion time, `null` when prepared storage was full |
+| `admission` | After each image group is offered | The group and the engine's answer |
+| `loss` | For each loss report taken while running | The missing capture numbers, and how many of them count as lost: none before the first frame |
+| `estimate` | After each published estimate | The group, tracking state, both anchor times and the publication time |
+| `summary` | Once, at the end | `finished` or `failed` with the failing component and reason; whether a finish was requested; the number of published estimates and the last one's times; the frame counts; the next capture number after the frames taken; the frames released unread after the finish request; the engine's health |
+
+Each message's sequence number orders the records across topics, and its log time is the
+common clock when it was written. A topic without records does not appear. Any MCAP reader
+opens the file, for example the `mcap` Python package with `json.loads` on each message.
+
+If the run log cannot be created, written or closed, the run fails with `RunLog`; poses
+already published stand. A failure at the close comes after the summary is written, so the
+summary cannot report it; the log and the exit status do. A file without its `summary`
+record is from a run that did not finish writing it, such as one that was killed, and holds
+no records if the run was killed before its first chunk of records was written.
 
 ## Write an adapter
 

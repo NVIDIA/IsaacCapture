@@ -16,6 +16,7 @@
 #include <csignal>
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <iostream>
 #include <poll.h>
 #include <string>
@@ -67,12 +68,16 @@ std::string seconds_text(std::chrono::milliseconds duration)
 std::string usage()
 {
     const ProviderConfig defaults{};
-    return "Usage: pose_provider_plugin --output-collection=<id> [--startup-timeout=<seconds>] "
+    return "Usage: pose_provider_plugin --output-collection=<id> [--episode-dir=<dir>] [--startup-timeout=<seconds>] "
            "[--drain-timeout=<seconds>] [--plugin-root-id=<id>] [-h|--help]\n"
            "  --output-collection=<id>     se3_tracker collection that receives the poses, new for each run; required, "
            "1 to " +
            std::to_string(kMaxOutputCollectionBytes) +
            " bytes\n"
+           "  --episode-dir=<dir>          Existing directory, as an absolute path, in which the run creates its "
+           "run log " +
+           std::string(kRunLogFileName) +
+           ", which must not exist yet; without it, no file is written\n"
            "  --startup-timeout=<seconds>  Time allowed from launch for the camera input to become ready and the run "
            "to start (default " +
            seconds_text(defaults.startup_timeout) +
@@ -125,6 +130,7 @@ ParseResult parse_options(int argc, char** argv, ProviderConfig& out, std::strin
     constexpr std::string_view kDrain = "--drain-timeout=";
     constexpr std::string_view kRootId = "--plugin-root-id=";
     constexpr std::string_view kOutput = "--output-collection=";
+    constexpr std::string_view kEpisode = "--episode-dir=";
     for (int i = 1; i < argc; ++i)
     {
         const std::string_view arg = argv[i];
@@ -152,9 +158,20 @@ ParseResult parse_options(int argc, char** argv, ProviderConfig& out, std::strin
         {
             out.output_collection = std::string(arg.substr(kOutput.size()));
         }
+        else if (arg.starts_with(kEpisode))
+        {
+            // The plugin launcher starts the plugin in its own directory, so a relative path would resolve there.
+            const std::filesystem::path directory(arg.substr(kEpisode.size()));
+            if (!directory.is_absolute())
+            {
+                error = "--episode-dir must be an absolute path, not '" + directory.string() + "'";
+                return ParseResult::Error;
+            }
+            out.episode_dir = directory;
+        }
         else
         {
-            for (const std::string_view option : { kStartup, kDrain, kRootId, kOutput })
+            for (const std::string_view option : { kStartup, kDrain, kRootId, kOutput, kEpisode })
             {
                 if (arg == option.substr(0, option.size() - 1))
                 {
@@ -215,10 +232,10 @@ try
     isaaccapture::Logger::get(kLoggerName)
         ->info(
             "Pose Provider plugin: adapter {} {}, engine library {} {}; startup timeout {} ms, drain timeout {} "
-            "ms; output collection '{}'; plugin root id '{}'",
+            "ms; output collection '{}'; plugin root id '{}'; episode directory '{}'",
             identity.adapter, identity.adapter_version, identity.engine_library, identity.engine_library_version,
             config.startup_timeout.count(), config.drain_timeout.count(), config.output_collection,
-            config.plugin_root_id);
+            config.plugin_root_id, config.episode_dir ? config.episode_dir->string() : std::string());
 
     PoseProvider provider(config, std::move(engine));
     // Stands in for the application's start request until the plugin has a control channel.
