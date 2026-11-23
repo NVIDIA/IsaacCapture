@@ -269,6 +269,7 @@ class _ZedCamera:
         self._captures = CaptureMailbox(
             len(next(iter(self._slots.values())).gpu_buffers)
         )
+        self._last_capture_ns = 0
         self._read_imu = imu
         self._imu_lock = threading.Lock()
         # Bounded: a reader that falls behind keeps the newest samples.
@@ -312,6 +313,7 @@ class _ZedCamera:
                 return
             # Nothing of the last session is handed out in this one.
             self._captures.reset()
+            self._last_capture_ns = 0
             with self._imu_lock:
                 self._imu_samples.clear()
             self._calibration = None
@@ -560,11 +562,17 @@ class _ZedCamera:
             slot.write_idx = index
 
     def _publish_pair(self, sl) -> None:
-        """Hand over the capture whose two eyes were just published."""
+        """Hand over the capture whose two eyes were just published.
+
+        A grab can succeed and return the capture before it (seen on a ZED
+        Mini, after opening and after a stall). That one is not handed out
+        again."""
         stamp = self._camera.get_timestamp(sl.TIME_REFERENCE.IMAGE)
-        self._captures.publish(
-            self._slots["left"].publish_idx, int(stamp.get_nanoseconds())
-        )
+        stamp_ns = int(stamp.get_nanoseconds())
+        if stamp_ns <= self._last_capture_ns:
+            return
+        self._last_capture_ns = stamp_ns
+        self._captures.publish(self._slots["left"].publish_idx, stamp_ns)
 
     def _close_camera(self) -> None:
         imu_ended = self._stop_imu()

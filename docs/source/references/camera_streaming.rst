@@ -969,6 +969,14 @@ Televiz as the compositor at the end of the chain:
   BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.
   The optional Argus source consumes Jetson EGLStreams with CUDA and publishes RGBA buffers without a
   CPU readback.
+- **Stereo cameras for code that computes on the pair** — depth or visual tracking, say — come from
+  ``build_stereo_camera(entry)`` in
+  :code-file:`sources/__init__.py <examples/camera_viz/python/isaaccapture_examples/camera_viz/sources/__init__.py>`,
+  which opens one ``cameras:`` entry. Every frame holds both eyes of one capture, in capture order
+  and never twice, and stays intact until the reader asks for the next. ``calibration()`` and
+  ``imu()`` give the stereo calibration and the IMU samples of a camera that has them, and
+  ``check_stereo_camera(entry)`` says why an entry is not a stereo camera. The viewer keeps using
+  ``build_local_camera``, which pairs the newest image of each eye.
 - **The viewer** (:code-file:`camera_viz.py <examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_viz.py>`) creates a
   ``VizSession`` and adds one ``QuadLayer`` per enabled camera, then submits each frame to its layer
   and calls ``render()`` once per frame. Stereo cameras submit both eyes.
