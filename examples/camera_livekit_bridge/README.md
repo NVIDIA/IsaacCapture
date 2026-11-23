@@ -129,10 +129,14 @@ Repeat `--capture-camera` for each camera in the station file.
 `--bridge-scale-div 1` publishes the full source size (the streams file's dimensions follow it); the launcher's
 default stays 2. `--bridge-bitrate-mbps` is the bridge's per-track H.264 ceiling, separate from the sender's
 `--bitrate-mbps`; 50 is a candidate for the head track on a provisioned link, not a validated value. The bridge
-encodes with the NVENC P4 preset and keeps following LiveKit's congestion feedback, so a ceiling above the link's
+keeps following LiveKit's congestion feedback, so a ceiling above the link's
 capacity is not reached. Check the achieved rate, frame age and missing frames in the `[stats]` lines at the
 intended number of cameras before relying on it; the recording does not switch to another path when bandwidth is
 short.
+
+The bridge encodes with NVENC preset 1 by default; `--nvenc-preset 4` (the launcher's `--bridge-nvenc-preset 4`)
+selects the slower, higher-quality preset. Preset 4's encode time and sustained rate at full size have to be
+measured on the installed hardware before relying on it.
 
 The delivered rate, image quality (the bridge's H.264 encode precedes egocap's final encode) and the alignment
 with tracking have to be measured on the installed hardware; this profile does not establish them.

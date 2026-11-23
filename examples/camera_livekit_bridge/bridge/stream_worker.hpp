@@ -28,6 +28,8 @@ struct WorkerConfig
     uint32_t fps = 30;
     uint32_t bitrate_bps = 8'000'000;
     uint32_t idr_period = 30;
+    /// NVENC preset number, 1 or 4.
+    uint32_t nvenc_preset = 1;
     /// A read that finishes later than this after its slot's notice is treated as possibly overwritten and dropped.
     /// Zero derives it from the ring: the time the publisher needs to wrap it at `fps`.
     uint32_t max_notice_age_ms = 0;

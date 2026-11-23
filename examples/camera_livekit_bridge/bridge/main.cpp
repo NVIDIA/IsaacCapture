@@ -36,7 +36,7 @@ void usage()
 {
     std::cerr
         << "usage: camera_livekit_bridge --livekit-url URL --livekit-token-file FILE --stream NAME=TRACK[:DIV] [--stream ...]\n"
-           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--max-notice-age-ms N] [--gpu N]\n         [--gpu-step NAME[=ARGS] ...] [--timestamp-basis monotonic_us|capture_monotonic_us]\n"
+           "         [--socket PATH] [--fps N] [--bitrate-mbps N] [--idr-period N] [--nvenc-preset 1|4] [--max-notice-age-ms N] [--gpu N]\n         [--gpu-step NAME[=ARGS] ...] [--timestamp-basis monotonic_us|capture_monotonic_us]\n"
            "         capture_monotonic_us: --chrony-sender HOST[:PORT] --chrony-sender-refid HEX [--chrony-pc-port PORT]\n"
            "           [--chronyc PATH]\n"
            "  NAME is a stream in camera_receiver's IPC catalog; TRACK is the LiveKit track name egocap expects;\n  DIV shrinks the picture on the GPU by that integer factor before encoding.\n"
@@ -98,6 +98,17 @@ int main(int argc, char** argv)
             defaults.fps = static_cast<uint32_t>(std::atoi(next().c_str()));
         else if (arg == "--bitrate-mbps")
             defaults.bitrate_bps = static_cast<uint32_t>(std::atof(next().c_str()) * 1e6);
+        else if (arg == "--nvenc-preset")
+        {
+            const std::string text = next();
+            if (text != "1" && text != "4")
+            {
+                std::cerr << "--nvenc-preset must be 1 or 4, got '" << text << "'\n";
+                usage();
+                return 2;
+            }
+            defaults.nvenc_preset = static_cast<uint32_t>(std::atoi(text.c_str()));
+        }
         else if (arg == "--max-notice-age-ms")
         {
             const std::string text = next();

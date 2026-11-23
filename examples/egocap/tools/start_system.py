@@ -670,6 +670,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bitrate-mbps", type=int, help="override the profile's HEVC bitrate")
     parser.add_argument("--bridge-bitrate-mbps", type=int, help="LiveKit H.264 bitrate ceiling per track, in Mbps")
     parser.add_argument(
+        "--bridge-nvenc-preset",
+        type=int,
+        choices=(1, 4),
+        help="NVENC preset for the bridge's H.264 encode: 1 (the default) or the slower, higher-quality 4",
+    )
+    parser.add_argument(
         "--bridge-scale-div",
         type=int,
         choices=(1, 2),
@@ -943,6 +949,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         if args.bridge_bitrate_mbps is not None
                         else []
                     ),
+                    *(["--nvenc-preset", str(args.bridge_nvenc_preset)] if args.bridge_nvenc_preset else []),
                     *bridge_timing_arguments(
                         args.mock,
                         orin_host,

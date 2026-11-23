@@ -24,6 +24,8 @@ struct EncoderConfig
     uint32_t bitrate_bps = 12'000'000;
     /// Frames between IDRs; a stream recovers from loss only at an IDR, so keep it short.
     uint32_t idr_period = 30;
+    /// NVENC preset number: 1 (fastest, the default) or 4 (slower, higher quality).
+    uint32_t preset = 1;
     bool full_range = false;
     /// Matrix coefficients signalled in the stream: BT.709 when true, BT.601 otherwise.
     bool matrix_bt709 = false;
