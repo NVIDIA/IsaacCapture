@@ -75,6 +75,8 @@ _AUTO_SETTINGS = ("exposure", "gain", "white_balance")
 
 # Unread IMU samples kept for a reader that fell behind.
 _IMU_BACKLOG = 4096
+#: How long a stop waits for the IMU reader to leave the SDK.
+_IMU_STOP_S = 2.0
 
 
 def video_settings(spec: dict) -> dict:
@@ -530,7 +532,7 @@ class _ZedCamera:
             return True
         thread, stop = reader
         stop.set()
-        thread.join(timeout=2.0)
+        thread.join(timeout=_IMU_STOP_S)
         return not thread.is_alive()
 
     def _imu_loop(self, camera, sl, stop: threading.Event) -> None:
@@ -549,7 +551,10 @@ class _ZedCamera:
                         last_ns = stamp_ns
                         a = imu.get_linear_acceleration()
                         with self._imu_lock:
-                            self._imu_samples.append((stamp_ns, a[0], a[1], a[2]))
+                            # A reader that outlived its stop adds nothing to
+                            # the next session.
+                            if not stop.is_set():
+                                self._imu_samples.append((stamp_ns, a[0], a[1], a[2]))
                 stop.wait(0.001)
         except Exception as e:
             _notify(f"the IMU is no longer read ({e})", logging.ERROR)
@@ -581,7 +586,7 @@ class _ZedCamera:
                 try:
                     self._camera.close()
                 except Exception:
-                    pass
+                    pass  # an unplugged camera cannot be closed; drop it
             else:
                 # The reader is still inside an SDK call on this camera, and
                 # closing it under that call could crash. The handle is

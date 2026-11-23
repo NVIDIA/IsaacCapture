@@ -277,6 +277,9 @@ class PolledSource(FrameSource):
     def start(self) -> None:
         if self._thread is not None:
             return
+        if self._mailbox is not None:
+            # Nothing of the last session is handed out in this one.
+            self._mailbox.reset()
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._produce_loop,
@@ -320,17 +323,20 @@ class PolledSource(FrameSource):
             if taken is None:
                 return None
             idx = self._consumed_idx = taken[0]
+            # When the capture was published, however long it then waited.
+            timestamp_ns = taken[1]
         else:
             with self._publish_lock:
                 if self._publish_idx < 0 or self._publish_idx == self._consumed_idx:
                     return None
                 idx = self._publish_idx
                 self._consumed_idx = idx
+            timestamp_ns = time.monotonic_ns()
         # stream=0: producer already synchronized its stream before publishing,
         # so the GPU buffer is safe to read from any consumer stream.
         return Frame(
             image=self._gpu_buffers[idx],
-            timestamp_ns=time.monotonic_ns(),
+            timestamp_ns=timestamp_ns,
             source_id=self._spec.name,
             stream=0,
         )
