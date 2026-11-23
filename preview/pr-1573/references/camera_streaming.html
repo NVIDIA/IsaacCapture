@@ -849,7 +849,8 @@ by default; <code class="docutils literal notranslate"><span class="pre">stereo:
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">synthetic</span></code></p></td>
 <td><p>Debugging tool — GPU-generated test pattern, no camera or file required. <code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code> adds
 a <code class="docutils literal notranslate"><span class="pre">disparity_px</span></code> offset between the eyes; with it, <code class="docutils literal notranslate"><span class="pre">scene:</span> <span class="pre">room</span></code> draws a furnished room
-seen by a slowly turning pair of eyes instead, with real depth.</p></td>
+seen by a slowly turning pair of eyes instead, with real depth (viewer only, like the stereo
+pattern).</p></td>
 </tr>
 </tbody>
 </table>
@@ -1252,6 +1253,7 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:</p>
 <span class="w">    </span><span class="nt">pair_emit_mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">both</span><span class="w">      </span><span class="c1"># argus independent stereo only: either | both</span>
 <span class="w">    </span><span class="nt">scene</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">room</span><span class="w">               </span><span class="c1"># synthetic stereo only, optional — draw a furnished room seen by</span>
 <span class="w">                              </span><span class="c1"># a slowly turning pair of eyes, in place of the test pattern</span>
+<span class="w">                              </span><span class="c1"># (viewer only)</span>
 <span class="w">    </span><span class="nt">exposure</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span><span class="w">            </span><span class="c1"># zed only, optional — auto | 0..100; also gain, white_balance</span>
 <span class="w">                              </span><span class="c1"># (auto | 2800..6500), brightness, contrast, saturation,</span>
 <span class="w">                              </span><span class="c1"># sharpness (0..8), gamma (1..9). Absent keys leave the camera</span>
