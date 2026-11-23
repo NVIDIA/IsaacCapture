@@ -71,6 +71,9 @@ SPDX-License-Identifier: Apache-2.0
 - Keep transport presence, physical-glove ingress/faults, and HUMAN/RAW/ROBOT
   output freshness/errors as separate health layers. One advancing dataset must
   not keep another dataset healthy.
+- Withdraw each unusable dataset's output resource; skipping pushes leaves cached
+  samples visible to consumers. Recreate only that dataset on recovery, with
+  isolated, bounded setup retries. Test withdrawal and recovery, not only clocks.
 - Validate every emitted health state/reason pair through the Python status reducer; producer-only tests do not
   protect the cross-language monitoring contract.
 - Keep the static HUMAN-to-OpenXR index table synchronized with the pinned
