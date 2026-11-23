@@ -126,3 +126,24 @@ def test_real_setup_never_loads_the_mock_sdk_files():
         "print('OK')\n"
     )
     assert result.returncode == 0 and "OK" in result.stdout, result.stderr
+
+
+async def test_configured_delays_reach_the_mock_session(monkeypatch):
+    from capture_server.mock import mock_isaac_capture
+
+    seen = {}
+
+    class RecordingSession(mock_isaac_capture.TeleopSession):
+        def __init__(self, *args, **kwargs):
+            seen.update(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(mock_isaac_capture, "TeleopSession", RecordingSession)
+    delays = {"controller_delay_s": 0.12, "glove_delay_s": 0.05, "delay_jitter_s": 0.01}
+    begin = p.BeginRequest(tracking=p.TrackingConfig(sources=(p.SourceType.HEAD,)))
+    acq = build_source_factory(ServerConfig(mock=True), delays=delays)(begin, ())
+    try:
+        await acq.enter()
+    finally:
+        await acq.close()
+    assert {k: seen[k] for k in delays} == delays

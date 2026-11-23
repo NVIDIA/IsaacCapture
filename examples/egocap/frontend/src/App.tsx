@@ -1,4 +1,8 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import { useCallback, useEffect, useId, useReducer, useRef, useState, type CSSProperties } from "react";
 import { useCaptureSession, type ConnectionPhase } from "./useCaptureSession";
 import type { PreviewSnapshot } from "./captureProtocol";
 import {
@@ -30,6 +34,12 @@ import {
 import { deviceTone, retainedTone, type Tone } from "./deviceHealth";
 import { PoseViserPanel } from "./PoseViserPanel";
 import { RecordingPanel } from "./RecordingPanel";
+import { SettingsPanel, type SettingsTab } from "./SettingsPanel";
+import { StepRail, type OpenableStep } from "./StepRail";
+import { UptimeChip } from "./UptimeChip";
+import { useSetup } from "./useSetup";
+import { WrapUpDialog } from "./WrapUpDialog";
+import { useOperatorSettings } from "./useOperatorSettings";
 import { buildRecordingActions } from "./recordingActions";
 import type { RecordingPhase } from "./recordingUiReducer";
 
@@ -200,10 +210,19 @@ function providerTone(status: ProviderStatus["status"]): Tone {
   return PROVIDER_TONE[status] ?? "neutral";
 }
 
-/** The page's top bar: app title, capture mode and feed-health status.
+/** The page's top bar: app title, capture mode, feed-health status and the Settings button.
  * There is no page/tab navigation -- the generic capture display and the
- * Ego Capture UI recording panel are always-present siblings on one page. */
-function AppHeader({ response, feedHealthLabel }: { response: CaptureStatusResponse | null; feedHealthLabel: string }) {
+ * Ego Capture UI recording panel are always-present siblings on one page, and
+ * Settings and the end-of-day report open as dialogs over them rather than replacing them. */
+function AppHeader({
+  response,
+  feedHealthLabel,
+  onOpenSettings,
+}: {
+  response: CaptureStatusResponse | null;
+  feedHealthLabel: string;
+  onOpenSettings: () => void;
+}) {
   return (
     <header className="app-header">
       <div className="app-title">
@@ -217,21 +236,25 @@ function AppHeader({ response, feedHealthLabel }: { response: CaptureStatusRespo
         <span className="feed-health" aria-live="polite">
           Feed {feedHealthLabel}
         </span>
+        <button type="button" className="settings-button" onClick={onOpenSettings} aria-haspopup="dialog">
+          Settings
+        </button>
       </div>
     </header>
   );
 }
 
-/** The compact status row beneath the header: station and the real capture
- * lifecycle headline (a quiet one-liner, not a large hero). The supporting
+/** The compact status row beneath the header: station, its read-only uptime
+ * chip (read again whenever `uptimeKey` changes), and the real capture lifecycle headline (a quiet one-liner, not a large hero). The supporting
  * session/provider details are reached by scrolling to their own collapsed
  * disclosure at the bottom of the page, not a link from here. A normal
  * running/current state stays quiet here; an error or stale feed instead
  * gets a visible banner from `StaleOrErrorBanner` below. */
-function StatusLine({ response, presentation }: { response: CaptureStatusResponse | null; presentation: Presentation }) {
+function StatusLine({ response, presentation, uptimeKey }: { response: CaptureStatusResponse | null; presentation: Presentation; uptimeKey: string }) {
   return (
     <div className={`status-strip ${toneClass(presentation.tone)}`}>
       <span className="status-station">{response?.station_label ?? "Station"}</span>
+      <UptimeChip stationLabel={response?.station_label ?? null} refreshKey={uptimeKey} />
       <span aria-live="polite" className="status-headline">
         {presentation.freshnessLabel !== null && <span className="freshness-badge">{presentation.freshnessLabel}</span>}
         {presentation.headline}
@@ -464,11 +487,67 @@ export default function App() {
     return () => window.removeEventListener("resize", refit);
   }, []);
   const unavailable = response === null && feedHealth === "unavailable";
+  // At most one dialog is open over the page; while one is, the page behind it takes no input.
+  const [dialog, setDialog] = useState<"settings" | "wrap_up" | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("station");
+  // Counts Settings openings: each one starts the dialog afresh on the tab that was asked for.
+  const [settingsOpenings, countSettingsOpening] = useReducer((n: number) => n + 1, 0);
+  const settingsOpen = dialog === "settings";
+  const modalOpen = dialog !== null;
+  // The operator settings the page itself uses (camera roles). Re-read each time Settings closes, so a change
+  // saved there reaches the tiles without a reload.
+  const [settingsGeneration, setSettingsGeneration] = useState(0);
+  const operatorSettings = useOperatorSettings(settingsGeneration);
+  // The start-of-day flow. It is read again when a dialog that can change it closes, and whenever the facts it
+  // is derived from change: the backend's own readiness reason, the station in use and the saved count. The
+  // control token goes with it, so the reply says which address the headset connects to.
+  const [setupGeneration, refreshSetup] = useReducer((n: number) => n + 1, 0);
+  const setup = useSetup(`${setupGeneration}|${recordingSnapshot?.notReadyReason ?? ""}|${response?.station_label ?? ""}|${recordingSnapshot?.savedCount ?? 0}`, { controlToken, scope: response?.station_label ?? "" });
+  /** Open Settings on the given tab, as a fresh dialog. */
+  const openSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    countSettingsOpening();
+    setDialog("settings");
+  };
+  /** Close Settings and read what it can change again: the camera setup the tiles go by, and the flow. */
+  const closeSettings = () => {
+    setDialog(null);
+    setSettingsGeneration((n) => n + 1);
+    refreshSetup();
+  };
+  /** Close End of day and read the flow again: a correction or a saved report can change the Wrap up step. */
+  const closeWrapUp = useCallback(() => {
+    setDialog(null);
+    refreshSetup();
+  }, []);
+  /** Open the place a step of the start-of-day flow is dealt with. */
+  const openStep = (step: OpenableStep) => {
+    if (step === "wrap_up") setDialog("wrap_up");
+    else openSettings(step);
+  };
+  // Every camera the session offers can fill a role, whichever path its video takes to the page.
+  const cameraSources = (snapshot?.started?.streams ?? []).filter((s) => s.kind === "camera" || s.kind === "livekit_camera").map((s) => s.name);
 
   return (
     <div className="app-shell app-shell--operator">
-      <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} />
+      <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} onOpenSettings={() => openSettings("station")} />
+      <StepRail steps={setup?.steps ?? null} onOpen={openStep} />
+      {/* Mounted only while open, so every opening starts from a fresh report and an empty notes draft. */}
+      {dialog === "wrap_up" && <WrapUpDialog open onClose={closeWrapUp} controlToken={controlToken} />}
+      <SettingsPanel
+        key={settingsOpenings}
+        initialTab={settingsTab}
+        open={settingsOpen}
+        onClose={closeSettings}
+        sidebarWidth={sidebarWidth}
+        sidebarDefault={SIDEBAR_DEFAULT_PX}
+        onResetSidebar={() => applyWidth(SIDEBAR_DEFAULT_PX, true)}
+        controlToken={controlToken}
+        cameraSources={cameraSources}
+        setup={setup}
+      />
       <div
+        inert={modalOpen}
         className={`op-body${resizing ? " op-body--resizing" : ""}`}
         style={{ "--op-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
@@ -491,11 +570,16 @@ export default function App() {
                 hasControlToken={controlToken !== null}
                 pendingPhase={panelPhase}
               />
-              <StatusLine response={response} presentation={presentation} />
+              {/* The chip is keyed on what the bar above shows, so the two do not disagree until the chip's own timer. */}
+              <StatusLine
+                response={response}
+                presentation={presentation}
+                uptimeKey={`${recordingSnapshot?.episodePhase ?? ""}|${recordingSnapshot?.notReadyReason ?? ""}|${recordingSnapshot?.savedCount ?? 0}`}
+              />
               <StaleOrErrorBanner presentation={presentation} feedHealth={feedHealth} diagnostic={diagnostic} onRetry={retry} />
               {/* The cameras are the page: they take every pixel the status bar above and the controls below leave. */}
               <div className={`op-stage${recording ? " op-stage--recording" : ""}`}>
-                <CameraGrid snapshot={snapshot} live={presentation.live} receivedAtMonotonic={receivedAtMonotonic} />
+                <CameraGrid snapshot={snapshot} live={presentation.live} receivedAtMonotonic={receivedAtMonotonic} cameraRoles={operatorSettings?.camera_roles ?? null} />
               </div>
               <div className="op-dock">
                 <RecordingPanel
@@ -509,6 +593,7 @@ export default function App() {
                   setControlToken={setControlToken}
                   clearControlToken={clearControlToken}
                   onPhaseChange={setPanelPhase}
+                  interactionBlocked={modalOpen}
                 />
               </div>
             </>

@@ -208,7 +208,7 @@ def _expected_origin(websocket: WebSocket) -> str:
     return f"{scheme}://{host}:{port}"
 
 
-def _configured_allowed_origins() -> frozenset[str]:
+def configured_allowed_origins() -> frozenset[str]:
     """Explicitly configured additional origins (comma-separated), for a
     deployment where the frontend is hosted separately from this backend
     or reached through a reverse proxy that changes the browser-visible
@@ -217,7 +217,7 @@ def _configured_allowed_origins() -> frozenset[str]:
     return frozenset(entry.strip() for entry in raw.split(",") if entry.strip())
 
 
-def _trusted_hostnames() -> frozenset[str] | None:
+def trusted_hostnames() -> frozenset[str] | None:
     """Pins the same-origin fallback below to a configured set of
     hostnames/addresses, or ``None`` if ``EGOCAP_TRUSTED_HOSTNAMES`` is
     unset. Unpinned, ``_expected_origin`` derives the "backend's own"
@@ -246,14 +246,14 @@ def _origin_allowed(websocket: WebSocket) -> bool:
     block anything by itself). No substring matching, no wildcard, no
     trusting a forwarded header -- an exact match against an explicitly
     configured origin, or against the backend's own derived origin (only
-    when the request's Host is itself trusted, see ``_trusted_hostnames``)."""
+    when the request's Host is itself trusted, see ``trusted_hostnames``)."""
     origin = websocket.headers.get("origin")
     if not origin or origin == "null":
         return False
-    if origin in _configured_allowed_origins():
+    if origin in configured_allowed_origins():
         return True
-    trusted_hostnames = _trusted_hostnames()
-    if trusted_hostnames is not None and (websocket.url.hostname or "") not in trusted_hostnames:
+    trusted = trusted_hostnames()
+    if trusted is not None and (websocket.url.hostname or "") not in trusted:
         return False
     return origin == _expected_origin(websocket)
 

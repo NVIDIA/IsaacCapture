@@ -36,10 +36,10 @@ from egocap.studio.studio_path_names import sanitize_studio_dir_name
 from .constants import PENDING_SUFFIX
 
 MANIFEST_DIR = ".recording"
-MANIFEST_SCHEMA_VERSION = 3
+MANIFEST_SCHEMA_VERSION = 4
 #: Older records are decoded onto the current fields when read and rewritten at the current version only when
 #: next saved; nothing is migrated at startup.
-READABLE_SCHEMA_VERSIONS = (1, 2, 3)
+READABLE_SCHEMA_VERSIONS = (1, 2, 3, 4)
 _EPISODE_NAME = re.compile(r"^episode_(\d+)(\.pending)?$")
 
 #: What finalization does with a checked take, recorded durably so recovery never re-derives it from policy:
@@ -80,8 +80,14 @@ class EpisodeManifest:
     # Digest of the configuration without the capture-QC policy: what a CHECKED take (its decision is already
     # stored with its own policy) must still match to be finished. None on manifests written before it existed.
     layout_digest: str | None = None
+    # Per source, whether its samples were one unbroken stretch: {"scope", "identity", "breaks", "known"} (see
+    # recording_service.models.NumericSample.continuity). None on manifests written before it existed, which says
+    # nothing about continuity; it never means "no breaks".
+    continuity: dict[str, dict[str, Any]] | None = None
     issues: list[str] = field(default_factory=list)
     duration_seconds: float = 0.0
+    # Optional free-text context the operator attached to the task; "" on manifests written before it existed.
+    task_details: str = ""
     schema_version: int = MANIFEST_SCHEMA_VERSION
 
 
@@ -176,7 +182,8 @@ def write_manifest(session_path: Path, manifest: EpisodeManifest) -> None:
 #: Sidecar record of the calibration assets preserved in a session: name -> sha256 (null if absent at creation).
 CALIBRATION_RECORD = "calibration_assets.json"
 
-#: Session-root (and, once routed, group-root) metadata snapshot: {"meta": {"egocap_station_name": ...}}.
+#: Session-root (and, once routed, group-root) config snapshot: the station identity under ``meta`` plus the
+#: source declarations (names, frame types, recording defaults) that time alignment reads.
 #: Written once at session creation and never rewritten on reopen/recovery (see
 #: RecordingService._prepare_session_assets); downstream tooling such as
 #: analytics/count_daily_trajectories.py reads it to map a session back to its station.

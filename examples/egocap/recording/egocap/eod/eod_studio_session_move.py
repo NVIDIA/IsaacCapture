@@ -13,6 +13,7 @@ session to ``<eod>/`` + canonical studio + same timestamp.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from collections.abc import Set as AbstractSet
@@ -22,6 +23,7 @@ from typing import Any
 import zarr
 
 from egocap.recording.constants import PENDING_SUFFIX
+from egocap.recording.episode_layout import MANIFEST_DIR, ROUTE_ATTR
 from egocap.studio.studio_path_names import (
     canonicalize_studio_dir_name,
     sanitize_studio_dir_name,
@@ -30,6 +32,21 @@ from egocap.studio.task_library_data import TASK_LIBRARY
 
 _SESSION_DIR = re.compile(r"^\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$")
 _UNMATCHED = "_unmatched"
+
+
+def _is_recorder_managed(session: Path) -> bool:
+    """Whether the recording service owns this session's location: it holds episode manifests, or its
+    directory carries a route-ownership stamp. Unreadable stamp metadata counts as managed.
+    """
+    if (session / MANIFEST_DIR).exists():
+        return True
+    marker = session / "zarr.json"
+    if not marker.exists():
+        return False
+    try:
+        return ROUTE_ATTR in json.loads(marker.read_text()).get("attributes", {})
+    except (OSError, ValueError, AttributeError):
+        return True
 
 
 def relocate_session_to_canonical_studio(
@@ -41,7 +58,8 @@ def relocate_session_to_canonical_studio(
     ``EOD/…/session_ts`` to ``EOD/<canonical_studio>/session_ts``.
 
     Covers both ``EOD/_unmatched/<ts>`` and ``EOD/Some_Studio/<ts>`` when
-    the theme metadata points elsewhere.
+    the theme metadata points elsewhere. A session the recording service manages is never moved (raises
+    ``OSError``): its episode manifests and ownership stamps freeze its location, so only its metadata can change.
 
     Returns
     -------
@@ -79,10 +97,21 @@ def relocate_session_to_canonical_studio(
         return session
     if have == want:
         return session
+    if _is_recorder_managed(session):
+        raise OSError(
+            f"This recording's location is fixed by its episode manifests: {session}. "
+            "Update the studio metadata without relocating it."
+        )
     if dest.exists():
         raise OSError(f"EOD session relocate: destination already exists (refuse overwrite): {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
+    aligned, aligned_dest = session.with_name(f"{session.name}_aligned"), dest.with_name(f"{dest.name}_aligned")
+    # The aligned copy follows its session; refuse before moving anything if it would collide.
+    if aligned.is_dir() and aligned_dest.exists():
+        raise OSError(f"EOD session relocate: destination already exists (refuse overwrite): {aligned_dest}")
     shutil.move(str(session), str(dest))
+    if aligned.is_dir():
+        shutil.move(str(aligned), str(aligned_dest))
     return dest
 
 

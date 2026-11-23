@@ -6,6 +6,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from egocap.analytics.count_daily_trajectories import (
     _episode_index,
     _episode_recorded_date,
@@ -260,11 +262,12 @@ def test_compute_station_data_breakdown_skips_non_matching_station(tmp_path):
     assert breakdown["total_seconds"] == 0.0
 
 
-def test_compute_station_data_breakdown_skips_aligned_and_non_dirs(tmp_path):
+@pytest.mark.parametrize("session_name", ["2026-01-01-10-00-00_aligned", ".2026-01-01-10-00-00"])
+def test_compute_station_data_breakdown_skips_aligned_hidden_and_non_dirs(tmp_path, session_name):
     _build_session(
         tmp_path,
         "Kitchen",
-        "2026-01-01-10-00-00_aligned",
+        session_name,
         "station_01",
         episodes={0: {"episode_duration": 5.0, "recorded_at": "2026-01-01; 10-00-00"}},
     )
@@ -363,11 +366,12 @@ def test_count_trajectories_date_mismatch_produces_no_session(tmp_path):
     assert count_trajectories(tmp_path, "2026-01-01") == {}
 
 
-def test_count_trajectories_skips_aligned_and_non_dir_entries(tmp_path):
+@pytest.mark.parametrize("session_name", ["2026-01-01-10-00-00_aligned", ".2026-01-01-10-00-00"])
+def test_count_trajectories_skips_aligned_hidden_and_non_dir_entries(tmp_path, session_name):
     _build_session(
         tmp_path,
         "Kitchen",
-        "2026-01-01-10-00-00_aligned",
+        session_name,
         "station_01",
         episodes={0: {"episode_duration": 5.0, "recorded_at": "2026-01-01; 10-00-00"}},
     )

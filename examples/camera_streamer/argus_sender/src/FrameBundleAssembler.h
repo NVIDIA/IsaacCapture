@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -8,7 +8,7 @@
 #define ARGUS_SENDER_FRAME_BUNDLE_ASSEMBLER_H
 
 #include "Avs1Wire.h"
-#include "StereoTiming.h"
+#include "FrameTiming.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +31,7 @@ struct BundleStreamInput
 class FrameBundleAssembler
 {
 public:
+    // Every bundle carries the AVS1 timing record per sample, valid or not (see WIRE_FORMAT.md).
     FrameBundleAssembler(PacketSink* packetSink, uint64_t sessionId, const std::vector<Avs1StreamRecord>& streamTemplates);
     ~FrameBundleAssembler();
 

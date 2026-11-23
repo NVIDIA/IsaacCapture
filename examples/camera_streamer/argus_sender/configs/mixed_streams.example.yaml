@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+version: 1
+
+network:
+  bind: 0.0.0.0
+  port: 5000
+  reconnect_ms: 1000
+
+runtime:
+  frames: 0
+  kpi: true
+
+alignment:
+  warmup_frames: 60
+  interval_frames: 60
+
+streams:
+  - id: front_stereo
+    type: stereo
+    cameras:
+      - {device: 0, mode: 0}
+      - {device: 1, mode: 0}
+    output:
+      fps: 60
+      codec: hevc
+      width: 1280
+      resize_mode: strict
+      rotation: 180
+      bitrate_mbps: 25
+      gop: 60
+
+  - id: wrist
+    type: mono
+    capture:
+      mode: fifo
+      fifo_length: 3
+    cameras:
+      - {device: 2, mode: 0}
+    output:
+      fps: 30
+      codec: raw_nv12
+      width: 640
+      height: 480
+      resize_mode: center_crop
+      rotation: 0

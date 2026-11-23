@@ -26,6 +26,7 @@ from egocap.recording.episode_layout import (
     FINALIZATION_RETAIN,
     IDENTITY_ATTR,
     MANIFEST_SCHEMA_VERSION,
+    READABLE_SCHEMA_VERSIONS,
     EpisodeManifest,
     episode_dir_names,
     finalize_episode_dir,
@@ -464,3 +465,46 @@ def test_an_interrupted_older_camera_rejection_cleanup_is_still_recoverable(tmp_
 def test_current_records_are_validated_strictly(tmp_path: Path, changes) -> None:
     with pytest.raises((ValueError, TypeError)):
         read_manifest(_checked_record(tmp_path, **changes))
+
+
+def test_schema_version_four_is_written_and_readable_versions_include_it(tmp_path: Path) -> None:
+    write_manifest(tmp_path, _manifest(0))
+    assert json.loads(manifest_path(tmp_path, 0).read_text())["schema_version"] == 4 == MANIFEST_SCHEMA_VERSION
+    assert set(READABLE_SCHEMA_VERSIONS) == {1, 2, 3, 4}
+
+
+def test_a_version_three_manifest_without_continuity_reads_as_no_evidence(tmp_path: Path) -> None:
+    """Absence is not a claim of continuity: the field decodes to None, never to an empty or clean record."""
+    write_manifest(tmp_path, _manifest(0))
+    file = manifest_path(tmp_path, 0)
+    data = json.loads(file.read_text())
+    del data["continuity"]
+    data["schema_version"] = 3
+    file.write_text(json.dumps(data))
+    decoded = read_manifest(file)
+    assert decoded.continuity is None and decoded.schema_version == MANIFEST_SCHEMA_VERSION
+
+
+def test_a_manifest_with_no_evidence_round_trips_as_none(tmp_path: Path) -> None:
+    write_manifest(tmp_path, _manifest(0))
+    assert read_manifest(manifest_path(tmp_path, 0)).continuity is None
+
+
+def test_continuity_evidence_round_trips_through_json_with_int_and_str_identities(tmp_path: Path) -> None:
+    manifest = _manifest(0)
+    manifest.continuity = {
+        "cam": {"scope": "clock_mapping", "identity": 7, "breaks": [3, 8], "known": True},
+        "arm": {"scope": "capture_session", "identity": "session-a", "breaks": [], "known": True},
+        "idle": {"scope": None, "identity": None, "breaks": [], "known": False},
+    }
+    write_manifest(tmp_path, manifest)
+    assert read_manifest(manifest_path(tmp_path, 0)).continuity == manifest.continuity
+
+
+def test_a_version_newer_than_this_reader_is_still_refused(tmp_path: Path) -> None:
+    write_manifest(tmp_path, _manifest(0))
+    data = json.loads(manifest_path(tmp_path, 0).read_text())
+    data["schema_version"] = MANIFEST_SCHEMA_VERSION + 1
+    manifest_path(tmp_path, 1).write_text(json.dumps(data))
+    found, problems = scan_manifests(tmp_path)
+    assert [m.episode_index for m in found] == [0] and "schema_version" in problems[0]

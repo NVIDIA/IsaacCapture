@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,26 @@ def test_relocate_destination_collision_raises(tmp_path):
     _session_dir(tmp_path, "Kitchen")  # pre-existing destination
     with pytest.raises(OSError, match="refuse overwrite"):
         relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+
+
+def test_relocate_moves_the_aligned_sibling_with_its_session(tmp_path):
+    session = _session_dir(tmp_path, "_unmatched")
+    aligned = session.with_name(f"{session.name}_aligned")
+    (aligned / "episode_0").mkdir(parents=True)
+    result = relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+    moved = result.with_name(f"{result.name}_aligned")
+    assert (moved / "episode_0").is_dir() and not aligned.exists() and not session.exists()
+
+
+def test_relocate_refuses_before_moving_anything_when_the_aligned_destination_exists(tmp_path):
+    session = _session_dir(tmp_path, "_unmatched")
+    aligned = session.with_name(f"{session.name}_aligned")
+    aligned.mkdir()
+    taken = tmp_path / "Kitchen" / f"{session.name}_aligned"
+    taken.mkdir(parents=True)
+    with pytest.raises(OSError, match="refuse overwrite"):
+        relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+    assert session.is_dir() and aligned.is_dir() and not (tmp_path / "Kitchen" / session.name).exists()
 
 
 def test_relocate_have_equals_want_but_different_case_is_noop(tmp_path):
@@ -223,3 +244,38 @@ def test_refresh_session_egocap_zarr_aggregates_keys_fallback_to_iteration(tmp_p
 
     store2 = zarr.open(str(tmp_path), mode="r")
     assert store2.attrs["num_episodes"] == 1
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    return {str(f.relative_to(root)): f.read_bytes() for f in sorted(root.rglob("*")) if f.is_file()}
+
+
+def _managed_by_manifests(session: Path) -> None:
+    (session / ".recording").mkdir()
+    (session / ".recording" / "episode_0.json").write_text("{}")
+
+
+def _managed_by_route_stamp(session: Path) -> None:
+    (session / "zarr.json").write_text(json.dumps({"attributes": {"recording_route_id": "s|g"}}))
+
+
+def _managed_by_unreadable_stamp(session: Path) -> None:
+    (session / "zarr.json").write_text("{not json")
+
+
+@pytest.mark.parametrize("mark", [_managed_by_manifests, _managed_by_route_stamp, _managed_by_unreadable_stamp])
+def test_relocate_refuses_a_recorder_managed_session_and_changes_nothing(tmp_path, mark):
+    session = _session_dir(tmp_path, "_unmatched")
+    mark(session)
+    before = _snapshot(tmp_path)
+    with pytest.raises(OSError, match="fixed by its episode manifests"):
+        relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+    assert _snapshot(tmp_path) == before
+    assert not (tmp_path / "Kitchen").exists()
+
+
+def test_relocate_still_moves_a_legacy_session_with_an_unstamped_zarr_group(tmp_path):
+    session = _session_dir(tmp_path, "_unmatched")
+    (session / "zarr.json").write_text(json.dumps({"attributes": {"studio": "Kitchen"}}))
+    result = relocate_session_to_canonical_studio(session, "Kitchen", KNOWN)
+    assert (result / "zarr.json").is_file() and not session.exists()

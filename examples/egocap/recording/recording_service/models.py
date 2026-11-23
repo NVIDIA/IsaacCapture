@@ -166,6 +166,12 @@ class NumericSample:
     capture_time: float
     receive_time: float
     fields: Mapping[str, Any]
+    #: What stretch of the source this sample belongs to, as (scope, identity): the scope says what the identity
+    #: covers. ``"clock_mapping"``: the mapping epoch that placed the time. ``"host_clock"``: the capture
+    #: connection of a source polled on this host's clock, not the device behind it. ``"capture_session"``: the
+    #: transport session, which says nothing about the device. A change of identity within a take is a break.
+    #: None means the producer gave no evidence, which is not a claim of continuity.
+    continuity: tuple[str, str | int] | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +184,8 @@ class VideoSample:
     capture_time: float
     receive_time: float
     intrinsics: np.ndarray | None = None
+    #: As on ``NumericSample``: (scope, identity) of the stretch this frame belongs to, or None for no evidence.
+    continuity: tuple[str, str | int] | None = None
 
 
 @dataclass(frozen=True)

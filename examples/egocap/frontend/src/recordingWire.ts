@@ -12,9 +12,9 @@
  */
 import type { RecordingBatchIdentity, RecordingEpisodeIdentity } from "./recordingTypes";
 
-/** Wire payload for `set_task`: a flat batch id and task text, not a nested `target`/task-context object. */
-export function setTaskPayload(target: RecordingBatchIdentity, taskText: string): Record<string, unknown> {
-  return { batch_id: target.batchId, task: taskText };
+/** Wire payload for `set_task`: a flat batch id, task text and optional free-text details, not a nested object. */
+export function setTaskPayload(target: RecordingBatchIdentity, taskText: string, details = ""): Record<string, unknown> {
+  return { batch_id: target.batchId, task: taskText, details };
 }
 
 /** Wire payload for batch-only actions (`start_episode`/`new_batch`). */

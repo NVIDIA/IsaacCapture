@@ -252,14 +252,20 @@ schema is not sent over the wire.
    cmake --build build --parallel
    cmake --install build
 
-**Run** pusher and printer in separate terminals:
+**Run** pusher and printer in separate terminals. Neither starts CloudXR, so
+start the runtime first (see :ref:`dedicated-cloudxr-runtime`) and source its
+environment in each terminal:
 
 .. code-block:: bash
 
+   python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
+
    # Terminal 1: Start printer
+   source ~/.cloudxr/run/cloudxr.env
    ./install/examples/schemaio/pedal_printer
 
    # Terminal 2: Start pusher
+   source ~/.cloudxr/run/cloudxr.env
    ./install/examples/schemaio/pedal_pusher
 
 The printer discovers the tensor collection created by the pusher and prints received samples.

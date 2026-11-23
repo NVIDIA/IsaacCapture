@@ -104,6 +104,8 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 _ENCODERS = ("opencv_mp4v", "ffmpeg_h264", "ffmpeg_h264_nvenc")
+#: The numeric frame type of a source that declares none.
+_DEFAULT_NUMERIC_FRAME_TYPE = "NumericFrame"
 
 
 def _sha256(path: Path) -> str:
@@ -142,7 +144,9 @@ def _digest(config: ServiceConfig) -> str:
         qc["capture_algorithm_version"] = ALGORITHM_VERSION  # a changed algorithm is a changed configuration
     canonical = {
         **({"routing": True} if config.routing is not None else {}),  # routed or not; each take freezes its studio
-        "numeric": [asdict(s) for s in config.numeric_sources],
+        # A frame type says how a source's fields are resampled, not how its data is laid out, so it is left out:
+        # setting or changing one never makes a take recorded earlier look like a different configuration.
+        "numeric": [{k: v for k, v in asdict(s).items() if k != "frame_type"} for s in config.numeric_sources],
         "video": [asdict(s) for s in config.video_sources],
         "qc": qc,
         "latency": config.latency,
@@ -164,11 +168,16 @@ class _Take:
         self.admission_closed = False
         self.accepted = dict.fromkeys(sources, 0)
         self.written = dict.fromkeys(sources, 0)
+        # Per source: whether its accepted rows were one unbroken stretch (see note_continuity).
+        self.continuity: dict[str, dict[str, Any]] = {}
         self.span: dict[str, list[float]] = {}
         self.worker: asyncio.Task[Any] | None = None
         self.operation_task: asyncio.Task[Any] | None = None
         self.operation = ""
         self.error: str | None = None
+        # Timing evidence for this take (clock mappings and their quality), written to the kept episode's
+        # attributes. Held in memory only: a take recovered after a crash has none, and says nothing of timing.
+        self.timing: dict[str, Any] | None = None
         self.released = store is None
         # Work ownership: ``operating`` while a lifecycle operation owns the take,
         # ``in_flight`` while a storage call is running even if its waiter went away.
@@ -181,6 +190,38 @@ class _Take:
     def episode_id(self) -> str:
         """The stable episode identity."""
         return self.manifest.episode_id
+
+    def note_continuity(self, source: str, row: int, continuity: tuple[str, str | int] | None) -> None:
+        """Record the continuity evidence of one accepted row of ``source``.
+
+        The first row fixes the scope and identity; a later row with a different identity is a break at that row
+        (rows are positions among the source's accepted rows, which equal its written rows once sealed). A row
+        with no evidence, or one whose scope changes, makes the source's continuity unknown: a take cannot vouch
+        for stretches it was never told about.
+        """
+        entry = self.continuity.setdefault(source, {"scope": None, "identity": None, "breaks": [], "known": True})
+        if continuity is None:
+            entry["known"] = False
+            return
+        scope, identity = continuity
+        if entry["scope"] is None:
+            entry["scope"], entry["identity"], entry["last"] = scope, identity, identity
+            return
+        if scope != entry["scope"]:
+            entry["known"] = False
+        elif identity != entry["last"]:
+            entry["breaks"].append(row)
+            entry["last"] = identity
+
+    def continuity_record(self) -> dict[str, dict[str, Any]]:
+        """The evidence for every source of the take, as stored in the manifest.
+
+        A source that accepted no rows has no evidence and is recorded as unknown, never as an empty clean list.
+        """
+        unknown = {"scope": None, "identity": None, "breaks": [], "known": False}
+        return {
+            s: {k: v for k, v in self.continuity.get(s, unknown).items() if k != "last"} for s in self.accepted
+        }
 
     def duration(self) -> float:
         """Maximum per-source capture-time span; never subtracts timestamps from different sources."""
@@ -227,9 +268,9 @@ class RecordingService:
         """
         return await self._run(self._open_impl(session_id))
 
-    async def start_episode(self, task: str, operator: str = "") -> EpisodeInfo:
+    async def start_episode(self, task: str, operator: str = "", task_details: str = "") -> EpisodeInfo:
         """Allocate an episode, open real writers, and return only once samples can be admitted."""
-        return await self._run(self._start_impl(task, operator))
+        return await self._run(self._start_impl(task, operator, task_details))
 
     def submit_sample(self, episode_id: str, sample: NumericSample | VideoSample) -> SubmissionResult:
         """Validate, copy and enqueue one sample without waiting.
@@ -248,6 +289,8 @@ class RecordingService:
         copied = self._copy(sample)  # the only fallible step: finish it before any bookkeeping changes
         index = take.accepted[sample.source]
         take.accepted[sample.source] = index + 1
+        # Evidence is noted for the accepted row only, never for an offer that came back FULL and will be retried.
+        take.note_continuity(sample.source, index, sample.continuity)
         take.queue.append(copied)
         take.wake.set()
         return SubmissionResult(SubmissionStatus.ACCEPTED, sample.source, index)
@@ -263,6 +306,15 @@ class RecordingService:
         if take.operation:
             raise StateError(f"episode {episode_id!r} already has a {take.operation} in progress")
         return await self._begin(take, "stop", self._stop_impl(take))
+
+    def set_episode_timing(self, episode_id: str, timing: dict[str, Any]) -> None:
+        """Attach timing evidence (JSON-serializable) to the active episode; it is written with its attributes.
+
+        Call before ``stop_episode``. It replaces any earlier value, is not persisted in the recovery manifest, and
+        raises ``StateError`` if the episode is not the active one.
+        """
+        json.dumps(timing)  # a value that cannot be written must fail here, not while the take is finalizing
+        self._active(episode_id, "set timing").timing = timing
 
     async def discard_episode(self, episode_id: str) -> EpisodeResult:
         """Close admission, settle all work, and delete only this episode's unfinished output."""
@@ -346,6 +398,21 @@ class RecordingService:
         for stamp in (sample.capture_time, sample.receive_time):
             if not isinstance(stamp, int | float) or not np.isfinite(stamp):
                 raise ValidationError(f"{sample.source}: timestamps must be finite numbers")
+        # Continuity evidence is stored in the manifest as JSON, so its shape is checked before any bookkeeping
+        # changes: a malformed value must leave the counters, the queue and the evidence untouched.
+        evidence = sample.continuity
+        if evidence is not None:
+            valid = (
+                isinstance(evidence, tuple)
+                and len(evidence) == 2
+                and isinstance(evidence[0], str)
+                and isinstance(evidence[1], str | int)
+                and not isinstance(evidence[1], bool)
+            )
+            if not valid:
+                raise ValidationError(
+                    f"{sample.source}: continuity must be a (scope, identity) pair of str and str|int"
+                )
         if isinstance(sample, NumericSample):
             if kind != "numeric":
                 raise ValidationError(f"{sample.source} is a video source")
@@ -391,6 +458,7 @@ class RecordingService:
                 float(sample.capture_time),
                 float(sample.receive_time),
                 {k: np.array(v, copy=True) for k, v in sample.fields.items()},
+                sample.continuity,
             )
         intrinsics = (
             None if sample.intrinsics is None else np.array(sample.intrinsics, dtype=np.float64, copy=True)
@@ -402,6 +470,7 @@ class RecordingService:
             float(sample.capture_time),
             float(sample.receive_time),
             intrinsics,
+            sample.continuity,
         )
 
     # -- task and call ownership --------------------------------------------------
@@ -639,12 +708,9 @@ class RecordingService:
                     record[asset.name] = None
                     self._issues.append(f"optional calibration asset {asset.name!r} not found at {source}")
             write_json_atomic(record_path, record)
-            if self._config.station_label:
-                write_yaml_atomic(
-                    session_path / SESSION_CONFIG_FILE,
-                    {"meta": {"egocap_station_name": self._config.station_label}},
-                )
+            write_yaml_atomic(session_path / SESSION_CONFIG_FILE, self._session_config())
             return
+        self._check_frozen_frame_types(session_path)
         record = json.loads(record_path.read_text()) if record_path.is_file() else {}
         for asset in assets:
             recorded, preserved = record.get(asset.name), session_path / asset.name
@@ -654,6 +720,68 @@ class RecordingService:
             if asset.required:
                 raise ConfigurationError(problem)
             self._issues.append("optional " + problem)
+
+    def _check_frozen_frame_types(self, session_path: Path) -> None:
+        """Refuse to reopen a session whose frozen numeric frame types differ from the active declarations.
+
+        Alignment reads the session's config.yaml, so a source declared differently now would resample a later
+        take by rules other than the ones its session froze. A session with no config.yaml is left to recovery
+        and discard; ``_start_impl`` refuses to record into it.
+        """
+        path = session_path / SESSION_CONFIG_FILE
+        if not path.is_file():
+            return
+        try:
+            frozen = yaml.safe_load(path.read_text())
+            default = (frozen.get("recording") or {}).get("numeric_frame_type", _DEFAULT_NUMERIC_FRAME_TYPE)
+            entries = frozen["numeric_sources"]
+            names = [e["name"] for e in entries]
+            if len(set(names)) != len(names):
+                raise ValueError("a source is declared twice")
+            declared = {e["name"]: e.get("frame_type", default) for e in entries}
+        except (OSError, yaml.YAMLError, AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise ConfigurationError(f"{path} has no readable source declarations: {exc}") from exc
+        for spec in self._config.numeric_sources:
+            if spec.name not in declared:
+                raise ConfigurationError(f"source {spec.name!r} is not declared in {path}; open a new session")
+            requested = _DEFAULT_NUMERIC_FRAME_TYPE if spec.frame_type is None else spec.frame_type
+            if declared[spec.name] != requested:
+                raise ConfigurationError(
+                    f"source {spec.name!r} was frozen with frame type {declared[spec.name]!r} but is now "
+                    f"{requested!r}; open a new session to record with the new frame type"
+                )
+
+    def _session_config(self) -> dict[str, Any]:
+        """The session's ``config.yaml``: the station identity and the source declarations time alignment reads.
+
+        Each source is declared by name with the frame type that says how its fields are resampled. A latency is
+        written only for a source the configuration gives one, since a latency that was never measured must not
+        be recorded as zero.
+        """
+        config = self._config
+        data: dict[str, Any] = {}
+        # The station identity analytics tools map a recorded session back to its station with.
+        if config.station_label:
+            data["meta"] = {"egocap_station_name": config.station_label}
+        # The default frame types for sources that declare none.
+        data["recording"] = {
+            "video_frame_type": "RGBCameraFrame",
+            "numeric_frame_type": _DEFAULT_NUMERIC_FRAME_TYPE,
+        }
+        latency = config.latency or {}
+
+        def declare(name: str, frame_type: str | None = None) -> dict[str, Any]:
+            """One source's declaration; a frame type or latency appears only when it is known."""
+            entry: dict[str, Any] = {"name": name}
+            if frame_type is not None:
+                entry["frame_type"] = frame_type
+            if name in latency:
+                entry["latency"] = latency[name]
+            return entry
+
+        data["video_sources"] = [declare(s.name) for s in config.video_sources]
+        data["numeric_sources"] = [declare(s.name, s.frame_type) for s in config.numeric_sources]
+        return data
 
     def _seed_group_assets(self, session_path: Path, group: str) -> None:
         """Copy the session's frozen config.yaml and preserved calibration assets into a routed group.
@@ -742,7 +870,7 @@ class RecordingService:
             {"kind": "video", **asdict(s)} for s in cfg.video_sources
         ]
 
-    async def _start_impl(self, task: str, operator: str) -> EpisodeInfo:
+    async def _start_impl(self, task: str, operator: str, task_details: str) -> EpisodeInfo:
         """Checkpoint a WRITING manifest, then open the real store; enter RECORDING only on success."""
         if self._session is None or self._closing:
             raise StateError("no open session")
@@ -753,6 +881,8 @@ class RecordingService:
         if self._blocking:
             raise StateError(f"unreadable episode manifests must be resolved first: {self._blocking}")
         session = self._session
+        if not (session.session_path / SESSION_CONFIG_FILE).is_file():
+            raise StateError("session has no frozen source declarations; start a new session to record")
         index = next_episode_index(session.session_path)
         pending_name, final_name = episode_dir_names(index)
         manifest = EpisodeManifest(
@@ -762,6 +892,7 @@ class RecordingService:
             config_digest=_digest(self._config),
             layout_digest=_layout_digest(self._config),
             task=task,
+            task_details=task_details,
             operator=operator,
             sources=self._source_declarations(),
             pending_path=pending_name,
@@ -880,6 +1011,7 @@ class RecordingService:
                         counts={
                             s: {"accepted": take.accepted[s], "written": take.written[s]} for s in take.accepted
                         },
+                        continuity=take.continuity_record(),
                         duration_seconds=take.duration(),
                         storage_phase="SEALED",
                     )
@@ -943,7 +1075,10 @@ class RecordingService:
                     # gone and the final one already holds the data: never rewrite it, only verify its identity.
                     if where == "pending":
                         await self._call(
-                            take, write_episode_attributes, session_path / m.pending_path, self._attributes(m)
+                            take,
+                            write_episode_attributes,
+                            session_path / m.pending_path,
+                            self._attributes(m, take.timing),
                         )
                     final = await self._call(take, finalize_episode_dir, session_path, m)
                     await self._checkpoint(take, storage_phase="FINALIZED")
@@ -1005,7 +1140,7 @@ class RecordingService:
         for name, value in changes.items():
             setattr(take.manifest, name, value)
 
-    def _attributes(self, m: EpisodeManifest) -> dict[str, Any]:
+    def _attributes(self, m: EpisodeManifest, timing: dict[str, Any] | None = None) -> dict[str, Any]:
         """Dataset-level metadata written to a kept episode, using the names existing readers consume.
 
         Only checks that actually ran are reported: the mandatory integrity check is recorded, and capture
@@ -1024,6 +1159,8 @@ class RecordingService:
         attributes = {
             "task_description": m.task,
             "instruction_language": m.task,
+            # Free-text context kept apart from task_description, which readers key on.
+            "task_details": m.task_details,
             "operator_name": m.operator,
             "episode_length": max(rows, default=0),
             "episode_duration": m.duration_seconds,
@@ -1036,6 +1173,8 @@ class RecordingService:
             "config_digest": m.config_digest,
             "sources": m.sources,
         }
+        if timing:
+            attributes["timing"] = timing
         if m.assignment is not None:
             attributes.update(
                 {"studio": m.studio, "route_group": m.assignment["group"], "output_index": m.assignment["slot"]}

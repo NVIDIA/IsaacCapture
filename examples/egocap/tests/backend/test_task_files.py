@@ -183,11 +183,15 @@ def test_the_librarys_summary_file_hidden_files_and_editor_leftovers_are_not_cat
             tf.read_task_file(tmp_path, name)
 
 
-def test_a_name_that_is_not_valid_utf8_is_not_listed(tmp_path):
-    import os
+def test_a_name_that_is_not_valid_utf8_is_not_listed(tmp_path, monkeypatch):
+    original_iterdir = Path.iterdir
 
-    with open(os.path.join(os.fsencode(tmp_path), b"bad\xff.csv"), "w") as handle:
-        handle.write("x")
+    # macOS refuses these filenames on disk; the directory entry still exercises the filter.
+    def entries(path):
+        found = list(original_iterdir(path))
+        return iter([*found, path / "bad\udcff.csv"] if path == tmp_path else found)
+
+    monkeypatch.setattr(Path, "iterdir", entries)
     _write(tmp_path, "ok.csv", "Task Name,Task Description\nx,y\n")
     assert tf.list_task_files(tmp_path) == ["ok.csv"]
 

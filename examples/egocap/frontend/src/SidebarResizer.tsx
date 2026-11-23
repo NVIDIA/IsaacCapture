@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * The draggable divider between the main column and the side panel. Pulling it left widens the panel and narrows the
  * main column (and the other way round); it also works from the keyboard and resets on double-click.

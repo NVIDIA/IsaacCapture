@@ -2,10 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Read-only access to the task CSV catalogs in ``data/taskfiles/``.
+"""Read shipped task CSV catalogs and manage operator-imported catalogs.
 
-Two small functions, ``list_task_files`` and ``read_task_file``, take the catalog root explicitly and touch the
-filesystem only when called. Two existing CSV layouts are supported, each by an explicit branch:
+Catalog listing, reading, import and removal take their root explicitly and touch the filesystem only when
+called. Two existing CSV layouts are supported, each by an explicit branch:
 
 * studio catalogs: a title record, a blank record, then ``Studio, Scenario, Task, Description`` headers;
 * Mid Train: headers on the first record (``Task Name``, ``Task Description`` and optional ``Primitive(s)``,
@@ -19,11 +19,13 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import os
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("isaaccapture.egocap.task_files")
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 
@@ -33,7 +35,12 @@ _MID_TRAIN_OPTIONAL = ("primitive(s)", "props", "left hand grasp", "right hand g
 
 
 class TaskFileError(Exception):
-    """Base for every error this module raises on purpose."""
+    """Base for domain errors whose public explanation contains no implementation details."""
+
+    def __init__(self, public_message: str) -> None:
+        """Retain a safe validation message independently of any chained I/O exception."""
+        super().__init__(public_message)
+        self.public_message = public_message
 
 
 class InvalidTaskFileName(TaskFileError):
@@ -152,6 +159,19 @@ def read_task_file(root: Path, name: str) -> TaskFileContents:
         raise TaskFilesUnavailable("task file storage is unavailable") from exc
     if not inside_root:
         raise TaskFileNotFound(f"no task file named {name}")
+    return parse_task_file(name, raw)
+
+
+def read_available_task_file(root: Path, imported: Path | None, name: str) -> TaskFileContents:
+    """Resolve a catalog with operator imports taking precedence over shipped files."""
+    # One resolution rule keeps the picker and settings validation in agreement.
+    if imported is not None and imported.is_dir() and name in list_task_files(imported):
+        return read_task_file(imported, name)
+    return read_task_file(root, name)
+
+
+def parse_task_file(name: str, raw: bytes) -> TaskFileContents:
+    """Parse catalog bytes (a file on disk or an upload) into task definitions, with the size bound applied."""
     if len(raw) > MAX_FILE_BYTES:
         raise TaskFileTooLarge(f"{name} is larger than {MAX_FILE_BYTES} bytes")
     # Decode (a leading BOM is allowed), then parse with strict CSV: quoted newlines work, bad quoting is refused.
@@ -162,8 +182,55 @@ def read_task_file(root: Path, name: str) -> TaskFileContents:
     try:
         records = list(csv.reader(io.StringIO(text, newline=""), strict=True))
     except csv.Error as exc:
-        raise MalformedTaskFile(f"{name} is not valid CSV: {exc}") from exc
+        raise MalformedTaskFile(f"{name} is not valid CSV") from exc
     return _parse(name, records)
+
+
+def is_catalog_name(name: str) -> bool:
+    """Whether ``name`` could name a catalog: a plain ``*.csv`` name, not hidden, not an editor leftover."""
+    plain = _is_plain_csv_name(name) and not name.startswith((".", "~"))
+    return plain and name not in _NOT_CATALOGS
+
+
+def import_task_file(root: Path, name: str, raw: bytes) -> TaskFileContents:
+    """Store an operator-supplied catalog under ``root`` as ``name`` once it parses; a bad file is never written.
+
+    The write goes through a temporary file so a crash leaves either the old catalog or the new one, never half.
+    """
+    if not is_catalog_name(name):
+        raise InvalidTaskFileName("a task file name is a plain filename ending in .csv")
+    contents = parse_task_file(name, raw)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=root, prefix=f".{name}.", delete=False) as handle:
+            tmp = Path(handle.name)
+            try:
+                handle.write(raw)
+                handle.flush()
+                os.fsync(handle.fileno())
+                handle.close()
+                tmp.replace(root / name)
+            finally:
+                tmp.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.error("task file %s could not be stored under %s: %s", name, root, exc)
+        raise TaskFilesUnavailable("task file storage is unavailable") from exc
+    return contents
+
+
+def remove_task_file(root: Path, name: str) -> None:
+    """Delete an imported catalog; a name that is not an imported catalog is absent, never a path to resolve."""
+    if not _is_plain_csv_name(name):
+        raise InvalidTaskFileName("a task file name is a plain filename ending in .csv")
+    if name not in list_task_files(root):
+        raise TaskFileNotFound(f"no imported task file named {name}")
+    try:
+        (root / name).unlink()
+    except FileNotFoundError as exc:
+        raise TaskFileNotFound(f"no imported task file named {name}") from exc
+    except OSError as exc:
+        logger.error("task file %s could not be removed: %s", root / name, exc)
+        raise TaskFilesUnavailable("task file storage is unavailable") from exc
 
 
 def _headers(record: list[str]) -> list[str]:

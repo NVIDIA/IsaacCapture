@@ -28,6 +28,23 @@ def test_mock_only_options_are_rejected_with_real_acquisition(capsys):
         assert "only apply with --mock" in capsys.readouterr().err
 
 
+def test_delay_options_are_rejected_without_mock(capsys):
+    for flags in (["--controller-delay-ms", "5"], ["--glove-delay-ms", "5"], ["--delay-jitter-ms", "5"]):
+        with pytest.raises(SystemExit) as excinfo:
+            main(flags)
+        assert excinfo.value.code == 2
+        assert "only apply with --mock" in capsys.readouterr().err
+
+
+def test_delay_options_are_parsed_in_milliseconds_and_default_to_zero():
+    defaults = _build_arg_parser().parse_args(["--mock"])
+    assert (defaults.controller_delay_ms, defaults.glove_delay_ms, defaults.delay_jitter_ms) == (0.0, 0.0, 0.0)
+    args = _build_arg_parser().parse_args(
+        ["--mock", "--controller-delay-ms", "120", "--glove-delay-ms", "45.5", "--delay-jitter-ms", "8"]
+    )
+    assert (args.controller_delay_ms, args.glove_delay_ms, args.delay_jitter_ms) == (120.0, 45.5, 8.0)
+
+
 def test_arg_parser_defaults():
     args = _build_arg_parser().parse_args(["--mock"])
     assert args.host == "127.0.0.1"

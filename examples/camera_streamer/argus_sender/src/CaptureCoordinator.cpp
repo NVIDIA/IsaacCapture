@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -422,6 +422,7 @@ bool runConfiguredCapture(const AppConfig& config, bool* receiverDisconnected, b
     TcpPacketSenderSettings transportSettings;
     transportSettings.port = config.network.port;
     transportSettings.dumpWirePath = config.network.dumpWirePath;
+    transportSettings.sendBufferBytes = config.network.sendBufferKb * 1024U;
     for (size_t i = 0; i < config.streams.size(); ++i)
     {
         transportSettings.streamLabels.push_back(config.streams[i].id);

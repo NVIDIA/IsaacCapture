@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Capture only VI firmware error notifications. A private tracefs instance keeps
+# this collector from consuming or clearing trace data owned by other tools.
+[Unit]
+Description=reference camera VI capture-error trace collector
+Wants=sys-kernel-debug.mount
+After=systemd-journald.service sys-kernel-debug.mount
+Before=camera-argus-sender.service
+ConditionPathExists=/sys/kernel/debug/tracing/events/tegra_rtcpu/rtcpu_vinotify_error/format
+
+[Service]
+Type=simple
+ExecStartPre=/bin/mkdir -p /sys/kernel/debug/tracing/instances/camera_vi_errors
+ExecStartPre=/bin/sh -ec ': > /sys/kernel/debug/tracing/instances/camera_vi_errors/trace; echo 1 > /sys/kernel/debug/tracing/instances/camera_vi_errors/events/tegra_rtcpu/rtcpu_vinotify_error/enable; echo 1 > /sys/kernel/debug/tracing/instances/camera_vi_errors/tracing_on'
+ExecStart=/bin/cat /sys/kernel/debug/tracing/instances/camera_vi_errors/trace_pipe
+ExecStopPost=/bin/sh -c 'test ! -e /sys/kernel/debug/tracing/instances/camera_vi_errors/events/tegra_rtcpu/rtcpu_vinotify_error/enable || echo 0 > /sys/kernel/debug/tracing/instances/camera_vi_errors/events/tegra_rtcpu/rtcpu_vinotify_error/enable'
+Restart=on-failure
+RestartSec=1
+TimeoutStopSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=camera-vi-error-trace
+
+[Install]
+WantedBy=multi-user.target

@@ -40,6 +40,7 @@ import argparse
 import asyncio
 import collections
 import contextlib
+import dataclasses
 import json
 import logging
 import signal
@@ -180,9 +181,12 @@ class ServerConfig:
     # Manus glove calibration: the worker executable and the managed MCAL directory. None leaves calibration
     # unavailable (a StartCalibration is rejected) and capture unaffected.
     calibration: CalibrationConfig | None = None
+    # LiveKit video offered to clients in SessionInit. Video never passes through this server; the list only says
+    # where each stream is published.
+    livekit_streams: tuple[p.LiveKitCameraStream, ...] = ()
 
     def __post_init__(self) -> None:
-        """Resolve the MCAL folder once, then reject one physical camera assigned to more than one logical name."""
+        """Resolve the MCAL folder once, then reject duplicate physical cameras and unusable LiveKit streams."""
         # Resolved here, at construction, so no later request re-resolves it on the event loop.
         if self.manus_calibration_dir is not None:
             self.manus_calibration_dir = self.manus_calibration_dir.resolve()
@@ -197,6 +201,15 @@ class ServerConfig:
             duplicates = sorted({i for i in ids if ids.count(i) > 1})
             if duplicates:
                 raise ValueError(f"physical camera(s) assigned to more than one logical name: {duplicates}")
+        # Fail at construction, not when a client first parses SessionInit.
+        try:
+            p.check_livekit_streams(self.livekit_streams)
+        except p.ProtocolError as exc:
+            raise ValueError(f"ServerConfig.livekit_streams: {exc}") from exc
+        jpeg_names = set(self.cameras or ()) | set(self.known_cameras or ())
+        clashes = sorted(jpeg_names & {s.name for s in self.livekit_streams})
+        if clashes:
+            raise ValueError(f"LiveKit stream name(s) equal to a camera name: {clashes}")
 
 
 @dataclass
@@ -586,8 +599,10 @@ class _Session:
         mode: p.CaptureMode,
         outbox: _Outbox,
         owner_ws: ServerConnection,
+        livekit_streams: tuple[p.LiveKitCameraStream, ...] = (),
     ) -> None:
         self.session_id = begin.session_id
+        self._livekit_streams = livekit_streams
         self.begin = begin
         # Which owner connection started this session -- a NEW owner
         # connecting later (because the old one disconnected while this
@@ -791,10 +806,12 @@ class _Session:
         exception here into a recorded diagnostic."""
         tracking_stream = self._tracking_stream()
         camera_streams = tuple(p.camera_stream_descriptor(c) for c in self._cameras)
-        streams: list[p.TrackingStream | p.CameraStream] = list(camera_streams)
+        streams: list[p.TrackingStream | p.CameraStream | p.LiveKitCameraStream] = list(camera_streams)
         if tracking_stream is not None:
             streams.insert(0, tracking_stream)
 
+        # Offered LiveKit cameras ride in the same registry; this server never produces frames for them.
+        streams.extend(self._livekit_streams)
         init = p.session_init_event(session_id=self.session_id, mode=self._mode, begin=self.begin, streams=streams)
         self.init_event = init  # cached for CaptureServer._handle_begin's replay path
         # The shared connection Outbox/writer is already running (started
@@ -1610,6 +1627,7 @@ class CaptureServer:
             self._mode,
             self._outbox,
             ws,
+            livekit_streams=self.config.livekit_streams,
         )
         self._active_session = session
         asyncio.ensure_future(self._run_session(session))
@@ -1986,32 +2004,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="play back a recorded episode directory (Zarr tracking groups plus *.mp4 cameras) instead of "
         "acquiring; reported to clients as MOCK mode because the data is recorded, not live",
     )
-    source.add_argument(
-        "--gmsl-ipc",
-        default=None,
-        metavar="SOCKET_PATH",
-        help="live station: read GMSL camera frames from the camera receiver's local frame feed at this Unix "
-        "socket (tracking still comes from IsaacCapture via ISAAC_ROOT); cameras are named with --gmsl-camera",
-    )
     parser.add_argument(
-        "--gmsl-camera",
-        action="append",
-        default=[],
-        metavar="NAME=STREAM[:WIDTHxHEIGHT]",
-        help="with --gmsl-ipc: logical camera NAME served from feed STREAM, optionally downscaled to WIDTHxHEIGHT "
-        "(the wire protocol caps one image at 2 MiB; a full-resolution head camera can exceed it); repeatable",
-    )
-    parser.add_argument(
-        "--gmsl-fps",
-        type=float,
-        default=60.0,
-        help="with --gmsl-ipc: the feed's frame rate, used to pace and time out polls",
+        "--livekit-streams",
+        type=Path,
+        metavar="FILE",
+        help="YAML file naming the LiveKit video streams to offer clients in SessionInit (see livekit_streams.py)",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8082)
     parser.add_argument("--seed", type=int, default=_MOCK_DEFAULTS["seed"], help="mock only")
     parser.add_argument("--scenario", default=_MOCK_DEFAULTS["scenario"], help="mock only")
     parser.add_argument("--connect-delay", type=float, default=_MOCK_DEFAULTS["connect_delay"], help="mock only")
+    for flag, help_text in (
+        ("controller-delay-ms", "controller content is this old at the poll"),
+        ("glove-delay-ms", "glove content is this old at the poll"),
+        ("delay-jitter-ms", "seeded +/- jitter on both delays"),
+    ):
+        parser.add_argument(f"--{flag}", type=float, default=0.0, help=f"mock only: synthetic delay, {help_text}")
     parser.add_argument(
         "--fault",
         action="append",
@@ -2100,7 +2109,14 @@ def _station_cameras(args: argparse.Namespace) -> dict[str, StationCamera] | Non
 
 
 # Defaults of the mock-only CLI options; any other value with real acquisition is an error.
-_MOCK_DEFAULTS = {"seed": 0, "scenario": "demo", "connect_delay": 0.0}
+_MOCK_DEFAULTS = {
+    "seed": 0,
+    "scenario": "demo",
+    "connect_delay": 0.0,
+    "controller_delay_ms": 0.0,
+    "glove_delay_ms": 0.0,
+    "delay_jitter_ms": 0.0,
+}
 
 
 def _mock_only_options_used(args: argparse.Namespace) -> list[str]:
@@ -2143,72 +2159,12 @@ def _replay_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
     return config, build_replay_source_factory(episode)
 
 
-def _gmsl_cameras(entries: list[str]) -> dict[str, Any]:
-    """Parse ``--gmsl-camera NAME=STREAM[:WIDTHxHEIGHT]`` entries; a malformed or repeated one is an error."""
-    from .launch import GmslCamera
-
-    cameras: dict[str, Any] = {}
-    for entry in entries:
-        name, sep, rest = entry.partition("=")
-        stream, _, size_text = rest.partition(":")
-        if not sep or not name or not stream:
-            raise ValueError(f"--gmsl-camera must be NAME=STREAM[:WIDTHxHEIGHT], got {entry!r}")
-        if name in cameras:
-            raise ValueError(f"--gmsl-camera name {name!r} given twice")
-        size: tuple[int, int] | None = None
-        if size_text:
-            width_text, x, height_text = size_text.partition("x")
-            valid = x and width_text.isdigit() and height_text.isdigit() and int(width_text) * int(height_text) > 0
-            if not valid:
-                raise ValueError(f"--gmsl-camera size must be WIDTHxHEIGHT, got {size_text!r} in {entry!r}")
-            size = (int(width_text), int(height_text))
-        cameras[name] = GmslCamera(stream, size)
-    return cameras
-
-
-def _gmsl_setup(args: argparse.Namespace) -> tuple[ServerConfig, Any]:
-    """Config and source factory for the live station: GMSL cameras from the frame feed plus real tracking.
-
-    The feed is probed once here so every configured camera's stream and size is known (and any unknown
-    stream rejected) before a session asks for it; sessions then subscribe on their own.
-    """
-    from .gmsl_ipc import probe_feed
-    from .launch import build_gmsl_source_factory, gmsl_station_cameras
-
-    cameras = _gmsl_cameras(args.gmsl_camera)
-    if not cameras:
-        raise ValueError("--gmsl-ipc needs at least one --gmsl-camera NAME=STREAM[:WIDTHxHEIGHT]")
-    catalog = probe_feed(args.gmsl_ipc, tuple(dict.fromkeys(c.stream for c in cameras.values())))
-    stations = gmsl_station_cameras(cameras, catalog, fps=args.gmsl_fps, jpeg_quality=args.camera_quality)
-    config = ServerConfig(
-        mock=False,
-        host=args.host,
-        port=args.port,
-        cameras=stations,
-        manus_calibration_dir=_manus_calibration_dir(args),
-        calibration=_calibration_config(args),
-        data_note=(
-            " -- GMSL cameras from the frame feed at "
-            f"{args.gmsl_ipc}: "
-            + ", ".join(
-                f"{name}<-{cam.stream} {stations[name].width}x{stations[name].height}"
-                for name, cam in cameras.items()
-            )
-        ),
-    )
-    return config, build_gmsl_source_factory(
-        args.gmsl_ipc, cameras, stations, calibration_dir=config.manus_calibration_dir
-    )
-
-
 async def _run_cli(args: argparse.Namespace) -> int:
     from .launch import build_source_factory
 
     try:
         if args.replay is not None:
             config, source_factory = _replay_setup(args)
-        elif args.gmsl_ipc is not None:
-            config, source_factory = _gmsl_setup(args)
         else:
             config = ServerConfig(
                 mock=args.mock,
@@ -2221,11 +2177,22 @@ async def _run_cli(args: argparse.Namespace) -> int:
             )
             # The one place the implementation is chosen, before any session is accepted.
             source_factory = build_source_factory(
-                config, scenario=args.scenario, seed=args.seed, faults=frozenset(args.fault)
+                config,
+                scenario=args.scenario,
+                seed=args.seed,
+                faults=frozenset(args.fault),
+                delays={
+                    "controller_delay_s": args.controller_delay_ms / 1000,
+                    "glove_delay_s": args.glove_delay_ms / 1000,
+                    "delay_jitter_s": args.delay_jitter_ms / 1000,
+                },
             )
-    except (ValueError, NotImplementedError, OSError, RuntimeError) as exc:
-        # A malformed episode is a ValueError (EpisodeFormatError); a missing directory an OSError; an
-        # unreachable or malformed frame feed a FeedError (RuntimeError).
+        if args.livekit_streams is not None:
+            from .livekit_streams import load_livekit_streams
+
+            config = dataclasses.replace(config, livekit_streams=load_livekit_streams(args.livekit_streams))
+    except (ValueError, NotImplementedError, OSError) as exc:
+        # A malformed episode is a ValueError (EpisodeFormatError); a missing directory an OSError.
         print(f"capture-server: {exc}", file=sys.stderr)
         return 2
     server = CaptureServer(config, source_factory=source_factory)
@@ -2247,13 +2214,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.mock and (used := _mock_only_options_used(args)):
         parser.error(f"{', '.join(used)} only apply with --mock; real acquisition and replay have no such options")
-    if (args.mock or args.replay is not None or args.gmsl_ipc is not None) and args.camera:
+    if (args.mock or args.replay is not None) and args.camera:
         parser.error(
-            "--camera only applies to real OAK-D acquisition; mock cameras use fixed settings, "
-            "replay cameras come from the episode and GMSL cameras are named with --gmsl-camera"
+            "--camera only applies to real OAK-D acquisition; mock cameras use fixed settings "
+            "and replay cameras come from the episode"
         )
-    if args.gmsl_ipc is None and args.gmsl_camera:
-        parser.error("--gmsl-camera only applies with --gmsl-ipc")
     return asyncio.run(_run_cli(args))
 
 

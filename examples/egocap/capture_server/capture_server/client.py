@@ -134,7 +134,7 @@ class CaptureStarted:
     mode: p.CaptureMode
     effective_config: p.CaptureConfiguration
     clock: p.CaptureClock
-    streams: tuple[FrameDescription | p.CameraStream, ...]
+    streams: tuple[FrameDescription | p.CameraStream | p.LiveKitCameraStream, ...]
 
 
 def _to_client_started(wire: p.SessionInit) -> CaptureStarted:
@@ -394,8 +394,9 @@ class _StreamRegistry:
         for stream in event.streams:
             if isinstance(stream, p.TrackingStream):
                 registry.tracking = stream
-            else:
+            elif isinstance(stream, p.CameraStream):
                 registry.cameras[stream.stream_id] = stream
+            # A LiveKit camera is only located here, never decoded from a binary message: nothing to register.
         return registry
 
 

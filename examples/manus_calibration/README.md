@@ -17,7 +17,9 @@ offsets are separate operations.
 ## Prerequisites
 
 - The Manus SDK, with the Manus plugin built against it (`MANUS_SDK_ROOT`, see
-  `src/plugins/manus/install_manus.sh`), producing `manus_glove_calibrator`.
+  `src/plugins/manus/install_manus.sh`), and `manus_glove_calibrator` built and installed to
+  `install/plugins/manus/`: `cmake --build build --target manus_glove_calibrator` then
+  `cmake --install build --component manus` from the repository root.
 - A Manus license for the SDK's `Integrated` feature, as Manus requires. Glove discovery and the step
   list worked without one in testing, but what the SDK does for a step start, finish and export without a
   license has not been established (see Status).
@@ -34,7 +36,7 @@ come from the `isaaccapture-manus-calibration` library in `src/plugins/manus_cal
 ```bash
 cd examples/manus_calibration
 PYTHONPATH=python:../../src/plugins/manus_calibration/python python3 -m isaaccapture_examples.manus_calibration \
-    --worker /path/to/manus_glove_calibrator \
+    --worker ../../install/plugins/manus/manus_glove_calibrator \
     --out-dir ~/manus-calibration
 ```
 

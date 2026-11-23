@@ -41,7 +41,7 @@ export type WireDTypeValue = (typeof WireDType)[keyof typeof WireDType];
 // capture_server/protocol.py -- not guessed widths or representations.
 // A descriptor advertising anything else is an unsupported-protocol error,
 // not something to silently ignore and keep showing "connected" for.
-export const StreamKind = { TRACKING: 1, IMAGE: 2 } as const;
+export const StreamKind = { TRACKING: 1, IMAGE: 2, LIVEKIT_IMAGE: 3 } as const;
 export const TrackingSchema = { IC_TRACKING_V1: 1 } as const;
 export const PoseRepresentation = { POSITION_QUATERNION: 1 } as const;
 export const QuaternionOrder = { XYZW: 1 } as const;
@@ -254,7 +254,32 @@ export interface CameraStreamDescriptor {
   fps: number;
 }
 
-export type StreamDescriptor = TrackingStreamDescriptor | CameraStreamDescriptor;
+/** A camera CaptureServer offers through a LiveKit room: where the video is, not frames it sends. */
+export interface LiveKitStreamDescriptor {
+  kind: "livekit_camera";
+  stream_id: number;
+  /** Operator-facing tile label. */
+  name: string;
+  url: string;
+  room: string;
+  /** Participant identity of the camera host; a track name is only unique within one participant. */
+  publisher: string;
+  track: string;
+  /** What the publisher's frame timestamp means (the backend's LiveKitTimestampBasis value). */
+  timestamp_basis: number;
+}
+
+/** LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US: the frame-ready time on the publisher's monotonic clock. */
+export const TIMESTAMP_BASIS_PUBLISHER_MONOTONIC_US = 1;
+/** LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US: the capture event on the publisher's monotonic clock. */
+export const TIMESTAMP_BASIS_CAPTURE_MONOTONIC_US = 4;
+/** The bases whose stamp the browser can place on the publisher's monotonic clock. */
+export const MONOTONIC_TIMESTAMP_BASES: readonly number[] = [
+  TIMESTAMP_BASIS_PUBLISHER_MONOTONIC_US,
+  TIMESTAMP_BASIS_CAPTURE_MONOTONIC_US,
+];
+
+export type StreamDescriptor = TrackingStreamDescriptor | CameraStreamDescriptor | LiveKitStreamDescriptor;
 
 /** Validates every field's extent is within payload_size and that no two
  * fields overlap. This is the one authoritative check for a descriptor's
@@ -327,7 +352,19 @@ function parseStreamDescriptor(value: unknown, field: string): StreamDescriptor 
       handJointOrder: HandJointOrder.OPENXR_26,
     };
   }
-  // kind === StreamKind.IMAGE (the only other value expectEnum(StreamKind, ...) allows)
+  if (kind === StreamKind.LIVEKIT_IMAGE) {
+    return {
+      kind: "livekit_camera",
+      stream_id: expectBoundedPositiveInt(value.stream_id, `${field}.stream_id`, 255),
+      name: expectString(value.name, `${field}.name`),
+      url: expectString(value.url, `${field}.url`),
+      room: expectString(value.room, `${field}.room`),
+      publisher: expectString(value.publisher, `${field}.publisher`),
+      track: expectString(value.track, `${field}.track`),
+      timestamp_basis: expectBoundedNonnegativeInt(value.timestamp_basis, `${field}.timestamp_basis`, 255),
+    };
+  }
+  // kind === StreamKind.IMAGE (the only remaining value expectEnum(StreamKind, ...) allows)
   const streamId = expectBoundedPositiveInt(value.stream_id, `${field}.stream_id`, 3);
   return {
     kind: "camera",
@@ -359,6 +396,11 @@ function parseCaptureStarted(value: unknown): CaptureStarted {
     mode: expectEnum(CaptureMode, value.mode, "capture.started.mode"),
     streams: streamsRaw.map((s, i) => parseStreamDescriptor(s, `capture.started.streams[${i}]`)),
   };
+}
+
+/** The LiveKit cameras a started session offers; empty before the session starts or when it offers none. */
+export function liveKitStreams(started: CaptureStarted | null | undefined): LiveKitStreamDescriptor[] {
+  return (started?.streams ?? []).filter((s): s is LiveKitStreamDescriptor => s.kind === "livekit_camera");
 }
 
 export interface CaptureStatusFacts {

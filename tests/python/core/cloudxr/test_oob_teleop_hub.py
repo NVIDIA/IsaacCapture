@@ -250,7 +250,8 @@ async def test_first_message_must_be_register() -> None:
 
 
 @pytest.mark.asyncio
-async def test_client_metrics_stored_in_snapshot() -> None:
+async def test_client_metrics_stored_in_snapshot(monkeypatch) -> None:
+    monkeypatch.setattr("oob_teleop_hub.time.time", lambda: 20.0)
     hub = OOBControlHub(control_token=TOKEN)
     ws = QueueWS()
     task = asyncio.create_task(hub.handle_connection(ws))
@@ -277,9 +278,90 @@ async def test_client_metrics_stored_in_snapshot() -> None:
     m = snap["headsets"][0]["metricsByCadence"]["frame"]
     assert m["at"] == 12345000
     assert m["metrics"]["StreamingFramerate"] == 72.5
+    # Legacy clients omit sample age; their epoch clock does not control freshness.
+    assert snap["headsets"][0]["lastMetricsAt"] == 20000
 
     await ws.end_stream()
     await task
+
+
+@pytest.mark.asyncio
+async def test_cached_metrics_age_without_renewing_freshness(monkeypatch) -> None:
+    now = 20.0
+    monkeypatch.setattr("oob_teleop_hub.time.time", lambda: now)
+    hub = OOBControlHub(control_token=TOKEN)
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
+    await asyncio.sleep(0)
+
+    async def send_sample(cadence: str, age_ms: float) -> dict:
+        await ws.inject(
+            json.dumps(
+                {
+                    "type": "clientMetrics",
+                    "payload": {
+                        "t": 9999999999999,
+                        "sampleAgeMs": age_ms,
+                        "cadence": cadence,
+                        "metrics": {"fps": 72},
+                    },
+                }
+            )
+        )
+        await asyncio.sleep(0)
+        return (await hub.get_snapshot())["headsets"][0]
+
+    try:
+        first = await send_sample("frame", 1000)
+        assert first["lastMetricsAt"] == 19000
+        now = 30.0
+        cached = await send_sample("frame", 11000)
+        assert cached["lastMetricsAt"] == 19000
+        assert cached["lastSeenAt"] == 30000
+        older_cadence = await send_sample("render", 15000)
+        assert older_cadence["lastMetricsAt"] == 19000
+        fresh = await send_sample("network", 100)
+        assert fresh["lastMetricsAt"] == 29900
+    finally:
+        await ws.end_stream()
+        await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sample_age_ms", [-1, "invalid", True, None, float("nan"), float("inf")]
+)
+async def test_invalid_metric_age_does_not_establish_freshness(sample_age_ms) -> None:
+    hub = OOBControlHub(control_token=TOKEN)
+    ws = QueueWS()
+    task = asyncio.create_task(hub.handle_connection(ws))
+    await ws.inject(
+        json.dumps({"type": "register", "payload": {"role": "headset", "token": TOKEN}})
+    )
+    await asyncio.sleep(0)
+    try:
+        await ws.inject(
+            json.dumps(
+                {
+                    "type": "clientMetrics",
+                    "payload": {
+                        "sampleAgeMs": sample_age_ms,
+                        "cadence": "frame",
+                        "metrics": {"fps": 72},
+                    },
+                }
+            )
+        )
+        await asyncio.sleep(0)
+        state = (await hub.get_snapshot())["headsets"][0]
+        assert state["lastMetricsAt"] is None
+        assert state["lastSeenAt"] is not None
+    finally:
+        await ws.end_stream()
+        await task
 
 
 @pytest.mark.asyncio
@@ -560,3 +642,51 @@ async def test_multibyte_frame_over_byte_limit_is_rejected() -> None:
     await task
 
     assert ws.close_calls == [(1009, "Frame too large")]
+
+
+@pytest.mark.asyncio
+async def test_xr_heartbeat_ages_without_refreshing_stream_readiness(monkeypatch):
+    from oob_teleop_hub import _HeadsetState
+
+    clock = [100.0]
+    monkeypatch.setattr("oob_teleop_hub.time.monotonic", lambda: clock[0])
+    hub = OOBControlHub(control_token=TOKEN)
+    ws = object()
+    hub._headsets[ws] = _HeadsetState("test", ws, 0, last_metrics_at=10)
+    await hub._handle_client_metrics(
+        ws,
+        {
+            "cadence": "xr",
+            "t": -99999999,
+            "metrics": {
+                "generation": 2,
+                "visibility": 0,
+                "headAgeMs": 10,
+                "rightAgeMs": -1,
+            },
+        },
+    )
+    clock[0] += 3
+    headset = (await hub.get_snapshot())["headsets"][0]
+    assert headset["lastMetricsAt"] == 10000
+    assert headset["xrPresence"]["heartbeatAgeMs"] == 3000
+    assert headset["xrPresence"]["headAgeMs"] == 3010
+    assert headset["xrPresence"]["rightAgeMs"] is None
+
+
+@pytest.mark.asyncio
+async def test_presence_status_push_is_narrow_and_preserves_http_snapshot():
+    from oob_teleop_hub import _HeadsetState
+
+    hub = OOBControlHub(control_token=TOKEN)
+    ws = QueueWS()
+    hub._headsets[ws] = _HeadsetState("test", ws, 0)
+    snapshot = {
+        "presenceRecovery": {"state": "waking", "attempts": 1, "serial": "private"}
+    }
+    await hub.set_lifecycle_snapshot(snapshot)
+    assert json.loads(ws.sent[-1]) == {
+        "type": "presenceRecovery",
+        "payload": {"state": "waking", "attempts": 1},
+    }
+    assert (await hub.get_snapshot())["lifecycle"] == snapshot

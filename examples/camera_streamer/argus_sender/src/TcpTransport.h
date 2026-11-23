@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -28,6 +28,9 @@ struct TcpPacketSenderSettings
     uint32_t logIntervalSeconds = 1;
     uint32_t sendPollTimeoutMs = 100;
     uint32_t drainTimeoutMs = 2000;
+    // Caps the kernel send buffer so a slow link pushes back on the sender instead of hiding seconds of video in it.
+    // 0 leaves the operating system's autotuning in place.
+    uint32_t sendBufferBytes = 0;
 };
 
 int acceptTcpClient(const std::string& bindHost,

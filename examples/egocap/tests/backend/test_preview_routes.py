@@ -35,7 +35,7 @@ from egocap_web.app import app
 from egocap_web.capture_status import CaptureStatusMonitor
 from egocap_web.config import CaptureStatusConfig
 from egocap_web.preview_protocol import BINARY_HEADER_SIZE, BINARY_KIND_TRACKING
-from egocap_web.preview_routes import _BoundedMjpegResponse, _trusted_hostnames, capture_session
+from egocap_web.preview_routes import _BoundedMjpegResponse, capture_session, trusted_hostnames
 from egocap_web.recording_command import RecordingContext
 from egocap_web.recording_session import RecordingSessionCoordinator
 from tests.support.capture_server import RunningServer, start_capture_server, stop_capture_server
@@ -177,13 +177,13 @@ def test_a_connection_from_an_explicitly_configured_extra_origin_is_accepted(unu
         server.stop()
 
 
-def test_trusted_hostnames_entries_are_lowercased_and_unbracketed(monkeypatch):
+def testtrusted_hostnames_entries_are_lowercased_and_unbracketed(monkeypatch):
     # websocket.url.hostname (what this is matched against) is already
     # lowercased and bracket-stripped by urllib -- a configured entry like
     # "Station.local" or "[::1]" must normalize the same way, or it would
     # silently never match.
     monkeypatch.setenv("EGOCAP_TRUSTED_HOSTNAMES", "Station.Lab.Local, [::1], 127.0.0.1")
-    assert _trusted_hostnames() == frozenset({"station.lab.local", "::1", "127.0.0.1"})
+    assert trusted_hostnames() == frozenset({"station.lab.local", "::1", "127.0.0.1"})
 
 
 def test_a_same_origin_host_not_in_the_configured_trust_set_is_rejected(unused_tcp_port, monkeypatch):

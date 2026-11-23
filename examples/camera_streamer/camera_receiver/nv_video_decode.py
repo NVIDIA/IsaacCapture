@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("isaaccapture.camera_streamer." + __name__)
+logger = logging.getLogger("isaaccapture.camera_streamer.decode")
 
 
 class NvVideoDecoder:
@@ -45,8 +45,8 @@ class NvVideoDecoder:
             import codec
         except ImportError as e:
             raise RuntimeError(
-                "NvVideoDecoder requires the native codec. Follow "
-                "the host receiver build instructions in examples/camera_streamer/README.md."
+                "NvVideoDecoder requires the native codec. Run "
+                "`codec/build.sh` from the camera_receiver directory."
             ) from e
 
         cfg = codec.DecoderConfig()
@@ -59,7 +59,7 @@ class NvVideoDecoder:
         except AttributeError as e:
             raise RuntimeError(
                 "The native codec module is stale (no Codec enum). Rebuild it "
-                "using the host receiver build instructions in examples/camera_streamer/README.md."
+                "with `codec/build.sh` from the camera_receiver directory."
             ) from e
         self._decoder = codec.NvVideoDecoder(cfg)
 

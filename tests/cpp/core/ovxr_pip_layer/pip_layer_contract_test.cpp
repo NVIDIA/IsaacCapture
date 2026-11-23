@@ -55,16 +55,20 @@ XrResult XRAPI_CALL unavailableFormats(XrSession, uint32_t, uint32_t*, int64_t*)
     return XR_ERROR_RUNTIME_FAILURE;
 }
 int resizeCreates = 0;
+int64_t resizeFormat = 0;
 bool imageEnumerationFails = true;
+// UNORM is listed first so the helper has to pick SRGB by value, not by position.
+std::vector<int64_t> advertisedFormats{ VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB };
 XrResult XRAPI_CALL availableFormats(XrSession, uint32_t capacity, uint32_t* count, int64_t* formats)
 {
-    *count = 1;
-    if (capacity)
-        formats[0] = VK_FORMAT_R8G8B8A8_UNORM;
+    *count = static_cast<uint32_t>(advertisedFormats.size());
+    for (uint32_t i = 0; i < capacity && i < *count; ++i)
+        formats[i] = advertisedFormats[i];
     return XR_SUCCESS;
 }
-XrResult XRAPI_CALL createResizeSwapchain(XrSession, const XrSwapchainCreateInfo*, XrSwapchain* swapchain)
+XrResult XRAPI_CALL createResizeSwapchain(XrSession, const XrSwapchainCreateInfo* info, XrSwapchain* swapchain)
 {
+    resizeFormat = info->format;
     *swapchain = reinterpret_cast<XrSwapchain>(uintptr_t{ 100 } + ++resizeCreates);
     return XR_SUCCESS;
 }
@@ -325,7 +329,14 @@ int main()
     imageEnumerationFails = false;
     assert(createSwapchain(resizing, resizeDispatch, 1, 1));
     assert(resizeCreates == 2 && resizing.width == 1 && resizing.images[0].image == VkImage(99));
+    assert(resizeFormat == VK_FORMAT_R8G8B8A8_SRGB);
     assert(releaseSessionResources(resizing, resizeDispatch));
+    // The camera bytes are sRGB encoded: a runtime offering only UNORM gets no swapchain, not a fallback.
+    advertisedFormats = { VK_FORMAT_R8G8B8A8_UNORM };
+    resizing = camera;
+    assert(!createSwapchain(resizing, resizeDispatch, 1, 1));
+    assert(resizeCreates == 2 && !resizing.swapchain && resizing.width == 0 && !resizing.ready);
+    advertisedFormats = { VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_SRGB };
     destroyOrder.clear();
     owner->cameras[0] = camera;
 

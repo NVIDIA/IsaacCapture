@@ -33,10 +33,12 @@ membership is needed.
 ./spacemouse_plugin [--device=/dev/hidrawN [--combined-report]] [--collection-id=ID]
 ```
 
-- **--device**: HID node to read. By default the first validated model is discovered under
-  `/sys/class/hidraw`, and rediscovered after it is unplugged.
+- **--device**: HID node to read. By default the first validated model whose report descriptor
+  declares the six motion axes is discovered under `/sys/class/hidraw`, and rediscovered after it
+  is unplugged.
 - **--combined-report**: With `--device`, the device sends translation and rotation in one report
-  (3Dconnexion Universal Receiver). Discovery sets this automatically.
+  (3Dconnexion Universal Receiver, SpaceMouse Wireless BT). Discovery reads this from the report
+  descriptor.
 - **--collection-id**: Default `spacemouse`. Match this when creating `SpaceMouseTracker`.
 - **--plugin-root-id**: Set by the plugin launcher; enables device status reporting.
 

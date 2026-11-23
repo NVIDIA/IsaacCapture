@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * CameraGrid's per-tile rate/latency readout: derived from successive snapshots' camera
  * sequence numbers, shown only for live fresh samples, and dashed until enough history exists.
@@ -10,6 +14,7 @@ import type { PreviewSnapshot } from "./captureProtocol";
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 function makeSnapshot(sequence: string | null, ageMs: number | null, fps = 60): PreviewSnapshot {
@@ -90,5 +95,36 @@ describe("CameraGrid primary camera", () => {
   it("tags the grid with how many cameras it holds, capped at four", () => {
     const { container } = render(<CameraGrid snapshot={three(["a", "b", "c", "d", "e"])} live={true} receivedAtMonotonic={performance.now()} />);
     expect(container.querySelector(".camera-grid-items")?.className).toContain("camera-grid-items--n4");
+  });
+});
+
+describe("Camera role assignments", () => {
+  function twoCameras(): PreviewSnapshot {
+    const snapshot = makeSnapshot("1", 0);
+    return { ...snapshot, cameras: [...snapshot.cameras, { ...snapshot.cameras[0], stream_id: 2, name: "wrist_camera", url: "/stream2" }] };
+  }
+
+  it("gives the assigned ego camera the primary tile and shows role badges", () => {
+    const { container } = render(<CameraGrid snapshot={twoCameras()} live={true} receivedAtMonotonic={performance.now()} cameraRoles={{ ego: "wrist_camera", wrist_left: "head_camera" }} />);
+    const primary = container.querySelectorAll(".camera-tile--primary");
+    expect(primary).toHaveLength(1);
+    expect(primary[0].textContent).toContain("wrist_camera");
+    expect(primary[0].textContent).toContain("Ego (head)");
+    expect(screen.getByText("Left wrist")).toBeTruthy();
+  });
+
+  it("restores the head-camera fallback after clearing the ego role", () => {
+    const snapshot = twoCameras();
+    const { container, rerender } = render(<CameraGrid snapshot={snapshot} live={true} receivedAtMonotonic={null} cameraRoles={{ ego: "wrist_camera" }} />);
+    expect(container.querySelector(".camera-tile--primary")?.textContent).toContain("wrist_camera");
+    rerender(<CameraGrid snapshot={snapshot} live={true} receivedAtMonotonic={null} cameraRoles={{ ego: null }} />);
+    expect(container.querySelector(".camera-tile--primary")?.textContent).toContain("head_camera");
+    expect(screen.queryByText("Ego (head)")).toBeNull();
+  });
+
+  it("keeps an absent ego assignment from hiding the primary camera", () => {
+    const { container } = render(<CameraGrid snapshot={twoCameras()} live={true} receivedAtMonotonic={null} cameraRoles={{ ego: "offline_camera" }} />);
+    expect(container.querySelectorAll(".camera-tile--primary")).toHaveLength(1);
+    expect(container.querySelector(".camera-tile--primary")?.textContent).toContain("head_camera");
   });
 });

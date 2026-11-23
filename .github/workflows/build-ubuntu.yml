@@ -209,6 +209,8 @@ jobs:
         key: ${{ steps.ccache.outputs.cache-primary-key }}
 
     - name: Run All Tests
+      env:
+        WUJI_TELEMETRY_DISABLE: "1"
       run: ctest --test-dir "${BUILD_DIR}" --output-on-failure --parallel
 
     - name: Generate coverage report
@@ -1052,6 +1054,7 @@ jobs:
             --network host \
             -v /tmp:/tmp \
             -e PYTHONUNBUFFERED=1 \
+            -e WUJI_TELEMETRY_DISABLE=1 \
             --entrypoint bash teleop_ros2_ref:${{ env.ROS_DISTRO }} -c \
             "source /usr/local/bin/teleop-env-setup && exec uv run --no-sync python -m isaaccapture_examples.teleop_ros2 --ros-args -p mode:=$mode -p hand_retargeter:=$hand_retargeter -p hand_tracking_provider:=$hand_tracking_provider -p mcap_replay_path:=$REPLAY_MCAP" >/dev/null
 
@@ -1170,6 +1173,7 @@ jobs:
           -e TELEOP_WEB_CLIENT_STATIC_DIR=/opt/webxr_client \
           -e PYTHONUNBUFFERED=1 \
           -e ACCEPT_CLOUDXR_EULA=Y \
+          -e WUJI_TELEMETRY_DISABLE=1 \
           --entrypoint bash "$IMAGE" -c \
           "source /usr/local/bin/teleop-env-setup && exec uv run --no-sync python -m isaaccapture_examples.teleop_ros2 --ros-args -p mode:=$MODE -p hand_retargeter:=$HAND_RETARGETER -p hand_tracking_provider:=$HAND_TRACKING_PROVIDER -p cloudxr_accept_eula:=true" >/dev/null
 
@@ -1587,19 +1591,22 @@ jobs:
             --data-urlencode "repos=${ARTIFACTORY_REPO}" \
             "${ARTIFACTORY_URL%/}/api/search/artifact")"
 
-          # The name search also matches the PEP 658 "<wheel>.metadata" file
-          # Artifactory generates on upload; keep only the wheel itself.
-          matches_json="$(jq --arg suffix "/${wheel_name}" \
-            '[(.results // [])[] | select(.uri | endswith($suffix))]' <<< "${search_json}")"
-
-          result_count="$(jq 'length' <<< "${matches_json}")"
+          # Name searches also return .whl.metadata sidecars; require the exact wheel in this repository.
+          wheel_results="$(jq --arg wheel_name "${wheel_name}" \
+            --arg storage_prefix "${ARTIFACTORY_URL%/}/api/storage/${ARTIFACTORY_REPO}/" '
+              .results
+              | if type != "array" then error("Artifactory results must be an array") else . end
+              | map(select(.uri | startswith($storage_prefix) and endswith("/" + $wheel_name)
+                  and (contains("?") | not) and (contains("#") | not)))
+            ' <<< "${search_json}")"
+          result_count="$(jq 'length' <<< "${wheel_results}")"
           if [[ "${result_count}" -ne 1 ]]; then
             echo "Expected exactly 1 Artifactory search result for ${wheel_name}, but got ${result_count}"
             echo "${search_json}"
             exit 1
           fi
 
-          storage_uri="$(jq -r '.[0].uri // empty' <<< "${matches_json}")"
+          storage_uri="$(jq -r '.[0].uri // empty' <<< "${wheel_results}")"
           if [[ -z "${storage_uri}" ]]; then
             echo "Unable to resolve storage URI for ${wheel_name}"
             echo "${search_json}"

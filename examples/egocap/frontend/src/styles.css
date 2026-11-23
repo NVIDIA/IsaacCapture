@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. */
+/* SPDX-License-Identifier: Apache-2.0 */
+
 :root {
   --canvas: #0b1018;
   --surface: #121a26;
@@ -88,6 +91,427 @@ body {
   gap: var(--space-4);
 }
 
+.settings-button {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-chip);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-button:hover {
+  border-color: var(--accent);
+}
+
+.settings-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- Settings dialog: a tabbed modal over the page; the page underneath stays as it was ----------------------- */
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 40;
+}
+
+.settings-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(920px, 96vw);
+  height: min(680px, 92vh);
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  z-index: 41;
+}
+
+.settings-nav {
+  flex: none;
+  width: 184px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-5) var(--space-3);
+  background: var(--canvas);
+  border-right: 1px solid var(--border);
+}
+
+.settings-nav h2 {
+  margin: 0 var(--space-3) var(--space-4);
+  font-size: 16px;
+}
+
+.settings-tab {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  color: var(--text-main);
+  background: var(--surface);
+}
+
+.settings-tab--on {
+  color: var(--text-main);
+  background: var(--surface-raised);
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+.settings-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-content-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.settings-content-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.settings-card {
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}
+
+.settings-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.settings-lead {
+  margin: var(--space-1) 0 var(--space-3);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.settings-note {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.settings-note--hint {
+  color: var(--accent);
+}
+
+/* Long paths and URLs wrap inside the value column instead of widening the dialog. */
+.settings-modal .kv-list dd {
+  max-width: 62%;
+  overflow-wrap: anywhere;
+}
+
+.settings-shortcuts kbd {
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  font-size: 12px;
+}
+
+.settings-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.settings-actions .settings-note {
+  margin: 0;
+}
+
+.settings-primary,
+.settings-quiet {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--canvas);
+  font-weight: 600;
+}
+
+.settings-quiet {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-main);
+}
+
+.settings-primary:disabled,
+.settings-quiet:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-primary:focus-visible,
+.settings-quiet:focus-visible,
+.settings-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-input {
+  height: 32px;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+  font-size: 13px;
+}
+
+.settings-import-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.settings-import-row .settings-input {
+  flex: 1 1 260px;
+}
+
+.settings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.settings-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  font-size: 13px;
+}
+
+.settings-list-item--on {
+  border-color: var(--accent);
+}
+
+/* A station row: the name line on top, what fills its roles and any problem beneath it. */
+.settings-station-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* The row wraps so that its editor opens beneath it, across the full width. The text column starts from no
+width, so a long line wraps inside it instead of pushing the row's buttons onto a line of their own. */
+.settings-list--stations > li {
+  flex-wrap: wrap;
+}
+
+.settings-list--stations .settings-list-main {
+  flex-basis: 0;
+}
+
+.station-editor {
+  flex: 1 0 100%;
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+/* A destructive confirmation: only ever shown after the operator asked to delete. */
+.settings-danger {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--critical);
+  background: transparent;
+  color: var(--critical);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-danger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-danger:focus-visible {
+  outline: 2px solid var(--critical);
+  outline-offset: 1px;
+}
+
+.settings-list-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1 1 auto;
+  cursor: pointer;
+}
+
+.settings-list-main--stacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  cursor: default;
+}
+
+.settings-list-main--stacked .settings-note {
+  margin: 0;
+}
+
+.settings-list-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.settings-badge {
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.settings-badge--on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* A compact form: each label beside its control. */
+.settings-fields {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: var(--space-2) var(--space-3);
+  align-items: center;
+}
+
+.settings-fields label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* A single on/off setting: the box beside its own words. */
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+/* The role a camera fills, shown in the tile caption beside its name. */
+.camera-role {
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 720px) {
+  .settings-modal {
+    flex-direction: column;
+    height: 100vh;
+    width: 100vw;
+    border-radius: 0;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-3);
+  }
+
+  .settings-nav h2 {
+    flex-basis: 100%;
+    margin-bottom: var(--space-2);
+  }
+}
+
 .mode-badge {
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-chip);
@@ -131,6 +555,469 @@ hero card so the tracking tree below starts near the top of the viewport. */
 
 .status-headline {
   flex: 1 1 auto;
+}
+
+/* --- Start-of-day rail ---------------------------------------------------- */
+
+.step-rail {
+  flex: none;
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.step-rail-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.step-rail-item {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+
+/* The line joining a step to the next one. */
+.step-rail-item + .step-rail-item::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: var(--space-4);
+  height: 1px;
+  margin-right: var(--space-2);
+  background: var(--border);
+}
+
+.step {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.step:hover {
+  border-color: var(--border);
+}
+
+/* The step that opens nothing looks like the others and offers no pointer. */
+.step--static {
+  cursor: default;
+}
+
+.step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.step-mark {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.step-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.step-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.step-detail {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step--done .step-mark {
+  border-color: var(--positive);
+  color: var(--positive);
+}
+
+.step--attention .step-mark {
+  border-color: var(--warning);
+  background: var(--warning);
+  color: var(--canvas);
+}
+
+.step--attention .step-detail {
+  color: var(--warning);
+}
+
+.step--skipped .step-mark {
+  border-style: dashed;
+}
+
+.step--skipped .step-label {
+  color: var(--text-secondary);
+}
+
+/* The step to deal with next. */
+.step--current {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+}
+
+.step--current.step--todo .step-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--canvas);
+}
+
+@media (max-width: 900px) {
+  .step-detail {
+    display: none;
+  }
+}
+
+/* --- Devices checklist ---------------------------------------------------- */
+
+.setup-verdict {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.setup-verdict--clear {
+  border-color: var(--positive);
+  color: var(--positive);
+}
+
+.setup-verdict--held {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.check-group {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.check-row:last-child {
+  border-bottom: 0;
+}
+
+.check-mark {
+  font-weight: 700;
+  text-align: center;
+}
+
+.check-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.check-detail {
+  grid-column: 2;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.check-row--pass .check-mark {
+  color: var(--positive);
+}
+
+.check-row--fail .check-mark,
+.check-row--fail .check-detail {
+  color: var(--critical);
+}
+
+.check-row--warn .check-mark,
+.check-row--warn .check-detail,
+.check-row--unknown .check-mark,
+.check-row--unknown .check-detail {
+  color: var(--warning);
+}
+
+.check-row--skip {
+  color: var(--text-secondary);
+}
+
+.check-row--skip .check-label {
+  font-weight: 400;
+}
+
+/* --- End-of-day dialog ---------------------------------------------------- */
+
+.wrap-up-modal {
+  width: min(1040px, 96vw);
+  height: min(760px, 94vh);
+}
+
+/* The question that stands in for Close while something typed is unsaved. */
+.wrap-up-discard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.wrap-up-tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-2);
+}
+
+.wrap-up-tile {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  border-left-width: 3px;
+}
+
+.wrap-up-tile-count {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.wrap-up-tile-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.wrap-up-tile-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* One colour per outcome, shared by the tiles and the table. */
+.wrap-up-tile--kept {
+  border-left-color: var(--positive);
+}
+
+.wrap-up-tile--flagged,
+.wrap-up-tile--pending {
+  border-left-color: var(--warning);
+}
+
+.wrap-up-tile--rejected {
+  border-left-color: var(--critical);
+}
+
+.wrap-up-tile--recording {
+  border-left-color: var(--accent);
+}
+
+.wrap-up-outcome {
+  font-weight: 600;
+}
+
+.wrap-up-outcome--kept {
+  color: var(--positive);
+}
+
+.wrap-up-outcome--flagged,
+.wrap-up-outcome--pending {
+  color: var(--warning);
+}
+
+.wrap-up-outcome--rejected {
+  color: var(--critical);
+}
+
+.wrap-up-outcome--discarded {
+  color: var(--text-secondary);
+}
+
+.wrap-up-outcome--recording {
+  color: var(--accent);
+}
+
+.wrap-up-time {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* What blocked the station, one stretch per line. */
+.wrap-up-blockers {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-blockers li {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.wrap-up-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-notes-text {
+  height: auto;
+  padding: var(--space-2);
+  resize: vertical;
+}
+
+.wrap-up-session {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  padding: var(--space-2) var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.wrap-up-session > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.wrap-up-session > summary .settings-note {
+  margin: 0;
+}
+
+.wrap-up-table {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
+/* Mostly text, unlike the tracking tables this style comes from: read left to right, numbers still right-aligned. */
+.wrap-up-table th,
+.wrap-up-table td {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.wrap-up-table th.num-cell,
+.wrap-up-table td.num-cell {
+  text-align: right;
+}
+
+.wrap-up-correction {
+  margin-top: var(--space-3);
+}
+
+.wrap-up-correction legend {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-range {
+  flex: 0 1 220px;
+}
+
+.wrap-up-task {
+  flex: 1 1 260px;
+}
+
+/* The station's uptime chip, beside its name. Read-only, so it has none of a button's affordances. */
+.station-uptime {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.uptime-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.uptime-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.uptime-chip--ready {
+  border-color: var(--positive);
+}
+
+.uptime-chip--ready .uptime-chip-dot {
+  background: var(--positive);
+}
+
+.uptime-chip--recording {
+  border-color: var(--accent);
+}
+
+.uptime-chip--recording .uptime-chip-dot {
+  background: var(--accent);
+}
+
+.uptime-chip--down {
+  border-color: var(--warning);
+}
+
+.uptime-chip--down .uptime-chip-dot {
+  background: var(--warning);
+}
+
+.station-uptime-summary {
+  color: var(--text-secondary);
 }
 
 .status-strip.tone-positive .status-headline {
@@ -771,7 +1658,8 @@ below for the narrow/stacked layout). */
   color: var(--text-main);
 }
 
-.recording-status-task {
+.recording-status-task,
+.recording-status-details {
   flex-basis: 100%;
   overflow-wrap: anywhere;
 }
@@ -891,9 +1779,27 @@ below for the narrow/stacked layout). */
   font: inherit;
 }
 
+.recording-task-editor-select {
+  flex: 1 1 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  color: var(--text-main);
+  font: inherit;
+}
+
 .recording-task-editor-input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* The details field takes its own row so a long task and long details are both readable while editing. */
+.recording-task-editor-details {
+  flex-basis: 100%;
+  order: 1;
 }
 
 .recording-task-editor-actions {
@@ -1320,6 +2226,16 @@ below for the narrow/stacked layout). */
   font-weight: 500;
 }
 
+/* The optional details sit under the task in a quieter weight; one line, full text on hover. */
+.op-task-details {
+  margin: 2px 0 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .op-counts {
   display: flex;
   align-items: center;
@@ -1497,6 +2413,21 @@ below for the narrow/stacked layout). */
 
 .op-stage .camera-tile--primary {
   grid-column: 1;
+  grid-row: 1 / -1;
+}
+
+/* Several head cameras share the main area in equal columns; other cameras stack smaller in the last column. */
+.op-stage .camera-grid-items--heads {
+  grid-template-columns: repeat(var(--head-count), minmax(0, 2fr)) minmax(0, 1fr);
+  grid-template-rows: repeat(var(--side-count), minmax(0, 1fr));
+}
+
+.op-stage .camera-grid-items--heads-only {
+  grid-template-columns: repeat(var(--head-count), minmax(0, 1fr));
+}
+
+.op-stage .camera-grid-items--heads .camera-tile--primary {
+  grid-column: auto;
   grid-row: 1 / -1;
 }
 
@@ -1888,4 +2819,26 @@ below for the narrow/stacked layout). */
     flex: 1 1 0;
     min-width: 0;
   }
+}
+
+/* Direct LiveKit preview tiles: a <video> sized like the MJPEG <img>, with any status text laid over it. */
+.camera-tile video {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.op-stage .camera-tile video {
+  flex: 1 1 0;
+  height: 100%;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.camera-tile video + .camera-placeholder {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  background: rgba(0, 0, 0, 0.6);
 }
