@@ -621,7 +621,7 @@ jobs:
     # GPU runner. The build-ubuntu job runs on a GPU-less GitHub-hosted runner
     # where these tests SKIP cleanly; this job actually exercises the Vulkan
     # / CUDA paths that build-ubuntu cannot.
-    runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
+    runs-on: [self-hosted, linux, wip, "${{ matrix.arch }}"]
     permissions:
       contents: read
     needs: [build-ubuntu, resolve-ci-config]
@@ -864,7 +864,7 @@ jobs:
             done
 
   test-cloudxr:
-    runs-on: [self-hosted, linux, gpu, "${{ matrix.arch }}"]
+    runs-on: [self-hosted, linux, wip, "${{ matrix.arch }}"]
     permissions:
       contents: read
     needs: [build-ubuntu, resolve-ci-config]
@@ -936,7 +936,7 @@ jobs:
     # Unit tests and MCAP replay require no GPU; only live CloudXR does.
     runs-on: >-
       ${{ needs.resolve-ci-config.outputs.gpu-tests == 'true'
-      && fromJSON(format('["self-hosted", "linux", "gpu", "{0}"]', matrix.arch))
+      && fromJSON(format('["self-hosted", "linux", "wip", "{0}"]', matrix.arch))
       || (matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04') }}
     permissions:
       contents: read
@@ -1426,7 +1426,7 @@ jobs:
         echo "Attached ${ARCHIVE}.zip to ${TAG}"
 
   publish-wheel:  # to internal Artifactory
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, linux, wip]
     permissions: {}
     needs:
       - wheel-gate
@@ -1643,7 +1643,7 @@ jobs:
         } >> "$GITHUB_OUTPUT"
 
   kitmaker:
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, linux, wip]
     needs:
       - publish-wheel
     outputs:
@@ -1756,7 +1756,7 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.kitmaker.outputs.releases) }}
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, linux, wip]
     needs:
       - kitmaker
     permissions:
