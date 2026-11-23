@@ -848,7 +848,8 @@ by default; <code class="docutils literal notranslate"><span class="pre">stereo:
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">synthetic</span></code></p></td>
 <td><p>Debugging tool — GPU-generated test pattern, no camera or file required. <code class="docutils literal notranslate"><span class="pre">stereo:</span> <span class="pre">true</span></code> adds
-a <code class="docutils literal notranslate"><span class="pre">disparity_px</span></code> offset between the eyes.</p></td>
+a <code class="docutils literal notranslate"><span class="pre">disparity_px</span></code> offset between the eyes; with it, <code class="docutils literal notranslate"><span class="pre">scene:</span> <span class="pre">room</span></code> draws a furnished room
+seen by a slowly turning pair of eyes instead, with real depth.</p></td>
 </tr>
 </tbody>
 </table>
@@ -1413,6 +1414,14 @@ source produces GPU frames where possible — e.g. the ZED source uses <code cla
 BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.
 The optional Argus source consumes Jetson EGLStreams with CUDA and publishes RGBA buffers without a
 CPU readback.</p></li>
+<li><p><strong>Stereo cameras for code that computes on the pair</strong> — depth or visual tracking, say — come from
+<code class="docutils literal notranslate"><span class="pre">build_stereo_camera(entry)</span></code> in
+<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/sources/__init__.py" rel="noopener noreferrer" target="_blank">sources/__init__.py</a>,
+which opens one <code class="docutils literal notranslate"><span class="pre">cameras:</span></code> entry. Every frame holds both eyes of one capture, in capture order
+and never twice, and stays intact until the reader asks for the next. <code class="docutils literal notranslate"><span class="pre">calibration()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">imu()</span></code> give the stereo calibration and the IMU samples of a camera that has them, and
+<code class="docutils literal notranslate"><span class="pre">check_stereo_camera(entry)</span></code> says why an entry is not a stereo camera. The viewer keeps using
+<code class="docutils literal notranslate"><span class="pre">build_local_camera</span></code>, which pairs the newest image of each eye.</p></li>
 <li><p><strong>The viewer</strong> (<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_viz.py" rel="noopener noreferrer" target="_blank">camera_viz.py</a>) creates a
 <code class="docutils literal notranslate"><span class="pre">VizSession</span></code> and adds one <code class="docutils literal notranslate"><span class="pre">QuadLayer</span></code> per enabled camera, then submits each frame to its layer
 and calls <code class="docutils literal notranslate"><span class="pre">render()</span></code> once per frame. Stereo cameras submit both eyes.</p></li>
