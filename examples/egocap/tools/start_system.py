@@ -275,7 +275,9 @@ def _output_dimension(output: dict, key: str) -> int | None:
     return value
 
 
-def frame_size(settings: SenderSettings, width: int | None, height: int | None) -> tuple[int, int]:
+def frame_size(
+    settings: SenderSettings, width: int | None, height: int | None, scale_div: int = BRIDGE_DOWNSCALE
+) -> tuple[int, int]:
     """The picture size the sender delivers: the profile's output size when it sets one, else the sensor's.
 
     The receiver, the bridge and the descriptor all follow this, so a profile that resizes its output cannot
@@ -293,8 +295,8 @@ def frame_size(settings: SenderSettings, width: int | None, height: int | None) 
         size = (settings.width, settings.height)
     else:
         size = (width or DEFAULT_SENSOR_WIDTH, height or DEFAULT_SENSOR_HEIGHT)
-    if size[0] % (2 * BRIDGE_DOWNSCALE) or size[1] % (2 * BRIDGE_DOWNSCALE):
-        raise StartupError(f"the picture size {size[0]}x{size[1]} must divide by {2 * BRIDGE_DOWNSCALE}")
+    if size[0] % (2 * scale_div) or size[1] % (2 * scale_div):
+        raise StartupError(f"the picture size {size[0]}x{size[1]} must divide by {2 * scale_div}")
     return size
 
 
@@ -666,6 +668,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--fps", type=int, help="override the profile's output.fps")
     parser.add_argument("--bitrate-mbps", type=int, help="override the profile's HEVC bitrate")
+    parser.add_argument("--bridge-bitrate-mbps", type=int, help="LiveKit H.264 bitrate ceiling per track, in Mbps")
+    parser.add_argument(
+        "--bridge-scale-div",
+        type=int,
+        choices=(1, 2),
+        default=BRIDGE_DOWNSCALE,
+        help="LiveKit output size divisor (1 retains the full source resolution)",
+    )
     parser.add_argument("--sender-port", type=int, help="override the profile's TCP video port")
     parser.add_argument(
         "--timesync-tool",
@@ -751,7 +761,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
         sender_config = load_sender_config(args.sender_config, args.fps, args.bitrate_mbps, args.sender_port)
         sender = sender_settings(sender_config)
-        width, height = frame_size(sender, args.width, args.height)
+        width, height = frame_size(sender, args.width, args.height, args.bridge_scale_div)
+        if args.bridge_bitrate_mbps is not None and not 1 <= args.bridge_bitrate_mbps <= 4294:
+            raise StartupError("--bridge-bitrate-mbps must fit a positive 32-bit bitrate in bits per second")
         # The bridge identifies the Orin's chrony by the reference id of its IPv4 address.
         if args.orin:
             try:
@@ -765,8 +777,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 room,
                 publisher,
                 track,
-                width // BRIDGE_DOWNSCALE,
-                height // BRIDGE_DOWNSCALE,
+                width // args.bridge_scale_div,
+                height // args.bridge_scale_div,
                 sender.fps,
                 basis,
                 sender.stream_id,
@@ -923,9 +935,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "--socket",
                     ipc_socket,
                     "--stream",
-                    f"{sender.stream_id}={track}:{BRIDGE_DOWNSCALE}",
+                    f"{sender.stream_id}={track}:{args.bridge_scale_div}",
                     "--fps",
                     str(sender.fps),
+                    *(
+                        ["--bitrate-mbps", str(args.bridge_bitrate_mbps)]
+                        if args.bridge_bitrate_mbps is not None
+                        else []
+                    ),
                     *bridge_timing_arguments(
                         args.mock,
                         orin_host,

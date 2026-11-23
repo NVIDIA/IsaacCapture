@@ -111,6 +111,22 @@ The settings that must agree for a 60 fps recording; each is configured, none is
 - Egocap: the same `fps` and the published size in the streams file, `record_fps: 60` in the station file, and a
   station `video_encoder` (for example `ffmpeg_h264_nvenc` with `crf: 12`).
 
+One recording invocation with the egocap launcher (paths as in `egocap/README.md`), with the station file from the
+example (`video_encoder: ffmpeg_h264_nvenc`, `crf: 12`):
+
+```bash
+uv run python tools/start_system.py --orin user@orin --deploy-script PATH --livekit-server PATH --bridge PATH \
+  --fps 60 --bridge-scale-div 1 --bridge-bitrate-mbps 50
+```
+
+`--bridge-scale-div 1` publishes the full source size (the streams file's dimensions follow it); the launcher's
+default stays 2. `--bridge-bitrate-mbps` is the bridge's per-track H.264 ceiling, separate from the sender's
+`--bitrate-mbps`; 50 is a candidate for the head track on a provisioned link, not a validated value. The bridge
+encodes with the NVENC P4 preset and keeps following LiveKit's congestion feedback, so a ceiling above the link's
+capacity is not reached. Check the achieved rate, frame age and missing frames in the `[stats]` lines at the
+intended number of cameras before relying on it; the recording does not switch to another path when bandwidth is
+short.
+
 The delivered rate, image quality (the bridge's H.264 encode precedes egocap's final encode) and the alignment
 with tracking have to be measured on the installed hardware; this profile does not establish them.
 
@@ -182,11 +198,11 @@ congestion control reports for each track (90% of the target, never above the ma
 fresh connection does not fill the sender's pacing queue. The `[stats]` line shows the current rate, the transport's
 target and how many times the rate changed.
 
-Measured with the mock sender on an RTX PRO 5000 against egocap's receiver and recording-feed checks (30 fps, head
+Measured with the earlier P1 preset and the mock sender on an RTX PRO 5000 against egocap's receiver and recording-feed checks (30 fps, head
 and one wrist, local LiveKit server): frames are 60-150 ms old from the first frame and settle near 80 ms while the
 rate climbs to the maximum within roughly 20 s. The head at 2560x1984 and 8 Mbps and at 1280x992 both ran with no
 missing frames and a median capture-to-receive time of 65-85 ms. A 20 Mbps maximum on the head built a standing
-backlog of about 1.2 s, so keep the maximum near 8 Mbps.
+backlog of about 1.2 s, in that setup.
 
 ## Probe
 

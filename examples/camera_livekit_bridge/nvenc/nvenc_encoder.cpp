@@ -114,7 +114,7 @@ struct NvencEncoder::Impl
     void configure()
     {
         const GUID codec = NV_ENC_CODEC_H264_GUID;
-        const GUID preset = NV_ENC_PRESET_P1_GUID;
+        const GUID preset = NV_ENC_PRESET_P4_GUID;
         const NV_ENC_TUNING_INFO tuning = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
 
         NV_ENC_PRESET_CONFIG preset_config{};

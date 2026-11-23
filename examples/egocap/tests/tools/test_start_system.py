@@ -549,7 +549,7 @@ def _command(recorded, name: str) -> str:
 
 def test_main_starts_the_orin_chain_in_order(recorded_main):
     argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
-    assert ss.main([*argv, *CAMERA_ARGS]) == 0
+    assert ss.main([*argv, *CAMERA_ARGS, "--bridge-bitrate-mbps", "50", "--bridge-scale-div", "1"]) == 0
     names = [c.name for c in recorded_main.children]
     assert names == ["sender", "livekit", "capture-server", "backend", "receiver", "bridge", "timesync-follower"]
     capture = _command(recorded_main, "capture-server")
@@ -558,6 +558,9 @@ def test_main_starts_the_orin_chain_in_order(recorded_main):
     assert "--livekit-streams" in capture
     assert "--mock" not in capture
     bridge = _command(recorded_main, "bridge")
+    assert "--bitrate-mbps 50" in bridge
+    declared = yaml.safe_load((recorded_main.workdir / "streams.yaml").read_text())["livekit"]["streams"][0]
+    assert (declared["width"], declared["height"]) == (2560, 1984)
     assert "--timestamp-basis capture_monotonic_us" in bridge
     assert "--sender-clock" not in bridge
     assert "--source-full-range" not in bridge
