@@ -804,8 +804,36 @@ def _shift_px(left, right, search=40):
     return int(np.argmin(costs))
 
 
+class _SceneClock:
+    """In place of ``time`` in the scene's module: the test sets the time
+    the drawings are stamped with, and so where the camera has turned to."""
+
+    monotonic = staticmethod(time.monotonic)
+
+    def __init__(self):
+        self.ns = 0
+
+    def monotonic_ns(self):
+        return self.ns
+
+
+def _drawing_at(source, clock, seconds, timeout_s=10.0):
+    """The drawing of the scene ``seconds`` after its camera started."""
+    clock.ns = int(seconds * 1e9)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        frame = source.latest()
+        if frame is not None and frame.timestamp_ns == clock.ns:
+            return frame
+        time.sleep(0.001)
+    raise AssertionError("no drawing stamped with that time arrived")
+
+
 @requires_gpu
-def test_the_two_eyes_see_the_wall_ahead_with_the_disparity_of_its_distance():
+def test_the_two_eyes_see_the_wall_ahead_with_the_disparity_of_its_distance(
+    monkeypatch,
+):
+    monkeypatch.setattr(scene, "time", _SceneClock())  # stands still: at rest
     source = build_stereo_camera({**ROOM, "width": 1280, "height": 720})
     calibration = source.calibration()
     fx = calibration.left_K[0, 0]
@@ -826,21 +854,16 @@ def test_the_two_eyes_see_the_wall_ahead_with_the_disparity_of_its_distance():
 
 
 @requires_gpu
-def test_the_picture_moves_as_the_drawn_camera_turns():
+def test_the_picture_moves_as_the_drawn_camera_turns(monkeypatch):
+    clock = _SceneClock()
+    monkeypatch.setattr(scene, "time", clock)
     source = scene.SyntheticSceneSource("room", 1280, 720, fps=120.0, still_s=0.0)
-    # A first session compiles the kernel, so the turn is not over by the
-    # time the measured session draws.
     source.start()
     try:
-        _read_any(source)
-    finally:
-        source.stop()
-    source.start()
-    try:
-        first = _read_any(source)
+        # Two points of the turn, however fast this machine draws.
+        first = _drawing_at(source, clock, 0.30)
         early, early_ns = first.image.get(), first.timestamp_ns
-        time.sleep(0.08)
-        later = _read_any(source)
+        later = _drawing_at(source, clock, 0.45)
         late, late_ns = later.image.get(), later.timestamp_ns
         right_eye = later.image_right.get()
     finally:
@@ -917,24 +940,26 @@ def test_a_drawn_camera_starts_again_after_a_stop_that_gave_up_waiting(monkeypat
     source._kernel = slow
     monkeypatch.setattr(scene, "_STOP_S", 0.05)
     source.start()
-    assert drawing.wait(10.0)
-    source.stop()  # gives up: the thread is inside the drawing
-    with pytest.raises(RuntimeError, match="still stopping"):
-        source.start()
-    release.set()  # the drawing ends, and the thread with it
-    restarted_ns = time.monotonic_ns()
-    source._kernel = draw
-    deadline = time.monotonic() + 10.0
-    while True:
-        try:
-            source.start()
-            break
-        except RuntimeError:
-            assert time.monotonic() < deadline
-            time.sleep(0.005)
     try:
+        assert drawing.wait(10.0)
+        source.stop()  # gives up: the thread is inside the drawing
+        with pytest.raises(RuntimeError, match="still stopping"):
+            source.start()
+        release.set()  # the drawing ends, and the thread with it
+        restarted_ns = time.monotonic_ns()
+        source._kernel = draw
+        deadline = time.monotonic() + 10.0
+        while True:
+            try:
+                source.start()
+                break
+            except RuntimeError:
+                assert time.monotonic() < deadline
+                time.sleep(0.005)
         assert _read_any(source).timestamp_ns >= restarted_ns
     finally:
+        release.set()
+        monkeypatch.setattr(scene, "_STOP_S", 5.0)  # this stop waits
         source.stop()
 
 
