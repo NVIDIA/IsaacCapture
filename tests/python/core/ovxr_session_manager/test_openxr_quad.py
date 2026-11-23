@@ -272,7 +272,9 @@ def test_incomplete_panel_copy_retires_only_safe_mailboxes(
                             render_var_count=1,
                             output_render_vars=[
                                 SimpleNamespace(
-                                    source_name=text(b"LdrColor"), output_handle=i + 1
+                                    status=1,
+                                    source_name=text(b"LdrColor"),
+                                    output_handle=SimpleNamespace(raw_id=i + 1),
                                 )
                             ],
                         )

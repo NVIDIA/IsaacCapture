@@ -160,7 +160,7 @@ controllers, and full body), see ``examples/deviceio_live_view/`` and its
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/deviceio_live_view
+   uv pip install -e ./examples/deviceio_live_view --no-sources
    python -m isaaccapture_examples.deviceio_live_view --accept-eula
 
 A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
@@ -170,6 +170,19 @@ A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
   same channel base name as ``FullBodySource``, so the resulting file replays
   with ``replay_full_body``.
 
+The C++ recorder does not start CloudXR, so start the runtime and source its
+environment first. With no output argument it writes to the current directory;
+pass ``recordings/`` so ``replay_full_body`` finds the take. From the repo root,
+after ``cmake --install`` and with the example package installed as in
+`Live preview`_:
+
+.. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service start --accept-eula
+   source ~/.cloudxr/run/cloudxr.env
+   ./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
+   python -m isaaccapture_examples.mcap_record_replay.replay_full_body
+
 Live preview
 ^^^^^^^^^^^^
 
@@ -177,7 +190,7 @@ From the repo root, in a venv set up as in :ref:`step 4 of Build from source <bu
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/mcap_record_replay --no-sources
    python -m isaaccapture_examples.mcap_record_replay.live_full_body --accept-eula
    python -m isaaccapture_examples.mcap_record_replay.live_full_body --port 8090 --accept-eula
 
@@ -192,7 +205,7 @@ From the repo root, in the same venv:
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/mcap_record_replay --no-sources
    R="python -m isaaccapture_examples.mcap_record_replay.record_hand"
    $R              # 5 s → ./recordings/hands_<timestamp>.mcap
    $R 10           # record for 10 seconds
@@ -201,10 +214,9 @@ From the repo root, in the same venv:
 Recordings are written to ``./recordings/`` relative to where you run the
 command, and the replay scripts look there when given no path.
 
-The example never downloads a published wheel — it runs against the
-``isaaccapture`` next to it, built from this checkout.  The install is editable,
-so edits under ``src/python/`` need no rebuild; for C++ changes see
-:ref:`step 4 of Build from source <build-from-source-editable-examples>`.  From
+The example runs against the ``isaaccapture`` wheel installed in step 4, which
+``--no-sources`` keeps in place; after a rebuild, rerun that install (see
+:ref:`step 4 of Build from source <build-from-source-editable-examples>`).  From
 ``install/examples/mcap_record_replay`` (after ``cmake
 --install``) it picks up the wheel you just built instead — see
 :doc:`/development/build_from_source/index`.
@@ -230,10 +242,13 @@ Replay repeats until Ctrl+C — no headset required:
 Open the printed URL (default ``http://localhost:8080``) in a browser to see the
 left (green) and right (blue) hand skeletons update each frame.
 
-The ``record_controller`` / ``replay_controller`` and ``record_full_body`` /
-``replay_full_body`` module pairs use the same CLI (positional MCAP path,
-``--host``, ``--port``). ``live_full_body`` accepts ``--host``,
-``--port``, and the CloudXR launcher flags (including ``--accept-eula``).
+``record_controller`` and ``record_full_body`` take the same arguments as
+``record_hand`` (duration, output path, and the CloudXR launcher flags such as
+``--accept-eula``). ``replay_controller`` and ``replay_full_body`` take the
+same arguments as ``replay_hand`` (MCAP path, ``--host``, ``--port``) and
+default to the newest ``controllers_*.mcap`` or ``full_body_*.mcap`` under
+``./recordings/``. ``live_full_body`` accepts ``--host``, ``--port``, and the
+CloudXR launcher flags.
 
 API Reference
 -------------
