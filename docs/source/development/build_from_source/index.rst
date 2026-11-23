@@ -178,8 +178,9 @@ This will:
 C++ Formatting Enforcement (Linux)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-On Linux, **clang-format** is enforced by default; the build fails if formatting changes would be applied. The project
-uses **clang-format-14** for consistent results across distributions (see ``cmake/ClangFormat.cmake``).
+On classic Linux CMake builds, **clang-format** is enforced by default; the build
+fails if formatting changes would be applied. The project uses **clang-format-14**
+for consistent results across distributions (see ``cmake/ClangFormat.cmake``).
 
 To disable enforcement, set ``ENABLE_CLANG_FORMAT_CHECK`` to ``OFF``:
 
@@ -425,15 +426,14 @@ the released wheels) is unchanged, so the two coexist.
 
 What this path does and how it differs from the classic flow:
 
-- **Full build, no overrides.** The backend passes no ``cmake.define`` overrides,
-  so ``BUILD_EXAMPLES``, ``BUILD_TESTING``, and ``BUILD_PLUGINS`` stay at their
-  CMake defaults: a ``pip install`` builds the full default target — extensions,
+- **Full build.** ``BUILD_EXAMPLES``, ``BUILD_TESTING``, and ``BUILD_PLUGINS`` stay
+  at their CMake defaults: a ``pip install`` builds the full default target — extensions,
   examples, C++ tests, and plugins (a plugin without its SDK skips gracefully). It
   installs only the ``isaacteleop_wheel`` and ``isaacteleop_binaries`` components,
   so C++ library/header install rules do not leak into the wheel.
-- **clang-format is enforced.** Because the gate is left on, the build **fails** if
-  ``clang-format-14`` is not installed or any C++ file is unformatted — a
-  ``pip install`` therefore requires ``clang-format-14`` on Linux.
+- **clang-format is optional.** Wheel builds disable the formatting gate, so
+  ``pip install`` does not require ``clang-format-14``. To enforce formatting,
+  pass ``-Ccmake.define.ENABLE_CLANG_FORMAT_CHECK=ON`` to ``pip install``.
 - **All executables on PATH.** Every executable built from ``src/`` and
   ``examples/`` — example programs, C++ test binaries, plugin tools
   (``oxr_simple_api_demo``, ``se3_printer``, ``schema_tests``, …) — is installed
