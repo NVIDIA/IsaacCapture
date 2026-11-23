@@ -240,8 +240,8 @@ pre-commit install --hook-type commit-msg
 
 ## Pull request descriptions
 
-- Reference internal bugs with plain bug IDs only. Never link to internal tools,
-  including NVBugs, in pull request descriptions.
+- Use "Internal bug IDs" followed by plain IDs in pull request descriptions.
+  Never name or link to internal tools.
 
 ## Remote pushes
 
