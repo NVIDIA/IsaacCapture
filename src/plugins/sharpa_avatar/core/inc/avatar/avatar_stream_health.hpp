@@ -59,7 +59,6 @@ public:
         {
             // Consumers retain cached samples until the output resource is withdrawn.
             output.reset();
-            m_error.reset();
             return nullptr;
         }
         if (!output && (!m_retry_after || now >= *m_retry_after))
