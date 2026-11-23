@@ -133,8 +133,20 @@ def streams_yaml(
     return yaml.safe_dump(descriptor, sort_keys=False)
 
 
-def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: int, name: str) -> str:
-    """The camera receiver's config: connect to the sender and expose one mono stream over CUDA IPC."""
+def receiver_yaml(
+    host: str,
+    port: int,
+    socket_path: str,
+    width: int,
+    height: int,
+    name: str,
+    full_range: bool = False,
+    color_matrix: str = "bt601",
+) -> str:
+    """The camera receiver's config: connect to the sender and expose one mono stream over CUDA IPC.
+
+    ``full_range`` and ``color_matrix`` describe the source's NV12 colour; the bridge signals them in its stream.
+    """
     config = {
         "version": 1,
         "receiver": {
@@ -154,6 +166,8 @@ def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: in
                 "height": height,
                 "output_format": "nv12",
                 "ring_depth": 6,
+                "full_range": full_range,
+                "color_matrix": color_matrix,
                 "ipc": {"mono": name},
             }
         ],
@@ -297,13 +311,13 @@ def mock_sender_command(python: str, script: Path, settings: SenderSettings, wid
 
 
 def bridge_timing_arguments(
-    settings: SenderSettings, mock: bool, orin_host: str | None, reference_id: str | None, chrony_port: int
+    mock: bool, orin_host: str | None, reference_id: str | None, chrony_port: int
 ) -> list[str]:
     """The bridge flags that say what the frame timestamps mean and which chrony instances can vouch for them."""
     if mock:
-        # No sender clock to qualify and no SIPL range to signal.
+        # No sender clock to qualify.
         return ["--timestamp-basis", MOCK_TIMESTAMP_BASIS]
-    flags = [
+    return [
         "--timestamp-basis",
         TIMESTAMP_BASIS,
         "--chrony-sender",
@@ -313,8 +327,6 @@ def bridge_timing_arguments(
         "--chrony-pc-port",
         str(chrony_port),
     ]
-    # SIPL pictures are full range; the bridge must say so or the encoded stream signals limited range.
-    return [*flags, "--source-full-range"] if settings.full_range else flags
 
 
 def check_station_cameras(station_config: Path, capture_cameras: Sequence[str]) -> None:
@@ -761,7 +773,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         (workdir / "receiver.yaml").write_text(
-            receiver_yaml(orin_host or "127.0.0.1", sender.port, ipc_socket, width, height, sender.stream_id)
+            receiver_yaml(
+                orin_host or "127.0.0.1",
+                sender.port,
+                ipc_socket,
+                width,
+                height,
+                sender.stream_id,
+                # SIPL pictures are full-range BT.709; the mock sender's are limited-range BT.601.
+                full_range=sender.full_range and not args.mock,
+                color_matrix="bt709" if sender.sipl and not args.mock else "bt601",
+            )
         )
         if args.mock:
             print(f"mock sender: {sender.fps} fps stream {sender.stream_id!r}, timestamps are frame-ready time")
@@ -905,7 +927,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "--fps",
                     str(sender.fps),
                     *bridge_timing_arguments(
-                        sender,
                         args.mock,
                         orin_host,
                         tool.reference_id_for(orin_host) if args.orin else None,

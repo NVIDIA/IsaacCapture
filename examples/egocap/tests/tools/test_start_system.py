@@ -65,6 +65,11 @@ def test_generated_configs_parse_and_carry_parameters():
     assert stream["name"] == "head"
     assert receiver["streams"][0]["name"] == "head"
     assert receiver["streams"][0]["ipc"]["mono"] == "head"
+    assert (receiver["streams"][0]["full_range"], receiver["streams"][0]["color_matrix"]) == (False, "bt601")
+    sipl = yaml.safe_load(
+        ss.receiver_yaml("h", 5555, "/tmp/s.sock", 640, 480, "head", full_range=True, color_matrix="bt709")
+    )
+    assert (sipl["streams"][0]["full_range"], sipl["streams"][0]["color_matrix"]) == (True, "bt709")
 
 
 def test_control_token_found_or_absent(tmp_path: Path):
@@ -446,16 +451,12 @@ def test_mock_sender_command_follows_the_profile():
 
 
 def test_bridge_timing_arguments_for_mock_and_real_sender():
-    sipl = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
-    assert ss.bridge_timing_arguments(sipl, True, None, None, 12301) == ["--timestamp-basis", "monotonic_us"]
-    real = " ".join(ss.bridge_timing_arguments(sipl, False, "192.0.2.10", "C000020A", 12301))
+    assert ss.bridge_timing_arguments(True, None, None, 12301) == ["--timestamp-basis", "monotonic_us"]
+    real = " ".join(ss.bridge_timing_arguments(False, "192.0.2.10", "C000020A", 12301))
     assert "--timestamp-basis capture_monotonic_us" in real
     assert "--chrony-sender 192.0.2.10 --chrony-sender-refid C000020A --chrony-pc-port 12301" in real
     assert "--sender-clock" not in real
-    assert "--source-full-range" in real
-    argus_config = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
-    argus = ss.sender_settings(argus_config)
-    assert "--source-full-range" not in ss.bridge_timing_arguments(argus, False, "192.0.2.10", "C000020A", 12301)
+    assert "--source-full-range" not in real
 
 
 def test_main_refuses_orin_together_with_mock(monkeypatch, capsys, tmp_path: Path):
@@ -559,7 +560,9 @@ def test_main_starts_the_orin_chain_in_order(recorded_main):
     bridge = _command(recorded_main, "bridge")
     assert "--timestamp-basis capture_monotonic_us" in bridge
     assert "--sender-clock" not in bridge
-    assert "--source-full-range" in bridge
+    assert "--source-full-range" not in bridge
+    colour = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (colour["full_range"], colour["color_matrix"]) == (True, "bt709")
     assert "--config" in _command(recorded_main, "receiver")
     release_deploys = [d for d in recorded_main.deploys if "--with-sipl" in d]
     assert len(release_deploys) == 1
@@ -638,6 +641,8 @@ def test_stop_daemon_runs_only_for_the_sipl_backend(recorded_main, tmp_path: Pat
     config.write_text(yaml.safe_dump(argus))
     assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(config)]) == 0
     assert not any(d[-1] == "stop-daemon" for d in recorded_main.deploys)
+    colour = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (colour["full_range"], colour["color_matrix"]) == (False, "bt601")
 
 
 TIMESYNC_TOOL = ss.REPO_ROOT / "src/core/timesync/tools/timesync_tool.py"
@@ -768,6 +773,9 @@ def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
     bridge = _command(recorded_main, "bridge")
     assert "--timestamp-basis monotonic_us" in bridge
     assert "--sender-clock" not in bridge
+    assert "--source-full-range" not in bridge
+    colour = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (colour["full_range"], colour["color_matrix"]) == (False, "bt601")
     assert recorded_main.deploys == []
 
 

@@ -25,6 +25,8 @@ struct EncoderConfig
     /// Frames between IDRs; a stream recovers from loss only at an IDR, so keep it short.
     uint32_t idr_period = 30;
     bool full_range = false;
+    /// Matrix coefficients signalled in the stream: BT.709 when true, BT.601 otherwise.
+    bool matrix_bt709 = false;
     /// Reusable input surfaces, registered with the encoder once at startup.
     uint32_t input_surfaces = 3;
 };

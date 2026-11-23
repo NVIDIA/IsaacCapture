@@ -99,6 +99,21 @@ build/bridge/camera_livekit_bridge \
   --fps 30 --bitrate-mbps 8
 ```
 
+### A 60 fps recording profile
+
+The settings that must agree for a 60 fps recording; each is configured, none is measured here:
+
+- Sender: `fps: 60` for every stream in `camera_streamer/argus_sender/configs/cameras.yaml`.
+- Receiver: `full_range` and `color_matrix` per stream in `camera_receiver/configs/receiver.yaml` (ordinary NV12 is
+  limited-range BT.601; SIPL is full-range BT.709). The bridge signals what the catalog carries.
+- Bridge: `--fps 60`, no `:DIV` on the head stream so the full image is published, and `--timestamp-basis
+  capture_monotonic_us` with the chrony options below.
+- Egocap: the same `fps` and the published size in the streams file, `record_fps: 60` in the station file, and a
+  station `video_encoder` (for example `ffmpeg_h264_nvenc` with `crf: 12`).
+
+The delivered rate, image quality (the bridge's H.264 encode precedes egocap's final encode) and the alignment
+with tracking have to be measured on the installed hardware; this profile does not establish them.
+
 `--stream NAME=TRACK[:DIV]` publishes the receiver's stream `NAME` as the
 LiveKit track `TRACK`, shrunk by the integer `DIV` on the GPU (the size must
 divide to even dimensions). Track names, the join token's identity and the
@@ -155,12 +170,12 @@ the video or recorded with it. The only timing fault a recording sees is a frame
 mapping, stale or unsynchronised evidence, or a wall-clock step). A deployment that must reject frames above the
 target needs the bound from the bridge's diagnostics or a stricter publication policy; this bridge does not apply one.
 
-`--source-full-range` says the receiver's pictures use the full 0-255 range, as SIPL sources do; the encoded stream
-then signals full range, so players and recordings keep the black and white levels. Without it the stream signals
-limited range (16-235). The receiver's IPC catalog does not carry the range, so it is set here and must match the
-source: a full-range picture published as limited range has crushed blacks and clipped whites, and the reverse
-looks washed out. The encoder copies levels as they are and does no range conversion. The stream signals no colour
-primaries, transfer or matrix, so a player assumes its default (BT.709 for HD).
+The encoded stream signals the picture's quantisation range and matrix coefficients (BT.601 or BT.709), taken from
+the `full_range` and `color_matrix` the receiver's IPC catalog publishes for each stream; set them in the receiver's
+`receiver.yaml` to match the source. They are configured, not detected: a full-range picture published as limited
+range has crushed blacks and clipped whites, and the reverse looks washed out. A catalog without them stops the
+bridge. The encoder copies levels as they are and does no range conversion. Colour primaries and transfer are
+signalled as unspecified because the source does not establish them.
 
 `--bitrate-mbps` is the maximum. The encoder starts at 2 Mbps and follows the target bitrate that LiveKit's
 congestion control reports for each track (90% of the target, never above the maximum or below 0.5 Mbps), so a

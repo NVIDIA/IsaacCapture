@@ -33,9 +33,6 @@ struct WorkerConfig
     uint32_t max_notice_age_ms = 0;
     /// Integer factor the picture is shrunk by on the GPU before encoding (1 keeps the source size).
     uint32_t scale_div = 1;
-    /// The IPC pictures are full-range (0-255) rather than limited-range (16-235); the encoded stream signals it. The
-    /// receiver's IPC catalog does not carry the range, so the operator says it here.
-    bool source_full_range = false;
     /// GPU steps run, in order, on every picture before the downscale (see gpu_ops/gpu_step.hpp). Empty by default:
     /// the picture is only copied or shrunk.
     std::vector<std::string> gpu_steps;

@@ -31,6 +31,9 @@ struct IpcStream
     int height = 0;
     std::string pixel_format;
     int gpu_id = 0;
+    /// Source colour as configured in the publisher: quantisation range and matrix ("bt601" or "bt709").
+    bool full_range = false;
+    std::string color_matrix;
     nlohmann::json layout;
     std::vector<IpcSlot> slots;
 };

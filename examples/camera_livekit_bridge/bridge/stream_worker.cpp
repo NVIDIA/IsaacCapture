@@ -202,8 +202,11 @@ struct StreamWorker::Impl
         // sender's pacer and ages every frame. The transport's target raises it toward the configured maximum.
         encoder_config.bitrate_bps = std::min(config.bitrate_bps, kStartBitrateBps);
         encoder_config.idr_period = config.idr_period;
-        // NVENC copies the source's levels; the stream must say which range they are in or players rescale them.
-        encoder_config.full_range = config.source_full_range;
+        // NVENC copies the source's levels; the stream must say which range and matrix they use or players
+        // rescale and mis-colour them. Both come from the publisher's catalog.
+        const IpcStream& source = client.streams().front();
+        encoder_config.full_range = source.full_range;
+        encoder_config.matrix_bt709 = source.color_matrix == "bt709";
         NvencEncoder encoder(context, encoder_config);
         // Declared after the encoder so it runs first on every exit, including a throw: the encoder's teardown frees
         // the surfaces a queued copy may still be writing, and destroying a stream does not wait for its work.

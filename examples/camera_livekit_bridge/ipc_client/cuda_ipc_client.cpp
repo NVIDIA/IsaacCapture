@@ -198,6 +198,15 @@ void CudaIpcClient::open_streams(const nlohmann::json& subscribed)
         stream.height = entry.at("height").get<int>();
         stream.pixel_format = entry.value("pixel_format", std::string());
         stream.gpu_id = entry.value("gpu_id", 0);
+        // The catalog is the only source of the picture's colour; a publisher without it cannot be encoded correctly.
+        if (!entry.contains("full_range") || !entry.at("full_range").is_boolean() || !entry.contains("color_matrix"))
+            throw std::runtime_error("the IPC catalog for '" + stream.name +
+                                     "' carries no colour (full_range, color_matrix); update the publisher");
+        stream.full_range = entry.at("full_range").get<bool>();
+        stream.color_matrix = entry.at("color_matrix").get<std::string>();
+        if (stream.color_matrix != "bt601" && stream.color_matrix != "bt709")
+            throw std::runtime_error("the IPC catalog for '" + stream.name + "' has an unsupported color_matrix '" +
+                                     stream.color_matrix + "'");
         stream.layout = entry.value("layout", nlohmann::json::object());
         check_cuda(cudaSetDevice(stream.gpu_id), "cudaSetDevice");
         for (const auto& item : entry.at("slots"))
