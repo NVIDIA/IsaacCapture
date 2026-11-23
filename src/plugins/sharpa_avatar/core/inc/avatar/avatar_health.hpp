@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "avatar_stream_health.hpp"
+
 #include <avatar_sdk/AvatarSDK.h>
 #include <plugin_utils/plugin_device_status_publisher.hpp>
 
@@ -16,8 +18,6 @@ namespace plugins
 {
 namespace avatar
 {
-
-inline constexpr auto kAvatarDataTimeout = std::chrono::seconds(3);
 
 enum class UsbDevicePresence
 {

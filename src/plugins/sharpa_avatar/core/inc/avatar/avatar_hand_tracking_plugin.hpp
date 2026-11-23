@@ -117,8 +117,7 @@ struct GloveState
 
     struct DatasetState
     {
-        std::optional<::avatar::Stamp> last_stamp;
-        std::optional<std::chrono::steady_clock::time_point> last_fresh_data;
+        DatasetFreshness freshness;
         std::optional<::avatar::ErrorCode> fetch_error;
         bool ever_received_data = false;
     };
@@ -248,6 +247,7 @@ private:
     bool try_create_output_resources(::avatar::DeviceSide side);
     void destroy_output_resources(::avatar::DeviceSide side) noexcept;
     void refresh_data();
+    void log_waiting_gloves();
     void publish_device_status();
     void process_haptics();
     void inject_hand_data();
@@ -295,7 +295,7 @@ private:
     std::optional<std::chrono::steady_clock::time_point> m_last_dongle_check;
     UsbDevicePresence m_dongle_presence = UsbDevicePresence::UNKNOWN;
     ::avatar::UsbConnectionState m_transport_state = ::avatar::UsbConnectionState::DISCONNECTED;
-    bool m_glove_wait_logged = false;
+    std::array<GloveWaitReminder, 2> m_glove_wait_reminders;
     bool m_inventory_error_logged = false;
     bool m_status_publish_error_logged = false;
 };

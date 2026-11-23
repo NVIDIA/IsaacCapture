@@ -39,6 +39,7 @@ namespace
 
 constexpr size_t kJointFlatbufferSize = 4096;
 constexpr auto kGloveRetryInterval = std::chrono::seconds(2);
+constexpr auto kGloveWaitReminderInterval = std::chrono::minutes(1);
 constexpr auto kOutputSetupRetryInterval = std::chrono::seconds(2);
 constexpr auto kHapticCommandTimeout = std::chrono::milliseconds(200);
 constexpr auto kHapticFailureRetryInterval = std::chrono::seconds(1);
@@ -386,8 +387,7 @@ void GloveState::clear_current_data() noexcept
     robot_frame = {};
     for (auto& dataset : datasets)
     {
-        dataset.last_stamp.reset();
-        dataset.last_fresh_data.reset();
+        dataset.freshness = {};
         dataset.fetch_error.reset();
     }
 }
@@ -633,14 +633,18 @@ void AvatarTracker::try_connect_missing_gloves()
             start_glove_if_present(state, side);
         }
     }
+}
 
-    const auto has_device = [](const GloveState& state) { return state.device != nullptr; };
-    const bool waiting = std::none_of(m_gloves.begin(), m_gloves.end(), has_device);
-    if (waiting && !m_glove_wait_logged)
+void AvatarTracker::log_waiting_gloves()
+{
+    const auto now = std::chrono::steady_clock::now();
+    for (const ::avatar::DeviceSide side : kDeviceSides)
     {
-        logger()->info("Waiting for an online glove...");
+        if (m_glove_wait_reminders[side_index(side)].observe(glove(side).ready, now, kGloveWaitReminderInterval))
+        {
+            logger()->info("Waiting for {} glove to connect and stream.", to_string(side));
+        }
     }
-    m_glove_wait_logged = waiting;
 }
 
 void AvatarTracker::refresh_glove_activity()
@@ -777,11 +781,9 @@ void AvatarTracker::refresh_data()
                 return;
             }
             dataset.fetch_error.reset();
-            if (stamp != nullptr && (!dataset.last_stamp || stamp->sec != dataset.last_stamp->sec ||
-                                     stamp->nanosec != dataset.last_stamp->nanosec))
+            if (stamp != nullptr)
             {
-                dataset.last_stamp = *stamp;
-                dataset.last_fresh_data = now;
+                dataset.freshness.observe(stamp->sec, stamp->nanosec, now);
                 dataset.ever_received_data = true;
             }
         };
@@ -876,7 +878,7 @@ void AvatarTracker::publish_device_status()
                 .ever_observed = m_ever_observed[index],
                 .ingress_fresh = ingress_fresh,
                 .ever_received_ingress = state.ever_received_ingress,
-                .data_fresh = dataset.last_fresh_data && now - *dataset.last_fresh_data < kAvatarDataTimeout,
+                .data_fresh = dataset.freshness.fresh(now),
                 .ever_received_data = dataset.ever_received_data,
                 .fetch_has_no_current_data = has_no_current_data,
                 .fetch_error = std::move(fetch_error),
@@ -912,6 +914,7 @@ void AvatarTracker::update()
     refresh_glove_activity();
     m_deviceio_session->update();
     refresh_data();
+    log_waiting_gloves();
     process_haptics();
     try
     {
@@ -1042,6 +1045,10 @@ void AvatarTracker::push_joint_frame(const GloveState& glove,
                                      ::avatar::DeviceDataCategory category,
                                      core::SchemaPusher& pusher)
 {
+    if (!glove.datasets[data_category_index(category)].freshness.fresh(std::chrono::steady_clock::now()))
+    {
+        return;
+    }
     const ::avatar::AvatarDataFrame& frame = cached_joint_frame(glove, category);
     if (frame.payload_case() != payload_case(category))
     {
@@ -1232,7 +1239,13 @@ void AvatarTracker::inject_hand_data()
 
     const auto process_hand = [this, time](::avatar::DeviceSide side)
     {
-        const std::vector<::avatar::Pose>& landmarks = glove(side).landmarks;
+        const GloveState& state = glove(side);
+        if (!state.datasets[data_category_index(::avatar::DeviceDataCategory::HUMAN)].freshness.fresh(
+                std::chrono::steady_clock::now()))
+        {
+            return;
+        }
+        const std::vector<::avatar::Pose>& landmarks = state.landmarks;
         if (landmarks.empty())
         {
             return;
