@@ -11,6 +11,7 @@ needs cupy + a CUDA device and skips cleanly without one.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 import types
 from collections import deque
@@ -653,6 +654,49 @@ def test_a_restarted_source_hands_out_nothing_of_its_last_session(depthai):
     # session would be stamped later than what follows it.
     assert stamps == sorted(stamps)
     assert (np.diff(samples.timestamps_ns) > 0).all()
+
+
+@requires_gpu
+def test_a_source_whose_stop_gave_up_waiting_closes_its_device_and_starts_again(
+    depthai, monkeypatch
+):
+    monkeypatch.setattr(oakd, "_STOP_S", 0.05)
+    source = build_stereo_camera(PAIR)
+    source.start()
+    _wait(source)
+    process, stuck, release = (
+        _Pipeline.processTasks,
+        threading.Event(),
+        threading.Event(),
+    )
+
+    def blocks(pipeline):  # a depthai call that does not return in time
+        stuck.set()
+        release.wait(10.0)
+        process(pipeline)
+
+    monkeypatch.setattr(_Pipeline, "processTasks", blocks)
+    assert stuck.wait(10.0)
+    source.stop()  # gives up: the producer is inside the call
+    assert not depthai[0].closed
+    with pytest.raises(RuntimeError, match="still stopping"):
+        source.start()
+    monkeypatch.setattr(_Pipeline, "processTasks", process)
+    release.set()  # the call returns, and the producer ends
+    deadline = time.monotonic() + 10.0
+    while True:
+        try:
+            source.start()
+            break
+        except RuntimeError:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+    try:
+        assert depthai[0].closed  # by the producer, once it was out of the call
+        assert _wait(source).image_right is not None
+    finally:
+        source.stop()
+    assert len(depthai) == 2 and depthai[1].closed
 
 
 def _error(source, timeout_s=5.0):

@@ -52,6 +52,9 @@ NO_MATCH_TIMEOUT_S = 3.0
 
 RECONNECT_DELAY_S = 5.0
 
+# How long stop() waits for the producer.
+_STOP_S = 5.0
+
 _ACCEL_RATE_HZ = 200
 # Unread IMU samples kept for a reader that fell behind.
 _IMU_BACKLOG = 4096
@@ -323,7 +326,12 @@ class OakdStereoSource(FrameSource):
 
     def start(self) -> None:
         if self._thread is not None:
-            return
+            if self._thread.is_alive():
+                if self._stop.is_set():
+                    raise RuntimeError(f"OAK-D {self._spec.name!r} is still stopping")
+                return
+            # stop() gave up waiting for this producer; it has ended since.
+            self._thread = None
         self._stop.clear()
         # Nothing of the last session is handed out in this one.
         self._captures.reset()
@@ -342,18 +350,18 @@ class OakdStereoSource(FrameSource):
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=5.0)
+            self._thread.join(timeout=_STOP_S)
             if self._thread.is_alive():
                 # The producer is inside a depthai call, such as the search
                 # for a device. Closing the device under it could crash, so
-                # the handle is leaked instead.
+                # the producer closes it when the call returns.
                 _notify(
-                    "the producer did not stop within 5 s; leaving the device open",
+                    f"the producer did not stop within {_STOP_S:.0f} s; it closes "
+                    "the device when it ends",
                     logging.WARNING,
                 )
                 return
             self._thread = None
-        self._close_device()
 
     def latest(self) -> Optional[Frame]:
         with self._lock:
@@ -375,7 +383,7 @@ class OakdStereoSource(FrameSource):
             stream=0,
         )
 
-    # ── Device open / close (producer thread, and stop() after it) ────
+    # ── Device open / close (producer thread) ─────────────────────────
 
     def _visible(self, dai) -> bool:
         """Whether the device is on USB. Opening one that is not blocks for
@@ -505,6 +513,9 @@ class OakdStereoSource(FrameSource):
             # latest() tells the reader: this device will not do.
             with self._lock:
                 self._error = exc
+        finally:
+            # By the thread that used it, also after stop() gave up waiting.
+            self._close_device()
 
     def _produce_once(self, dai) -> None:
         if not self._connected:
