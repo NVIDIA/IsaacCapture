@@ -238,3 +238,50 @@ def test_a_stereo_camera_frame_stays_intact_while_the_reader_holds_it(tmp_path):
         assert _collect(source, 1) and source.dropped_captures >= 5
     finally:
         source.stop()
+
+
+def _side_by_side_clip(path) -> dict:
+    """A short side-by-side clip and the stereo camera entry that plays it."""
+    frames = [
+        np.hstack([_solid(32, 32, (v, v, v)), _solid(32, 32, (255 - v, 0, v))])
+        for v in range(8, 252, 16)
+    ]
+    _write_clip(path, frames)
+    return {"name": "clip", "type": "video", "stereo": True, "path": str(path)}
+
+
+@requires_gpu
+def test_a_stereo_camera_frame_carries_the_time_it_was_published(tmp_path):
+    from isaaccapture_examples.camera_viz.sources import build_stereo_camera
+
+    entry = _side_by_side_clip(tmp_path / "sbs.mp4")
+    source = build_stereo_camera({**entry, "fps": 5})
+    source.start()
+    try:
+        _collect(source, 1)  # taken as it is published: in step with the source
+        time.sleep(0.3)  # the next frame is published at 0.2 s and waits
+        (frame,) = _collect(source, 1)
+        waited_s = (time.monotonic_ns() - frame.timestamp_ns) / 1e9
+    finally:
+        source.stop()
+    assert 0.04 < waited_s < 0.25
+
+
+@requires_gpu
+def test_a_restarted_stereo_recording_hands_out_nothing_of_its_last_session(tmp_path):
+    from isaaccapture_examples.camera_viz.sources import build_stereo_camera
+
+    entry = _side_by_side_clip(tmp_path / "sbs.mp4")
+    source = build_stereo_camera({**entry, "fps": 200})
+    source.start()
+    try:
+        _collect(source, 1)
+        time.sleep(0.05)  # a later frame is published and left untaken
+    finally:
+        source.stop()
+    source.start()
+    try:
+        assert source.latest() is None  # nothing until this session's first frame
+        assert _collect(source, 1)
+    finally:
+        source.stop()
