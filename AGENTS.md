@@ -238,6 +238,11 @@ A `commit-msg` pre-commit hook enforces this. Install it **once per clone**
 pre-commit install --hook-type commit-msg
 ```
 
+## Pull request descriptions
+
+- Reference internal bugs with plain bug IDs only. Never link to internal tools,
+  including NVBugs, in pull request descriptions.
+
 ## Remote pushes
 
 - When moving a focused fix from a release branch onto `main`, identify its
