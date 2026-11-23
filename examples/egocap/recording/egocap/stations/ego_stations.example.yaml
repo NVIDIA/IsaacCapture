@@ -26,6 +26,10 @@ stations:
       data_dir: ~/egocap_data/recordings
       record_fps: 60
       stream_fps: 60
+      # Final encoder for every camera: ffmpeg_h264 (default), ffmpeg_h264_nvenc or opencv_mp4v. On an NVIDIA
+      # machine the NVENC writer takes the same crf/preset keys; availability is reported when a take starts.
+      # video_encoder: ffmpeg_h264_nvenc
+      # video_encoder_options: {crf: 12, preset: p4}
       verbose: false
       video_frame_type: RGBCameraFrame
       numeric_frame_type: TrackingFrame
