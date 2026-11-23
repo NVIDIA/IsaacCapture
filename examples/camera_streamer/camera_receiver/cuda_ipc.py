@@ -44,6 +44,9 @@ class _SlotInfo:
     strides: tuple[int, ...]
 
 
+COLOR_MATRICES = ("bt601", "bt709")
+
+
 @dataclass(frozen=True)
 class _StreamInfo:
     name: str
@@ -54,6 +57,8 @@ class _StreamInfo:
     gpu_id: int
     layout: dict[str, Any]
     slots: tuple[_SlotInfo, ...]
+    full_range: bool = False
+    color_matrix: str = "bt601"
 
 
 @dataclass
@@ -96,8 +101,22 @@ class CudaIpcFramePublisher:
         gpu_id: int,
         buffers: list[Any],
         layout: Optional[dict[str, Any]] = None,
+        full_range: bool = False,
+        color_matrix: str = "bt601",
     ) -> None:
-        """Register a ring of CuPy-like GPU buffers and export IPC handles."""
+        """Register a ring of CuPy-like GPU buffers and export IPC handles.
+
+        ``full_range`` and ``color_matrix`` ("bt601" or "bt709") describe the
+        NV12 pictures for consumers that encode them; they are published in the
+        catalog as configured, never detected.
+        """
+        if not isinstance(full_range, bool):
+            raise ValueError(f"CUDA IPC stream {name!r}: full_range must be a boolean")
+        if color_matrix not in COLOR_MATRICES:
+            raise ValueError(
+                f"CUDA IPC stream {name!r}: color_matrix must be one of "
+                f"{', '.join(COLOR_MATRICES)}, got {color_matrix!r}"
+            )
         try:
             import cupy as cp
         except ImportError as e:
@@ -141,6 +160,8 @@ class CudaIpcFramePublisher:
                 gpu_id=int(gpu_id),
                 layout=dict(layout or {}),
                 slots=tuple(slots),
+                full_range=full_range,
+                color_matrix=color_matrix,
             )
         logger.info(
             "CUDA IPC: registered stream '%s' %s with %d slots on GPU %d",
@@ -280,6 +301,8 @@ class CudaIpcFramePublisher:
             "gpu_id": stream.gpu_id,
             "slot_count": len(stream.slots),
             "layout": stream.layout,
+            "full_range": stream.full_range,
+            "color_matrix": stream.color_matrix,
         }
 
     def _stream_with_slots(self, stream: _StreamInfo) -> dict[str, Any]:
