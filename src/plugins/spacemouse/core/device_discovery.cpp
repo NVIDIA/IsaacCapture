@@ -28,10 +28,16 @@ struct KnownDevice
 // Matched as substrings of HID_NAME, which is usually "<manufacturer> <product>".
 // "SpaceNavigator" also matches "SpaceNavigator for Notebooks".
 // Match Wireless BT before Wireless: only the BT model uses combined reports.
+// Keep one device per row so model ordering stays visible.
+// clang-format off
 constexpr KnownDevice kKnownDevices[] = {
-    { "SpaceMouse Compact", false }, { "SpaceMouse Wireless BT", true },         { "SpaceMouse Wireless", false },
-    { "SpaceNavigator", false },     { "3Dconnexion Universal Receiver", true },
+    { "SpaceMouse Compact", false },
+    { "SpaceMouse Wireless BT", true },
+    { "SpaceMouse Wireless", false },
+    { "SpaceNavigator", false },
+    { "3Dconnexion Universal Receiver", true },
 };
+// clang-format on
 
 std::optional<std::string> read_hid_name(const std::filesystem::path& uevent_path)
 {
@@ -80,8 +86,11 @@ bool has_motion_axes(const std::filesystem::path& descriptor_path)
             usage_min = value;
             break;
         case 0x28: // Usage Maximum
-            if (usage_page == 1 && usage_min <= 0x30 && value >= 0x35)
-                usages |= 0x3f;
+            // Translation and rotation can use separate ranges and Input items.
+            if (usage_page == 1)
+                for (uint32_t usage = 0x30; usage <= 0x35; ++usage)
+                    if (usage_min <= usage && usage <= value)
+                        usages |= 1U << (usage - 0x30);
             break;
         case 0x80: // Input (ignore constant padding)
             if (!(value & 1))

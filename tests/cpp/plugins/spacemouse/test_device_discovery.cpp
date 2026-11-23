@@ -114,6 +114,12 @@ TEST_CASE("Receiver discovery requires motion inputs in a readable descriptor", 
         write_descriptor(devices, "hidraw4", { 0x05, 0x01, 0x19, 0x30, 0x29, 0x35, 0x81, 0x02 });
         expected = true;
     }
+    SECTION("Translation and rotation in separate usage ranges on the same report")
+    {
+        write_descriptor(devices, "hidraw4", { 0x05, 0x01, 0x85, 0x01, 0x75, 0x10, 0x95, 0x03, 0x19, 0x30,
+                                               0x29, 0x32, 0x81, 0x02, 0x19, 0x33, 0x29, 0x35, 0x81, 0x02 });
+        expected = true;
+    }
     CHECK(find_device(devices.class_dir(), devices.dev_dir()).has_value() == expected);
 }
 
