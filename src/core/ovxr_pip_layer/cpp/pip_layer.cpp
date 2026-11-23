@@ -291,7 +291,8 @@ bool createSwapchain(CameraSession& camera, const Dispatch& dispatch, uint32_t w
     {
         return false;
     }
-    auto chosen = std::find(formats.begin(), formats.end(), VK_FORMAT_R8G8B8A8_UNORM);
+    // LdrColor bytes are sRGB encoded; the compositor must decode them before blending.
+    auto chosen = std::find(formats.begin(), formats.end(), VK_FORMAT_R8G8B8A8_SRGB);
     if (chosen == formats.end())
     {
         return false; // No color conversion or unverified swapchain format fallback.
