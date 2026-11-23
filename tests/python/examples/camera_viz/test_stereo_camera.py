@@ -300,6 +300,8 @@ class _Camera:
     captures: ClassVar[list] = [0]
     #: How many grabs each opened camera, in order, survives; absent: all.
     grabs_before_unplug: ClassVar[dict] = {}
+    #: Grabs, counted per camera, that succeed and return the capture before.
+    repeated_grabs: ClassVar[set] = set()
     information: ClassVar = staticmethod(lambda: _camera_information(63.0))
 
     def __init__(self):
@@ -326,6 +328,8 @@ class _Camera:
         self.grabs += 1
         if self._unplug_after is not None and self.grabs > self._unplug_after:
             return "CAMERA_NOT_DETECTED"
+        if self.grabs in _Camera.repeated_grabs:
+            return "SUCCESS"
         _Camera.captures[0] += 1
         self.capture = _Camera.captures[0]
         return "SUCCESS"
@@ -406,6 +410,7 @@ def zed_sdk(monkeypatch):
     monkeypatch.setattr(_Camera, "opened", [])
     monkeypatch.setattr(_Camera, "captures", [0])
     monkeypatch.setattr(_Camera, "grabs_before_unplug", {})
+    monkeypatch.setattr(_Camera, "repeated_grabs", set())
     return _Camera.opened
 
 
@@ -457,6 +462,21 @@ def test_every_frame_holds_both_eyes_of_one_capture_with_its_timestamp(zed_sdk):
     assert captures == sorted(set(captures)), "a capture was repeated or out of order"
     assert calibration.rectified and calibration.T[0] == pytest.approx(-0.063)
     assert zed_sdk[0].closed.is_set()
+
+
+@requires_gpu
+def test_a_capture_the_sdk_returns_twice_is_handed_out_once(zed_sdk, monkeypatch):
+    # The first capture after opening, and one further on.
+    monkeypatch.setattr(_Camera, "repeated_grabs", {2, 6, 7})
+    source = build_stereo_camera(ZED)
+    source.start()
+    try:
+        frames = _read(source, 8)
+    finally:
+        source.stop()
+    assert zed_sdk[0].grabs > 7
+    stamps = [stamp for stamp, *_eyes in frames]
+    assert stamps == sorted(set(stamps)), "a capture was handed out twice"
 
 
 @requires_gpu
