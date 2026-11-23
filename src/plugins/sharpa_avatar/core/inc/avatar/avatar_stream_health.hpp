@@ -5,7 +5,10 @@
 
 #include <chrono>
 #include <cstdint>
+#include <exception>
+#include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 namespace plugins
@@ -38,6 +41,57 @@ public:
 private:
     std::optional<std::pair<int64_t, int64_t>> m_last_stamp;
     std::optional<Clock::time_point> m_last_fresh_data;
+};
+
+class StreamOutputRecovery
+{
+public:
+    using Clock = std::chrono::steady_clock;
+
+    template <typename Output, typename Factory>
+    Output* update(std::unique_ptr<Output>& output,
+                   bool usable,
+                   Clock::time_point now,
+                   Clock::duration retry_interval,
+                   Factory&& create)
+    {
+        if (!usable)
+        {
+            // Consumers retain cached samples until the output resource is withdrawn.
+            output.reset();
+            m_error.reset();
+            return nullptr;
+        }
+        if (!output && (!m_retry_after || now >= *m_retry_after))
+        {
+            try
+            {
+                output = std::forward<Factory>(create)();
+                m_retry_after.reset();
+                m_error.reset();
+            }
+            catch (const std::exception& error)
+            {
+                m_error = std::string("output setup failed: ") + error.what();
+                m_retry_after = now + retry_interval;
+            }
+            catch (...)
+            {
+                m_error = "output setup failed with an unknown error";
+                m_retry_after = now + retry_interval;
+            }
+        }
+        return output.get();
+    }
+
+    const std::optional<std::string>& error() const noexcept
+    {
+        return m_error;
+    }
+
+private:
+    std::optional<Clock::time_point> m_retry_after;
+    std::optional<std::string> m_error;
 };
 
 class GloveWaitReminder

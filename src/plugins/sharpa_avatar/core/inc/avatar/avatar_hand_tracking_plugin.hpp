@@ -118,6 +118,7 @@ struct GloveState
     struct DatasetState
     {
         DatasetFreshness freshness;
+        StreamOutputRecovery output;
         std::optional<::avatar::ErrorCode> fetch_error;
         bool ever_received_data = false;
     };
