@@ -260,10 +260,14 @@ class OakdStereoSource(FrameSource):
             (picture_width or width, picture_height or height) if picture else None
         )
 
+        self._stream = cp.cuda.Stream(non_blocking=True)
+
         def rgba(w: int, h: int) -> list:
             buffers = [cp.empty((h, w, 4), dtype=cp.uint8) for _ in range(3)]
-            for buffer in buffers:
-                buffer[..., 3] = 255
+            # On the producer's stream, so its uploads come after.
+            with self._stream:
+                for buffer in buffers:
+                    buffer[..., 3] = 255
             return buffers
 
         # Per sensor: the buffers a reader is handed, a pinned host copy of
@@ -281,7 +285,6 @@ class OakdStereoSource(FrameSource):
             sensor: cp.empty(staging.shape, dtype=cp.uint8)
             for sensor, staging in self._staging.items()
         }
-        self._stream = cp.cuda.Stream(non_blocking=True)
         self._captures = CaptureMailbox(3)
 
         self._lock = threading.Lock()
@@ -296,7 +299,8 @@ class OakdStereoSource(FrameSource):
         self._imu_queue = None
         self._matcher: Optional[FrameMatcher] = None
         self._connected = False
-        self._delivered = False  # a capture was handed over since start()
+        # A capture or IMU samples were handed over since start().
+        self._delivered = False
         self._waiting = False  # the "not visible" notice is out
         self._last_attempt_s = 0.0
         self._last_match_s = 0.0
@@ -317,6 +321,9 @@ class OakdStereoSource(FrameSource):
         with self._lock:
             samples = list(self._imu_samples)
             self._imu_samples.clear()
+            if samples:
+                # Stamped with this device's clock, as a capture is.
+                self._delivered = True
         if not samples:
             return None
         return ImuSamples(
@@ -406,6 +413,9 @@ class OakdStereoSource(FrameSource):
         )
         self._device = device
         try:
+            # depthai would reopen a device it lost by itself, and the
+            # clock its frames are stamped with would start again.
+            device.setMaxReconnectionAttempts(0)
             self._set_up(dai, device)
         except Refused:
             raise
@@ -558,15 +568,17 @@ class OakdStereoSource(FrameSource):
             raise
         except Exception as e:
             self._close_device()
-            if self._delivered:
+            with self._lock:
+                final = self._delivered
+                if not final:
+                    # The reopened device's clock starts again.
+                    self._imu_samples.clear()
+            if final:
                 raise Refused(
                     f"the device stopped ({e}). Reopening it would restart the "
                     "clock its frames are stamped with"
                 ) from e
             _notify(f"frame error ({e}); reopening", logging.ERROR)
-            # The reopened device's clock starts again.
-            with self._lock:
-                self._imu_samples.clear()
             return
         if time.monotonic() - self._last_match_s > NO_MATCH_TIMEOUT_S:
             self._close_device()
@@ -595,25 +607,30 @@ class OakdStereoSource(FrameSource):
     def _upload(self, timestamp_ns: int, frames: dict) -> None:
         """One matched set onto the GPU, into buffers no reader holds."""
         index = self._captures.write_index()
-        with self._stream:
-            for sensor, frame in frames.items():
-                # NV12 becomes packed BGR on the host; gray stays as it is.
-                pixels = frame.getCvFrame() if sensor == "picture" else frame.getFrame()
-                staging = self._staging[sensor]
-                if pixels.shape != staging.shape:
-                    raise Refused(
-                        f"the device sent {sensor} frames of {pixels.shape[1]}x"
-                        f"{pixels.shape[0]}, not the {staging.shape[1]}x"
-                        f"{staging.shape[0]} that was asked for"
+        try:
+            with self._stream:
+                for sensor, frame in frames.items():
+                    # NV12 becomes packed BGR on the host; gray stays as it is.
+                    pixels = (
+                        frame.getCvFrame() if sensor == "picture" else frame.getFrame()
                     )
-                np.copyto(staging, pixels)
-                landing = self._landing[sensor]
-                landing.set(staging)
-                buffer = self._buffers[sensor][index]
-                if sensor == "picture":
-                    buffer[..., :3] = landing[..., ::-1]  # BGR to RGB
-                else:
-                    buffer[..., :3] = landing[..., None]
-        # The reader's copy runs on another stream.
-        self._stream.synchronize()
+                    staging = self._staging[sensor]
+                    if pixels.shape != staging.shape:
+                        raise Refused(
+                            f"the device sent {sensor} frames of {pixels.shape[1]}x"
+                            f"{pixels.shape[0]}, not the {staging.shape[1]}x"
+                            f"{staging.shape[0]} that was asked for"
+                        )
+                    np.copyto(staging, pixels)
+                    landing = self._landing[sensor]
+                    landing.set(staging)
+                    buffer = self._buffers[sensor][index]
+                    if sensor == "picture":
+                        buffer[..., :3] = landing[..., ::-1]  # BGR to RGB
+                    else:
+                        buffer[..., :3] = landing[..., None]
+        finally:
+            # Also after a failed upload: the next one reuses the staging
+            # buffers. And the reader's copy runs on another stream.
+            self._stream.synchronize()
         self._captures.publish(index, timestamp_ns)

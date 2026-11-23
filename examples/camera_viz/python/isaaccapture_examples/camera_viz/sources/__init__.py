@@ -8,6 +8,7 @@ contract — the teleop hot path never round-trips through host memory.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -261,13 +262,22 @@ def _oakd_stereo_arguments(spec: dict, name: str, mode: str) -> dict:
             "picture_height": int(spec.get("rgb_height", 0)),
             "exposure_limit_ms": float(spec.get("exposure_limit_ms", 0.0)),
         }
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(
             f"camera {name!r}: width, height, fps, rgb_width, rgb_height and "
             f"exposure_limit_ms are numbers ({exc})"
         ) from exc
-    if arguments["exposure_limit_ms"] < 0.0:
-        raise ValueError(f"camera {name!r}: exposure_limit_ms cannot be negative")
+    if min(arguments["width"], arguments["height"], arguments["fps"]) <= 0:
+        raise ValueError(f"camera {name!r}: width, height and fps must be above 0")
+    if arguments["picture_width"] < 0 or arguments["picture_height"] < 0:
+        raise ValueError(
+            f"camera {name!r}: rgb_width and rgb_height cannot be negative"
+        )
+    limit = arguments["exposure_limit_ms"]
+    if not (math.isfinite(limit) and limit >= 0.0):
+        raise ValueError(
+            f"camera {name!r}: exposure_limit_ms is a finite number, 0 or above"
+        )
     return {
         **arguments,
         "device_id": str(spec.get("device_id", "")),

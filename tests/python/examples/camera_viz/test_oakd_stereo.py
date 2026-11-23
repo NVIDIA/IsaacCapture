@@ -77,7 +77,12 @@ def test_the_pair_is_a_stereo_camera_with_or_without_the_colour_picture():
         ({**PAIR, "mode": "mono"}, r"opens one camera unless"),
         ({**PAIR, "mode": "depth"}, r"unknown oakd mode 'depth'"),
         ({**PAIR, "fps": "fast"}, r"'oak': width, height, fps, rgb_width"),
-        ({**PAIR, "exposure_limit_ms": -1}, r"exposure_limit_ms cannot be negative"),
+        ({**PAIR, "exposure_limit_ms": -1}, r"exposure_limit_ms is a finite number"),
+        ({**PAIR, "exposure_limit_ms": float("nan")}, r"exposure_limit_ms is a finite"),
+        ({**PAIR, "width": -1}, r"'oak': width, height and fps must be above 0"),
+        ({**PAIR, "fps": 0}, r"'oak': width, height and fps must be above 0"),
+        ({**PAIR, "rgb_width": -1}, r"rgb_width and rgb_height cannot be negative"),
+        ({**PAIR, "height": float("inf")}, r"'oak': width, height, fps, rgb_width"),
         ({k: v for k, v in PAIR.items() if k != "width"}, r"needs width"),
     ],
 )
@@ -437,6 +442,9 @@ class _Device:
             for socket, sensor in self.sensors.items()
         ]
 
+    def setMaxReconnectionAttempts(self, attempts):
+        self.reconnection_attempts = attempts
+
     def getUsbSpeed(self):
         return types.SimpleNamespace(name="SUPER")
 
@@ -661,9 +669,6 @@ def test_a_source_whose_stop_gave_up_waiting_closes_its_device_and_starts_again(
     depthai, monkeypatch
 ):
     monkeypatch.setattr(oakd, "_STOP_S", 0.05)
-    source = build_stereo_camera(PAIR)
-    source.start()
-    _wait(source)
     process, stuck, release = (
         _Pipeline.processTasks,
         threading.Event(),
@@ -675,26 +680,31 @@ def test_a_source_whose_stop_gave_up_waiting_closes_its_device_and_starts_again(
         release.wait(10.0)
         process(pipeline)
 
-    monkeypatch.setattr(_Pipeline, "processTasks", blocks)
-    assert stuck.wait(10.0)
-    source.stop()  # gives up: the producer is inside the call
-    assert not depthai[0].closed
-    with pytest.raises(RuntimeError, match="still stopping"):
-        source.start()
-    monkeypatch.setattr(_Pipeline, "processTasks", process)
-    release.set()  # the call returns, and the producer ends
-    deadline = time.monotonic() + 10.0
-    while True:
-        try:
-            source.start()
-            break
-        except RuntimeError:
-            assert time.monotonic() < deadline
-            time.sleep(0.005)
+    source = build_stereo_camera(PAIR)
+    source.start()
     try:
+        _wait(source)
+        monkeypatch.setattr(_Pipeline, "processTasks", blocks)
+        assert stuck.wait(10.0)
+        source.stop()  # gives up: the producer is inside the call
+        assert not depthai[0].closed
+        with pytest.raises(RuntimeError, match="still stopping"):
+            source.start()
+        monkeypatch.setattr(_Pipeline, "processTasks", process)
+        release.set()  # the call returns, and the producer ends
+        deadline = time.monotonic() + 10.0
+        while True:
+            try:
+                source.start()
+                break
+            except RuntimeError:
+                assert time.monotonic() < deadline
+                time.sleep(0.005)
         assert depthai[0].closed  # by the producer, once it was out of the call
         assert _wait(source).image_right is not None
     finally:
+        release.set()
+        monkeypatch.setattr(oakd, "_STOP_S", 5.0)  # this stop waits
         source.stop()
     assert len(depthai) == 2 and depthai[1].closed
 
@@ -719,11 +729,15 @@ def test_a_picture_that_trails_the_pair_is_never_handed_out(depthai, monkeypatch
     source = build_stereo_camera(WITH_PICTURE)
     source.start()
     try:
-        deadline = time.monotonic() + 0.03
-        while time.monotonic() < deadline:
-            assert source.latest() is None
+        message, deadline = None, time.monotonic() + 5.0
+        while message is None:  # no frame, until the source gives up
+            assert time.monotonic() < deadline, "the source did not report an error"
+            try:
+                assert source.latest() is None
+            except RuntimeError as error:
+                message = str(error)
             time.sleep(0.002)
-        assert "no set of frames exposed together" in _error(source)
+        assert "no set of frames exposed together" in message
     finally:
         source.stop()
     assert len(depthai) == 1 and depthai[0].closed
@@ -781,11 +795,11 @@ def test_a_device_that_cannot_be_set_up_as_asked_is_reported_once(depthai, monke
 @requires_gpu
 def test_an_error_after_the_first_capture_is_final(depthai, monkeypatch):
     """Reopening restarts the device's clock, which stamps its frames."""
-    monkeypatch.setattr(_Device, "link_fails_after", {0: 4})
     source = build_stereo_camera(PAIR)
     source.start()
     try:
         _wait(source)
+        monkeypatch.setattr(_Device, "link_fails_after", {0: 0})  # from now on
         message = _error(source)
     finally:
         source.stop()
@@ -794,6 +808,38 @@ def test_an_error_after_the_first_capture_is_final(depthai, monkeypatch):
         and "restart the clock" in message
     )
     assert len(depthai) == 1 and depthai[0].closed
+
+
+@requires_gpu
+def test_an_error_after_imu_samples_were_read_is_final_too(depthai, monkeypatch):
+    """They carry the device's clock as well, capture or no capture."""
+    # The right sensor trails the left by 5 ms: no pair ever matches.
+    monkeypatch.setattr(_Device, "offsets_us", {"left": 0, "right": 5000})
+    source = build_stereo_camera(PAIR, imu=True)
+    source.start()
+    try:
+        deadline = time.monotonic() + 10.0
+        while source.imu() is None:
+            assert time.monotonic() < deadline, "no IMU sample arrived"
+            time.sleep(0.002)
+        monkeypatch.setattr(_Device, "link_fails_after", {0: 0})  # from now on
+        message = _error(source)
+    finally:
+        source.stop()
+    assert "the device stopped (X_LINK_ERROR)" in message
+    assert len(depthai) == 1 and depthai[0].closed
+
+
+@requires_gpu
+def test_the_device_is_told_not_to_reconnect_by_itself(depthai):
+    """A device depthai reopened would restart its clock unnoticed."""
+    source = build_stereo_camera(PAIR)
+    source.start()
+    try:
+        _wait(source)
+    finally:
+        source.stop()
+    assert depthai[0].reconnection_attempts == 0
 
 
 @requires_gpu
