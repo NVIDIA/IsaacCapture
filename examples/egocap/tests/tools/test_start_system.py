@@ -177,7 +177,7 @@ def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sen
 def test_default_profile_gives_the_head_camera_settings():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
     assert ss.sender_settings(config) == ss.SenderSettings(
-        port=5000, fps=30, bitrate_mbps=4, stream_id="head", full_range=True, sipl=True
+        port=5000, fps=60, bitrate_mbps=4, stream_id="head", full_range=True, sipl=True
     )
 
 
@@ -447,7 +447,7 @@ def test_second_ctrl_c_kills_the_child_and_the_rest_at_once(stack, tmp_path: Pat
 def test_mock_sender_command_follows_the_profile():
     settings = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
     command = ss.mock_sender_command("python", Path("mock.py"), settings, 2560, 1984)
-    assert command == ["python", "mock.py", "--port", "5000", "--stream", "head:2560x1984@30"]
+    assert command == ["python", "mock.py", "--port", "5000", "--stream", "head:2560x1984@60"]
 
 
 def test_bridge_timing_arguments_for_mock_and_real_sender():
@@ -570,6 +570,20 @@ def test_main_starts_the_orin_chain_in_order(recorded_main):
     release_deploys = [d for d in recorded_main.deploys if "--with-sipl" in d]
     assert len(release_deploys) == 1
     assert release_deploys[0][1:3] == ["x", "user@192.0.2.10"]
+
+
+def test_bridge_nvenc_preset_defaults_to_4_and_follows_the_flag(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    assert "--nvenc-preset 4" in _command(recorded_main, "bridge")
+    recorded_main.children.clear()
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--bridge-nvenc-preset", "1"]) == 0
+    assert "--nvenc-preset 1" in _command(recorded_main, "bridge")
+
+
+def test_bridge_nvenc_preset_rejects_other_values(capsys):
+    with pytest.raises(SystemExit):
+        ss.parse_args(["--bridge-nvenc-preset", "3"])
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_main_wires_chrony_into_the_bridge_and_starts_the_follower_after_it(recorded_main):

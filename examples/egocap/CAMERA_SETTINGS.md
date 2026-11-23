@@ -26,7 +26,7 @@ is no runtime settings API: add such keys to the file and nothing happens.
 ## The default sender profile
 
 `configs/default-camera-settings.yaml` is the profile the launcher uses unless told otherwise. It describes one SHW5G head
-camera on the SIPL backend: HEVC at 30 fps and 4 Mbit/s.
+camera on the SIPL backend: HEVC at 60 fps and 4 Mbit/s.
 
 The file is specific to that rig. A different SIPL platform or camera changes the `sipl` block (platform file, config
 name, link masks, tuning directory) and possibly the stream id and size. The Argus backend has no `sipl` block: it

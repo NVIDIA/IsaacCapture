@@ -673,7 +673,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--bridge-nvenc-preset",
         type=int,
         choices=(1, 4),
-        help="NVENC preset for the bridge's H.264 encode: 1 (the default) or the slower, higher-quality 4",
+        default=4,
+        help="NVENC preset for the bridge's H.264 encode: the slower, higher-quality 4 (default) or the faster 1",
     )
     parser.add_argument(
         "--bridge-scale-div",
@@ -949,7 +950,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         if args.bridge_bitrate_mbps is not None
                         else []
                     ),
-                    *(["--nvenc-preset", str(args.bridge_nvenc_preset)] if args.bridge_nvenc_preset else []),
+                    "--nvenc-preset",
+                    str(args.bridge_nvenc_preset),
                     *bridge_timing_arguments(
                         args.mock,
                         orin_host,

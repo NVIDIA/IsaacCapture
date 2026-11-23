@@ -134,9 +134,9 @@ capacity is not reached. Check the achieved rate, frame age and missing frames i
 intended number of cameras before relying on it; the recording does not switch to another path when bandwidth is
 short.
 
-The bridge encodes with NVENC preset 1 by default; `--nvenc-preset 4` (the launcher's `--bridge-nvenc-preset 4`)
-selects the slower, higher-quality preset. Preset 4's encode time and sustained rate at full size have to be
-measured on the installed hardware before relying on it.
+On its own the bridge encodes with NVENC preset 1; `--nvenc-preset 4` selects the slower, higher-quality preset. The
+egocap launcher passes preset 4 by default (`--bridge-nvenc-preset 1` selects the faster one). Preset 4's encode time
+and sustained rate at full size have to be measured on the installed hardware before relying on it.
 
 The delivered rate, image quality (the bridge's H.264 encode precedes egocap's final encode) and the alignment
 with tracking have to be measured on the installed hardware; this profile does not establish them.
