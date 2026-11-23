@@ -90,9 +90,10 @@ with ``isaaccapture`` (wheel installs included), and read it with ``SpaceMouseSo
        ],
    )
 
-Without ``--device`` the plugin opens the first validated model under ``/sys/class/hidraw`` and
-finds it again after it is unplugged. For a Universal Receiver at an explicit path, add
-``--combined-report``.
+Without ``--device`` the plugin opens the first validated model under ``/sys/class/hidraw`` whose
+HID report descriptor declares the six motion axes, takes the report layout from that descriptor,
+and finds the device again after it is unplugged. For a device that sends all six axes in one
+report (Universal Receiver, SpaceMouse Wireless BT) at an explicit path, add ``--combined-report``.
 
 The plugin can also run on its own, for example on another machine pushing to the same runtime,
 next to any reader of the same collection:
@@ -140,6 +141,8 @@ Troubleshooting
 - **Status DISCONNECTED with the device plugged in** — check ``cat
   /sys/class/hidraw/*/device/uevent | grep HID_NAME``; an unlisted model can be read with
   ``--device``.
+- **Translation moves but rotation stays at 0 with** ``--device`` — the device sends all six axes in
+  one report; add ``--combined-report``.
 - **Axes move but buttons never change** — some receivers report buttons on another interface;
   try ``--device`` on the device's other ``hidraw`` node.
 
