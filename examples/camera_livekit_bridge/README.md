@@ -111,13 +111,20 @@ The settings that must agree for a 60 fps recording; each is configured, none is
 - Egocap: the same `fps` and the published size in the streams file, `record_fps: 60` in the station file, and a
   station `video_encoder` (for example `ffmpeg_h264_nvenc` with `crf: 12`).
 
-One recording invocation with the egocap launcher (paths as in `egocap/README.md`), with the station file from the
-example (`video_encoder: ffmpeg_h264_nvenc`, `crf: 12`):
+One recording invocation with the egocap launcher. It needs a station file of your own, copied from
+`egocap/recording/egocap/stations/ego_stations.example.yaml`, with `record_fps: 60`, a `video_encoder` (for example
+`ffmpeg_h264_nvenc` with `crf: 12` under `video_encoder_options`) and the cameras you record. Every camera under
+`video_sources` is opened by CaptureServer, so each one needs a matching `--capture-camera NAME=DEVICE_ID`; the
+launcher refuses to start otherwise. `--orin` takes `user@IPv4` (a hostname is rejected) and the paths are as in
+`egocap/README.md`:
 
 ```bash
-uv run python tools/start_system.py --orin user@orin --deploy-script PATH --livekit-server PATH --bridge PATH \
+uv run python tools/start_system.py --orin user@192.0.2.10 --deploy-script PATH --livekit-server PATH --bridge PATH \
+  --station-config PATH/my_station.yaml --capture-camera NAME=DEVICE_ID \
   --fps 60 --bridge-scale-div 1 --bridge-bitrate-mbps 50
 ```
+
+Repeat `--capture-camera` for each camera in the station file.
 
 `--bridge-scale-div 1` publishes the full source size (the streams file's dimensions follow it); the launcher's
 default stays 2. `--bridge-bitrate-mbps` is the bridge's per-track H.264 ceiling, separate from the sender's
