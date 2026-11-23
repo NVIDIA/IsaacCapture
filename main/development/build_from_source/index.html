@@ -668,8 +668,9 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 </ol>
 <section id="c-formatting-enforcement-linux">
 <h3>C++ Formatting Enforcement (Linux)<a class="headerlink" href="#c-formatting-enforcement-linux" title="Link to this heading">#</a></h3>
-<p>On Linux, <strong>clang-format</strong> is enforced by default; the build fails if formatting changes would be applied. The project
-uses <strong>clang-format-14</strong> for consistent results across distributions (see <code class="docutils literal notranslate"><span class="pre">cmake/ClangFormat.cmake</span></code>).</p>
+<p>On classic Linux CMake builds, <strong>clang-format</strong> is enforced by default; the build
+fails if formatting changes would be applied. The project uses <strong>clang-format-14</strong>
+for consistent results across distributions (see <code class="docutils literal notranslate"><span class="pre">cmake/ClangFormat.cmake</span></code>).</p>
 <p>To disable enforcement, set <code class="docutils literal notranslate"><span class="pre">ENABLE_</span><wbr><span class="pre">CLANG_</span><wbr><span class="pre">FORMAT_</span><wbr><span class="pre">CHECK</span></code> to <code class="docutils literal notranslate"><span class="pre">OFF</span></code>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DENABLE_CLANG_FORMAT_CHECK<span class="o">=</span>OFF
 </pre></div>
@@ -914,15 +915,14 @@ it never collides with a classic <code class="docutils literal notranslate"><spa
 </div>
 <p>What this path does and how it differs from the classic flow:</p>
 <ul class="simple">
-<li><p><strong>Full build, no overrides.</strong> The backend passes no <code class="docutils literal notranslate"><span class="pre">cmake.define</span></code> overrides,
-so <code class="docutils literal notranslate"><span class="pre">BUILD_EXAMPLES</span></code>, <code class="docutils literal notranslate"><span class="pre">BUILD_TESTING</span></code>, and <code class="docutils literal notranslate"><span class="pre">BUILD_PLUGINS</span></code> stay at their
-CMake defaults: a <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> builds the full default target — extensions,
+<li><p><strong>Full build.</strong> <code class="docutils literal notranslate"><span class="pre">BUILD_EXAMPLES</span></code>, <code class="docutils literal notranslate"><span class="pre">BUILD_TESTING</span></code>, and <code class="docutils literal notranslate"><span class="pre">BUILD_PLUGINS</span></code> stay
+at their CMake defaults: a <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> builds the full default target — extensions,
 examples, C++ tests, and plugins (a plugin without its SDK skips gracefully). It
 installs only the <code class="docutils literal notranslate"><span class="pre">isaacteleop_wheel</span></code> and <code class="docutils literal notranslate"><span class="pre">isaacteleop_binaries</span></code> components,
 so C++ library/header install rules do not leak into the wheel.</p></li>
-<li><p><strong>clang-format is enforced.</strong> Because the gate is left on, the build <strong>fails</strong> if
-<code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code> is not installed or any C++ file is unformatted — a
-<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> therefore requires <code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code> on Linux.</p></li>
+<li><p><strong>clang-format is optional.</strong> Wheel builds disable the formatting gate, so
+<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> does not require <code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code>. To enforce formatting,
+pass <code class="docutils literal notranslate"><span class="pre">-Ccmake.define.ENABLE_CLANG_FORMAT_CHECK=ON</span></code> to <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code>.</p></li>
 <li><p><strong>All executables on PATH.</strong> Every executable built from <code class="docutils literal notranslate"><span class="pre">src/</span></code> and
 <code class="docutils literal notranslate"><span class="pre">examples/</span></code> — example programs, C++ test binaries, plugin tools
 (<code class="docutils literal notranslate"><span class="pre">oxr_simple_api_demo</span></code>, <code class="docutils literal notranslate"><span class="pre">se3_printer</span></code>, <code class="docutils literal notranslate"><span class="pre">schema_tests</span></code>, …) — is installed

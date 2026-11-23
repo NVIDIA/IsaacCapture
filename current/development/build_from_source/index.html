@@ -35,8 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=36007acf" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=9c450ab6" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../../_static/documentation_options.js?v=5165c444"></script>
     <script src="../../_static/doctools.js?v=9bcbadda"></script>
     <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -345,6 +345,7 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
@@ -615,8 +616,9 @@ cmake<span class="w"> </span>--build<span class="w"> </span>build<span class="w"
 </ol>
 <section id="c-formatting-enforcement-linux">
 <h3>C++ Formatting Enforcement (Linux)<a class="headerlink" href="#c-formatting-enforcement-linux" title="Link to this heading">#</a></h3>
-<p>On Linux, <strong>clang-format</strong> is enforced by default; the build fails if formatting changes would be applied. The project
-uses <strong>clang-format-14</strong> for consistent results across distributions (see <code class="docutils literal notranslate"><span class="pre">cmake/ClangFormat.cmake</span></code>).</p>
+<p>On classic Linux CMake builds, <strong>clang-format</strong> is enforced by default; the build
+fails if formatting changes would be applied. The project uses <strong>clang-format-14</strong>
+for consistent results across distributions (see <code class="docutils literal notranslate"><span class="pre">cmake/ClangFormat.cmake</span></code>).</p>
 <p>To disable enforcement, set <code class="docutils literal notranslate"><span class="pre">ENABLE_</span><wbr><span class="pre">CLANG_</span><wbr><span class="pre">FORMAT_</span><wbr><span class="pre">CHECK</span></code> to <code class="docutils literal notranslate"><span class="pre">OFF</span></code>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake<span class="w"> </span>-B<span class="w"> </span>build<span class="w"> </span>-DENABLE_CLANG_FORMAT_CHECK<span class="o">=</span>OFF
 </pre></div>
@@ -861,15 +863,14 @@ it never collides with a classic <code class="docutils literal notranslate"><spa
 </div>
 <p>What this path does and how it differs from the classic flow:</p>
 <ul class="simple">
-<li><p><strong>Full build, no overrides.</strong> The backend passes no <code class="docutils literal notranslate"><span class="pre">cmake.define</span></code> overrides,
-so <code class="docutils literal notranslate"><span class="pre">BUILD_EXAMPLES</span></code>, <code class="docutils literal notranslate"><span class="pre">BUILD_TESTING</span></code>, and <code class="docutils literal notranslate"><span class="pre">BUILD_PLUGINS</span></code> stay at their
-CMake defaults: a <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> builds the full default target — extensions,
+<li><p><strong>Full build.</strong> <code class="docutils literal notranslate"><span class="pre">BUILD_EXAMPLES</span></code>, <code class="docutils literal notranslate"><span class="pre">BUILD_TESTING</span></code>, and <code class="docutils literal notranslate"><span class="pre">BUILD_PLUGINS</span></code> stay
+at their CMake defaults: a <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> builds the full default target — extensions,
 examples, C++ tests, and plugins (a plugin without its SDK skips gracefully). It
 installs only the <code class="docutils literal notranslate"><span class="pre">isaacteleop_wheel</span></code> and <code class="docutils literal notranslate"><span class="pre">isaacteleop_binaries</span></code> components,
 so C++ library/header install rules do not leak into the wheel.</p></li>
-<li><p><strong>clang-format is enforced.</strong> Because the gate is left on, the build <strong>fails</strong> if
-<code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code> is not installed or any C++ file is unformatted — a
-<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> therefore requires <code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code> on Linux.</p></li>
+<li><p><strong>clang-format is optional.</strong> Wheel builds disable the formatting gate, so
+<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> does not require <code class="docutils literal notranslate"><span class="pre">clang-format-14</span></code>. To enforce formatting,
+pass <code class="docutils literal notranslate"><span class="pre">-Ccmake.define.ENABLE_CLANG_FORMAT_CHECK=ON</span></code> to <code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code>.</p></li>
 <li><p><strong>All executables on PATH.</strong> Every executable built from <code class="docutils literal notranslate"><span class="pre">src/</span></code> and
 <code class="docutils literal notranslate"><span class="pre">examples/</span></code> — example programs, C++ test binaries, plugin tools
 (<code class="docutils literal notranslate"><span class="pre">oxr_simple_api_demo</span></code>, <code class="docutils literal notranslate"><span class="pre">se3_printer</span></code>, <code class="docutils literal notranslate"><span class="pre">schema_tests</span></code>, …) — is installed
