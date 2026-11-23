@@ -131,7 +131,10 @@ def test_an_entry_that_is_not_a_stereo_camera_is_refused_with_the_reason(entry, 
         ({**ZED, "bus_type": "pcie"}, r"bus_type is usb or gmsl, got 'pcie'"),
         ({**ROOM, "scene": "forest"}, r"unknown scene 'forest' \(scenes: room\)"),
         ({**ROOM, "fps": "fast"}, r"'room': width, height and fps are numbers"),
-        ({**ROOM, "fps": 0}, r"'room': fps must be above 0"),
+        ({**ROOM, "fps": 0}, r"'room': fps must be a finite number above 0"),
+        ({**ROOM, "fps": float("inf")}, r"'room': fps must be a finite number"),
+        ({**ROOM, "width": 0}, r"'room': width and height must be above 0"),
+        ({**ROOM, "height": float("inf")}, r"'room': width, height and fps are"),
         (
             {"name": "clip", "type": "video", "stereo": True, "path": "c", "fps": "x"},
             r"'clip': width, height and fps are numbers",
@@ -825,9 +828,15 @@ def test_the_two_eyes_see_the_wall_ahead_with_the_disparity_of_its_distance():
 @requires_gpu
 def test_the_picture_moves_as_the_drawn_camera_turns():
     source = scene.SyntheticSceneSource("room", 1280, 720, fps=120.0, still_s=0.0)
+    # A first session compiles the kernel, so the turn is not over by the
+    # time the measured session draws.
     source.start()
     try:
-        _read_any(source)  # the first drawing waits for the kernel to compile
+        _read_any(source)
+    finally:
+        source.stop()
+    source.start()
+    try:
         first = _read_any(source)
         early, early_ns = first.image.get(), first.timestamp_ns
         time.sleep(0.08)
@@ -867,6 +876,12 @@ def test_a_drawn_frame_stays_intact_while_the_reader_holds_it():
         later = _read_any(source)
         assert later.timestamp_ns > held.timestamp_ns
         assert (later.image.get() != before[0]).any()
+        # Two drawings between two reads, however slowly this machine draws.
+        pause, deadline = 0.1, time.monotonic() + 10.0
+        while source.dropped_captures == 0 and time.monotonic() < deadline:
+            time.sleep(pause)
+            _read_any(source)
+            pause *= 2.0
         assert source.dropped_captures > 0
     finally:
         source.stop()
@@ -885,6 +900,52 @@ def test_a_restarted_drawn_camera_hands_out_nothing_of_its_last_session():
     source.start()
     try:
         assert _read_any(source).timestamp_ns >= restarted_ns
+    finally:
+        source.stop()
+
+
+@requires_gpu
+def test_a_drawn_camera_starts_again_after_a_stop_that_gave_up_waiting(monkeypatch):
+    source = scene.SyntheticSceneSource("room", 320, 180, fps=120.0)
+    draw, drawing, release = source._kernel, threading.Event(), threading.Event()
+
+    def slow(*arguments):  # a first drawing that is still compiling
+        drawing.set()
+        release.wait(10.0)
+        draw(*arguments)
+
+    source._kernel = slow
+    monkeypatch.setattr(scene, "_STOP_S", 0.05)
+    source.start()
+    assert drawing.wait(10.0)
+    source.stop()  # gives up: the thread is inside the drawing
+    with pytest.raises(RuntimeError, match="still stopping"):
+        source.start()
+    release.set()  # the drawing ends, and the thread with it
+    restarted_ns = time.monotonic_ns()
+    source._kernel = draw
+    deadline = time.monotonic() + 10.0
+    while True:
+        try:
+            source.start()
+            break
+        except RuntimeError:
+            assert time.monotonic() < deadline
+            time.sleep(0.005)
+    try:
+        assert _read_any(source).timestamp_ns >= restarted_ns
+    finally:
+        source.stop()
+
+
+@requires_gpu
+def test_a_rate_too_low_to_wait_out_draws_once_and_then_waits():
+    source = scene.SyntheticSceneSource("room", 320, 180, fps=1e-320)
+    source.start()
+    try:
+        _read_any(source)
+        time.sleep(0.05)
+        assert source.latest() is None  # waiting, not failed
     finally:
         source.stop()
 

@@ -8,6 +8,7 @@ contract — the teleop hot path never round-trips through host memory.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -271,12 +272,14 @@ def _synthetic_scene_arguments(spec: dict, name: str) -> dict:
             "height": int(spec["height"]),
             "fps": float(spec.get("fps", 30.0)),
         }
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(
             f"camera {name!r}: width, height and fps are numbers ({exc})"
         ) from exc
-    if not arguments["fps"] > 0.0:
-        raise ValueError(f"camera {name!r}: fps must be above 0")
+    if arguments["width"] <= 0 or arguments["height"] <= 0:
+        raise ValueError(f"camera {name!r}: width and height must be above 0")
+    if not (math.isfinite(arguments["fps"]) and arguments["fps"] > 0.0):
+        raise ValueError(f"camera {name!r}: fps must be a finite number above 0")
     return arguments
 
 

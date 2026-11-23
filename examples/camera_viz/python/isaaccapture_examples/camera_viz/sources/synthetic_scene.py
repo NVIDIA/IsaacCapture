@@ -49,6 +49,9 @@ _OBJECTS = (
 _LAMP_M = (0.0, -1.1, 2.0)
 #: The camera holds still this long before it starts to turn.
 STILL_S = 2.0
+
+# How long stop() waits for the drawing thread.
+_STOP_S = 5.0
 #: It then swings left and right and nods, each as a sine.
 YAW_DEG, YAW_PERIOD_S = 35.0, 10.0
 PITCH_DEG, PITCH_PERIOD_S = 8.0, 7.0
@@ -324,8 +327,9 @@ class SyntheticSceneSource(FrameSource):
         focal = FOCAL_PER_WIDTH * width
         self._intrinsics = (focal, focal, (width - 1) / 2.0, (height - 1) / 2.0)
 
-        self._left = [cp.zeros((height, width, 4), dtype=cp.uint8) for _ in range(3)]
-        self._right = [cp.zeros((height, width, 4), dtype=cp.uint8) for _ in range(3)]
+        # Not zeroed: a slot is drawn in full before it is published.
+        self._left = [cp.empty((height, width, 4), dtype=cp.uint8) for _ in range(3)]
+        self._right = [cp.empty((height, width, 4), dtype=cp.uint8) for _ in range(3)]
         self._captures = CaptureMailbox(len(self._left))
         self._kernel = cp.RawKernel(_DRAW_ROOM_KERNEL_SRC, "draw_room")
         # A stream of its own, so drawing does not wait for the reader's
@@ -362,13 +366,18 @@ class SyntheticSceneSource(FrameSource):
         )
 
     def rotation_at(self, timestamp_ns: int) -> np.ndarray:
-        """The camera's true orientation at a frame's timestamp, as
-        ``scene_rotation`` gives it."""
+        """The camera's true orientation at the timestamp of a frame of
+        the current session, as ``scene_rotation`` gives it."""
         return scene_rotation((timestamp_ns - self._t0_ns) * 1e-9, self._still_s)
 
     def start(self) -> None:
         if self._thread is not None:
-            return
+            if self._thread.is_alive():
+                if self._stop.is_set():
+                    raise RuntimeError(f"Source {self._spec.name!r} is still stopping")
+                return
+            # stop() gave up waiting for this thread; it has ended since.
+            self._thread = None
         self._stop.clear()
         with self._lock:
             self._error = None
@@ -383,7 +392,7 @@ class SyntheticSceneSource(FrameSource):
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
-            self._thread.join(timeout=5.0)
+            self._thread.join(timeout=_STOP_S)
             if self._thread.is_alive():
                 return  # still compiling or drawing; it ends on its own
             self._thread = None
@@ -423,12 +432,14 @@ class SyntheticSceneSource(FrameSource):
         # Pinned to the GPU the buffers are on, which need not be this
         # thread's default.
         with cp.cuda.Device(int(self._left[0].device.id)):
-            room = cp.asarray(ROOM_MIN_M + ROOM_MAX_M, dtype=cp.float32)
-            objects = cp.asarray(
-                [value for box in _OBJECTS for part in box for value in part],
-                dtype=cp.float32,
-            )
-            lamp = cp.asarray(_LAMP_M, dtype=cp.float32)
+            # On the stream that draws, so the drawing waits for them.
+            with self._stream:
+                room = cp.asarray(ROOM_MIN_M + ROOM_MAX_M, dtype=cp.float32)
+                objects = cp.asarray(
+                    [value for box in _OBJECTS for part in box for value in part],
+                    dtype=cp.float32,
+                )
+                lamp = cp.asarray(_LAMP_M, dtype=cp.float32)
             while not self._stop.is_set():
                 drawn_at = time.monotonic()
                 timestamp_ns = time.monotonic_ns()
@@ -465,4 +476,4 @@ class SyntheticSceneSource(FrameSource):
                 if self._interval_s > 0.0:
                     remaining = self._interval_s - (time.monotonic() - drawn_at)
                     if remaining > 0.0:
-                        self._stop.wait(remaining)
+                        self._stop.wait(min(remaining, threading.TIMEOUT_MAX))
