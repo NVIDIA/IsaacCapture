@@ -4,9 +4,9 @@
 OVXR installation
 =================
 
-OVXR provides optional XR presentation for applications that use Isaac Capture
-for teleoperation input. Select the ``ovxr`` extra when installing Isaac Capture
-to include OVXR and its rendering dependencies.
+Any application that supplies an OVRTX renderer and an OVStage can use Isaac
+Capture for XR presentation and teleoperation input. Select the ``ovxr`` extra
+when installing Isaac Capture to include OVXR and its rendering dependencies.
 
 Install XR support
 ------------------
@@ -23,9 +23,26 @@ the installation requirement:
 Replace ``X.Y`` with the version of your source build, as described in the build
 guide. Base installations and imports do not require OVXR.
 
-OVXR declares its compatible OVRTX and OVStage versions in its package metadata.
-The consuming application's dependency constraints must accept those versions.
+Isaac Capture pins OVXR ``0.2.0.1794933073``. This release requires OVRTX
+``0.7.0.1794596436`` and OVStage ``0.4.0.1794520352``. The consuming
+application's dependency constraints must accept those versions.
 See the package pages below for supported Python versions and platforms.
+
+Upgrading from OVXR 0.1
+-----------------------
+
+Keep existing ``OvxrSession``, ``OvxrSessionConfig`` and ``FrameOutputs`` calls.
+``FrameOutputs.latest_color()`` continues to return a numeric output ID and sensor
+time when an image is available. Update any application pins or overrides for
+the three packages above, then regenerate the application's lock file.
+
+Applications that call OVRTX or OVStage directly must also account for their
+API changes. Pass typed handles back to the provider that issued them and use
+``.raw_id`` for numeric storage. Stage ordinals are signed 64-bit integers;
+use ``ovstage.ORDINAL_MAX`` for latest-value reads. Rebuild native integrations
+against matching headers. See the
+`OVRTX 0.7 changes <https://github.com/NVIDIA-Omniverse/ovrtx/blob/main/CHANGELOG.md#070---2026-11-12>`__
+and `OVStage 0.4 changes <https://github.com/NVIDIA-Omniverse/ovstage/blob/main/CHANGELOG.md#040---2026-11-10>`__.
 
 Optional packages and licenses
 ------------------------------
@@ -108,15 +125,25 @@ Use from another application
 and ``OvxrSessionConfig``. Implement ``OvxrApplicationInterface`` to supply the
 application's renderer, Stage and ordinal ledger in an ``OvxrSessionBinding``.
 The binding also supplies optional ``frame_consumers`` after the application has
-resolved its render-product paths. Capture does not depend on an Isaac Lab task
-or scene configuration. ``camera_paths`` is required and must contain both stereo
-cameras. Set ``up_axis="Y"`` for a Y-up Stage; the default is ``"Z"``.
+resolved its auxiliary render-product paths. ``camera_paths`` is required and
+must contain both stereo cameras. Set ``up_axis="Y"`` for a Y-up Stage; the
+default is ``"Z"``.
 
 ``CameraPanelConsumer`` and ``OwnedDesktopMirror`` implement the same
 ``OvxrFrameConsumer`` lifecycle. Configure panels with a tuple of
 ``CameraPanelConfig`` values, each pairing a render-product path with its placement
 and image bound. Configure the mirror's camera choices with ``MirrorProduct``
-values. Either consumer can be enabled independently.
+values for the auxiliary cameras. The mirror lists the two eyes from the bound
+OVXR frame, followed by those cameras, so its menu is empty until the first
+renderable frame. Either consumer can be enabled independently.
+
+Read ``session.eye_render_product_paths`` from any thread for the active
+``(left, right)`` pair, including when OVXR chooses the paths and the mirror is
+disabled. It returns ``None`` until the first renderable frame binds
+successfully and after the session closes. It follows the pair in each bound
+frame, and is ``None`` for a bound frame that lacks both eye products.
+Auxiliary cameras are excluded. Inside a frame consumer,
+``frame.eye_render_product_paths`` supplies the same pair.
 
 Camera-panel attachment failure disables panels and logs the reason without
 blocking teleoperation input. An incomplete GPU copy disables the affected panel;

@@ -35,8 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=0017f0b3" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=36007acf" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=9c450ab6" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -458,8 +458,9 @@ session, including after provider failure or shutdown.</p>
 <section id="reading-status">
 <h2>Reading status<a class="headerlink" href="#reading-status" title="Link to this heading">#</a></h2>
 <p>The getters return cached immutable values and perform no device, process, or
-OpenXR I/O:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceState</span>
+OpenXR I/O. <code class="docutils literal notranslate"><span class="pre">config</span></code> is a <code class="docutils literal notranslate"><span class="pre">TeleopSessionConfig</span></code> as built in
+<a class="reference internal" href="../teleop/teleop_session.html"><span class="doc">Teleop Session</span></a>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.teleop_session_manager</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceState</span><span class="p">,</span> <span class="n">TeleopSession</span>
 
 <span class="k">with</span> <span class="n">TeleopSession</span><span class="p">(</span><span class="n">config</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
     <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
@@ -573,14 +574,22 @@ behavior.</p>
 </section>
 <section id="openxr-ownership">
 <h2>OpenXR ownership<a class="headerlink" href="#openxr-ownership" title="Link to this heading">#</a></h2>
-<p>For an owned OpenXR session, Isaac Teleop polls lifecycle events and HMD
-tracking. Runtime or session loss fails the provider; sustained loss of active
-head tracking disconnects the headset while leaving the runtime provider
-available.</p>
+<p>For an owned OpenXR session, Isaac Teleop polls lifecycle events before each
+input update. <code class="docutils literal notranslate"><span class="pre">XR_</span><wbr><span class="pre">SESSION_</span><wbr><span class="pre">STATE_</span><wbr><span class="pre">STOPPING</span></code> ends the running session, clears
+current head, hand, controller and body samples, and pauses input queries and
+controller haptics. <code class="docutils literal notranslate"><span class="pre">XR_SESSION_STATE_READY</span></code> begins the same session again
+so input can recover without restarting the application. Startup still requires
+the runtime to make the session ready before the synchronous initial begin.</p>
+<p>Isaac Teleop also polls HMD tracking. Runtime or session loss fails the provider;
+sustained loss of active head tracking disconnects the headset while leaving the
+runtime provider available.</p>
 <p>For externally supplied <code class="docutils literal notranslate"><span class="pre">oxr_handles</span></code>, Isaac Teleop does not consume the
 external owner’s event queue. The provider is available after setup and the
 headset remains <code class="docutils literal notranslate"><span class="pre">UNKNOWN</span></code> unless the owner supplies health through another
 integration.</p>
+<p>Native consumers must rebuild together: <code class="docutils literal notranslate"><span class="pre">OpenXRSessionHandles</span></code> includes optional
+shared lifecycle state. Externally supplied handles without this state keep
+caller-managed lifecycle behavior.</p>
 </section>
 </section>
 
@@ -721,7 +730,7 @@ integration.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 06, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 23, 2026.
       <br/>
     
   </p>

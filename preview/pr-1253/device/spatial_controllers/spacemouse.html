@@ -35,8 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=0017f0b3" />
-    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/custom.css?v=36007acf" />
+    <link rel="stylesheet" type="text/css" href="../../_static/css/ecosystem.css?v=9c450ab6" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -538,9 +538,10 @@ with <code class="docutils literal notranslate"><span class="pre">isaaccapture</
 <span class="p">)</span>
 </pre></div>
 </div>
-<p>Without <code class="docutils literal notranslate"><span class="pre">--device</span></code> the plugin opens the first validated model under <code class="docutils literal notranslate"><span class="pre">/sys/class/hidraw</span></code> and
-finds it again after it is unplugged. For a Universal Receiver at an explicit path, add
-<code class="docutils literal notranslate"><span class="pre">--combined-report</span></code>.</p>
+<p>Without <code class="docutils literal notranslate"><span class="pre">--device</span></code> the plugin opens the first validated model under <code class="docutils literal notranslate"><span class="pre">/sys/class/hidraw</span></code> whose
+HID report descriptor declares the six motion axes, takes the report layout from that descriptor,
+and finds the device again after it is unplugged. For a device that sends all six axes in one
+report (Universal Receiver, SpaceMouse Wireless BT) at an explicit path, add <code class="docutils literal notranslate"><span class="pre">--combined-report</span></code>.</p>
 <p>The plugin can also run on its own, for example on another machine pushing to the same runtime,
 next to any reader of the same collection:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>./install/plugins/spacemouse/spacemouse_plugin
@@ -583,6 +584,8 @@ and replug the device.</p></li>
 <li><p><strong>Status DISCONNECTED with the device plugged in</strong> — check <code class="docutils literal notranslate"><span class="pre">cat</span>
 <span class="pre">/sys/class/hidraw/*/device/uevent</span> <span class="pre">|</span> <span class="pre">grep</span> <span class="pre">HID_NAME</span></code>; an unlisted model can be read with
 <code class="docutils literal notranslate"><span class="pre">--device</span></code>.</p></li>
+<li><p><strong>Translation moves but rotation stays at 0 with</strong> <code class="docutils literal notranslate"><span class="pre">--device</span></code> — the device sends all six axes in
+one report; add <code class="docutils literal notranslate"><span class="pre">--combined-report</span></code>.</p></li>
 <li><p><strong>Axes move but buttons never change</strong> — some receivers report buttons on another interface;
 try <code class="docutils literal notranslate"><span class="pre">--device</span></code> on the device’s other <code class="docutils literal notranslate"><span class="pre">hidraw</span></code> node.</p></li>
 </ul>
@@ -734,7 +737,7 @@ reconnecting through a FIFO standing in for the device node.</p>
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 06, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 23, 2026.
       <br/>
     
   </p>
