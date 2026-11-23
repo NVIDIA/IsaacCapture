@@ -47,10 +47,11 @@ _MAX_REQUESTS = 4
 class Reading:
     """The newest record of one data series and how old it is.
 
-    `sample_time_ns` is on the robot machine's clock; compare ages, not times. `age_s` is None
-    when no clock estimate came with the record, and too large, never too small, while
-    `clock_two_way` is False. `fresh` is False for a record older than its series allows and for
-    one of a robot app that left.
+    `sample_time_ns` and `publish_time_ns` (the publish call) are on the robot machine's clock,
+    `receive_time_ns` (the arrival) is on this machine's; compare ages, not times of two
+    machines. `age_s` is None when no clock estimate came with the record, and too large, never
+    too small, while `clock_two_way` is False. `fresh` is False for a record older than its
+    series allows and for one of a robot app that left.
     """
 
     series: str
@@ -60,6 +61,9 @@ class Reading:
     receive_age_s: float
     fresh: bool
     clock_two_way: bool
+    # Keyword-only and out of comparisons: a reading built without them equals the reader's.
+    publish_time_ns: int = field(default=0, kw_only=True, compare=False)
+    receive_time_ns: int = field(default=0, kw_only=True, compare=False)
 
 
 @dataclass(frozen=True)
@@ -331,6 +335,8 @@ class RobotState:
                 receive_age_s=joints.receive_age_s,
                 fresh=joints.fresh,
                 clock_two_way=joints.clock_two_way,
+                publish_time_ns=joints.publish_time_ns,
+                receive_time_ns=joints.receive_time_ns,
                 name=name,
                 position=joint.position,
                 valid=joint.valid,
@@ -554,6 +560,8 @@ class RobotState:
             "receive_age_s": record.receive_age_ns / 1e9,
             "fresh": fresh,
             "clock_two_way": record.clock_two_way,
+            "publish_time_ns": record.publish_time_ns,
+            "receive_time_ns": record.receive_time_ns,
         }
         flatbuffer = info.message_encoding == "flatbuffer"
         try:

@@ -800,7 +800,8 @@ names one:
      - Close the reader. ``RobotState`` is also a context manager.
 
 Every reading also has ``series``, ``age_s``, ``receive_age_s``, ``fresh``,
-``clock_two_way``, ``sequence`` and ``sample_time_ns`` (see `Ages`_).
+``clock_two_way``, ``sequence``, ``sample_time_ns``, ``publish_time_ns`` and
+``receive_time_ns`` (see `Ages`_).
 
 - **A read can return None.** ``joints()``, ``gripper()``, ``status()`` and
   ``record()`` return ``None`` when the series has no reading yet, when its
@@ -960,6 +961,10 @@ session; in a local session both are one machine.
   from its arrival and goes stale like any other.
 - ``sample_time_ns`` is the time of the reading on the robot machine's clock.
   Do not compare it with a time taken on another machine; use ``age_s``.
+- ``publish_time_ns`` is the time of the publish call on the robot machine's
+  clock, and ``receive_time_ns`` is the time the reading arrived at the server,
+  or in a local session the time of the publish call, as
+  ``time.monotonic_ns()`` of the machine the reader runs on.
 - ``sequence`` counts the readings of the series since the robot app entered
   its session: every publish call that returned ``True`` in a local session,
   every reading that reached the server in a remote one, where a slow network
