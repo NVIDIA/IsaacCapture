@@ -244,7 +244,9 @@ TEST_CASE("Intermittent missing data cannot bypass output setup backoff", "[shar
     stream.has_payload = true;
     stream.fail_setup = false;
     CHECK(stream.update(start + 2ms) == nullptr);
+    CHECK(stream.recovery.error().has_value());
     CHECK(stream.attempts == 1);
     REQUIRE(stream.update(start + 2s) != nullptr);
     CHECK(stream.attempts == 2);
+    CHECK_FALSE(stream.recovery.error().has_value());
 }
