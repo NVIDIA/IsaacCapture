@@ -53,6 +53,8 @@ for node in /dev/hidraw*; do
     # USB ID properties belong to the parent, but HID_ID is present on the HID device.
     hid_id="$(sed -n 's/^HID_ID=//p' "/sys/class/hidraw/${node##*/}/device/uevent" 2>/dev/null)" || continue
     IFS=: read -r bus vendor model <<< "${hid_id^^}"
+    # HID_ID uses zero-padded hex: 256F is 3Dconnexion; 046D is Logitech.
+    # Logitech C626/C628 identify SpaceNavigator / SpaceNavigator for Notebooks.
     if [[ "$vendor" == "0000256F" || ( "$vendor" == "0000046D" && ( "$model" == "0000C626" || "$model" == "0000C628" ) ) ]]; then
         found=1
         if [[ -r "$node" ]]; then

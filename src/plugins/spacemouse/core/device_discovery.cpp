@@ -52,11 +52,14 @@ std::optional<std::string> read_hid_name(const std::filesystem::path& uevent_pat
     return std::nullopt;
 }
 
+// Distinguish receiver motion interfaces from auxiliary interfaces sharing HID_NAME.
+// Look for the six motion-axis inputs on report 1, matching the combined-report decoder.
 bool has_motion_axes(const std::filesystem::path& descriptor_path)
 {
     std::ifstream file(descriptor_path, std::ios::binary);
     uint32_t usage_page = 0;
     uint32_t usage_min = 0;
+    uint32_t report_id = 0;
     unsigned usages = 0;
     unsigned input_axes = 0;
     // HID short items encode their payload size in the low two bits (3 means 4 bytes).
@@ -92,8 +95,11 @@ bool has_motion_axes(const std::filesystem::path& descriptor_path)
                     if (usage_min <= usage && usage <= value)
                         usages |= 1U << (usage - 0x30);
             break;
+        case 0x84: // Report ID
+            report_id = value;
+            break;
         case 0x80: // Input (ignore constant padding)
-            if (!(value & 1))
+            if (report_id == 1 && !(value & 1))
                 input_axes |= usages;
             if (input_axes == 0x3f)
                 return true;
@@ -129,7 +135,6 @@ std::optional<DeviceLocation> find_device(const std::filesystem::path& hidraw_cl
         {
             if (hid_name->find(known.product_name) != std::string::npos)
             {
-                // Receiver interfaces share HID_NAME; only the motion interface has these axes.
                 if (known.product_name == "3Dconnexion Universal Receiver" &&
                     !has_motion_axes(hidraw_class_dir / name / "device" / "report_descriptor"))
                     continue;

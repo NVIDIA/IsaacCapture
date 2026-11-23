@@ -99,19 +99,19 @@ TEST_CASE("Receiver discovery requires motion inputs in a readable descriptor", 
     }
     SECTION("Usage range on the button page")
     {
-        write_descriptor(devices, "hidraw4", { 0x05, 0x09, 0x19, 0x30, 0x29, 0x35, 0x81, 0x02 });
+        write_descriptor(devices, "hidraw4", { 0x05, 0x09, 0x85, 0x01, 0x19, 0x30, 0x29, 0x35, 0x81, 0x02 });
     }
     SECTION("Axes declared only as output")
     {
-        write_descriptor(devices, "hidraw4", { 0x05, 0x01, 0x19, 0x30, 0x29, 0x35, 0x91, 0x02, 0x81, 0x02 });
+        write_descriptor(devices, "hidraw4", { 0x05, 0x01, 0x85, 0x01, 0x19, 0x30, 0x29, 0x35, 0x91, 0x02, 0x81, 0x02 });
     }
     SECTION("Constant input")
     {
-        write_descriptor(devices, "hidraw4", { 0x05, 0x01, 0x19, 0x30, 0x29, 0x35, 0x81, 0x01 });
+        write_descriptor(devices, "hidraw4", { 0x05, 0x01, 0x85, 0x01, 0x19, 0x30, 0x29, 0x35, 0x81, 0x01 });
     }
     SECTION("Motion usage range")
     {
-        write_descriptor(devices, "hidraw4", { 0x05, 0x01, 0x19, 0x30, 0x29, 0x35, 0x81, 0x02 });
+        write_descriptor(devices, "hidraw4", { 0x05, 0x01, 0x85, 0x01, 0x19, 0x30, 0x29, 0x35, 0x81, 0x02 });
         expected = true;
     }
     SECTION("Translation and rotation in separate usage ranges on the same report")
@@ -121,6 +121,35 @@ TEST_CASE("Receiver discovery requires motion inputs in a readable descriptor", 
         expected = true;
     }
     CHECK(find_device(devices.class_dir(), devices.dev_dir()).has_value() == expected);
+}
+
+TEST_CASE("Receiver discovery skips reports the combined decoder cannot read", "[spacemouse][discovery]")
+{
+    spacemouse_test::FakeDevices devices;
+    devices.add("hidraw10", "3Dconnexion Universal Receiver");
+    SECTION("Axes only on report 4")
+    {
+        write_descriptor(devices, "hidraw10",
+                         { 0x05, 0x01, 0x85, 0x04, 0x75, 0x10, 0x95, 0x06, 0x19, 0x30, 0x29, 0x35, 0x81, 0x02 });
+    }
+    SECTION("Translation on report 1 and rotation on report 2")
+    {
+        write_descriptor(devices, "hidraw10", { 0x05, 0x01, 0x85, 0x01, 0x75, 0x10, 0x95, 0x03, 0x19, 0x30, 0x29,
+                                                0x32, 0x81, 0x02, 0x85, 0x02, 0x19, 0x33, 0x29, 0x35, 0x81, 0x02 });
+    }
+    SECTION("Unnumbered motion report")
+    {
+        write_descriptor(devices, "hidraw10", { 0x05, 0x01, 0x75, 0x10, 0x95, 0x06, 0x19, 0x30, 0x29, 0x35, 0x81, 0x02 });
+    }
+    CHECK_FALSE(find_device(devices.class_dir(), devices.dev_dir()));
+
+    devices.add("hidraw6", "3Dconnexion Universal Receiver");
+    write_descriptor(
+        devices, "hidraw6", { 0x05, 0x01, 0x85, 0x01, 0x75, 0x10, 0x95, 0x06, 0x19, 0x30, 0x29, 0x35, 0x81, 0x02 });
+    const auto found = find_device(devices.class_dir(), devices.dev_dir());
+    REQUIRE(found);
+    CHECK(found->path == devices.dev_dir() / "hidraw6");
+    CHECK(found->combined_report);
 }
 
 TEST_CASE("Discovery finds nothing without a validated model or a hidraw class", "[spacemouse][discovery]")
