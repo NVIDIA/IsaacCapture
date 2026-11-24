@@ -9,6 +9,8 @@ import logging
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from conftest import LINE_RE
@@ -119,6 +121,26 @@ class TestLogDir:
 
 
 class TestEnsurePrivateDir:
+    @pytest.mark.parametrize(("mode", "foreign"), [(0o777, False), (0o755, True)])
+    def test_rejects_an_untrusted_root_before_creating_children(
+        self, tmp_path, mode, foreign
+    ):
+        info = SimpleNamespace(
+            st_mode=stat.S_IFDIR | mode,
+            st_uid=os.geteuid() + 1 if foreign else os.geteuid(),
+        )
+        with (
+            patch.object(_core.os, "fstat", return_value=info),
+            patch.object(_core.os, "mkdir") as mkdir,
+        ):
+            with pytest.raises(PermissionError):
+                _core.ensure_private_dir(tmp_path / "logs")
+            mkdir.assert_not_called()
+
+    def test_ownership_uses_the_effective_user(self, tmp_path):
+        with patch.object(_core.os, "getuid", return_value=os.geteuid() + 1):
+            assert _core.ensure_private_dir(tmp_path / "logs") == tmp_path / "logs"
+
     @not_root
     @pytest.mark.skipif(not hasattr(os, "O_PATH"), reason="Linux traversal descriptors")
     @pytest.mark.parametrize("existing", [False, True])

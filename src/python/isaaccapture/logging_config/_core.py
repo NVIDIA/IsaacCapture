@@ -108,6 +108,16 @@ def log_dir() -> Path:
     return directory
 
 
+def _validate_directory(fd: int, directory: Path, *, target: bool) -> None:
+    info = os.fstat(fd)
+    # Sticky shared ancestors protect entries; the target must forbid other writers.
+    if info.st_uid not in (0, os.geteuid()) or (target and info.st_uid != os.geteuid()):
+        raise PermissionError(f"refusing foreign-owned log path: {directory}")
+    writable = info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    if writable and (target or not info.st_mode & stat.S_ISVTX):
+        raise PermissionError(f"refusing replaceable log path: {directory}")
+
+
 def ensure_private_dir(directory: Path) -> Path:
     """Create owner-only directories without following replaceable POSIX paths."""
     if not _POSIX:
@@ -123,6 +133,8 @@ def ensure_private_dir(directory: Path) -> Path:
     flags |= os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     parent = os.open("/", flags)
     try:
+        # The initial root is also a parent and must be checked before mkdirat.
+        _validate_directory(parent, directory, target=False)
         for index, name in enumerate(parts):
             try:
                 os.mkdir(name, mode=0o700, dir_fd=parent)
@@ -132,17 +144,7 @@ def ensure_private_dir(directory: Path) -> Path:
             os.close(parent)
             parent = child
 
-            info = os.fstat(parent)
-            target = index == len(parts) - 1
-            # Sticky shared ancestors (such as /tmp) are safe to traverse, but
-            # the final directory must belong to us and forbid other writers.
-            if info.st_uid not in (0, os.getuid()) or (
-                target and info.st_uid != os.getuid()
-            ):
-                raise PermissionError(f"refusing foreign-owned log path: {directory}")
-            writable = info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-            if writable and (target or not info.st_mode & stat.S_ISVTX):
-                raise PermissionError(f"refusing replaceable log path: {directory}")
+            _validate_directory(parent, directory, target=index == len(parts) - 1)
     finally:
         os.close(parent)
     return directory
