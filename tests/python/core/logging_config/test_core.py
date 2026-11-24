@@ -227,6 +227,13 @@ class TestEnsurePrivateDir:
         finally:
             ancestor.chmod(0o700)
 
+    def test_validation_only_never_creates_missing_components(self, tmp_path):
+        with patch.object(_core.os, "mkdir") as mkdir:
+            assert not _core.is_private_dir(tmp_path / "missing" / "runtime")
+            mkdir.assert_not_called()
+        assert not (tmp_path / "missing").exists()
+        assert _core.is_private_dir(tmp_path)
+
     def test_narrows_every_component_it_created(self, tmp_path):
         base = tmp_path / "shared"
         base.mkdir()

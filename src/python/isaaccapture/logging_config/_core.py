@@ -126,10 +126,12 @@ def _validate_directory(fd: int, directory: Path, *, target: bool) -> None:
         raise PermissionError(f"refusing replaceable directory path: {directory}")
 
 
-def ensure_private_dir(directory: Path) -> Path:
-    """Create owner-only directories without following replaceable POSIX paths."""
+def _private_dir(directory: Path, *, create_missing: bool) -> Path:
     if not _POSIX:
-        directory.mkdir(parents=True, exist_ok=True)
+        if create_missing:
+            directory.mkdir(parents=True, exist_ok=True)
+        elif not directory.is_dir():
+            raise NotADirectoryError(str(directory))
         return directory
 
     parts = directory.absolute().parts[1:]
@@ -145,10 +147,11 @@ def ensure_private_dir(directory: Path) -> Path:
         component = Path("/")
         _validate_directory(parent, component, target=False)
         for index, name in enumerate(parts):
-            try:
-                os.mkdir(name, mode=0o700, dir_fd=parent)
-            except FileExistsError:
-                pass  # Existing entries still undergo the checks below.
+            if create_missing:
+                try:
+                    os.mkdir(name, mode=0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass  # Existing entries still undergo the checks below.
             child = os.open(name, flags, dir_fd=parent)
             os.close(parent)
             parent = child
@@ -158,6 +161,20 @@ def ensure_private_dir(directory: Path) -> Path:
     finally:
         os.close(parent)
     return directory
+
+
+def ensure_private_dir(directory: Path) -> Path:
+    """Create owner-only directories without following replaceable POSIX paths."""
+    return _private_dir(directory, create_missing=True)
+
+
+def is_private_dir(directory: Path) -> bool:
+    """Apply the same ownership and path checks without creating anything."""
+    try:
+        _private_dir(directory, create_missing=False)
+    except OSError:
+        return False
+    return True
 
 
 def ensure_log_dir() -> Path:

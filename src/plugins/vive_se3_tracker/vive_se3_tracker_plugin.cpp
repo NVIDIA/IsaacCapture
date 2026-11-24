@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -259,16 +260,33 @@ void ViveSe3TrackerPlugin::write_collections_file() const
     if (!collections_file_)
         return;
     // Write to a temp then rename so a concurrent reader never sees a partial file.
-    const std::string tmp = *collections_file_ + ".tmp";
+    // Reserve 0600 before writing, even under a permissive umask. Automatic paths
+    // have a validated parent protecting the subsequent stream reopen.
+    std::string tmp = *collections_file_ + ".tmp.XXXXXX";
+    const int fd = ::mkstemp(tmp.data());
+    if (fd < 0)
+    {
+        logger_->warn("could not create collections file {}: {}", tmp, std::strerror(errno));
+        return;
+    }
+    ::close(fd);
     {
         std::ofstream out(tmp, std::ios::trunc);
         if (!out)
         {
             logger_->warn("could not write collections file {}", tmp);
+            std::remove(tmp.c_str());
             return;
         }
         for (const auto& kv : streams_)
             out << kv.second.collection_id << "\n";
+        out.close();
+        if (!out)
+        {
+            logger_->warn("could not finish collections file {}", tmp);
+            std::remove(tmp.c_str());
+            return;
+        }
     }
     if (std::rename(tmp.c_str(), collections_file_->c_str()) != 0)
     {
