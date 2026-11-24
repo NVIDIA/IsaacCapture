@@ -122,7 +122,7 @@ details.
 When ``oxr_handles`` is provided (live mode), ``TeleopSession`` uses the
 supplied handles instead of creating its own OpenXR session. The caller is
 responsible for the external session's lifetime. Construct handles with
-``OpenXRSessionHandles(instance, session, space, proc_addr)`` where each
+``OpenXRSessionHandles(instance, session, space, xr_get_instance_proc_addr)`` where each
 argument is a ``uint64`` handle value.
 
 .. code-block:: python
@@ -346,18 +346,27 @@ Practical tuning:
 PluginConfig
 ^^^^^^^^^^^^
 
-Configure plugins:
+Configure plugins and pass them as ``TeleopSessionConfig(plugins=[...])``:
 
 .. code-block:: python
 
-   PluginConfig(
+   from pathlib import Path
+
+   from isaaccapture.teleop_session_manager import PluginConfig
+
+   plugin = PluginConfig(
        plugin_name="controller_synthetic_hands",
        plugin_root_id="synthetic_hands",
-       search_paths=[Path("/path/to/plugins")],
+       search_paths=[Path("/path/to/IsaacCapture/install/plugins")],
        enabled=True,
        plugin_args=["--arg1=val1", "--arg2=val2"],
        required=True,
    )
+
+A source build installs ``controller_synthetic_hands`` and the other plugins
+into ``install/plugins/``. The plugins shipped inside the ``isaaccapture``
+wheel are under ``BUNDLED_PLUGINS_DIR``, which you import from
+``isaaccapture.teleop_session_manager`` and pass as a search path instead.
 
 Plugins are optional by default: if none of their search paths exist or the
 configured plugin is not discovered, session startup continues without them.
@@ -490,8 +499,9 @@ Before vs After
 
 .. code-block:: python
 
-   # Create trackers
-   controller_tracker = deviceio.ControllerTracker()
+   # Create source and its tracker
+   controllers = ControllersSource(name="controllers")
+   controller_tracker = controllers.get_tracker()
 
    # Get extensions
    required_extensions = deviceio.DeviceIOSession.get_required_extensions([controller_tracker])
@@ -510,7 +520,6 @@ Before vs After
    plugin_context = plugin_manager.start(...)
 
    # Setup pipeline
-   controllers = ControllersSource(name="controllers")
    gripper_left = GripperRetargeter(
        GripperRetargeterConfig(hand_side="left"),
        name="gripper_left",
@@ -534,14 +543,7 @@ Before vs After
    while True:
        deviceio_session.update()
        # Manual data injection needed for new sources
-       left_controller = controller_tracker.get_left_controller(deviceio_session)
-       right_controller = controller_tracker.get_right_controller(deviceio_session)
-       inputs = {
-           "controllers": {
-               "deviceio_controller_left": [left_controller],
-               "deviceio_controller_right": [right_controller]
-           }
-       }
+       inputs = {"controllers": controllers.poll_tracker(deviceio_session)}
        result = pipeline(inputs)
        # ... error handling, cleanup ...
 
