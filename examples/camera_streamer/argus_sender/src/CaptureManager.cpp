@@ -6,6 +6,7 @@
 
 #include "CaptureManager.h"
 
+#include "ArgusBufferBinding.h"
 #include "CameraCatalog.h"
 #include "CaptureDomainPlan.h"
 #include "CapturePriorityPolicy.h"
@@ -14,6 +15,7 @@
 #include "HevcEncoder.h"
 #include "PriorityFrameHandoff.h"
 #include "Runtime.h"
+#include "SensorClock.h"
 #include "StereoAlignmentPolicy.h"
 
 #include <Argus/BufferStream.h>
@@ -79,7 +81,7 @@ DmaBuffer* CapturedDmaBuffer::release()
 
 void CapturedDmaBuffer::reset(DmaBuffer* buffer)
 {
-    if (m_buffer && m_buffer != buffer && !m_buffer->releaseToArgus())
+    if (m_buffer && m_buffer != buffer && !m_buffer->releaseToOwner())
     {
         std::fprintf(stderr, "Failed to release unused direct-capture DMABUF to Argus\n");
     }
@@ -176,6 +178,9 @@ public:
         EGLStream::IFrameConsumer* iConsumer = NULL;
         uint64_t lastFrameNumber = 0;
         bool hasLastFrameNumber = false;
+        // Places the Argus TSC start-of-frame on CLOCK_MONOTONIC. Used only by the thread that acquires this camera.
+        std::unique_ptr<SensorTimeMapper> timeMapper;
+        std::string lastMappingReason;
     };
 
     struct PendingFrame
@@ -537,7 +542,8 @@ public:
                         for (uint32_t bufferIndex = 0; bufferIndex < kDirectCaptureBufferCount; ++bufferIndex)
                         {
                             std::unique_ptr<DmaBuffer> dmaBuffer(
-                                DmaBuffer::create(directSize, NVBUF_COLOR_FORMAT_NV12, NVBUF_LAYOUT_BLOCK_LINEAR));
+                                DmaBuffer::create(directSize.width(), directSize.height(), NVBUF_COLOR_FORMAT_NV12,
+                                                  NVBUF_LAYOUT_BLOCK_LINEAR));
                             if (!dmaBuffer || !dmaBuffer->mapEglImage() ||
                                 iEglImageSettings->setEGLImage(dmaBuffer->getEglImage()) != Argus::STATUS_OK)
                             {
@@ -554,8 +560,9 @@ public:
                                                 camera.label.c_str());
                             }
                             iBuffer->setClientData(dmaBuffer.get());
-                            if (!dmaBuffer->bindArgusBuffer(camera.iBufferStream, camera.argusBuffers[bufferIndex].get()) ||
-                                !dmaBuffer->releaseToArgus())
+                            if (!bindArgusBuffer(
+                                    dmaBuffer.get(), camera.iBufferStream, camera.argusBuffers[bufferIndex].get()) ||
+                                !dmaBuffer->releaseToOwner())
                             {
                                 ORIGINATE_ERROR("Failed to release direct buffer %u for initial %s capture",
                                                 bufferIndex, camera.label.c_str());
@@ -1583,6 +1590,40 @@ private:
         }
     }
 
+    // The Argus TSC start-of-frame is documented in nanoseconds of the platform counter. A frame without it, or one the
+    // mapping refuses, carries no capture time; the generic sensor timestamp is not a substitute.
+    void mapCaptureTime(CameraState* camera, FrameTiming* timing)
+    {
+        if (!camera->timeMapper)
+        {
+            SensorClockMap::Config config;
+            camera->timeMapper.reset(new SensorTimeMapper(readCounterHz(), config, readCounterPair));
+        }
+        SensorTimeMapping mapping;
+        if (!timing->hasSensorSofTimestampTsc)
+        {
+            mapping.reason = "the frame metadata has no TSC start-of-frame timestamp";
+        }
+        else
+        {
+            const int64_t nowNs = monotonicNowNs();
+            mapping =
+                camera->timeMapper->map(timing->sensorSofTimestampTscNs, SensorTimestampUnit::Nanoseconds, nowNs, nowNs);
+        }
+        applyMappingToTiming(mapping, timing);
+        if (!mapping.valid && mapping.reason != camera->lastMappingReason)
+        {
+            // Reported when the reason changes, not per frame: the frames still flow without a capture time.
+            std::fprintf(
+                stderr, "[argus] camera %s: no capture time: %s\n", camera->label.c_str(), mapping.reason.c_str());
+            camera->lastMappingReason = mapping.reason;
+        }
+        else if (mapping.valid)
+        {
+            camera->lastMappingReason.clear();
+        }
+    }
+
     std::unique_ptr<PendingFrame> acquireCameraFrame(DomainState* domain,
                                                      size_t flatIndex,
                                                      const std::atomic<bool>* expectedStop,
@@ -1605,7 +1646,7 @@ private:
                     Argus::IBuffer* iBuffer = Argus::interface_cast<Argus::IBuffer>(argusBuffer);
                     DmaBuffer* dmaBuffer =
                         iBuffer ? const_cast<DmaBuffer*>(static_cast<const DmaBuffer*>(iBuffer->getClientData())) : NULL;
-                    if (!dmaBuffer || !dmaBuffer->markArgusAcquired(argusBuffer))
+                    if (!dmaBuffer || !markArgusAcquired(dmaBuffer, argusBuffer))
                     {
                         camera.iBufferStream->releaseBuffer(argusBuffer);
                         failCamera(domain, &camera, "failed to resolve acquired direct DMABUF");
@@ -1648,7 +1689,7 @@ private:
         const uint64_t acquiredNs = steadyNowNs();
         const bool timingRead =
             camera.iBufferStream ?
-                readFrameTiming(sample->dmaBuffer.get()->getArgusBuffer(), camera.label.c_str(), &sample->timing) :
+                readFrameTiming(argusBufferOf(sample->dmaBuffer.get()), camera.label.c_str(), &sample->timing) :
                 readFrameTiming(sample->frame.get(), camera.label.c_str(), &sample->timing);
         if (!timingRead)
         {
@@ -1657,6 +1698,7 @@ private:
         }
         sample->timing.acquiredSteadyNs = acquiredNs;
         sample->timing.acquiredTscNs = acquiredTscNs;
+        mapCaptureTime(&camera, &sample->timing);
         sample->duplicate = camera.hasLastFrameNumber && sample->timing.frameNumber == camera.lastFrameNumber;
         if (camera.hasLastFrameNumber && sample->timing.frameNumber > camera.lastFrameNumber + 1)
         {

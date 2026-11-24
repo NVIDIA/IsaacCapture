@@ -44,7 +44,7 @@ set(_cf_exclude_patterns
   ".*/node_modules/.*"
   ".*/third_party/.*"
   ".*/venv/.*"
-  ".*/\\.venv/.*"
+  ".*/\\.?venv[^/]*/.*"
   ".*/__pycache__/.*"
 )
 
@@ -54,10 +54,12 @@ foreach(dir IN LISTS _cf_glob_dirs)
     foreach(pat IN LISTS _cf_patterns)
       file(GLOB_RECURSE _found FOLLOW_SYMLINKS ${dir}/${pat})
       foreach(f IN LISTS _found)
-        # Exclude patterns
+        # Match excludes against the path below ${dir}, so directories above
+        # the checkout (e.g. /work/venv-project/) can't exclude every source.
+        file(RELATIVE_PATH _rel "${dir}" "${f}")
         set(_skip FALSE)
         foreach(ex IN LISTS _cf_exclude_patterns)
-          if (f MATCHES ${ex})
+          if ("/${_rel}" MATCHES "${ex}")
             set(_skip TRUE)
           endif()
         endforeach()
@@ -115,9 +117,9 @@ if (CLANG_FORMAT_SOURCES)
     endif()
   else()
     if (ENABLE_CLANG_FORMAT_CHECK)
-      message(FATAL_ERROR "clang-format not found but ENABLE_CLANG_FORMAT_CHECK is ON. Install clang-format (e.g., apt install clang-format).")
+      message(FATAL_ERROR "clang-format-14 not found but ENABLE_CLANG_FORMAT_CHECK is ON. Install it with sudo apt-get install -y clang-format-14, or configure with -DENABLE_CLANG_FORMAT_CHECK=OFF.")
     else()
-      message(STATUS "clang-format not found; skipping clang-format targets. Install clang-format to enable formatting checks.")
+      message(STATUS "clang-format-14 not found; skipping clang-format targets. Install clang-format-14 to enable formatting checks.")
     endif()
   endif()
 else()

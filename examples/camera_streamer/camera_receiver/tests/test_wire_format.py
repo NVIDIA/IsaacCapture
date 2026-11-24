@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 import sys
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
@@ -16,18 +17,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from avs_wire import (  # noqa: E402
     BUNDLE_SENDER_CLOCK_VALID,
     BUNDLE_SENDER_TSC_VALID,
+    BUNDLE_TIMING_EXT,
     CODEC_HEVC,
     CODEC_RAW_NV12,
     HEADER,
     SAMPLE,
     SENSOR_SOF_MAX_LAG_NS,
     STREAM,
+    TIMING,
+    TIMING_DOMAIN_REALTIME,
+    TIMING_VALID,
     Avs1Bundle,
     parse_avs1_record,
     sensor_sof_lag_ns,
     sensor_sof_ns,
 )
 from camera_receiver import (  # noqa: E402
+    Avs1TcpReceiver,
+    ReceivedRecord,
     ReceiveFpsMonitor,
     ReceiveFpsWarningConfig,
     _OUTPUT_NV12,
@@ -51,9 +58,12 @@ def _avs1_record(
     session_id: int = 99,
     stream1_present: bool = True,
     sender_capture_ready_tsc_ns: Optional[int] = None,
+    timing: Optional[list[tuple[int, int, int, int, int, int]]] = None,
 ) -> bytes:
     # flags=None derives CLOCK_VALID plus SENDER_TSC_VALID when a TSC is given;
     # pass flags explicitly to build deliberately inconsistent records.
+    # timing: one (capture_realtime_ns, uncertainty_ns, anchor_age_ns, flags,
+    # clock_domain, reserved) tuple per sample; sets BUNDLE_TIMING_EXT.
     if flags is None:
         flags = BUNDLE_SENDER_CLOCK_VALID
         if sender_capture_ready_tsc_ns is not None:
@@ -156,7 +166,16 @@ def _avs1_record(
             len(wrist),
         ),
     ]
-    descriptor_bytes = len(streams) * STREAM.size + len(samples) * SAMPLE.size
+    timing_records: list[bytes] = []
+    if timing is not None:
+        assert len(timing) == len(samples)
+        flags |= BUNDLE_TIMING_EXT
+        timing_records = [TIMING.pack(*record) for record in timing]
+    descriptor_bytes = (
+        len(streams) * STREAM.size
+        + len(samples) * SAMPLE.size
+        + len(timing_records) * TIMING.size
+    )
     header = HEADER.pack(
         b"AVS1",
         1,
@@ -172,7 +191,26 @@ def _avs1_record(
         len(payload),
         sender_capture_ready_tsc_ns or 0,
     )
-    return header + b"".join(streams) + b"".join(samples) + payload
+    return (
+        header
+        + b"".join(streams)
+        + b"".join(samples)
+        + b"".join(timing_records)
+        + payload
+    )
+
+
+_REALTIME_NS = 1_762_900_000_123_456_789
+_INVALID = (0, 0, 0, 0, 0, 0)
+
+
+def _valid(
+    capture_ns: int = _REALTIME_NS,
+    uncertainty_ns: int = 2_500,
+    anchor_age_ns: int = 400_000_000,
+    domain: int = TIMING_DOMAIN_REALTIME,
+) -> tuple[int, int, int, int, int, int]:
+    return (capture_ns, uncertainty_ns, anchor_age_ns, TIMING_VALID, domain, 0)
 
 
 class Avs1ParserTests(unittest.TestCase):
@@ -439,6 +477,167 @@ class Avs1ParserTests(unittest.TestCase):
         self.assertEqual(layout["planes"][0]["name"], "y")
         self.assertEqual(layout["planes"][1]["name"], "uv")
         self.assertEqual(layout["planes"][1]["offset"], 640 * 480)
+
+
+class Avs1TimingExtensionTests(unittest.TestCase):
+    def _samples(self, **kwargs):
+        bundle = parse_avs1_record(_avs1_record(**kwargs))
+        return bundle, [s for stream in bundle.streams for s in stream.samples]
+
+    def test_valid_realtime_record_parses(self) -> None:
+        bundle, samples = self._samples(
+            timing=[_valid(), _valid(_REALTIME_NS + 10, 3_000, 5), _valid(7, 1, 2)]
+        )
+
+        self.assertTrue(bundle.flags & BUNDLE_TIMING_EXT)
+        self.assertTrue(samples[0].capture_valid)
+        self.assertEqual(samples[0].sensor_capture_realtime_ns, _REALTIME_NS)
+        self.assertEqual(samples[0].capture_uncertainty_ns, 2_500)
+        self.assertEqual(samples[0].capture_anchor_age_ns, 400_000_000)
+        self.assertEqual(samples[1].sensor_capture_realtime_ns, _REALTIME_NS + 10)
+        self.assertEqual(samples[1].capture_uncertainty_ns, 3_000)
+        self.assertEqual(samples[1].capture_anchor_age_ns, 5)
+        self.assertEqual(samples[2].sensor_capture_realtime_ns, 7)
+        # Payload slicing is unaffected by the extra descriptor bytes.
+        self.assertEqual(bytes(samples[0].payload), b"\x00\x00\x00\x01head-left")
+
+    def test_bundle_without_extension_has_no_capture_time(self) -> None:
+        bundle, samples = self._samples()
+
+        self.assertFalse(bundle.flags & BUNDLE_TIMING_EXT)
+        for sample in samples:
+            self.assertIsNone(sample.sensor_capture_realtime_ns)
+            self.assertIsNone(sample.capture_uncertainty_ns)
+            self.assertIsNone(sample.capture_anchor_age_ns)
+            self.assertFalse(sample.capture_valid)
+
+    def test_all_zero_invalid_records_parse(self) -> None:
+        _, samples = self._samples(timing=[_INVALID] * 3)
+
+        for sample in samples:
+            self.assertIsNone(sample.sensor_capture_realtime_ns)
+            self.assertIsNone(sample.capture_uncertainty_ns)
+            self.assertIsNone(sample.capture_anchor_age_ns)
+            self.assertFalse(sample.capture_valid)
+
+    def test_mixed_valid_and_invalid_records(self) -> None:
+        _, samples = self._samples(timing=[_valid(), _INVALID, _valid(99, 4, 6)])
+
+        self.assertTrue(samples[0].capture_valid)
+        self.assertEqual(samples[0].sensor_capture_realtime_ns, _REALTIME_NS)
+        self.assertFalse(samples[1].capture_valid)
+        self.assertIsNone(samples[1].sensor_capture_realtime_ns)
+        self.assertTrue(samples[2].capture_valid)
+        self.assertEqual(samples[2].sensor_capture_realtime_ns, 99)
+        self.assertEqual(samples[2].capture_uncertainty_ns, 4)
+        self.assertEqual(samples[2].capture_anchor_age_ns, 6)
+
+    def test_valid_record_in_other_domains_is_rejected(self) -> None:
+        for domain in (0, 1, 3, 0xFFFF):
+            with self.subTest(domain=domain):
+                with self.assertRaisesRegex(
+                    ValueError, "valid timing record has no realtime capture time"
+                ):
+                    parse_avs1_record(
+                        _avs1_record(timing=[_valid(domain=domain), _INVALID, _INVALID])
+                    )
+
+    def test_valid_record_with_zero_capture_is_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError, "valid timing record has no realtime capture time"
+        ):
+            parse_avs1_record(_avs1_record(timing=[_valid(0), _INVALID, _INVALID]))
+
+    def test_invalid_record_with_values_is_rejected(self) -> None:
+        for record in (
+            (1, 0, 0, 0, 0, 0),
+            (0, 1, 0, 0, 0, 0),
+            (0, 0, 1, 0, 0, 0),
+            (0, 0, 0, 0, TIMING_DOMAIN_REALTIME, 0),
+        ):
+            with self.subTest(record=record):
+                with self.assertRaisesRegex(
+                    ValueError, "invalid timing record carries values"
+                ):
+                    parse_avs1_record(_avs1_record(timing=[record, _INVALID, _INVALID]))
+
+    def test_valid_record_for_absent_sample_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "valid for an absent sample"):
+            parse_avs1_record(
+                _avs1_record(
+                    stream1_present=False, timing=[_INVALID, _INVALID, _valid()]
+                )
+            )
+
+    def test_absent_sample_with_invalid_record_parses(self) -> None:
+        _, samples = self._samples(
+            stream1_present=False, timing=[_valid(), _valid(), _INVALID]
+        )
+
+        self.assertFalse(samples[2].capture_valid)
+
+    def test_reserved_and_extra_flag_bits_are_rejected(self) -> None:
+        for record in (
+            (_REALTIME_NS, 1, 1, TIMING_VALID, TIMING_DOMAIN_REALTIME, 1),
+            (_REALTIME_NS, 1, 1, TIMING_VALID | 0x0002, TIMING_DOMAIN_REALTIME, 0),
+            (_REALTIME_NS, 1, 1, TIMING_VALID | 0x8000, TIMING_DOMAIN_REALTIME, 0),
+            (0, 0, 0, 0x0002, 0, 0),
+            (0, 0, 0, 0, 0, 1),
+        ):
+            with self.subTest(record=record):
+                with self.assertRaisesRegex(ValueError, "reserved bits set"):
+                    parse_avs1_record(_avs1_record(timing=[record, _INVALID, _INVALID]))
+
+    def test_descriptor_count_must_include_timing_records(self) -> None:
+        record = bytearray(_avs1_record(timing=[_INVALID] * 3))
+        fields = list(HEADER.unpack_from(record))
+        fields[10] -= 3 * TIMING.size
+        fields[11] += 3 * TIMING.size
+        HEADER.pack_into(record, 0, *fields)
+        with self.assertRaises(ValueError):
+            parse_avs1_record(record)
+
+    def _metadata(self, record: bytes) -> dict[str, object]:
+        bundle = parse_avs1_record(record)
+        stream = bundle.streams[0]
+        runtime = SimpleNamespace(
+            config=SimpleNamespace(name="head", output_format="nv12")
+        )
+        received = ReceivedRecord(b"", 1, 2, 3, 4, "realtime")
+        return Avs1TcpReceiver._frame_metadata(
+            None,
+            bundle,
+            stream,
+            stream.samples[0],
+            runtime,
+            received,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            {},
+        )
+
+    def test_frame_metadata_for_valid_sample(self) -> None:
+        metadata = self._metadata(_avs1_record(timing=[_valid(), _INVALID, _INVALID]))
+
+        self.assertEqual(metadata["sensor_capture_realtime_ns"], _REALTIME_NS)
+        self.assertEqual(metadata["sensor_capture_uncertainty_ns"], 2_500)
+        self.assertEqual(metadata["sensor_anchor_age_ns"], 400_000_000)
+        self.assertIs(metadata["sensor_capture_valid"], True)
+
+    def test_frame_metadata_for_invalid_or_absent_record(self) -> None:
+        for record in (
+            _avs1_record(timing=[_INVALID, _valid(), _INVALID]),
+            _avs1_record(),
+        ):
+            metadata = self._metadata(record)
+            self.assertIsNone(metadata["sensor_capture_realtime_ns"])
+            self.assertIsNone(metadata["sensor_capture_uncertainty_ns"])
+            self.assertIsNone(metadata["sensor_anchor_age_ns"])
+            self.assertIs(metadata["sensor_capture_valid"], False)
 
 
 if __name__ == "__main__":

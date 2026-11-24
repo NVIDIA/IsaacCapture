@@ -136,7 +136,8 @@ public:
             {
                 for (uint32_t i = 0; i < kProcessorBuffers; ++i)
                 {
-                    DmaBuffer* buffer = DmaBuffer::create(size, NVBUF_COLOR_FORMAT_NV12, NVBUF_LAYOUT_PITCH);
+                    DmaBuffer* buffer =
+                        DmaBuffer::create(size.width(), size.height(), NVBUF_COLOR_FORMAT_NV12, NVBUF_LAYOUT_PITCH);
                     if (!buffer)
                     {
                         std::fprintf(stderr, "Failed to allocate %s processing DMABUF %u\n", state.label.c_str(), i);
@@ -308,7 +309,7 @@ public:
                 if (!state.encoder->queueInput(v4l2Buffer, input, m_bundleSequence))
                 {
                     state.freeIndices.push_front(index);
-                    if (input && !input->releaseToArgus())
+                    if (input && !input->releaseToOwner())
                     {
                         std::fprintf(stderr, "Failed to return %s direct input after encoder queue failure\n",
                                      state.label.c_str());
@@ -346,7 +347,7 @@ public:
             }
             else if (state.pendingInput)
             {
-                if (!state.pendingInput->releaseToArgus())
+                if (!state.pendingInput->releaseToOwner())
                     ok = false;
                 state.pendingInput = NULL;
             }
@@ -437,7 +438,7 @@ private:
             CameraState& state = m_cameras[camera];
             if (state.pendingInput)
             {
-                if (!state.pendingInput->releaseToArgus())
+                if (!state.pendingInput->releaseToOwner())
                 {
                     std::fprintf(stderr, "Failed to release pending %s direct input to Argus\n", state.label.c_str());
                 }
@@ -458,7 +459,7 @@ private:
             return false;
         if (completed.index >= kEncoderOutputPlaneBuffers || !buffer)
             return false;
-        if (buffer->isArgusBound() && !buffer->releaseToArgus())
+        if (buffer->hasOwner() && !buffer->releaseToOwner())
         {
             std::fprintf(stderr, "Failed to release encoded direct DMABUF to Argus\n");
             // The encoder slot is still dequeued even if returning the backing

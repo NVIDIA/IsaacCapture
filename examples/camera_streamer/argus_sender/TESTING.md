@@ -19,8 +19,8 @@ ctest --test-dir build --output-on-failure
 The default suite does not open a camera. It covers YAML capture-mode parsing and validation,
 output geometry, mixed-rate scheduling, capture-priority selection and release
 timing, stereo alignment policy, AVS1 serialization/parsing, asynchronous bundle
-assembly and ordering, plus TCP send/dump/disconnect and bounded stalled-receiver
-drain behavior.
+assembly and ordering, encoder input-slot lease release, plus TCP
+send/dump/disconnect and bounded stalled-receiver drain behavior.
 
 The matching receiver parser tests run from `camera_receiver/`:
 
@@ -33,6 +33,13 @@ The deployment snapshot/restore checks run from `argus_sender/`:
 ```bash
 python3 -m pytest tests/test_deployment.py -q
 ```
+
+## Cross-compiling on a PC
+
+`cross_build.sh syntax` type-checks every sender source against the Orin's headers, and `cross_build.sh build`
+produces an aarch64 `argus_sender` that is linked but not run. Both use the sysroot and Arm toolchain from
+`ORIN_CROSS_ROOT`; the script header says what the sysroot must contain. Tests that include Argus headers compile
+this way but run only on the Orin.
 
 ## 120-frame hardware smoke test
 
