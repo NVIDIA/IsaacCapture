@@ -52,12 +52,14 @@ def test_publisher_token_is_a_verifiable_hs256_jwt():
     assert claims["video"]["canPublish"] is True
 
 
-def test_generated_configs_parse_and_carry_parameters():
+def test_generated_configs_parse_and_carry_parameters(tmp_path):
     streams = yaml.safe_load(ss.streams_yaml("ws://h:1", "r", "p", "trk", 640, 480, 30, "b", "head"))
     stream = streams["livekit"]["streams"][0]
     assert (stream["track"], stream["width"], stream["height"]) == ("trk", 640, 480)
 
-    receiver = yaml.safe_load(ss.receiver_yaml("h", 5555, "/tmp/s.sock", 640, 480, "head"))
+    socket_path = str(tmp_path / "s.sock")
+    receiver = yaml.safe_load(ss.receiver_yaml("h", 5555, socket_path, 640, 480, "head"))
+    assert receiver["ipc"]["socket_path"] == socket_path
     assert receiver["receiver"]["port"] == 5555
     assert (receiver["streams"][0]["width"], receiver["streams"][0]["height"]) == (640, 480)
 

@@ -926,9 +926,10 @@ def test_print_hosted_client_line_hides_credentials() -> None:
 
 
 def test_oob_replay_recording_from_env(
-    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch
+    clear_teleop_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """Unset means no recording; a set value is returned stripped."""
     assert oob_replay_recording_from_env() == ""
-    monkeypatch.setenv("TELEOP_OOB_RECORDING", "  /tmp/take-7.json  ")
-    assert oob_replay_recording_from_env() == "/tmp/take-7.json"
+    recording_path = str(tmp_path / "take-7.json")
+    monkeypatch.setenv("TELEOP_OOB_RECORDING", f"  {recording_path}  ")
+    assert oob_replay_recording_from_env() == recording_path

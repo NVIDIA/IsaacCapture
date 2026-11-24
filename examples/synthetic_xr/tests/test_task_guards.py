@@ -51,6 +51,11 @@ def feedback(step):
 
 
 class MotionGuards(unittest.TestCase):
+    def setUp(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
     def test_invalid_endpoint_or_trigger_has_no_input_side_effects(self):
         for point, rotation, trigger in (
             ([1.6, 0, 0.2], np.eye(3), None),
@@ -91,7 +96,9 @@ class MotionGuards(unittest.TestCase):
         value.client.state.return_value = feedback(10)
         real_target = value.target_base
         value.target_base = lambda p, r, t: real_target(p, r, t, wait_receipt=False)
-        session = FrankaTaskSession(observation_dir="/tmp/observer", output="/tmp/task")
+        session = FrankaTaskSession(
+            observation_dir=self.root / "observer", output=self.root / "task"
+        )
         session.controller = value
         # This tool target maps outside the hand workspace after its offset.
         with patch(BRIDGE + ".wait_steps"), self.assertRaises(ValueError):
@@ -99,18 +106,22 @@ class MotionGuards(unittest.TestCase):
         value.client.command.assert_not_called()
 
     def test_position_alone_cannot_claim_pose_convergence(self):
-        session = FrankaTaskSession(observation_dir="/tmp/observer", output="/tmp/task")
+        session = FrankaTaskSession(
+            observation_dir=self.root / "observer", output=self.root / "task"
+        )
         session.controller = bridge()
         session.controller.move_world = Mock()
-        session.state = Mock(return_value=observation(Path("/tmp/observer")))
+        session.state = Mock(return_value=observation(self.root / "observer"))
         with self.assertRaisesRegex(RuntimeError, "converge"):
             session.move_tool([0.4, 0, 0.2], [1, 0, 0, 0])
 
     def test_orientation_only_move_waits_and_quaternion_sign_is_equivalent(self):
-        session = FrankaTaskSession(observation_dir="/tmp/observer", output="/tmp/task")
+        session = FrankaTaskSession(
+            observation_dir=self.root / "observer", output=self.root / "task"
+        )
         session.controller = bridge()
         session.controller.move_world = Mock()
-        wrong = observation(Path("/tmp/observer"))
+        wrong = observation(self.root / "observer")
         correct = copy.deepcopy(wrong)
         correct["ee_quaternions_world"] = [[[-1, 0, 0, 0]]]
         session.state = Mock(side_effect=[wrong, correct])
@@ -125,7 +136,7 @@ class MotionGuards(unittest.TestCase):
             ("exported_successful_episodes", 0.5),
         ):
             with self.subTest(name=name):
-                value = observation(Path("/tmp/observer"))
+                value = observation(self.root / "observer")
                 value[name] = invalid
                 with self.assertRaises(ValueError):
                     validate_observation(value)

@@ -46,11 +46,13 @@ def test_numbers_survive_as_strings():
     assert env["NV_MAX_FPS"] == "72"
 
 
-def test_a_launcher_computed_key_is_refused():
+def test_a_launcher_computed_key_is_refused(tmp_path):
     """The launcher ignores these with a UserWarning buried in the output;
     refusing here names the YAML key instead."""
     with pytest.raises(ValueError, match="computed by the CloudXR launcher"):
-        cloudxr_env.env_from_yaml({"cloudxr": {"XR_RUNTIME_JSON": "/tmp/x.json"}})
+        cloudxr_env.env_from_yaml(
+            {"cloudxr": {"XR_RUNTIME_JSON": str(tmp_path / "x.json")}}
+        )
 
 
 def test_a_non_mapping_block_is_refused():

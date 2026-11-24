@@ -59,6 +59,11 @@ def observation(root):
 
 
 class TaskTests(unittest.TestCase):
+    def setUp(self):
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+
     def test_observer_help_needs_no_lab_or_output(self):
         result = subprocess.run(
             [
@@ -147,13 +152,13 @@ class TaskTests(unittest.TestCase):
 
     def test_invalid_feedback_shape_and_nan_rejected(self):
         for bad in ([[[1, 2]]], [[[1, 2, float("nan")]]]):
-            value = observation(Path("/tmp/observer"))
+            value = observation(self.root / "observer")
             value["ee_positions_world"] = bad
             with self.assertRaises(ValueError):
                 validate_observation(value)
 
     def test_native_tool_and_finger_frames_are_accepted(self):
-        value = observation(Path("/tmp/observer"))
+        value = observation(self.root / "observer")
         value["ee_positions_world"] = [
             [[0.4, 0, 0.2], [0.4, 0.04, 0.2], [0.4, -0.04, 0.2]]
         ]
@@ -270,7 +275,9 @@ class TaskTests(unittest.TestCase):
             )
 
     def test_invalid_tool_and_gripper_inputs_never_send_motion(self):
-        session = FrankaTaskSession(observation_dir="/tmp/observer", output="/tmp/task")
+        session = FrankaTaskSession(
+            observation_dir=self.root / "observer", output=self.root / "task"
+        )
         session.controller = Mock()
         for point, quat in (
             ([0, 0], [0, 0, 0, 1]),
@@ -338,7 +345,9 @@ class TaskTests(unittest.TestCase):
             self.assertFalse((root / "stop").exists())
 
     def test_unbounded_timeouts_rejected_before_io(self):
-        session = FrankaTaskSession(observation_dir="/tmp/observer", output="/tmp/task")
+        session = FrankaTaskSession(
+            observation_dir=self.root / "observer", output=self.root / "task"
+        )
         for timeout in (-1, 0, float("nan"), float("inf"), 301):
             with self.subTest(timeout=timeout):
                 with self.assertRaises(ValueError):

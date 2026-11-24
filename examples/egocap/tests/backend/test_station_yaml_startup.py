@@ -110,15 +110,13 @@ def test_unconfigured_station_preserves_existing_development_default(monkeypatch
         assert reason != "station configuration is invalid; see backend logs"
 
 
-async def test_a_committed_operator_in_context_still_requires_the_browsers_own_operator_token():
+async def test_a_committed_operator_in_context_still_requires_the_browsers_own_operator_token(tmp_path):
     """Whatever operator value is already committed in TaskContext (seeded or otherwise), the
     existing attribution/authorization gate in RecordingContext.apply() is untouched -- a command
     with no operator_token is still rejected, exactly as it is without a station configured."""
 
     def factory() -> ServiceConfig:
-        return ServiceConfig(
-            output_root=Path("/tmp/does-not-matter"), numeric_sources=(NUMERIC,), video_sources=()
-        )
+        return ServiceConfig(output_root=tmp_path, numeric_sources=(NUMERIC,), video_sources=())
 
     coordinator = RecordingSessionCoordinator(
         factory,
