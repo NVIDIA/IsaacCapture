@@ -16,7 +16,7 @@ as its own separately installable package.
 The server runs in one of two modes, chosen once at setup and never by a client:
 
 - **Mock** (`--mock`, or `ServerConfig(mock=True)`, the library default): synthetic
-  motion and camera frames, no hardware. Needs no `ISAAC_ROOT`, IsaacCapture,
+  motion and camera frames, no hardware. Needs no IsaacCapture SDK,
   CloudXR, ADB or DepthAI.
 - **Real** (no `--mock`, or `ServerConfig(mock=False)`): IsaacCapture tracking and
   OAK-D camera frames. It never falls back to mock data; a missing SDK, runtime or
@@ -33,27 +33,34 @@ uv run pytest tests/capture_server -q
 uv run capture-server --mock
 ```
 
-No `ISAAC_ROOT` or external checkout is needed to
-install, run, or test this package in mock mode.
+No IsaacCapture SDK is needed to install, run, or test this package in mock mode.
 
 ## Setup (real)
 
-Real tracking needs a built IsaacCapture checkout; camera-only sessions need none
-(`ISAAC_ROOT` is read only when a session requests tracking).
+Real tracking needs the built `isaaccapture` wheel in this package's Python 3.12 environment; camera-only
+sessions need none (the SDK is imported only when a session requests tracking).
 
-**IsaacCapture.** Export `ISAAC_ROOT` as the root of the IsaacCapture checkout this example lives
-in, once its Python bindings are built. The server imports `isaaccapture` only from
-`$ISAAC_ROOT/build/python_package/Release` and refuses a package loaded from anywhere else; it
-never uses a bundled copy. Validated with `isaaccapture` 1.7+local (built from IsaacCapture commit
-`22026461c`), which also provides CloudXR runtime 6.3.0 and needs the project's Python 3.12.
+**IsaacCapture.** Build the wheel from this repository. Sync the environment first (add `--extra oak` for OAK-D
+cameras, below), then install the wheel into that environment's interpreter:
+
+```sh
+cd egocap
+uv sync --extra oak
+uv pip install --python .venv/bin/python /path/to/IsaacCapture/build/wheels/isaaccapture-*-cp312-*.whl
+```
+
+`isaaccapture` is not a declared dependency, so a later plain `uv sync` removes it; re-sync with
+`uv sync --inexact` (or install the wheel again) afterwards.
+
+The server imports whatever `isaaccapture` that environment provides, and a missing or unloadable one fails
+the session with the import error. Validated with `isaaccapture` 1.7+local, which also provides CloudXR
+runtime 6.3.0.
 
 **CloudXR runtime.** Start the CloudXR service first, using the same build and the
 project's Python, so an unrelated globally installed SDK is not launched:
 
 ```sh
-export ISAAC_ROOT="/path/to/your/IsaacCapture/checkout"
-PYTHONPATH="$ISAAC_ROOT/build/python_package/Release" \
-    uv run python -m isaaccapture.cloudxr.service start --setup-oob --usb-local
+uv run python -m isaaccapture.cloudxr.service start --setup-oob --usb-local
 ```
 
 `--usb-local` routes headset traffic over the USB cable (needs `adb` and `coturn`),
@@ -65,12 +72,11 @@ reports an error instead of starting one itself; the one exception is a race, wh
 SDK launcher it attaches through could start a detached service if the service exits
 between our liveness check and the attach.
 
-**OAK-D cameras.** Install the optional extra (DepthAI 3.6.1) and name each camera by
-its stable device ID (the OAK-D's MXID, e.g. from `dai.Device.getAllAvailableDevices()`):
+**OAK-D cameras.** The optional `oak` extra (DepthAI 3.6.1) is installed by the `uv sync --extra oak` above. Name
+each camera by its stable device ID (the OAK-D's MXID, e.g. from `dai.Device.getAllAvailableDevices()`):
 
 ```sh
-uv sync --extra oak
-ISAAC_ROOT="/path/to/your/IsaacCapture/checkout" uv run capture-server \
+uv run capture-server \
     --camera 'front=YOUR_DEVICE_ID' --camera-usb-speed HIGH
 ```
 
@@ -665,7 +671,7 @@ The application chooses source nodes and connects their outputs into an OutputCo
 
 Choosing HandsSource does not select Manus. The native hand implementation enumerates XDev candidates, tries non-display devices before display-device candidates, and retains default session hand trackers as a final fallback. At each update it selects the first active successful candidate independently per hand. Neither HandsSource's HandInput nor the current tracking payload contains a device/provider identity. A valid hand can therefore be an OpenXR headset hand when no Manus hand is active.
 
-Manus is configured separately as a plugin. The server maps a Manus plugin request to IC PluginConfig (`plugin_name` is the manifest name `manus_hand_plugin`, matched exactly by the IC plugin manager; the search path is the package's bundled plugins plus `$ISAAC_ROOT/install/plugins`, where IC's `cmake --install --component manus` places the plugin) and launches its human dataset. The plugin injects 26-joint hands into OpenXR. Its manifest declares left/right hand devices; its status publisher reports their actual hardware/data state. This protocol supports the human dataset only; it does not expose raw flex sensors, haptics or calibration commands.
+Manus is configured separately as a plugin. The server maps a Manus plugin request to IC PluginConfig (`plugin_name` is the manifest name `manus_hand_plugin`, matched exactly by the IC plugin manager; the search path is the package's bundled plugins plus `install/plugins` of the source checkout, where IC's `cmake --install --component manus` places the plugin) and launches its human dataset. The plugin injects 26-joint hands into OpenXR. Its manifest declares left/right hand devices; its status publisher reports their actual hardware/data state. This protocol supports the human dataset only; it does not expose raw flex sensors, haptics or calibration commands.
 
 IC PluginConfig.required means discovery of the plugin is required. It does not mean both physical gloves must be connected before session entry returns. A missing required plugin or source initialization error can raise during startup. A running plugin with missing gloves can coexist with a successfully entered session. No automatic switch from a requested plugin to another plugin is promised.
 

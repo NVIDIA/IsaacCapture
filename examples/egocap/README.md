@@ -86,28 +86,26 @@ reference.
 (which owns the recorder), the camera receiver and the bridge, and stops them all on Ctrl-C:
 
 ```bash
-uv run python tools/start_system.py --orin user@orin --deploy-script PATH --livekit-server PATH --bridge PATH --open
+uv run python tools/start_system.py --orin user@192.0.2.10 --livekit-server PATH --bridge PATH --open
 ```
 
-It prints the page URL and the recording control token. CaptureServer runs real acquisition, which needs a built
-IsaacCapture checkout (`ISAAC_ROOT`) and tracking hardware, and it opens only the cameras it is given with
+It prints the page URL and the recording control token. CaptureServer runs real acquisition, which needs the `isaaccapture` wheel
+installed in this environment (see the CaptureServer README) and tracking hardware, and it opens only the cameras it is given with
 `--capture-camera NAME=DEVICE_ID`. The default station file (`--station-config`) is the shipped example, which
 requests three cameras, so the launcher refuses to start unless each one is given; use a station file whose
 `video_sources` name no CaptureServer cameras when the video comes from the Orin through LiveKit.
 
 `--mock` runs without hardware: CaptureServer gives synthetic tracking and cameras, and a local mock sender replaces
-the Orin, so nothing real is started and `--orin` is refused. The mock sender is `camera_streamer`'s `mock_sender.py`.
-It is not in this tree (it is added by the camera_streamer mock-sender change, PR #1476), so give its path with
-`--mock-sender` or `EGOCAP_MOCK_SENDER`; it needs `ffmpeg` with `libx265`. With `--bridge`, `--livekit-server` and the
+the Orin, so nothing real is started and `--orin` is refused. The mock sender is `camera_streamer`'s `mock_sender.py`
+(`--mock-sender` overrides the path); it needs `ffmpeg` with `libx265`. With `--bridge`, `--livekit-server` and the
 mock sender the mock video goes through the same receiver, bridge and page, with the frame-ready time as its
 timestamp because the mock sender has no clock to measure. A recording made in this mode is synthetic data.
 
 Without `--orin` or `--mock` only the PC side starts. `--skip-deploy` reuses the previous release. The sender runs
 for `--seconds` (default one hour) and the launcher stops the whole stack when it ends, so a take in progress is
-cut off; the launcher prints the stop time at startup. The sender release the profile describes, its deploy tool, the
-timesync tool, the LiveKit server and the bridge are not in this tree's base, so pass their paths (or set
-`EGOCAP_DEPLOY_SCRIPT`, `EGOCAP_TIMESYNC_TOOL`, `EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`); `--orin` needs the timesync
-tool and refuses to start without it. `--orin` also needs an IPv4 address, because the bridge finds the sender's chrony
+cut off; the launcher prints the stop time at startup. The deploy tool and the timesync tool are found in this repository (`--deploy-script` and
+`--timesync-tool` override them). The LiveKit server and the bridge are built separately, so pass their paths (or set
+`EGOCAP_LIVEKIT_SERVER`, `EGOCAP_BRIDGE`). `--orin` also needs an IPv4 address, because the bridge finds the sender's chrony
 by it. After the bridge starts, the launcher runs time sync through `src/core/timesync/tools/timesync_tool.py` (see that
 module's README): `ensure-local` (which may install chrony on this PC), an unprivileged chronyd on this PC that measures
 the Orin's clock, and `configure-remote` on the Orin; each step has a timeout. These steps run before the page address
@@ -138,9 +136,8 @@ recording admission, recovery and shutdown); until then it is the supported way 
 
 ## Real hardware
 
-CaptureServer's real mode needs its own Python bindings built in an
-[IsaacCapture](https://github.com/NVIDIA/IsaacCapture) checkout (`ISAAC_ROOT`, the checkout root)
-for tracking, and the `oak` extra plus a camera's device ID for OAK-D cameras. See
+CaptureServer's real mode needs the built `isaaccapture` wheel from this repository installed in its
+environment for tracking, and the `oak` extra plus a camera's device ID for OAK-D cameras. See
 [`capture_server/README.md`](capture_server/README.md) for exact setup and validated hardware.
 The backend and frontends are unchanged between mock and real mode — CaptureServer is the only
 process that differs.

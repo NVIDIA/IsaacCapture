@@ -80,16 +80,6 @@ def test_control_token_found_or_absent(tmp_path: Path):
     assert ss.control_token(log) is None
 
 
-def test_main_requires_deploy_script_with_orin(monkeypatch, capsys, tmp_path: Path):
-    monkeypatch.delenv("EGOCAP_DEPLOY_SCRIPT", raising=False)
-    # signal.signal is stubbed so main()'s SIGTERM handler is never installed in the test process.
-    installed: list[tuple] = []
-    monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
-    monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
-    assert ss.main(["--orin", "x@y"]) == 1
-    assert "--deploy-script" in capsys.readouterr().err
-
-
 def test_main_rejects_a_hostname_orin(monkeypatch, capsys, tmp_path: Path):
     installed: list[tuple] = []
     monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
@@ -460,7 +450,6 @@ def test_bridge_timing_arguments_for_mock_and_real_sender():
 
 
 def test_main_refuses_orin_together_with_mock(monkeypatch, capsys, tmp_path: Path):
-    monkeypatch.delenv("EGOCAP_DEPLOY_SCRIPT", raising=False)
     installed: list[tuple] = []
     monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
@@ -476,12 +465,16 @@ def test_main_refuses_a_missing_mock_sender(monkeypatch, capsys, tmp_path: Path)
     monkeypatch.setattr(signal, "signal", lambda *args: installed.append(args))
     monkeypatch.setattr(ss.tempfile, "mkdtemp", lambda **_: str(tmp_path))
     monkeypatch.setattr(ss.Stack, "start", fail_start)
-    monkeypatch.delenv("EGOCAP_MOCK_SENDER", raising=False)
     argv = ["--mock", "--bridge", "b", "--livekit-server", "l", "--mock-sender", str(tmp_path / "missing.py")]
     assert ss.main(argv) == 1
-    assert "--mock-sender" in capsys.readouterr().err
-    assert ss.main(["--mock", "--bridge", "b", "--livekit-server", "l"]) == 1
-    assert "--mock-sender" in capsys.readouterr().err
+    assert "the mock sender" in capsys.readouterr().err
+
+
+def test_default_tool_paths_are_tracked_repo_files():
+    args = ss.parse_args([])
+    assert args.deploy_script == ss.DEPLOY_SCRIPT and args.deploy_script.is_file()
+    assert args.mock_sender == ss.MOCK_SENDER and args.mock_sender.is_file()
+    assert args.timesync_tool == ss.TIMESYNC_TOOL and args.timesync_tool.is_file()
 
 
 def test_main_refuses_a_station_that_requests_cameras_not_given(monkeypatch, capsys, tmp_path: Path):
@@ -547,6 +540,15 @@ def _command(recorded, name: str) -> str:
     return " ".join(next(c.command for c in recorded.children if c.name == name))
 
 
+def test_sender_verbose_is_passed_to_the_deploy_run_only_when_asked(recorded_main):
+    argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    assert ss.main([*argv, *CAMERA_ARGS]) == 0
+    assert "--verbose" not in _command(recorded_main, "sender")
+    recorded_main.children.clear()
+    assert ss.main([*argv, *CAMERA_ARGS, "--sender-verbose"]) == 0
+    assert "--verbose" in _command(recorded_main, "sender").split()
+
+
 def test_main_starts_the_orin_chain_in_order(recorded_main):
     argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
     assert ss.main([*argv, *CAMERA_ARGS, "--bridge-bitrate-mbps", "50", "--bridge-scale-div", "1"]) == 0
@@ -569,7 +571,25 @@ def test_main_starts_the_orin_chain_in_order(recorded_main):
     assert "--config" in _command(recorded_main, "receiver")
     release_deploys = [d for d in recorded_main.deploys if "--with-sipl" in d]
     assert len(release_deploys) == 1
-    assert release_deploys[0][1:3] == ["x", "user@192.0.2.10"]
+    assert [str(release_deploys[0][1]), release_deploys[0][2]] == ["x", "user@192.0.2.10"]
+
+
+def test_mock_tracking_mocks_only_the_capture_server(recorded_main):
+    argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    assert ss.main([*argv, *CAMERA_ARGS, "--mock-tracking"]) == 0
+    assert [c.name for c in recorded_main.children] == [
+        "sender",
+        "livekit",
+        "capture-server",
+        "backend",
+        "receiver",
+        "bridge",
+        "timesync-follower",
+    ]
+    assert "--mock" in _command(recorded_main, "capture-server").split()
+    assert "--timestamp-basis capture_monotonic_us" in _command(recorded_main, "bridge")
+    declared = yaml.safe_load((recorded_main.workdir / "streams.yaml").read_text())["livekit"]
+    assert declared["timestamp_basis"] == "capture_monotonic_us"
 
 
 def test_bridge_nvenc_preset_defaults_to_4_and_follows_the_flag(recorded_main):
@@ -769,8 +789,8 @@ def test_every_deploy_command_the_launcher_issues_is_accepted_by_the_real_deploy
         if name.startswith("cmd_"):
             monkeypatch.setattr(tool, name, lambda *a, _name=name, **k: dispatched.append(_name))
     assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
-    issued = [d[2:] for d in recorded_main.deploys if d[1] == "x"]
-    issued += [c.command[2:] for c in recorded_main.children if c.command[1] == "x"]
+    issued = [d[2:] for d in recorded_main.deploys if str(d[1]) == "x"]
+    issued += [c.command[2:] for c in recorded_main.children if str(c.command[1]) == "x"]
     assert any(command[1] == "stop-daemon" for command in issued)
     for command in issued:
         # `target command ...` is exactly how the launcher calls the tool; the real parser must accept it.
@@ -794,6 +814,10 @@ def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
     colour = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
     assert (colour["full_range"], colour["color_matrix"]) == (False, "bt601")
     assert recorded_main.deploys == []
+    for child in recorded_main.children:
+        assert "ISAAC_ROOT" not in (child.env or {})
+    pythonpath = recorded_main.children[2].env["PYTHONPATH"]
+    assert "manus_calibration" not in pythonpath
 
 
 ORIN_ARGV = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
@@ -923,7 +947,6 @@ def test_default_profile_declares_no_sender_clock_responder():
 
 
 def test_parse_args_timesync_defaults(monkeypatch):
-    monkeypatch.delenv("EGOCAP_TIMESYNC_TOOL", raising=False)
     args = ss.parse_args([])
     assert args.chrony_cmd_port == 12301
     assert args.chrony_wait == 120.0
@@ -1138,3 +1161,20 @@ def test_run_supervised_kills_the_helper_when_a_required_child_exits(monkeypatch
     with pytest.raises(ss.StartupError, match="bridge exited with 1"):
         ss.run_supervised(stack, ["sleep", "30"])
     assert helpers[0].poll() is not None
+
+
+def test_default_profile_platform_file_ships_with_the_sender_and_defines_the_platform():
+    sipl = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)["sipl"]
+    sender_dir = Path(__file__).resolve().parents[4] / "examples" / "camera_streamer" / "argus_sender"
+    # The release's src/ is the sender directory, and the sender runs from the release root.
+    relative = Path(sipl["platform_config_json"])
+    assert relative.parts[0] == "src"
+    platform_file = sender_dir.joinpath(*relative.parts[1:])
+    assert platform_file.is_file()
+    stock = Path(__file__).resolve().parents[4] / "src" / "plugins" / "sensing" / "configs" / "shw5g.json"
+    assert platform_file.read_bytes() == stock.read_bytes()
+    entries = {entry["name"]: entry for entry in json.loads(platform_file.read_text())["cameraConfigs"]}
+    modules = entries[sipl["platform_config_name"]]["cameraModules"]
+    assert modules
+    for module in modules:
+        assert module["name"] in entries

@@ -114,6 +114,21 @@ def test_mock_setup_needs_no_isaac_root_and_loads_no_hardware_sdk():
     assert result.returncode == 0 and "OK" in result.stdout, result.stderr
 
 
+def test_load_isaac_capture_without_the_installed_package_is_unavailable_whatever_isaac_root_says(monkeypatch):
+    """The SDK is the installed package: an unimportable one is reported, and ISAAC_ROOT is never consulted."""
+    from capture_server.acquisition import isaac_sdk
+
+    def cannot_import(name, *_):
+        raise ImportError(f"No module named {name!r}")
+
+    monkeypatch.setattr(isaac_sdk, "_loaded", None)
+    monkeypatch.delenv("ISAAC_ROOT", raising=False)
+    monkeypatch.setattr(isaac_sdk.importlib, "import_module", cannot_import)
+
+    with pytest.raises(isaac_sdk.IsaacCaptureUnavailable, match="install the built IsaacCapture wheel"):
+        isaac_sdk.load_isaac_capture()
+
+
 def test_real_setup_never_loads_the_mock_sdk_files():
     """Choosing real acquisition does not import the mock SDKs, so mock data cannot be reached by accident."""
     result = _run_isolated(

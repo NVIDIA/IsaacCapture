@@ -10,7 +10,7 @@ mock classes or silently fall back to generated values. Real setup never
 falls back to the mock, and each side's SDK imports happen only on its own
 path: the mock SDK files are imported inside :func:`build_mock_source_factory`,
 so real setup never loads them, and mock setup never loads a hardware SDK
-or reads ``ISAAC_ROOT``.
+or imports it.
 
 Everything downstream of :func:`build_mock_source_factory` -- the
 :class:`~capture_server.acquisition.acquisition.Acquisition` it returns,
@@ -205,7 +205,7 @@ def _open_pipeline(dai: ModuleType, device_id: str, max_usb_speed: str | None) -
 
 
 def build_real_source_factory(config: ServerConfig) -> SourceFactory:
-    """The real-acquisition source factory: IsaacCapture tracking from ``$ISAAC_ROOT``.
+    """The real-acquisition source factory: IsaacCapture tracking from the installed ``isaaccapture`` package.
 
     The SDK is resolved when a session first asks for tracking, so a camera-only session needs no
     IsaacCapture; a resolution failure rejects that Begin with the reason. Each requested camera is a real

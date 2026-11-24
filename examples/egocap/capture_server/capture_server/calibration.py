@@ -33,6 +33,7 @@ from isaaccapture_manus_calibration.worker import (
 )
 
 from . import protocol as p
+from .acquisition.isaac_sdk import source_checkout_root
 
 logger = logging.getLogger("isaaccapture.capture_server.calibration")
 
@@ -68,15 +69,15 @@ class CalibrationConfig:
 
 
 def find_worker(override: str | os.PathLike[str] | None) -> Path | None:
-    """The worker executable: the configured override, else the Manus install under ``ISAAC_ROOT``.
+    """The worker executable: the configured override, else the Manus install of the source checkout.
 
     ``None`` when no executable is found, so calibration is simply unavailable and capture is unaffected.
     """
     if override is not None:
         candidate = Path(override)
         return candidate if candidate.is_file() and os.access(candidate, os.X_OK) else None
-    root = os.environ.get("ISAAC_ROOT")
-    found = shutil.which(WORKER_NAME, path=str(Path(root) / "install" / "plugins" / "manus") if root else "")
+    checkout = source_checkout_root()
+    found = shutil.which(WORKER_NAME, path=str(checkout / "install" / "plugins" / "manus") if checkout else "")
     return Path(found) if found else None
 
 

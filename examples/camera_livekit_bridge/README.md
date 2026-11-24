@@ -119,7 +119,7 @@ launcher refuses to start otherwise. `--orin` takes `user@IPv4` (a hostname is r
 `egocap/README.md`:
 
 ```bash
-uv run python tools/start_system.py --orin user@192.0.2.10 --deploy-script PATH --livekit-server PATH --bridge PATH \
+uv run python tools/start_system.py --orin user@192.0.2.10 --livekit-server PATH --bridge PATH \
   --station-config PATH/my_station.yaml --capture-camera NAME=DEVICE_ID \
   --fps 60 --bridge-scale-div 1 --bridge-bitrate-mbps 50
 ```
