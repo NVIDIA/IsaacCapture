@@ -614,6 +614,9 @@ class OobLifecycle:
         self._turn_listener_ready = False
         if self.coturn is not None:
             await asyncio.to_thread(adb.stop_coturn, self.coturn)
+            # Keep the process and its private files owned until exit is confirmed.
+            if self.coturn.poll() is None:
+                raise adb.OobAdbError("coturn could not be stopped for recovery")
         self.coturn = await asyncio.to_thread(
             adb.start_coturn, self.turn_port, USB_TURN_USER, USB_TURN_CREDENTIAL
         )

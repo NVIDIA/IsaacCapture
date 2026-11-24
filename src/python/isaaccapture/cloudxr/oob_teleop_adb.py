@@ -1019,7 +1019,7 @@ def require_turn_port_free(port: int) -> None:
 
 
 class _CoturnProcess(subprocess.Popen):
-    """Keep our private config and log directory alive with the TURN process."""
+    """Own private relay files until cleanup or launcher shutdown."""
 
     def __init__(self, command: list[str], directory: TemporaryDirectory[str]):
         self.directory = directory

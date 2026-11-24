@@ -4,6 +4,7 @@
 """Own coturn files with the process that can reopen them."""
 
 import asyncio
+import gc
 import os
 import secrets
 import signal
@@ -16,7 +17,10 @@ from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock
 
 import pytest
-from cloudxr_py_test_ns import oob_teleop_adb as adb
+
+# Match the lifecycle import so mocks reach the same module instance.
+from isaaccapture.cloudxr import oob_teleop_adb as adb
+from isaaccapture.cloudxr.oob_teleop_lifecycle import OobLifecycle, RecoveryConfig
 
 
 @pytest.fixture
@@ -227,3 +231,42 @@ def test_tail_refuses_symlink(tmp_path):
     link = tmp_path / "log"
     link.symlink_to(target)
     assert adb._tail_file(str(link), 20) == ""
+
+
+async def test_recovery_retains_a_relay_that_cannot_be_stopped(relay, monkeypatch):
+    launch, processes, directories, _, _ = relay
+    lifecycle = OobLifecycle(
+        hub=None,
+        resolved_port=48322,
+        usb_local=True,
+        host_client=False,
+        config=RecoveryConfig(60, 5),
+        turn_port=3478,
+    )
+    lifecycle.coturn = launch()
+    processes.clear()  # The lifecycle must be the only owner of the process handle.
+    starts = []
+    monkeypatch.setattr(adb, "verify_coturn_listening", lambda _port: False)
+    monkeypatch.setattr(adb, "start_coturn", lambda *args: starts.append(args))
+
+    def refuse_stop(self):
+        raise OSError("injected failure to signal relay")
+
+    try:
+        with monkeypatch.context() as stop_failure:
+            stop_failure.setattr(adb._CoturnProcess, "terminate", refuse_stop)
+            stop_failure.setattr(adb._CoturnProcess, "kill", refuse_stop)
+            for _ in range(2):
+                with pytest.raises(adb.OobAdbError, match="could not be stopped"):
+                    await lifecycle._ensure_coturn()
+                gc.collect()
+                assert lifecycle.coturn.poll() is None
+                assert directories[0].exists()
+                assert (directories[0] / "turnserver.conf").is_file()
+                assert not starts
+                assert not lifecycle._turn_listener_ready
+    finally:
+        lifecycle.coturn.terminate()
+        lifecycle.coturn.wait(timeout=5)
+        adb.stop_coturn(lifecycle.coturn)
+    assert not directories[0].exists()
