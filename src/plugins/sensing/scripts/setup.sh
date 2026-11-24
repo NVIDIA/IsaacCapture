@@ -192,6 +192,7 @@ else
         yes) add_groups=1 ;;
         no)  info "skipped" ;;
         ask) confirm "Add $USER to ${names[*]}?" && add_groups=1 ;;
+        *) die "invalid group membership mode: $DO_GROUPS" ;;
     esac
     if [[ "$add_groups" -eq 1 ]]; then
         sudo usermod -aG "$(IFS=,; echo "${names[*]}")" "$USER"

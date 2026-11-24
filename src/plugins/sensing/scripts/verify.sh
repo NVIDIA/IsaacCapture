@@ -20,6 +20,8 @@ QUIET=0
 case "${1:-}" in
     -q|--quiet) QUIET=1 ;;
     -h|--help)  sed -n '4,12p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
+    "") ;;
+    *) die "unknown argument: $1" "Run $0 --help" ;;
 esac
 [[ "$QUIET" -eq 0 ]] || { ok() { :; }; info() { :; }; step() { :; }; }
 
