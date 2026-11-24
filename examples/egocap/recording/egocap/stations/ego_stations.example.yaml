@@ -5,7 +5,9 @@
 # Per-station recording configuration. EGOCAP_STATION_CONFIG (see
 # backend/egocap_web/station_config.py) reads the FIRST station entry under "stations" and
 # consumes meta.egocap_station_name, meta.operator_name, meta.auto_fill_operator_name,
-# meta.task_description, recording.data_dir, and each video_sources entry's name/type (as the
+# meta.task_description, recording.data_dir, recording.video_encoder and recording.video_encoder_options (the
+# writer every camera is recorded with; they share names with keys of the recorder CLI's data_recording/config.yaml
+# but are consumed here), and each video_sources entry's name/type (as the
 # cameras requested from CaptureServer) and the alignment section. numeric_sources and the rest of each
 # video_sources entry (frame_type, latency, params) are reference data for other tooling, not consumed here --
 # CaptureServer owns actually opening the selected cameras/devices. Each video_sources name MUST

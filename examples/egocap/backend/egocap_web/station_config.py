@@ -5,7 +5,8 @@
 """Deployment station YAML: resolved once at backend startup into one immutable station value.
 
 ``EGOCAP_STATION_CONFIG`` points at a YAML file describing this station's identity, operator,
-initial task, recording output root and the cameras to request from CaptureServer. Unset
+initial task, recording output root, the writer every camera is recorded with (``recording.video_encoder`` and
+``recording.video_encoder_options``) and the cameras to request from CaptureServer. Unset
 preserves the existing configuration-free development workflow (the deployment station label,
 freeform task editing, no cameras requested). Set but unreadable or invalid is a hard
 recording-configuration failure, never a silent fallback to a development default -- see
@@ -26,12 +27,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import yaml
 
 from capture_server import protocol as p
-from egocap.recording.video_writer_backends import resolve_video_encoder_options
+from egocap.recording.video_writer_backends import VideoEncoderKind, resolve_video_encoder_options
 
 STATION_CONFIG_ENV = "EGOCAP_STATION_CONFIG"
 _DEFAULT_FLAT_STATION_ID = "station_01"
@@ -40,6 +41,10 @@ _DEFAULT_FLAT_STATION_ID = "station_01"
 _MAX_CAMERAS = 3
 #: The tracking sources the recorder takes a latency for.
 _TRACKING_SOURCES = ("pico_controller", "manus_glove")
+
+
+#: The writer used when a station names none: software H.264.
+DEFAULT_VIDEO_ENCODER = "ffmpeg_h264"
 
 
 class StationConfigError(ValueError):
@@ -67,7 +72,7 @@ class ResolvedStation:
     alignment_index: str | None
     #: The final writer every recorded camera uses (``recording.video_encoder``); the default software H.264 writer
     #: when unset.
-    video_encoder: str = "ffmpeg_h264"
+    video_encoder: str = DEFAULT_VIDEO_ENCODER
     #: ``recording.video_encoder_options`` (crf, preset, pix_fmt), validated for ``video_encoder``; None keeps the
     #: writer's defaults.
     video_encoder_options: dict[str, Any] | None = None
@@ -188,9 +193,12 @@ def _resolve_video_encoder(station_id: str, recording: dict) -> tuple[str, dict[
     A bad value fails station load rather than the first take. Availability is not probed here: a missing or
     failing encoder surfaces through the writer's own start and release errors, with no software fallback.
     """
-    encoder = recording.get("video_encoder", "ffmpeg_h264")
+    # Null means unset, like data_dir and the options: the default writer.
+    encoder = recording.get("video_encoder")
+    if encoder is None:
+        encoder = DEFAULT_VIDEO_ENCODER
     options = recording.get("video_encoder_options")
-    if encoder not in ("opencv_mp4v", "ffmpeg_h264", "ffmpeg_h264_nvenc"):
+    if encoder not in get_args(VideoEncoderKind):
         raise StationConfigError(f"station {station_id!r}: recording.video_encoder {encoder!r} is not supported")
     try:
         resolve_video_encoder_options(encoder, options)

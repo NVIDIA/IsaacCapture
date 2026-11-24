@@ -69,7 +69,13 @@ from .settings_routes import EffectiveSettings
 from .settings_routes import router as settings_router
 from .setup_routes import router as setup_router
 from .setup_service import CHECKLIST_SECONDS, SetupService, capture_facts
-from .station_config import ResolvedStation, StationConfigError, load_station_config, station_config_path_from_env
+from .station_config import (
+    DEFAULT_VIDEO_ENCODER,
+    ResolvedStation,
+    StationConfigError,
+    load_station_config,
+    station_config_path_from_env,
+)
 from .station_routes import router as station_router
 from .station_service import TAKE_IN_PROGRESS, StationService, session_adapter
 from .station_uptime import DOWN, READY, RECORDING, UPTIME_DIR, UptimeLog, UptimeSampler
@@ -187,7 +193,7 @@ def _recording_config_factory(
     station_label: str | None | Callable[[], str | None],
     output_root: Path,
     on_video_sources: Callable[[frozenset[str], frozenset[str]], None] | None = None,
-    video_encoder: str = "ffmpeg_h264",
+    video_encoder: str = DEFAULT_VIDEO_ENCODER,
     video_encoder_options: dict[str, Any] | None = None,
 ):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
@@ -500,7 +506,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     A deployment station YAML (``EGOCAP_STATION_CONFIG``, see station_config.py), when
     configured, is loaded exactly once here and seeds the station's label, initial
-    operator/instruction and recording output root through the same existing
+    operator/instruction, recording output root and recording writer through the same existing
     config/context mechanisms below -- not a second configuration path. A
     configured-but-invalid file is a real configuration failure, but NOT a backend
     startup crash: capture preview has nothing to do with recording configuration and
@@ -583,7 +589,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             lambda: station_service.label(),
             recording_output_root,
             aligner.note_video_sources if aligner is not None else None,
-            video_encoder=resolved_station.video_encoder if resolved_station is not None else "ffmpeg_h264",
+            video_encoder=resolved_station.video_encoder
+            if resolved_station is not None
+            else DEFAULT_VIDEO_ENCODER,
             video_encoder_options=resolved_station.video_encoder_options if resolved_station is not None else None,
         ),
         queue_capacity=_INGRESS_QUEUE_CAPACITY,
