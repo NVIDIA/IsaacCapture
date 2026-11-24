@@ -216,6 +216,10 @@ class ServerConfig:
             raise ValueError("ServerConfig.network_check needs livekit_streams to check")
         if self.network_check is not None:
             require_secure_livekit_urls(self.livekit_streams)
+            # The check compares frames with the offered size and rate, so every stream must state them.
+            missing = sorted(s.name for s in self.livekit_streams if None in (s.width, s.height, s.fps))
+            if missing:
+                raise ValueError(f"network_check needs width, height and fps for every LiveKit stream: {missing}")
         jpeg_names = set(self.cameras or ()) | set(self.known_cameras or ())
         clashes = sorted(jpeg_names & {s.name for s in self.livekit_streams})
         if clashes:

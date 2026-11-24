@@ -517,7 +517,11 @@ class RecordingContext:
                     or (busy.service is not None and busy.service.episode is not None)
                 ):
                     return "rejected", "finish or stop the current take before running the network check"
-                await self.run_network_check()
+                try:
+                    await self.run_network_check()
+                except Exception as exc:  # noqa: BLE001 -- no accepted session, a send timeout or a closed connection
+                    _logger.warning("network test could not be requested: %s", exc)
+                    return "rejected", "the network test could not be requested from CaptureServer"
                 return "ok", None
             if command.action == "new_batch":
                 # A genuinely active take must be explicitly stopped/

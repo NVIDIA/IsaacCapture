@@ -70,7 +70,7 @@ import asyncio, json, sys, time
 from pathlib import Path
 from types import SimpleNamespace
 from capture_server.livekit_streams import load_livekit_streams
-from egocap_web.livekit_receiver import LiveKitFrameReceiver
+from capture_server.livekit_receiver import LiveKitFrameReceiver
 from egocap_web.livekit_recording import (
     LiveKitRecordingFeed, unrecordable_reason, uncertainty_budget_ns)
 
@@ -182,7 +182,9 @@ def _skip_reason() -> str | None:
         return f"receiver venv missing ({RECEIVER_PY})"
     if not _cuda_present():
         return "no CUDA device (nvidia-smi -L lists no GPU)"
-    if not (EGOCAP_DIR / "backend/egocap_web/livekit_clock_sync.py").is_file():
+    if not (
+        EGOCAP_DIR / "capture_server/capture_server/livekit_clock_sync.py"
+    ).is_file():
         return f"egocap timing checkout not found ({EGOCAP_DIR}); set EGOCAP_DIR"
     if not EGOCAP_PY.is_file():
         return f"egocap interpreter missing ({EGOCAP_PY}); set EGOCAP_PYTHON"

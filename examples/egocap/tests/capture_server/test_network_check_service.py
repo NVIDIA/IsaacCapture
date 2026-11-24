@@ -122,6 +122,10 @@ class FakeReceiver:
         self.lost: set[int] = set()
         self.stream_gates: dict[int, asyncio.Event] = {}
         self.track_script: list[dict[int, str]] | None = None
+        self.queued: dict[int, list[ReceivedFrame]] = {}
+
+    def pending(self, stream_id):
+        return len(self.queued.get(stream_id, []))
 
     async def start(self):
         self.starts += 1
@@ -168,6 +172,8 @@ class FakeReceiver:
         script = self.scripts.get(stream_id, [])
         if script:
             return script.pop(0)
+        if timeout == 0 and self.queued.get(stream_id):
+            return self.queued[stream_id].pop(0)
         if stream_id in self.lost:
             return None
         raise asyncio.TimeoutError
@@ -306,6 +312,24 @@ async def test_a_healthy_check_is_ready_with_every_camera_passed_and_the_legs_li
     assert status.completed_at_unix_ns == harness.unix
     assert "LiveKit wss://lk" in status.endpoint and "room" in status.endpoint
     assert harness.receiver.cleared == 1
+
+
+async def test_a_frame_queued_inside_the_window_when_it_ends_is_counted_and_a_later_one_is_not():
+    harness = _healthy_harness()
+    end_ns = T0 + int(WINDOW_S * SEC)
+    original = harness._factory
+
+    def factory(streams, token, clock_sync=False):
+        receiver = original(streams, token, clock_sync)
+        receiver.queued = {16: [frame(16, end_ns - 1, 1000)], 17: [frame(17, end_ns + 1, 1000)]}
+        return receiver
+
+    harness.service._receiver_factory = factory
+    harness.service.begin_session("s1")
+    status = await harness.finished()
+    by_id = {c.stream_id: c for c in status.cameras}
+    assert by_id[16].usable_frames == int(WINDOW_S * FPS) + 1
+    assert by_id[17].usable_frames == int(WINDOW_S * FPS)
 
 
 async def test_one_failing_camera_makes_the_check_unsuitable_and_names_it_with_the_others_reported():

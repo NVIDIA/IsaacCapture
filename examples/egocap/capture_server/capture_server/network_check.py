@@ -36,7 +36,8 @@ from .livekit_receiver import LiveKitFrameReceiver
 
 logger = logging.getLogger("isaaccapture.capture_server.network_check")
 
-#: Frame-rate fraction below which a one-second window counts as low: the recorder's own average rejection floor.
+#: Frame-rate fraction below which a one-second window counts as low. It copies the data check's default
+#: camera_min_fps_ratio, which a station may override, and is applied per second here, not as an average.
 LOW_WINDOW_FRACTION = 0.86
 #: Longest startup allowance plus window the policy may name, so a check always ends and cancellation is prompt.
 MAX_TOTAL_S = 300.0
@@ -704,21 +705,35 @@ class NetworkCheckService:
             try:
                 frame = await receiver.next_frame_or_lost(stream_id, timeout=remaining)
             except asyncio.TimeoutError:
-                return
+                break
             if frame is None:
                 window.lost = True
                 return
-            clock_sync = receiver.clock_sync
-            mapping = None if clock_sync is None else clock_sync.mapping()
-            capture_s = age_s = None
-            if frame.user_timestamp_us is not None and mapping is not None:
-                capture_s = mapping.to_local_ns(frame.user_timestamp_us * 1000) / 1e9
-                age_s = frame.receive_time_ns / 1e9 - capture_s
-            window.add_frame(
-                frame_id=frame.frame_id,
-                capture_s=capture_s,
-                receive_ns=frame.receive_time_ns,
-                age_s=age_s,
-                mapping_ok=mapping is not None and mapping.uncertainty_ns <= budget_ns,
-                size_ok=frame.image.shape[:2] == (window.stream.height, window.stream.width),
-            )
+            self._add(receiver, window, frame, budget_ns)
+        # Frames that arrived inside the window but had not been read when its end instant came still count.
+        while receiver.pending(stream_id):
+            try:
+                frame = await receiver.next_frame_or_lost(stream_id, timeout=0)
+            except asyncio.TimeoutError:
+                return
+            if frame is None:
+                return
+            self._add(receiver, window, frame, budget_ns)
+
+    @staticmethod
+    def _add(receiver: LiveKitFrameReceiver, window: StreamWindow, frame: Any, budget_ns: int) -> None:
+        """Judge one received frame's timing and size and give it to the window."""
+        clock_sync = receiver.clock_sync
+        mapping = None if clock_sync is None else clock_sync.mapping()
+        capture_s = age_s = None
+        if frame.user_timestamp_us is not None and mapping is not None:
+            capture_s = mapping.to_local_ns(frame.user_timestamp_us * 1000) / 1e9
+            age_s = frame.receive_time_ns / 1e9 - capture_s
+        window.add_frame(
+            frame_id=frame.frame_id,
+            capture_s=capture_s,
+            receive_ns=frame.receive_time_ns,
+            age_s=age_s,
+            mapping_ok=mapping is not None and mapping.uncertainty_ns <= budget_ns,
+            size_ok=frame.image.shape[:2] == (window.stream.height, window.stream.width),
+        )

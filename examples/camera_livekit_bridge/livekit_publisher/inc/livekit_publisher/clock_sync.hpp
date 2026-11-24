@@ -3,7 +3,7 @@
 //
 // The publisher's half of the PC's four-timestamp clock exchange: parse a request, build the reply. All times are
 // CLOCK_MONOTONIC nanoseconds, the clock the PC maps. Wire format (little-endian), shared with
-// examples/egocap/backend/egocap_web/livekit_clock_sync.py and the egocap emulator:
+// examples/egocap/capture_server/capture_server/livekit_clock_sync.py and the egocap emulator:
 //   request, 13 bytes: 'Q', u32 sequence, i64 t1 (the requester's clock)
 //   reply,   29 bytes: 'R', u32 sequence, i64 t1 (both echoed), i64 t2 (receipt), i64 t3 (reply send)
 // No LiveKit type appears here, so the format is testable on its own.

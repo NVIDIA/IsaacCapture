@@ -319,7 +319,10 @@ def test_loader_rejects_unusable_files_with_value_error(tmp_path, text):
         load_livekit_streams(_write(tmp_path, text))
 
 
-_NC_HEAD = "livekit:\n  url: wss://lk\n  room: r\n  publisher: o\n  streams: [{name: A, track: t}]\n"
+_NC_HEAD = (
+    "livekit:\n  url: wss://lk\n  room: r\n  publisher: o\n"
+    "  streams: [{name: A, track: t, width: 6, height: 4, fps: 30}]\n"
+)
 
 
 def _with_check(tmp_path: Path, check_yaml: str) -> Path:
@@ -512,6 +515,19 @@ def test_cli_rejects_a_bad_network_check_with_exit_code_2(tmp_path, capsys):
     path = _with_check(tmp_path, "  network_check: {bogus: 1}\n")
     assert main(["--mock", "--livekit-streams", str(path)]) == 2
     assert "bogus" in capsys.readouterr().err
+
+
+def test_server_config_rejects_a_network_check_on_a_stream_without_geometry_or_rate():
+    streams = (_stream(name="Left", fps=None), _stream(stream_id=17, name="Right", track="other"))
+    with pytest.raises(ValueError, match=r"width, height and fps for every LiveKit stream: \['Left'\]"):
+        ServerConfig(livekit_streams=streams, network_check=NetworkCheckPolicy())
+    assert ServerConfig(livekit_streams=streams).livekit_streams
+
+
+def test_cli_rejects_a_network_check_on_a_stream_without_fps_with_exit_code_2(tmp_path, capsys):
+    text = _NC_HEAD.replace(", fps: 30", "") + "  network_check: {}\n"
+    assert main(["--mock", "--livekit-streams", str(_write(tmp_path, text))]) == 2
+    assert "width, height and fps for every LiveKit stream: ['A']" in capsys.readouterr().err
 
 
 def test_server_config_rejects_a_network_check_without_livekit_streams():

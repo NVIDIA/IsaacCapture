@@ -253,3 +253,18 @@ async def test_run_network_check_is_allowed_again_once_the_take_has_stopped(tmp_
     reply = await handle_recording_command(_command("run_network_check", {"batch_id": context.batch_id}), context)
     assert reply["outcome"] == "ok"
     assert calls == ["run"]
+
+
+async def test_a_run_network_check_that_cannot_reach_capture_server_is_rejected_without_recording_wording(
+    tmp_path,
+):
+    async def run() -> None:
+        raise ConnectionError("socket closed")
+
+    context = await _context(tmp_path, run_network_check=run)
+    reply = await handle_recording_command(_command("run_network_check", {"batch_id": context.batch_id}), context)
+    assert (reply["outcome"], reply["reason"]) == (
+        "rejected",
+        "the network test could not be requested from CaptureServer",
+    )
+    assert "recording failed" not in reply["reason"].lower()

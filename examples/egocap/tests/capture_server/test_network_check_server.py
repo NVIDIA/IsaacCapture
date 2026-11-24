@@ -123,6 +123,9 @@ class FakeReceiver:
     def clear_queued(self):
         pass
 
+    def pending(self, stream_id):
+        return 0
+
     def track_ids(self):
         return {s.stream_id: "TR_16" for s in self.streams}
 
