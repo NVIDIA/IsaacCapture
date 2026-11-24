@@ -491,8 +491,6 @@ def test_cli_rejects_a_missing_streams_file_with_exit_code_2(tmp_path, capsys):
 
 
 def test_cli_passes_the_network_check_policy_into_the_server_config(tmp_path, monkeypatch):
-    import capture_server.__main__ as cli_main
-
     path = _with_check(tmp_path, "  network_check: {window_s: 12}\n")
     seen: list[ServerConfig] = []
 
@@ -505,7 +503,7 @@ def test_cli_passes_the_network_check_policy_into_the_server_config(tmp_path, mo
 
     monkeypatch.setattr("capture_server.server.CaptureServer", fake_server)
     with pytest.raises(_Stop):
-        cli_main.main(["--mock", "--livekit-streams", str(path)])
+        main(["--mock", "--livekit-streams", str(path)])
     assert seen[0].network_check == NetworkCheckPolicy(window_s=12)
     assert [s.name for s in seen[0].livekit_streams] == ["A"]
 

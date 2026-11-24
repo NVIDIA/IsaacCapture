@@ -65,7 +65,8 @@ def test_an_unreachable_server_is_a_503_with_a_detail(client, monkeypatch):
     monkeypatch.setattr(CaptureClient, "query_status", query_status)
     response = client.get("/api/server-status")
     assert response.status_code == 503
-    assert response.json() == {"detail": "the status query failed: refused"}
+    assert response.json() == {"detail": "CaptureServer did not answer the status query"}
+    assert "refused" not in response.text
     assert response.headers["cache-control"] == "no-store"
 
 

@@ -430,3 +430,12 @@ def test_a_wrong_size_frame_is_not_also_counted_as_missing_a_capture_time():
     reasons = _finished(window).reasons
     assert any("not the offered" in r for r in reasons)
     assert not any("without a capture time" in r for r in reasons)
+
+
+def test_frames_in_a_partial_last_second_are_not_counted_in_a_whole_second():
+    window = _window(10.5)
+    _feed(window, end_s=10.0)
+    window.add_frame(
+        frame_id=10_000, capture_s=10.2, receive_ns=window.start_ns + int(10.2 * SEC), age_s=0.05, mapping_ok=True
+    )
+    assert sum(window._second_counts()) == 10 * 60

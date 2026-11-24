@@ -728,7 +728,11 @@ async def get_server_status(request: Request) -> JSONResponse:
     try:
         reply = await CaptureClient(request.app.state.capture_server_url).query_status()
     except ServerStatusQueryError as exc:
-        return JSONResponse({"detail": str(exc)}, status_code=503, headers=headers)
+        # The cause can carry socket or protocol detail; it goes to the log and the browser gets a fixed message.
+        logger.warning("CaptureServer status query failed: %s", exc)
+        return JSONResponse(
+            {"detail": "CaptureServer did not answer the status query"}, status_code=503, headers=headers
+        )
     body = reply.to_json()
     if reply.status is not None:
         # The browser reads JSON numbers as float64, which loses the nanosecond clock; the recording page's status

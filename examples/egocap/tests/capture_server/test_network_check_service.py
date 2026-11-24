@@ -911,3 +911,22 @@ async def test_stop_after_a_newer_session_began_leaves_its_state_alone(monkeypat
     status = harness.service.snapshot()
     assert (status.state, status.session_id) == (p.NetworkCheckState.CHECKING, "B")
     assert (await harness.finished()).state is p.NetworkCheckState.READY
+
+
+async def test_a_mapping_that_jumped_before_the_window_is_unsuitable():
+    harness = Harness(policy=_policy(startup_s=0.2))
+    harness.service.begin_session("s1")
+    await asyncio.sleep(0)
+    harness.receiver.clock_sync.discontinuity = True
+    status = await harness.finished()
+    assert status.state is p.NetworkCheckState.UNSUITABLE
+    assert "clock mapping jumped" in status.reason
+
+
+async def test_untimed_frames_during_the_window_fail_the_camera():
+    untimed = [frame(16, T0 + 10_000_000 * i, 2000 + i, stamped=False) for i in range(3)]
+    harness = Harness(scripts={16: healthy(16) + untimed, 17: healthy(17)})
+    harness.service.begin_session("s1")
+    status = await harness.finished()
+    assert status.cameras[0].passed is False
+    assert any("3 frame(s) arrived without a capture time" in r for r in status.cameras[0].reasons)
