@@ -117,7 +117,16 @@ def publisher_token(key: str, secret: str, room: str, identity: str, hours: int 
 
 
 def streams_yaml(
-    url: str, room: str, publisher: str, track: str, width: int, height: int, fps: int, basis: str, name: str
+    url: str,
+    room: str,
+    publisher: str,
+    track: str,
+    width: int,
+    height: int,
+    fps: int,
+    basis: str,
+    name: str,
+    network_check: bool = False,
 ) -> str:
     """The CaptureServer ``--livekit-streams`` file for one camera published by the bridge."""
     # Dumped from a mapping because the stream name comes from a user-edited profile.
@@ -130,6 +139,9 @@ def streams_yaml(
             "streams": [{"name": name, "track": track, "width": width, "height": height, "fps": fps}],
         }
     }
+    if network_check:
+        # An empty mapping asks for the check with its starting limits; they are unvalidated proposals.
+        descriptor["livekit"]["network_check"] = {}
     return yaml.safe_dump(descriptor, sort_keys=False)
 
 
@@ -698,6 +710,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=3600,
         help="how long the Orin sender runs; when it ends the whole stack stops, so a take in progress is cut off",
     )
+    parser.add_argument(
+        "--network-check",
+        action="store_true",
+        help="have CaptureServer test camera delivery before recording is allowed (starting limits, unvalidated)",
+    )
     parser.add_argument("--open", action="store_true", help="open the page in a browser once it is up")
     return parser.parse_args(argv)
 
@@ -758,6 +775,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sender.fps,
                 basis,
                 sender.stream_id,
+                network_check=args.network_check,
             )
         )
         (workdir / "receiver.yaml").write_text(
@@ -849,7 +867,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # The descriptor advertises a LiveKit stream, so it is given only when something publishes one.
                 *(["--livekit-streams", str(workdir / "streams.yaml")] if chain else []),
             ],
-            env={"PYTHONPATH": pythonpath},
+            # The credentials let the delivery check join the LiveKit room as a subscriber.
+            env={
+                "PYTHONPATH": pythonpath,
+                "LIVEKIT_API_KEY": LIVEKIT_DEV_KEY,
+                "LIVEKIT_API_SECRET": LIVEKIT_DEV_SECRET,
+            },
             cwd=EGOCAP_ROOT,
         )
         stack.wait_until(capture, lambda: port_open("127.0.0.1", 8082), "listening on 8082", 60)

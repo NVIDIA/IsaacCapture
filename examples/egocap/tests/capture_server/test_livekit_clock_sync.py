@@ -12,9 +12,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from egocap_web import livekit_receiver as lr
-from egocap_web.clock_exchange import DEFAULT_MAX_RTT_NS, DEFAULT_STALE_AFTER_NS
-from egocap_web.livekit_clock_sync import CLOCK_SYNC_TOPIC, ClockSyncClient
+from capture_server import livekit_receiver as lr
+from capture_server.clock_exchange import DEFAULT_MAX_RTT_NS, DEFAULT_STALE_AFTER_NS
+from capture_server.livekit_clock_sync import CLOCK_SYNC_TOPIC, ClockSyncClient
 
 PUBLISHER = "orin"
 REMOTE_AHEAD_NS = 3_000_000_000

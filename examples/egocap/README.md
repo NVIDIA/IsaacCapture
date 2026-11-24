@@ -155,6 +155,27 @@ process that differs.
   for the control token before it lists or serves anything. See
   [`recordings_frontend/README.md`](recordings_frontend/README.md).
 
+## Camera delivery check
+
+CaptureServer can test whether its LiveKit cameras deliver well enough to record. For every new capture session, once its sources have started, it joins the room as a subscriber, observes every offered camera at once for a measured window, and reports `checking`, `ready` or `unsuitable` (or `stale`, once a pass has aged out) in the session status. Its verdict belongs to that session and ends with it; a browser reconnect, a query or a repeated Begin does not run it again. The page shows the result whether or not a take is running, with a per-camera result and a "Run test again" button (not offered during a take). When the server reports a check, the backend refuses to start a take unless this session's result is `ready` for the cameras on offer, asks again after storage opens, and refuses if a camera has been republished on a different LiveKit track since the check; a result that ages out during a take does not stop it.
+
+The check is off unless the `--livekit-streams` file names it, and it needs `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in the server's environment (`tools/start_system.py --network-check` sets both up):
+
+```yaml
+livekit:
+  # ...
+  network_check: {window_s: 30}
+```
+
+To read the server's general status, including this check, without a capture session or any media connection:
+
+```bash
+python -m capture_server.status_report --url ws://127.0.0.1:8082          # readable
+python -m capture_server.status_report --url ws://127.0.0.1:8082 --json   # the server's own payload
+```
+
+Every limit has a default (see `capture_server/network_check.py`); they are starting values that no healthy saved take has validated yet, so treat a pass as "no problem seen in this sample". The check covers the path from the camera to a decoder in the capture server. It does not test delivery to the recording host, recorder CPU or disk, or the browser preview, and it does not watch the connection after it ends.
+
 ## Configuration
 
 A station's identity, initial operator/task, recording output location, and requested cameras come

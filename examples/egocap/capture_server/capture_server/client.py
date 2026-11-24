@@ -72,6 +72,7 @@ __all__ = [
     "CalibrationStopped",
     "CaptureClient",
     "DeviceQueryError",
+    "ServerStatusQueryError",
     "ManusPluginConfig",
     "CaptureFrame",
     "CaptureStarted",
@@ -319,6 +320,10 @@ class ManusPluginConfig:
             raise ValueError("left_calibration and right_calibration must name different files")
 
 
+class ServerStatusQueryError(Exception):
+    """The server's status could not be retrieved (transport, timeout, protocol, or an older server)."""
+
+
 class DeviceQueryError(Exception):
     """The device list could not be retrieved (transport, timeout, protocol, or a server without the query).
 
@@ -513,6 +518,18 @@ class CaptureClient:
         if attempt is None:
             return  # idle, or the previous attempt already finished
         attempt.stop_requested.set()  # idempotent: a no-op if already set
+
+    async def run_network_check(self) -> None:
+        """Ask the server to run its camera delivery check again; the result arrives in the session status.
+
+        Needs an accepted session. The server refuses a request while a check is running or when it runs none;
+        either leaves the status as it was, so the caller learns the outcome from the status, not from this call.
+        """
+        attempt = self._attempt
+        if attempt is None or attempt.ws is None or not attempt.accepted:
+            raise RuntimeError("run_network_check needs an accepted capture session")
+        request = p.RunNetworkCheckRequest(session_id=str(uuid.uuid4()))
+        await asyncio.wait_for(attempt.ws.send(_to_json_text(request.to_json())), timeout=_STOP_TIMEOUT_S)
 
     # -- calibration -------------------------------------------------------
 
@@ -1093,6 +1110,36 @@ class CaptureClient:
         if reply.request_id != request.request_id:
             raise DeviceQueryError("the server's reply does not answer this device query")
         return reply.devices
+
+    async def query_status(self) -> p.ServerStatusReply:
+        """The server's general status, read without owning a session or joining any media.
+
+        Uses the read-only ``/query`` route, so it works before, during and after a capture session. Raises
+        :class:`ServerStatusQueryError` when no answer is obtained, including from a server too old to know it.
+        """
+        url = urlsplit(self._url)._replace(path="/query", query="", fragment="").geturl()
+        request = p.QueryStatusRequest(request_id=f"status-{uuid.uuid4()}")
+        try:
+            async with asyncio.timeout(_QUERY_TIMEOUT_S):
+                async with websockets.connect(url, compression=None, max_size=_MAX_MESSAGE_BYTES) as ws:
+                    await ws.send(_to_json_text(request.to_json()))
+                    raw = await ws.recv()
+        except ConnectionClosed as exc:
+            code = exc.rcvd.code if exc.rcvd is not None else None
+            raise ServerStatusQueryError(
+                f"the server closed the status query (close code {code}); it may not support it"
+            ) from None
+        except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
+            raise ServerStatusQueryError(f"the status query failed: {str(exc) or type(exc).__name__}") from None
+        if isinstance(raw, bytes):
+            raise ServerStatusQueryError("the server answered the status query with a binary message")
+        try:
+            reply = p.ServerStatusReply.from_json(_from_json_text(raw))
+        except p.ProtocolError as exc:
+            raise ServerStatusQueryError(f"the server's status reply was invalid: {exc}") from None
+        if reply.request_id != request.request_id:
+            raise ServerStatusQueryError("the server's reply does not answer this status query")
+        return reply
 
     # -- message/result construction ---------------------------------------
 

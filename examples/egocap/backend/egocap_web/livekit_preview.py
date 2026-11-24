@@ -15,57 +15,16 @@ environment only; they never appear in a response or a log line.
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
 import os
-import secrets
 import time
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from capture_server import protocol as p
-
-API_KEY_ENV = "LIVEKIT_API_KEY"
-API_SECRET_ENV = "LIVEKIT_API_SECRET"
-#: A token only has to outlive the page's connect; LiveKit keeps an established connection going afterwards.
-TOKEN_TTL_S = 3600
+from capture_server.livekit_token import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 
 router = APIRouter()
-
-
-def _b64url(data: bytes) -> str:
-    """URL-safe base64 without padding, as JWT segments require."""
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
-def subscriber_token(*, api_key: str, signing_key: str, room: str, now: int, ttl_s: int = TOKEN_TTL_S) -> str:
-    """A signed LiveKit token that may join ``room``, subscribe and send data messages, but not publish media."""
-    header = {"alg": "HS256", "typ": "JWT"}
-    claims = {
-        "iss": api_key,
-        # Each consumer gets its own identity: LiveKit disconnects an existing participant that reuses one.
-        "sub": f"egocap-viewer-{secrets.token_hex(4)}",
-        "nbf": now,
-        "exp": now + ttl_s,
-        "video": {
-            "room": room,
-            "roomJoin": True,
-            "canSubscribe": True,
-            "canPublish": False,
-            # Data messages only, for the clock-sync exchange with the publisher. Any holder of this token can send
-            # data messages into the room, so the publisher must act only on well-formed clock-sync requests.
-            "canPublishData": True,
-        },
-    }
-    # Compact JSON: the signature covers exactly these bytes, so both sides must agree on them.
-    signing_input = ".".join(
-        _b64url(json.dumps(part, separators=(",", ":")).encode()) for part in (header, claims)
-    )
-    signature = hmac.new(signing_key.encode(), signing_input.encode("ascii"), hashlib.sha256).digest()
-    return f"{signing_input}.{_b64url(signature)}"
 
 
 @router.get("/api/livekit-token")

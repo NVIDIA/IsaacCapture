@@ -24,8 +24,8 @@ import numpy as np
 import pytest
 
 from capture_server import protocol as p
-from egocap_web.clock_exchange import ClockEstimator, ClockMapping, Exchange
-from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
+from capture_server.clock_exchange import ClockEstimator, ClockMapping, Exchange
+from capture_server.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import LiveKitRecordingFeed
 
 S = 1_000_000_000

@@ -755,8 +755,8 @@ def test_pico_and_manus_samples_are_both_stamped_with_the_one_host_poll_frame_ti
 async def test_livekit_video_and_tracking_from_one_frame_share_the_pc_monotonic_timeline():
     from collections import defaultdict
 
-    from egocap_web.clock_exchange import ClockEstimator, Exchange
-    from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
+    from capture_server.clock_exchange import ClockEstimator, Exchange
+    from capture_server.livekit_receiver import ReceivedFrame, StreamCounters
     from egocap_web.livekit_recording import LiveKitRecordingFeed
 
     S = 1_000_000_000

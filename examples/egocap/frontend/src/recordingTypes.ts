@@ -119,7 +119,7 @@ export interface RecordingSnapshot {
  * _PAYLOAD_VALIDATORS exactly. Kept narrow rather than a bare string so a typo is a compile
  * error. No `open_session`/`close_session` here -- this component never
  * opens or closes anything, it only rotates to a fresh batch. */
-export type RecordingActionName = "set_task" | "start_episode" | "stop_episode" | "discard_episode" | "new_batch";
+export type RecordingActionName = "set_task" | "start_episode" | "stop_episode" | "discard_episode" | "new_batch" | "run_network_check";
 
 /** The real, awaited result of one recording command: the backend's own
  * handler accepted it ("ok") or rejected it with a real, specific reason
@@ -146,4 +146,6 @@ export interface RecordingActions {
   onStopEpisode?: (target: RecordingEpisodeIdentity) => Promise<RecordingCommandResult>;
   onDiscardEpisode?: (target: RecordingEpisodeIdentity) => Promise<RecordingCommandResult>;
   onNewBatch?: (target: RecordingBatchIdentity) => Promise<RecordingCommandResult>;
+  /** Asks CaptureServer to run its camera delivery check again; the result arrives in the capture status. */
+  onRunNetworkCheck?: (target: RecordingBatchIdentity) => Promise<RecordingCommandResult>;
 }

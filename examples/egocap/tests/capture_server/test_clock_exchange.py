@@ -10,7 +10,7 @@ import dataclasses
 
 import pytest
 
-from egocap_web.clock_exchange import _MAX_HISTORY, ClockEstimator, Exchange
+from capture_server.clock_exchange import _MAX_HISTORY, ClockEstimator, Exchange
 
 MS = 1_000_000
 S = 1_000_000_000

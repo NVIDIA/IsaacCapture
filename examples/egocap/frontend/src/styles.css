@@ -2842,3 +2842,84 @@ below for the narrow/stacked layout). */
   height: auto;
   background: rgba(0, 0, 0, 0.6);
 }
+
+.netcheck {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.netcheck--ok {
+  border-left-color: var(--positive);
+}
+
+.netcheck--warn {
+  border-left-color: var(--warning);
+}
+
+.netcheck--bad {
+  border-left-color: var(--critical);
+}
+
+.netcheck--idle {
+  border-left-color: var(--border);
+}
+
+.netcheck-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.netcheck-headline {
+  font-weight: 600;
+}
+
+.netcheck-reason {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.netcheck-cameras {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.netcheck-camera {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--text-secondary);
+}
+
+.netcheck-camera-name {
+  color: var(--text-main);
+}
+
+.netcheck-camera--pass .netcheck-camera-verdict {
+  color: var(--positive);
+}
+
+.netcheck-camera--fail .netcheck-camera-verdict {
+  color: var(--critical);
+}
+
+.netcheck-camera-reasons {
+  flex-basis: 100%;
+}
+
+.netcheck-scope {
+  color: var(--text-secondary);
+}

@@ -113,11 +113,11 @@ class CaptureStatusResponse:
             "terminal": self.terminal,
             "stop_reason": None if self.stop_reason is None else int(self.stop_reason),
             "error_message": self.error_message,
-            "status": None if self.status is None else _status_snapshot_to_json(self.status),
+            "status": None if self.status is None else status_snapshot_to_json(self.status),
         }
 
 
-def _status_snapshot_to_json(status: p.StatusSnapshot) -> dict:
+def status_snapshot_to_json(status: p.StatusSnapshot) -> dict:
     """JSON form of a StatusSnapshot for the response, adjusted for what a browser can decode."""
     data = status.to_json()
     # The wire protocol's own to_json() keeps this an ordinary JSON integer
@@ -336,6 +336,10 @@ class CaptureStatusMonitor:
         return frozenset(
             s.name for s in self.native.started.streams if isinstance(s, (p.CameraStream, p.LiveKitCameraStream))
         )
+
+    async def run_network_check(self) -> None:
+        """Ask CaptureServer to run its camera delivery check again; the result arrives in the next status."""
+        await self._client.run_network_check()
 
     def set_station_label(self, label: str) -> None:
         """Replaces the station label every status and preview snapshot carries. The revision advances so

@@ -401,7 +401,7 @@ async def test_answer_clock_sync_sends_nothing_for_a_malformed_request():
 
 
 def test_exchange_with_the_emulator_reply_recovers_the_monotonic_offset():
-    exchange_cls = pytest.importorskip("egocap_web.clock_exchange").Exchange
+    exchange_cls = pytest.importorskip("capture_server.clock_exchange").Exchange
     now_ns = [0]
     clock = _model(now_ns, monotonic_offset_ns=3_000_000_000)
     one_way, t1 = 5_000_000, 100_000_000_000

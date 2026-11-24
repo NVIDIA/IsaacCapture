@@ -67,6 +67,26 @@ def test_generated_configs_parse_and_carry_parameters():
     assert receiver["streams"][0]["ipc"]["mono"] == "head"
 
 
+def test_streams_yaml_adds_network_check_only_when_asked():
+    args = ("ws://h:1", "r", "p", "trk", 640, 480, 30, "monotonic_us", "head")
+    assert "network_check" not in yaml.safe_load(ss.streams_yaml(*args))["livekit"]
+    assert "network_check" not in yaml.safe_load(ss.streams_yaml(*args, network_check=False))["livekit"]
+    assert yaml.safe_load(ss.streams_yaml(*args, network_check=True))["livekit"]["network_check"] == {}
+
+
+def test_streams_yaml_with_network_check_loads_through_the_capture_server_loader(tmp_path: Path):
+    from capture_server.livekit_streams import load_livekit_offer, load_livekit_streams
+    from capture_server.network_check import NetworkCheckPolicy
+
+    args = ("ws://h:1", "r", "p", "trk", 640, 480, 30, "monotonic_us", "head")
+    for enabled, expected in ((False, None), (True, NetworkCheckPolicy())):
+        path = tmp_path / f"streams-{enabled}.yaml"
+        path.write_text(ss.streams_yaml(*args, network_check=enabled))
+        offer = load_livekit_offer(path)
+        assert offer.network_check == expected
+        assert [s.name for s in load_livekit_streams(path)] == ["head"]
+
+
 def test_control_token_found_or_absent(tmp_path: Path):
     log = tmp_path / "backend.log"
     log.write_text(f"noise\n{ss.CONTROL_TOKEN_MARKER} abc\n")
@@ -1113,3 +1133,23 @@ def test_run_supervised_kills_the_helper_when_a_required_child_exits(monkeypatch
     with pytest.raises(ss.StartupError, match="bridge exited with 1"):
         ss.run_supervised(stack, ["sleep", "30"])
     assert helpers[0].poll() is not None
+
+
+def test_network_check_flag_defaults_off_and_is_parsed():
+    assert ss.parse_args([]).network_check is False
+    assert ss.parse_args(["--network-check"]).network_check is True
+
+
+@pytest.mark.parametrize("flag", [False, True])
+def test_main_passes_network_check_into_the_streams_file(recorded_main, flag):
+    argv = [*ORIN_ARGV, *CAMERA_ARGS, *(["--network-check"] if flag else [])]
+    assert ss.main(argv) == 0
+    streams = next(recorded_main.workdir.glob("*streams*.yaml"))
+    assert ("network_check" in yaml.safe_load(streams.read_text())["livekit"]) is flag
+
+
+def test_capture_server_child_gets_the_livekit_credentials(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--network-check"]) == 0
+    env = next(c.env for c in recorded_main.children if c.name == "capture-server")
+    assert env["LIVEKIT_API_KEY"] == ss.LIVEKIT_DEV_KEY
+    assert env["LIVEKIT_API_SECRET"] == ss.LIVEKIT_DEV_SECRET

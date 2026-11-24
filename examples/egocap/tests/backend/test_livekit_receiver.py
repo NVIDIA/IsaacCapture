@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 from livekit import rtc as real_rtc
 
+from capture_server import livekit_receiver as lr
 from capture_server import protocol as p
-from egocap_web import livekit_receiver as lr
 
 URL = "ws://lk.test"
 ROOM = "room"

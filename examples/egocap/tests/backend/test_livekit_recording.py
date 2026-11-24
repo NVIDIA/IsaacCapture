@@ -13,9 +13,9 @@ import numpy as np
 import pytest
 
 from capture_server import protocol as p
+from capture_server.clock_exchange import ClockMapping
+from capture_server.livekit_receiver import LiveKitFrameReceiver, ReceivedFrame, StreamCounters
 from egocap_web import livekit_recording as lrec
-from egocap_web.clock_exchange import ClockMapping
-from egocap_web.livekit_receiver import LiveKitFrameReceiver, ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import (
     BUDGET_ENV,
     LiveKitRecordingFeed,
@@ -287,8 +287,8 @@ async def test_the_budget_comes_from_the_environment_when_not_passed(monkeypatch
 
 async def test_a_mapping_in_budget_at_the_first_frame_ages_over_budget_when_replies_stop(monkeypatch):
     """Real estimator and sync client: only time passing, with no new exchange, pushes the take over budget."""
-    from egocap_web.clock_exchange import ClockEstimator, Exchange
-    from egocap_web.livekit_clock_sync import ClockSyncClient
+    from capture_server.clock_exchange import ClockEstimator, Exchange
+    from capture_server.livekit_clock_sync import ClockSyncClient
 
     monkeypatch.delenv(BUDGET_ENV, raising=False)
     s = 1_000_000_000

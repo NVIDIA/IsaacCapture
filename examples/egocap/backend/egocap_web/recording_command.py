@@ -30,7 +30,7 @@ import re
 import secrets
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -149,6 +149,7 @@ _PAYLOAD_VALIDATORS: dict[str, Any] = {
     "stop_episode": _validate_episode_target,
     "discard_episode": _validate_episode_target,
     "new_batch": _validate_batch_target,
+    "run_network_check": _validate_batch_target,
 }
 
 
@@ -237,6 +238,11 @@ class RecordingContext:
     #: take: a setup fact changing mid-take does not stop it, unlike a capture source going stale. It is asked
     #: on the event loop at any time, during a take too, so it must answer from memory.
     setup_gate: Callable[[], str | None] | None = field(default=None, repr=False)
+    #: Why CaptureServer's camera delivery check does not allow a take, or None. Like the setup gate it decides
+    #: admission and never interrupts a take; it is not station downtime, because the verdict ages out by design.
+    network_gate: Callable[[], str | None] | None = field(default=None, repr=False)
+    #: Asks CaptureServer to run its delivery check again; None when this backend has no capture connection to ask.
+    run_network_check: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
     batch_id: str = field(default_factory=_new_batch_id)
     saved_count: int = 0
     last_result: dict[str, Any] | None = None
@@ -343,6 +349,8 @@ class RecordingContext:
         blocked = self.setup_block()
         if blocked is not None:
             ready, reason = False, blocked
+        elif ready and self.network_gate is not None and (waiting := self.network_gate()) is not None:
+            ready, reason = False, waiting
         decision_state = self._decision_state(coordinator_snapshot, ready, reason)
         if decision_state != self._last_decision_state:
             self._last_decision_state = decision_state
@@ -497,6 +505,19 @@ class RecordingContext:
                 return "ok", None
             if command.action == "discard_episode":
                 await self.coordinator.discard_episode(command.payload["episode_id"])
+                return "ok", None
+            if command.action == "run_network_check":
+                if self.run_network_check is None:
+                    return "rejected", "this station has no network check to run"
+                # A second decoder during a take or its start would load the host the take is recorded on.
+                busy = self.coordinator.snapshot()
+                if (
+                    busy.active_operation is not None
+                    or interrupted_take(busy.service)
+                    or (busy.service is not None and busy.service.episode is not None)
+                ):
+                    return "rejected", "finish or stop the current take before running the network check"
+                await self.run_network_check()
                 return "ok", None
             if command.action == "new_batch":
                 # A genuinely active take must be explicitly stopped/

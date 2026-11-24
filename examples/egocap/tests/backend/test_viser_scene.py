@@ -714,6 +714,9 @@ class _FakeMonitor:
     def offered_camera_names(self):
         return None
 
+    async def run_network_check(self):
+        pass
+
 
 async def test_the_lifespan_stops_capture_even_when_the_3d_view_fails_to_stop_or_start_is_cancelled(monkeypatch):
     import asyncio

@@ -30,7 +30,7 @@ try:
 except ImportError:  # the optional "livekit" extra is not installed; annotations only, nothing runs without it
     rtc = None
 
-logger = logging.getLogger("isaaccapture.egocap.livekit_clock_sync")
+logger = logging.getLogger("isaaccapture.capture_server.livekit_clock_sync")
 
 CLOCK_SYNC_TOPIC = "isaaccapture.clock-sync"
 _REQUEST = struct.Struct("<cIq")

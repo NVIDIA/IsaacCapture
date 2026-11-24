@@ -21,7 +21,8 @@ import websockets
 from capture_server import protocol as p
 from capture_server.__main__ import main
 from capture_server.client import CaptureClient, _StreamRegistry
-from capture_server.livekit_streams import load_livekit_streams
+from capture_server.livekit_streams import load_livekit_offer, load_livekit_streams
+from capture_server.network_check import NetworkCheckPolicy
 from capture_server.server import ServerConfig, StationCamera
 from tests.support.capture_server import poll_until, start_capture_server, stop_capture_server
 
@@ -318,6 +319,63 @@ def test_loader_rejects_unusable_files_with_value_error(tmp_path, text):
         load_livekit_streams(_write(tmp_path, text))
 
 
+_NC_HEAD = "livekit:\n  url: wss://lk\n  room: r\n  publisher: o\n  streams: [{name: A, track: t}]\n"
+
+
+def _with_check(tmp_path: Path, check_yaml: str) -> Path:
+    return _write(tmp_path, _NC_HEAD + check_yaml)
+
+
+def test_offer_without_network_check_has_no_policy(tmp_path):
+    offer = load_livekit_offer(_write(tmp_path, _GOOD_YAML))
+    assert offer.network_check is None
+    assert offer.streams == load_livekit_streams(_write(tmp_path, _GOOD_YAML))
+
+
+def test_offer_with_null_network_check_has_no_policy(tmp_path):
+    assert load_livekit_offer(_with_check(tmp_path, "  network_check:\n")).network_check is None
+
+
+def test_offer_with_empty_network_check_uses_the_default_policy(tmp_path):
+    offer = load_livekit_offer(_with_check(tmp_path, "  network_check: {}\n"))
+    assert offer.network_check == NetworkCheckPolicy()
+    assert len(offer.streams) == 1
+
+
+def test_offer_with_network_check_values_builds_that_policy(tmp_path):
+    text = "  network_check: {startup_s: 10, window_s: 20.5, max_low_windows: 3, min_delivery_fraction: 0.5}\n"
+    policy = load_livekit_offer(_with_check(tmp_path, text)).network_check
+    assert policy == NetworkCheckPolicy(startup_s=10, window_s=20.5, max_low_windows=3, min_delivery_fraction=0.5)
+
+
+def test_load_livekit_streams_still_returns_only_the_streams_when_a_check_is_present(tmp_path):
+    streams = load_livekit_streams(_with_check(tmp_path, "  network_check: {}\n"))
+    assert [s.name for s in streams] == ["A"]
+
+
+@pytest.mark.parametrize(
+    "check_yaml",
+    [
+        "  network_check: {bogus: 1}\n",
+        "  network_check: [1]\n",
+        "  network_check: 5\n",
+        "  network_check: {window_s: .nan}\n",
+        "  network_check: {window_s: .inf}\n",
+        "  network_check: {window_s: true}\n",
+        "  network_check: {window_s: fast}\n",
+        "  network_check: {max_low_windows: 1.5}\n",
+        "  network_check: {max_low_windows: true}\n",
+        "  network_check: {startup_s: 200, window_s: 200}\n",
+    ],
+)
+def test_offer_rejects_a_bad_network_check_naming_the_file(tmp_path, check_yaml):
+    path = _with_check(tmp_path, check_yaml)
+    with pytest.raises(ValueError, match="livekit.yaml"):
+        load_livekit_offer(path)
+    with pytest.raises(ValueError, match="livekit.yaml"):
+        load_livekit_streams(path)
+
+
 def test_loader_reports_an_unreadable_file_as_value_error(tmp_path):
     with pytest.raises(ValueError, match="cannot read"):
         load_livekit_streams(tmp_path / "missing.yaml")
@@ -430,6 +488,38 @@ def test_cli_rejects_a_bad_streams_file_with_exit_code_2(tmp_path, capsys):
 def test_cli_rejects_a_missing_streams_file_with_exit_code_2(tmp_path, capsys):
     assert main(["--mock", "--livekit-streams", str(tmp_path / "nope.yaml")]) == 2
     assert "cannot read" in capsys.readouterr().err
+
+
+def test_cli_passes_the_network_check_policy_into_the_server_config(tmp_path, monkeypatch):
+    import capture_server.__main__ as cli_main
+
+    path = _with_check(tmp_path, "  network_check: {window_s: 12}\n")
+    seen: list[ServerConfig] = []
+
+    class _Stop(Exception):
+        pass
+
+    def fake_server(config, **_):
+        seen.append(config)
+        raise _Stop
+
+    monkeypatch.setattr("capture_server.server.CaptureServer", fake_server)
+    with pytest.raises(_Stop):
+        cli_main.main(["--mock", "--livekit-streams", str(path)])
+    assert seen[0].network_check == NetworkCheckPolicy(window_s=12)
+    assert [s.name for s in seen[0].livekit_streams] == ["A"]
+
+
+def test_cli_rejects_a_bad_network_check_with_exit_code_2(tmp_path, capsys):
+    path = _with_check(tmp_path, "  network_check: {bogus: 1}\n")
+    assert main(["--mock", "--livekit-streams", str(path)]) == 2
+    assert "bogus" in capsys.readouterr().err
+
+
+def test_server_config_rejects_a_network_check_without_livekit_streams():
+    with pytest.raises(ValueError, match="livekit_streams"):
+        ServerConfig(network_check=NetworkCheckPolicy())
+    assert ServerConfig(livekit_streams=(_stream(),), network_check=NetworkCheckPolicy()).network_check is not None
 
 
 @pytest.mark.asyncio

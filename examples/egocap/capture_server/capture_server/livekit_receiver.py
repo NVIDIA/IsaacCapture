@@ -24,8 +24,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from capture_server import protocol as p
-
+from . import protocol as p
 from .livekit_clock_sync import ClockSyncClient
 
 try:
@@ -33,7 +32,7 @@ try:
 except ImportError:  # the optional "livekit" extra is not installed
     rtc = None
 
-logger = logging.getLogger("isaaccapture.egocap.livekit_receiver")
+logger = logging.getLogger("isaaccapture.capture_server.livekit_receiver")
 
 LIVEKIT_MISSING = "receiving LiveKit video needs the livekit package: install the egocap 'livekit' extra"
 
@@ -196,6 +195,10 @@ class LiveKitFrameReceiver:
             for task in (get, lost):
                 if not task.done():
                     task.cancel()
+
+    def track_ids(self) -> dict[int, str]:
+        """The LiveKit track each stream is currently read from, so a consumer can tell a republished camera."""
+        return dict(self._active)
 
     def clear_queued(self) -> None:
         """Drop every queued frame, so a take starts with frames acquired after it began."""

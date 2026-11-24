@@ -12,6 +12,8 @@ import react from "@vitejs/plugin-react";
 // FastAPI origin -- see backend/egocap_web/app.py.
 export default defineConfig({
   plugins: [react()],
+  // The recording page and, at /status/, the read-only CaptureServer status page.
+  build: { rollupOptions: { input: { main: "index.html", status: "status/index.html" } } },
   server: {
     proxy: {
       "/api": { target: "http://127.0.0.1:8000", ws: true },

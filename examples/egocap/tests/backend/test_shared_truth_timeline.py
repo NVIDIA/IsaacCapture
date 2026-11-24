@@ -39,7 +39,7 @@ import zarr
 
 from capture_server import protocol as p
 from capture_server.client import CaptureFrame
-from egocap_web.livekit_receiver import ReceivedFrame
+from capture_server.livekit_receiver import ReceivedFrame
 from egocap_web.livekit_recording import LiveKitRecordingFeed
 from egocap_web.recording_adapter import (
     MANUS_GLOVE_SOURCE,

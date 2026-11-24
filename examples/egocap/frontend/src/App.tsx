@@ -21,6 +21,7 @@ import {
 } from "./captureStatus";
 import { CaptureTree } from "./CaptureTree";
 import { CameraGrid } from "./CameraGrid";
+import { NetworkCheckPanel } from "./NetworkCheckPanel";
 import { OperatorBar } from "./OperatorBar";
 import { SidebarResizer } from "./SidebarResizer";
 import {
@@ -577,6 +578,19 @@ export default function App() {
                 uptimeKey={`${recordingSnapshot?.episodePhase ?? ""}|${recordingSnapshot?.notReadyReason ?? ""}|${recordingSnapshot?.savedCount ?? 0}`}
               />
               <StaleOrErrorBanner presentation={presentation} feedHealth={feedHealth} diagnostic={diagnostic} onRetry={retry} />
+              {/* The server's camera delivery check, shown whether or not a take is running. */}
+              <NetworkCheckPanel
+                check={response?.status?.network_check ?? null}
+                live={presentation.live}
+                onRun={
+                  recordingSnapshot !== null && recordingActions.onRunNetworkCheck !== undefined
+                    ? () => recordingActions.onRunNetworkCheck!({ batchId: recordingSnapshot.batchId })
+                    : undefined
+                }
+                runBlockedReason={
+                  recording || panelPhase !== "idle" ? "Finish the current take before checking the connection" : null
+                }
+              />
               {/* The cameras are the page: they take every pixel the status bar above and the controls below leave. */}
               <div className={`op-stage${recording ? " op-stage--recording" : ""}`}>
                 <CameraGrid snapshot={snapshot} live={presentation.live} receivedAtMonotonic={receivedAtMonotonic} cameraRoles={operatorSettings?.camera_roles ?? null} />

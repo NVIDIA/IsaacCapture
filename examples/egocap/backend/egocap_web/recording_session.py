@@ -190,8 +190,12 @@ class RecordingSessionCoordinator:
         initial_context: TaskContext | None = None,
         livekit_source: LiveKitRecordingSource | None = None,
         tracking_latency: dict[str, float] | None = None,
+        network_gate: Callable[[], str | None] | None = None,
     ) -> None:
         self._config_factory = config_factory
+        # Why CaptureServer's camera delivery check does not allow a take, or None. Asked at admission and again
+        # after storage opens, because the verdict can change while storage opens; never during a take.
+        self._network_gate = network_gate
         # Optional LiveKit video for each take: joined before storage opens, fed after the ingress starts, left
         # before the ingress is retired.
         self._livekit_source = livekit_source
@@ -414,6 +418,7 @@ class RecordingSessionCoordinator:
         ready, reason = self._readiness_check()
         if not ready:
             raise CoordinatorBusyError(reason or "required sources are not ready")
+        self._require_network_ready("")
         frozen_context = replace(self._context, operator=operator)
         return await self._run_operation(OperationKind.STARTING, partial(self._start_episode_impl, frozen_context))
 
@@ -442,6 +447,12 @@ class RecordingSessionCoordinator:
             await self._livekit_source.stop()
             raise
 
+    def _require_network_ready(self, when: str) -> None:
+        """Refuse the start while the server's delivery check does not allow it; ``when`` prefixes the reason."""
+        reason = self._network_gate() if self._network_gate is not None else None
+        if reason is not None:
+            raise CoordinatorBusyError(f"{when}{reason}")
+
     async def _start_episode_with_storage(self, frozen_context: TaskContext) -> EpisodeInfo:
         service = await self._open_storage_if_needed()
         # Recheck readiness/closing intent right after storage finished
@@ -450,6 +461,8 @@ class RecordingSessionCoordinator:
         ready, _ = self._readiness_check()
         if not ready or self._closing:
             raise CoordinatorBusyError("start was superseded while storage was opening")
+        # The delivery verdict can change while storage opens: a result that aged out or a camera that changed.
+        self._require_network_ready("start was superseded while storage was opening: ")
         episode = await service.start_episode(
             frozen_context.task_text, frozen_context.operator, task_details=frozen_context.task_details
         )
@@ -461,17 +474,25 @@ class RecordingSessionCoordinator:
         # check is real-time backend-local capture state, re-run here
         # rather than trusted from before the await.
         ready, _ = self._readiness_check()
+        network_reason = self._network_gate() if self._network_gate is not None else None
         # Also recheck closing intent: a close() could have been requested
         # concurrently while this start was still in flight -- activating
         # a brand new ingress for a session that's already shutting down
         # would hand it work nothing is going to retire.
-        if not ready or self._closing or service.snapshot().phase is not RecordingPhase.RECORDING:
+        if (
+            not ready
+            or network_reason is not None
+            or self._closing
+            or service.snapshot().phase is not RecordingPhase.RECORDING
+        ):
             # A superseded storage-level start must be explicitly settled,
             # not merely raised past -- discard it so the service doesn't
             # retain an orphaned RECORDING take nothing will ever stop.
             with contextlib.suppress(Exception):
                 await service.discard_episode(episode.episode_id)
-            raise CoordinatorBusyError("start was superseded before activation")
+            raise CoordinatorBusyError(
+                "start was superseded before activation" + (f": {network_reason}" if network_reason else "")
+            )
         episode_id = episode.episode_id
         # A callable is resolved per take: LiveKit frame sizes are known only once the session has started.
         ingress = RecordingIngress(

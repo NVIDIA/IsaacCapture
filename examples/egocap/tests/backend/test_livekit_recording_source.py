@@ -17,9 +17,9 @@ import numpy as np
 import pytest
 
 from capture_server import protocol as p
+from capture_server.clock_exchange import ClockMapping
+from capture_server.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web import livekit_recording as lrec
-from egocap_web.clock_exchange import ClockMapping
-from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import LiveKitRecordingSource, recordable_livekit_streams
 
 CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
@@ -119,6 +119,7 @@ class FakeReceiver:
     start_gate: asyncio.Event | None = None
     stop_gate: asyncio.Event | None = None
     mapping_ready = True
+    tracks: dict[int, str] = {}
 
     def __init__(self, streams, token, clock_sync=False):
         self.clock_sync_requested = clock_sync
@@ -129,6 +130,9 @@ class FakeReceiver:
         self.stops = 0
         self.counters = defaultdict(StreamCounters)
         FakeReceiver.instances.append(self)
+
+    def track_ids(self):
+        return dict(FakeReceiver.tracks)
 
     async def start(self):
         self.events.append("start")
@@ -168,6 +172,7 @@ def fake_receiver(monkeypatch):
     FakeReceiver.start_error = None
     FakeReceiver.start_gate = FakeReceiver.stop_gate = None
     FakeReceiver.mapping_ready = True
+    FakeReceiver.tracks = {}
     monkeypatch.setattr(lrec, "LiveKitFrameReceiver", FakeReceiver)
 
 
@@ -581,3 +586,49 @@ async def test_an_exchange_reported_again_with_more_uncertainty_is_listed_once_a
         (2, 100, 1_000),
         (1, 200, 1_000),
     ]
+
+
+# --- the tracks the server's network check measured ------------------------------
+
+
+async def test_a_camera_on_the_tested_track_prepares():
+    streams = [livekit_stream(16)]
+    FakeReceiver.tracks = {16: "t16"}
+    source = make_source(streams, tested_tracks=lambda: {16: "t16"})
+    await prepare_with_frames(source, streams)
+    assert FakeReceiver.instances[0].stops == 0
+    await source.stop()
+
+
+async def test_a_republished_camera_refuses_the_start_naming_it_and_leaves_the_room():
+    streams = [livekit_stream(16)]
+    FakeReceiver.tracks = {16: "t16-new"}
+    source = make_source(streams, tested_tracks=lambda: {16: "t16"})
+    with pytest.raises(
+        RuntimeError, match="cam16: the camera was republished since the network check; run it again"
+    ):
+        await prepare_with_frames(source, streams)
+    assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_a_tested_camera_with_no_current_track_refuses_the_start():
+    streams = [livekit_stream(16)]
+    source = make_source(streams, tested_tracks=lambda: {16: "t16"})
+    with pytest.raises(RuntimeError, match="republished"):
+        await prepare_with_frames(source, streams)
+
+
+async def test_a_camera_the_check_did_not_measure_is_not_refused():
+    streams = [livekit_stream(16), livekit_stream(17)]
+    FakeReceiver.tracks = {16: "t16", 17: "anything"}
+    source = make_source(streams, tested_tracks=lambda: {16: "t16"})
+    await prepare_with_frames(source, streams)
+    await source.stop()
+
+
+async def test_no_reported_tested_tracks_means_no_refusal():
+    streams = [livekit_stream(16)]
+    FakeReceiver.tracks = {16: "whatever"}
+    source = make_source(streams, tested_tracks=lambda: {})
+    await prepare_with_frames(source, streams)
+    await source.stop()
