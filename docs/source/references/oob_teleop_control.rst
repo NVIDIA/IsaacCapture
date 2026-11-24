@@ -829,9 +829,9 @@ loopback).
 ``turnserver`` process on 127.0.0.1:3478; no systemd service is needed
 (and may conflict — stop the system ``coturn.service`` if enabled).
 
-Inspect ``/tmp/coturn-cloudxr-3478.log`` for bind errors or credential
-mismatches; the launcher truncates this file on every start so only the
-current session's output is present.
+Use the coturn log path reported at startup while the relay runs. On startup
+failure or restart, inspect the log tail in the launcher output; private coturn
+files are removed after the owned process exits.
 
 Tab not found within timeout
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
