@@ -9,6 +9,8 @@ import logging
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from conftest import LINE_RE
@@ -119,6 +121,44 @@ class TestLogDir:
 
 
 class TestEnsurePrivateDir:
+    @pytest.mark.parametrize(("mode", "foreign"), [(0o777, False), (0o755, True)])
+    def test_rejects_an_untrusted_root_before_creating_children(
+        self, tmp_path, mode, foreign
+    ):
+        info = SimpleNamespace(
+            st_mode=stat.S_IFDIR | mode,
+            st_uid=os.geteuid() + 1 if foreign else os.geteuid(),
+        )
+        with (
+            patch.object(_core.os, "fstat", return_value=info),
+            patch.object(_core.os, "mkdir") as mkdir,
+        ):
+            with pytest.raises(PermissionError):
+                _core.ensure_private_dir(tmp_path / "logs")
+            mkdir.assert_not_called()
+
+    def test_ownership_uses_the_effective_user(self, tmp_path):
+        with patch.object(_core.os, "getuid", return_value=os.geteuid() + 1):
+            assert _core.ensure_private_dir(tmp_path / "logs") == tmp_path / "logs"
+
+    @not_root
+    @pytest.mark.skipif(not hasattr(os, "O_PATH"), reason="Linux traversal descriptors")
+    @pytest.mark.parametrize("existing", [False, True])
+    def test_searchable_ancestor_does_not_need_read_permission(
+        self, tmp_path, existing
+    ):
+        ancestor = tmp_path / "searchable"
+        ancestor.mkdir()
+        leaf = ancestor / "logs"
+        if existing:
+            leaf.mkdir(mode=0o700)
+        ancestor.chmod(0o300)
+        try:
+            assert _core.ensure_private_dir(leaf) == leaf
+            (leaf / "probe").write_text("usable")
+        finally:
+            ancestor.chmod(0o700)
+
     def test_narrows_every_component_it_created(self, tmp_path):
         base = tmp_path / "shared"
         base.mkdir()
@@ -138,6 +178,61 @@ class TestEnsurePrivateDir:
         existing.chmod(0o755)
         assert _core.ensure_private_dir(existing) == existing
         assert stat.S_IMODE(existing.stat().st_mode) == 0o755
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_rejects_a_symlink_at_the_target(self, tmp_path):
+        private = tmp_path / "private"
+        private.mkdir()
+        link = tmp_path / "logs"
+        link.symlink_to(private, target_is_directory=True)
+
+        with pytest.raises(NotADirectoryError):
+            _core.ensure_private_dir(link)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_does_not_create_through_a_symlinked_parent(self, tmp_path):
+        destination = tmp_path / "destination"
+        destination.mkdir()
+        link = tmp_path / "runtime"
+        link.symlink_to(destination, target_is_directory=True)
+
+        with pytest.raises(NotADirectoryError):
+            _core.ensure_private_dir(link / "logs")
+        assert not (destination / "logs").exists()
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_rejects_a_replaceable_path_component(self, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir(mode=0o777)
+        shared.chmod(0o777)
+
+        with pytest.raises(PermissionError, match="replaceable"):
+            _core.ensure_private_dir(shared / "logs")
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_sticky_ancestor_is_allowed_but_sticky_target_is_not(self, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        shared.chmod(0o1777)
+        assert _core.ensure_private_dir(shared / "logs") == shared / "logs"
+        with pytest.raises(PermissionError, match="replaceable"):
+            _core.ensure_private_dir(shared)
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_rejects_parent_traversal_before_creating_anything(self, tmp_path):
+        with pytest.raises(PermissionError, match="ambiguous"):
+            _core.ensure_private_dir(tmp_path / "new" / ".." / "logs")
+        assert not (tmp_path / "new").exists()
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX ownership and modes")
+    def test_creation_is_private_even_with_a_permissive_umask(self, tmp_path):
+        previous = os.umask(0)
+        try:
+            leaf = _core.ensure_private_dir(tmp_path / "runtime" / "logs")
+        finally:
+            os.umask(previous)
+        assert stat.S_IMODE(leaf.stat().st_mode) == 0o700
+        assert stat.S_IMODE(leaf.parent.stat().st_mode) == 0o700
 
     @not_root
     def test_raises_rather_than_returning_an_unusable_directory(self, tmp_path):

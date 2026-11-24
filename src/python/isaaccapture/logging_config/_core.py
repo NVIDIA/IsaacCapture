@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -107,21 +108,45 @@ def log_dir() -> Path:
     return directory
 
 
-def ensure_private_dir(directory: Path) -> Path:
-    """Create *directory* and make only newly created components owner-only."""
-    missing = []
-    probe = directory
-    while not probe.exists() and probe != probe.parent:
-        missing.append(probe)
-        probe = probe.parent
+def _validate_directory(fd: int, directory: Path, *, target: bool) -> None:
+    info = os.fstat(fd)
+    # Sticky shared ancestors protect entries; the target must forbid other writers.
+    if info.st_uid not in (0, os.geteuid()) or (target and info.st_uid != os.geteuid()):
+        raise PermissionError(f"refusing foreign-owned log path: {directory}")
+    writable = info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    if writable and (target or not info.st_mode & stat.S_ISVTX):
+        raise PermissionError(f"refusing replaceable log path: {directory}")
 
-    try:
-        directory.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
+
+def ensure_private_dir(directory: Path) -> Path:
+    """Create owner-only directories without following replaceable POSIX paths."""
+    if not _POSIX:
+        directory.mkdir(parents=True, exist_ok=True)
         return directory
-    if _POSIX:
-        for component in missing:
-            component.chmod(0o700)
+
+    parts = directory.absolute().parts[1:]
+    if not parts or ".." in parts:
+        raise PermissionError(f"refusing ambiguous log directory path: {directory}")
+
+    # Pin parents against pathname swaps; O_PATH needs search permission, not read.
+    flags = getattr(os, "O_PATH", os.O_RDONLY)
+    flags |= os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    parent = os.open("/", flags)
+    try:
+        # The initial root is also a parent and must be checked before mkdirat.
+        _validate_directory(parent, directory, target=False)
+        for index, name in enumerate(parts):
+            try:
+                os.mkdir(name, mode=0o700, dir_fd=parent)
+            except FileExistsError:
+                pass  # Existing entries still undergo the checks below.
+            child = os.open(name, flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
+
+            _validate_directory(parent, directory, target=index == len(parts) - 1)
+    finally:
+        os.close(parent)
     return directory
 
 
