@@ -301,9 +301,17 @@ struct BitReader
     }
 };
 
+struct SpsColour
+{
+    int present = 0; // colour_description_present_flag
+    uint32_t primaries = 0;
+    uint32_t transfer = 0;
+    uint32_t matrix = 0;
+};
+
 // Returns video_full_range_flag from the first SPS in an Annex-B access unit; -1 if absent, unparsable, or the
-// VUI carries no video_signal_type.
-int sps_video_full_range(const std::vector<uint8_t>& au)
+// VUI carries no video_signal_type. When `colour` is given it receives colour_description.
+int sps_video_full_range(const std::vector<uint8_t>& au, SpsColour* colour = nullptr)
 {
     for (size_t i = 0; i + 4 < au.size(); ++i)
     {
@@ -363,17 +371,28 @@ int sps_video_full_range(const std::vector<uint8_t>& au)
             return -1;
         r.u(3); // video_format
         const uint32_t full = r.u(1);
+        if (colour)
+        {
+            colour->present = static_cast<int>(r.u(1));
+            if (colour->present)
+            {
+                colour->primaries = r.u(8);
+                colour->transfer = r.u(8);
+                colour->matrix = r.u(8);
+            }
+        }
         return r.ok ? static_cast<int>(full) : -1;
     }
     return -1;
 }
 
 // A grayscale ramp (Y 0..255 across the width, UV 128) must be signalled as full or limited range as configured.
-void test_range_signalling(CudaContext& ctx, bool full_range)
+void test_range_signalling(CudaContext& ctx, bool full_range, bool bt709)
 {
     EncoderConfig cfg;
     cfg.geometry = { 640, 480 };
     cfg.full_range = full_range;
+    cfg.matrix_bt709 = bt709;
     cfg.input_surfaces = 2;
     NvencEncoder enc(ctx, cfg);
 
@@ -382,6 +401,7 @@ void test_range_signalling(CudaContext& ctx, bool full_range)
         luma[i] = static_cast<uint8_t>((i % 640) * 255 / 639);
 
     int flag = -2;
+    SpsColour colour;
     for (int i = 0; i < 3; ++i)
     {
         NvencEncoder::Surface s;
@@ -391,11 +411,19 @@ void test_range_signalling(CudaContext& ctx, bool full_range)
         CHECK(cudaDeviceSynchronize() == cudaSuccess);
         EncodedPacket p = enc.encode(s, nullptr, 2000 + static_cast<uint64_t>(i), i == 0);
         if (i == 0)
-            flag = sps_video_full_range(p.data);
+            flag = sps_video_full_range(p.data, &colour);
     }
     if (flag != (full_range ? 1 : 0))
         std::fprintf(stderr, "video_full_range_flag=%d for full_range=%d\n", flag, full_range ? 1 : 0);
     CHECK(flag == (full_range ? 1 : 0));
+    // Primaries and transfer are signalled as 2 (unspecified); only the matrix follows the config.
+    if (!colour.present || colour.matrix != (bt709 ? 1u : 6u))
+        std::fprintf(stderr, "colour_description present=%d primaries=%u transfer=%u matrix=%u for bt709=%d\n",
+                     colour.present, colour.primaries, colour.transfer, colour.matrix, bt709 ? 1 : 0);
+    CHECK(colour.present == 1);
+    CHECK(colour.primaries == 2);
+    CHECK(colour.transfer == 2);
+    CHECK(colour.matrix == (bt709 ? 1u : 6u));
 }
 
 } // namespace
@@ -500,8 +528,10 @@ int main()
     test_output_after_reconfigure(*enc);
     test_rate_changes_output_size(*enc);
     test_decodable_across_reconfigure(*enc);
-    test_range_signalling(*ctx, true);
-    test_range_signalling(*ctx, false);
+    test_range_signalling(*ctx, true, true);
+    test_range_signalling(*ctx, false, false);
+    test_range_signalling(*ctx, true, false);
+    test_range_signalling(*ctx, false, true);
 
     if (g_failures != 0)
     {

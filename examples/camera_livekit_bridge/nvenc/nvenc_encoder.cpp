@@ -114,7 +114,7 @@ struct NvencEncoder::Impl
     void configure()
     {
         const GUID codec = NV_ENC_CODEC_H264_GUID;
-        const GUID preset = NV_ENC_PRESET_P1_GUID;
+        const GUID preset = config.preset == 4 ? NV_ENC_PRESET_P4_GUID : NV_ENC_PRESET_P1_GUID;
         const NV_ENC_TUNING_INFO tuning = NV_ENC_TUNING_INFO_ULTRA_LOW_LATENCY;
 
         NV_ENC_PRESET_CONFIG preset_config{};
@@ -137,6 +137,11 @@ struct NvencEncoder::Impl
         h264.h264VUIParameters.videoSignalTypePresentFlag = 1;
         h264.h264VUIParameters.videoFormat = NV_ENC_VUI_VIDEO_FORMAT_UNSPECIFIED;
         h264.h264VUIParameters.videoFullRangeFlag = config.full_range ? 1 : 0;
+        // Only the matrix is known; primaries and transfer are signalled as unspecified (value 2).
+        h264.h264VUIParameters.colourDescriptionPresentFlag = 1;
+        h264.h264VUIParameters.colourPrimaries = static_cast<NV_ENC_VUI_COLOR_PRIMARIES>(2);
+        h264.h264VUIParameters.transferCharacteristics = static_cast<NV_ENC_VUI_TRANSFER_CHARACTERISTIC>(2);
+        h264.h264VUIParameters.colourMatrix = static_cast<NV_ENC_VUI_MATRIX_COEFFS>(config.matrix_bt709 ? 1 : 6);
 
         NV_ENC_INITIALIZE_PARAMS& init = init_params;
         init = {};

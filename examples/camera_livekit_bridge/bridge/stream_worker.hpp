@@ -28,14 +28,13 @@ struct WorkerConfig
     uint32_t fps = 30;
     uint32_t bitrate_bps = 8'000'000;
     uint32_t idr_period = 30;
+    /// NVENC preset number, 1 or 4.
+    uint32_t nvenc_preset = 1;
     /// A read that finishes later than this after its slot's notice is treated as possibly overwritten and dropped.
     /// Zero derives it from the ring: the time the publisher needs to wrap it at `fps`.
     uint32_t max_notice_age_ms = 0;
     /// Integer factor the picture is shrunk by on the GPU before encoding (1 keeps the source size).
     uint32_t scale_div = 1;
-    /// The IPC pictures are full-range (0-255) rather than limited-range (16-235); the encoded stream signals it. The
-    /// receiver's IPC catalog does not carry the range, so the operator says it here.
-    bool source_full_range = false;
     /// GPU steps run, in order, on every picture before the downscale (see gpu_ops/gpu_step.hpp). Empty by default:
     /// the picture is only copied or shrunk.
     std::vector<std::string> gpu_steps;

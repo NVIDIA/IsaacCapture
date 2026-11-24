@@ -26,7 +26,7 @@ is no runtime settings API: add such keys to the file and nothing happens.
 ## The default sender profile
 
 `configs/default-camera-settings.yaml` is the profile the launcher uses unless told otherwise. It describes one SHW5G head
-camera on the SIPL backend: HEVC at 30 fps and 4 Mbit/s.
+camera on the SIPL backend: HEVC at 60 fps and 4 Mbit/s.
 
 The file is specific to that rig. A different SIPL platform or camera changes the `sipl` block (platform file, config
 name, link masks, tuning directory) and possibly the stream id and size. The Argus backend has no `sipl` block: it
@@ -71,10 +71,9 @@ The page shows latency from the sensor's capture time only when all of these hol
    `CLOCK_REALTIME` with every frame. A release whose parser still reads `network.timing_extension` is older than this profile and sends
    no capture time unless that key is set to `true`, which this profile no longer carries; every take with it is refused.
 2. The receiver passes the timing records through to the CUDA IPC output.
-3. The bridge runs with `--timestamp-basis capture_monotonic_us --chrony-sender ORIN_HOST --chrony-sender-refid ID --chrony-pc-port PORT`. For a SIPL profile
-   the launcher also passes `--source-full-range`, because SIPL pictures use the full 0-255 range; without it the
-   encoded stream signals limited range and the page's blacks and whites are wrong. The bridge binary must support
-   that flag.
+3. The bridge runs with `--timestamp-basis capture_monotonic_us --chrony-sender ORIN_HOST --chrony-sender-refid ID --chrony-pc-port PORT`. The launcher writes the
+   source's range and matrix into the receiver's generated config (SIPL: full range, BT.709), the receiver publishes them in
+   its IPC catalog and the bridge signals them in the encoded stream; a bridge older than that catalog support does not.
 4. The CaptureServer descriptor declares `timestamp_basis: capture_monotonic_us`.
 5. The bridge answers the browser's clock exchange, so the page can map the publisher's clock onto its own.
 

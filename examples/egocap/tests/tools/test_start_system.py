@@ -65,6 +65,11 @@ def test_generated_configs_parse_and_carry_parameters():
     assert stream["name"] == "head"
     assert receiver["streams"][0]["name"] == "head"
     assert receiver["streams"][0]["ipc"]["mono"] == "head"
+    assert (receiver["streams"][0]["full_range"], receiver["streams"][0]["color_matrix"]) == (False, "bt601")
+    sipl = yaml.safe_load(
+        ss.receiver_yaml("h", 5555, "/tmp/s.sock", 640, 480, "head", full_range=True, color_matrix="bt709")
+    )
+    assert (sipl["streams"][0]["full_range"], sipl["streams"][0]["color_matrix"]) == (True, "bt709")
 
 
 def test_control_token_found_or_absent(tmp_path: Path):
@@ -172,7 +177,7 @@ def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sen
 def test_default_profile_gives_the_head_camera_settings():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
     assert ss.sender_settings(config) == ss.SenderSettings(
-        port=5000, fps=30, bitrate_mbps=4, stream_id="head", full_range=True, sipl=True
+        port=5000, fps=60, bitrate_mbps=4, stream_id="head", full_range=True, sipl=True
     )
 
 
@@ -442,20 +447,16 @@ def test_second_ctrl_c_kills_the_child_and_the_rest_at_once(stack, tmp_path: Pat
 def test_mock_sender_command_follows_the_profile():
     settings = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
     command = ss.mock_sender_command("python", Path("mock.py"), settings, 2560, 1984)
-    assert command == ["python", "mock.py", "--port", "5000", "--stream", "head:2560x1984@30"]
+    assert command == ["python", "mock.py", "--port", "5000", "--stream", "head:2560x1984@60"]
 
 
 def test_bridge_timing_arguments_for_mock_and_real_sender():
-    sipl = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
-    assert ss.bridge_timing_arguments(sipl, True, None, None, 12301) == ["--timestamp-basis", "monotonic_us"]
-    real = " ".join(ss.bridge_timing_arguments(sipl, False, "192.0.2.10", "C000020A", 12301))
+    assert ss.bridge_timing_arguments(True, None, None, 12301) == ["--timestamp-basis", "monotonic_us"]
+    real = " ".join(ss.bridge_timing_arguments(False, "192.0.2.10", "C000020A", 12301))
     assert "--timestamp-basis capture_monotonic_us" in real
     assert "--chrony-sender 192.0.2.10 --chrony-sender-refid C000020A --chrony-pc-port 12301" in real
     assert "--sender-clock" not in real
-    assert "--source-full-range" in real
-    argus_config = {**ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG), "capture_backend": "argus"}
-    argus = ss.sender_settings(argus_config)
-    assert "--source-full-range" not in ss.bridge_timing_arguments(argus, False, "192.0.2.10", "C000020A", 12301)
+    assert "--source-full-range" not in real
 
 
 def test_main_refuses_orin_together_with_mock(monkeypatch, capsys, tmp_path: Path):
@@ -548,7 +549,7 @@ def _command(recorded, name: str) -> str:
 
 def test_main_starts_the_orin_chain_in_order(recorded_main):
     argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
-    assert ss.main([*argv, *CAMERA_ARGS]) == 0
+    assert ss.main([*argv, *CAMERA_ARGS, "--bridge-bitrate-mbps", "50", "--bridge-scale-div", "1"]) == 0
     names = [c.name for c in recorded_main.children]
     assert names == ["sender", "livekit", "capture-server", "backend", "receiver", "bridge", "timesync-follower"]
     capture = _command(recorded_main, "capture-server")
@@ -557,13 +558,32 @@ def test_main_starts_the_orin_chain_in_order(recorded_main):
     assert "--livekit-streams" in capture
     assert "--mock" not in capture
     bridge = _command(recorded_main, "bridge")
+    assert "--bitrate-mbps 50" in bridge
+    declared = yaml.safe_load((recorded_main.workdir / "streams.yaml").read_text())["livekit"]["streams"][0]
+    assert (declared["width"], declared["height"]) == (2560, 1984)
     assert "--timestamp-basis capture_monotonic_us" in bridge
     assert "--sender-clock" not in bridge
-    assert "--source-full-range" in bridge
+    assert "--source-full-range" not in bridge
+    colour = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (colour["full_range"], colour["color_matrix"]) == (True, "bt709")
     assert "--config" in _command(recorded_main, "receiver")
     release_deploys = [d for d in recorded_main.deploys if "--with-sipl" in d]
     assert len(release_deploys) == 1
     assert release_deploys[0][1:3] == ["x", "user@192.0.2.10"]
+
+
+def test_bridge_nvenc_preset_defaults_to_4_and_follows_the_flag(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
+    assert "--nvenc-preset 4" in _command(recorded_main, "bridge")
+    recorded_main.children.clear()
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--bridge-nvenc-preset", "1"]) == 0
+    assert "--nvenc-preset 1" in _command(recorded_main, "bridge")
+
+
+def test_bridge_nvenc_preset_rejects_other_values(capsys):
+    with pytest.raises(SystemExit):
+        ss.parse_args(["--bridge-nvenc-preset", "3"])
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_main_wires_chrony_into_the_bridge_and_starts_the_follower_after_it(recorded_main):
@@ -638,6 +658,8 @@ def test_stop_daemon_runs_only_for_the_sipl_backend(recorded_main, tmp_path: Pat
     config.write_text(yaml.safe_dump(argus))
     assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--sender-config", str(config)]) == 0
     assert not any(d[-1] == "stop-daemon" for d in recorded_main.deploys)
+    colour = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (colour["full_range"], colour["color_matrix"]) == (False, "bt601")
 
 
 TIMESYNC_TOOL = ss.REPO_ROOT / "src/core/timesync/tools/timesync_tool.py"
@@ -768,6 +790,9 @@ def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
     bridge = _command(recorded_main, "bridge")
     assert "--timestamp-basis monotonic_us" in bridge
     assert "--sender-clock" not in bridge
+    assert "--source-full-range" not in bridge
+    colour = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"][0]
+    assert (colour["full_range"], colour["color_matrix"]) == (False, "bt601")
     assert recorded_main.deploys == []
 
 

@@ -121,7 +121,7 @@ native decoder) when the venv or decoder is missing and the camera chain starts 
 bridge); `CAMERA_RECEIVER_VENV` and `CAMERA_RECEIVER_PYTHON` select the environment as they do for the receiver's own
 scripts.
 
-The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (30 fps, 4 Mbit/s HEVC). Pass another file with `--sender-config`, or override single values with
+The sender settings come from the checked-in profile `configs/default-camera-settings.yaml` (60 fps, 4 Mbit/s HEVC). Pass another file with `--sender-config`, or override single values with
 `--fps`, `--bitrate-mbps` and `--sender-port`; the receiver, bridge and CaptureServer descriptor are
 built from the same effective values. [`CAMERA_SETTINGS.md`](CAMERA_SETTINGS.md) says which component owns which
 setting and lists every key.

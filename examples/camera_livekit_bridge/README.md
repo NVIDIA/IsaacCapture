@@ -99,6 +99,48 @@ build/bridge/camera_livekit_bridge \
   --fps 30 --bitrate-mbps 8
 ```
 
+### A 60 fps recording profile
+
+The settings that must agree for a 60 fps recording; each is configured, none is measured here:
+
+- Sender: `fps: 60` for every stream in `camera_streamer/argus_sender/configs/cameras.yaml`.
+- Receiver: `full_range` and `color_matrix` per stream in `camera_receiver/configs/receiver.yaml` (ordinary NV12 is
+  limited-range BT.601; SIPL is full-range BT.709). The bridge signals what the catalog carries.
+- Bridge: `--fps 60`, no `:DIV` on the head stream so the full image is published, and `--timestamp-basis
+  capture_monotonic_us` with the chrony options below.
+- Egocap: the same `fps` and the published size in the streams file, `record_fps: 60` in the station file, and a
+  station `video_encoder` (for example `ffmpeg_h264_nvenc` with `crf: 12`).
+
+One recording invocation with the egocap launcher. It needs a station file of your own, copied from
+`egocap/recording/egocap/stations/ego_stations.example.yaml`, with `record_fps: 60`, a `video_encoder` (for example
+`ffmpeg_h264_nvenc` with `crf: 12` under `video_encoder_options`) and the cameras you record. Every camera under
+`video_sources` is opened by CaptureServer, so each one needs a matching `--capture-camera NAME=DEVICE_ID`; the
+launcher refuses to start otherwise. `--orin` takes `user@IPv4` (a hostname is rejected) and the paths are as in
+`egocap/README.md`:
+
+```bash
+uv run python tools/start_system.py --orin user@192.0.2.10 --deploy-script PATH --livekit-server PATH --bridge PATH \
+  --station-config PATH/my_station.yaml --capture-camera NAME=DEVICE_ID \
+  --fps 60 --bridge-scale-div 1 --bridge-bitrate-mbps 50
+```
+
+Repeat `--capture-camera` for each camera in the station file.
+
+`--bridge-scale-div 1` publishes the full source size (the streams file's dimensions follow it); the launcher's
+default stays 2. `--bridge-bitrate-mbps` is the bridge's per-track H.264 ceiling, separate from the sender's
+`--bitrate-mbps`; 50 is a candidate for the head track on a provisioned link, not a validated value. The bridge
+keeps following LiveKit's congestion feedback, so a ceiling above the link's
+capacity is not reached. Check the achieved rate, frame age and missing frames in the `[stats]` lines at the
+intended number of cameras before relying on it; the recording does not switch to another path when bandwidth is
+short.
+
+On its own the bridge encodes with NVENC preset 1; `--nvenc-preset 4` selects the slower, higher-quality preset. The
+egocap launcher passes preset 4 by default (`--bridge-nvenc-preset 1` selects the faster one). Preset 4's encode time
+and sustained rate at full size have to be measured on the installed hardware before relying on it.
+
+The delivered rate, image quality (the bridge's H.264 encode precedes egocap's final encode) and the alignment
+with tracking have to be measured on the installed hardware; this profile does not establish them.
+
 `--stream NAME=TRACK[:DIV]` publishes the receiver's stream `NAME` as the
 LiveKit track `TRACK`, shrunk by the integer `DIV` on the GPU (the size must
 divide to even dimensions). Track names, the join token's identity and the
@@ -155,23 +197,23 @@ the video or recorded with it. The only timing fault a recording sees is a frame
 mapping, stale or unsynchronised evidence, or a wall-clock step). A deployment that must reject frames above the
 target needs the bound from the bridge's diagnostics or a stricter publication policy; this bridge does not apply one.
 
-`--source-full-range` says the receiver's pictures use the full 0-255 range, as SIPL sources do; the encoded stream
-then signals full range, so players and recordings keep the black and white levels. Without it the stream signals
-limited range (16-235). The receiver's IPC catalog does not carry the range, so it is set here and must match the
-source: a full-range picture published as limited range has crushed blacks and clipped whites, and the reverse
-looks washed out. The encoder copies levels as they are and does no range conversion. The stream signals no colour
-primaries, transfer or matrix, so a player assumes its default (BT.709 for HD).
+The encoded stream signals the picture's quantisation range and matrix coefficients (BT.601 or BT.709), taken from
+the `full_range` and `color_matrix` the receiver's IPC catalog publishes for each stream; set them in the receiver's
+`receiver.yaml` to match the source. They are configured, not detected: a full-range picture published as limited
+range has crushed blacks and clipped whites, and the reverse looks washed out. A catalog without them stops the
+bridge. The encoder copies levels as they are and does no range conversion. Colour primaries and transfer are
+signalled as unspecified because the source does not establish them.
 
 `--bitrate-mbps` is the maximum. The encoder starts at 2 Mbps and follows the target bitrate that LiveKit's
 congestion control reports for each track (90% of the target, never above the maximum or below 0.5 Mbps), so a
 fresh connection does not fill the sender's pacing queue. The `[stats]` line shows the current rate, the transport's
 target and how many times the rate changed.
 
-Measured with the mock sender on an RTX PRO 5000 against egocap's receiver and recording-feed checks (30 fps, head
+Measured with the earlier P1 preset and the mock sender on an RTX PRO 5000 against egocap's receiver and recording-feed checks (30 fps, head
 and one wrist, local LiveKit server): frames are 60-150 ms old from the first frame and settle near 80 ms while the
 rate climbs to the maximum within roughly 20 s. The head at 2560x1984 and 8 Mbps and at 1280x992 both ran with no
 missing frames and a median capture-to-receive time of 65-85 ms. A 20 Mbps maximum on the head built a standing
-backlog of about 1.2 s, so keep the maximum near 8 Mbps.
+backlog of about 1.2 s, in that setup.
 
 ## Probe
 

@@ -133,8 +133,20 @@ def streams_yaml(
     return yaml.safe_dump(descriptor, sort_keys=False)
 
 
-def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: int, name: str) -> str:
-    """The camera receiver's config: connect to the sender and expose one mono stream over CUDA IPC."""
+def receiver_yaml(
+    host: str,
+    port: int,
+    socket_path: str,
+    width: int,
+    height: int,
+    name: str,
+    full_range: bool = False,
+    color_matrix: str = "bt601",
+) -> str:
+    """The camera receiver's config: connect to the sender and expose one mono stream over CUDA IPC.
+
+    ``full_range`` and ``color_matrix`` describe the source's NV12 colour; the bridge signals them in its stream.
+    """
     config = {
         "version": 1,
         "receiver": {
@@ -154,6 +166,8 @@ def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: in
                 "height": height,
                 "output_format": "nv12",
                 "ring_depth": 6,
+                "full_range": full_range,
+                "color_matrix": color_matrix,
                 "ipc": {"mono": name},
             }
         ],
@@ -261,7 +275,9 @@ def _output_dimension(output: dict, key: str) -> int | None:
     return value
 
 
-def frame_size(settings: SenderSettings, width: int | None, height: int | None) -> tuple[int, int]:
+def frame_size(
+    settings: SenderSettings, width: int | None, height: int | None, scale_div: int = BRIDGE_DOWNSCALE
+) -> tuple[int, int]:
     """The picture size the sender delivers: the profile's output size when it sets one, else the sensor's.
 
     The receiver, the bridge and the descriptor all follow this, so a profile that resizes its output cannot
@@ -279,8 +295,8 @@ def frame_size(settings: SenderSettings, width: int | None, height: int | None) 
         size = (settings.width, settings.height)
     else:
         size = (width or DEFAULT_SENSOR_WIDTH, height or DEFAULT_SENSOR_HEIGHT)
-    if size[0] % (2 * BRIDGE_DOWNSCALE) or size[1] % (2 * BRIDGE_DOWNSCALE):
-        raise StartupError(f"the picture size {size[0]}x{size[1]} must divide by {2 * BRIDGE_DOWNSCALE}")
+    if size[0] % (2 * scale_div) or size[1] % (2 * scale_div):
+        raise StartupError(f"the picture size {size[0]}x{size[1]} must divide by {2 * scale_div}")
     return size
 
 
@@ -297,13 +313,13 @@ def mock_sender_command(python: str, script: Path, settings: SenderSettings, wid
 
 
 def bridge_timing_arguments(
-    settings: SenderSettings, mock: bool, orin_host: str | None, reference_id: str | None, chrony_port: int
+    mock: bool, orin_host: str | None, reference_id: str | None, chrony_port: int
 ) -> list[str]:
     """The bridge flags that say what the frame timestamps mean and which chrony instances can vouch for them."""
     if mock:
-        # No sender clock to qualify and no SIPL range to signal.
+        # No sender clock to qualify.
         return ["--timestamp-basis", MOCK_TIMESTAMP_BASIS]
-    flags = [
+    return [
         "--timestamp-basis",
         TIMESTAMP_BASIS,
         "--chrony-sender",
@@ -313,8 +329,6 @@ def bridge_timing_arguments(
         "--chrony-pc-port",
         str(chrony_port),
     ]
-    # SIPL pictures are full range; the bridge must say so or the encoded stream signals limited range.
-    return [*flags, "--source-full-range"] if settings.full_range else flags
 
 
 def check_station_cameras(station_config: Path, capture_cameras: Sequence[str]) -> None:
@@ -654,6 +668,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--fps", type=int, help="override the profile's output.fps")
     parser.add_argument("--bitrate-mbps", type=int, help="override the profile's HEVC bitrate")
+    parser.add_argument("--bridge-bitrate-mbps", type=int, help="LiveKit H.264 bitrate ceiling per track, in Mbps")
+    parser.add_argument(
+        "--bridge-nvenc-preset",
+        type=int,
+        choices=(1, 4),
+        default=4,
+        help="NVENC preset for the bridge's H.264 encode: the slower, higher-quality 4 (default) or the faster 1",
+    )
+    parser.add_argument(
+        "--bridge-scale-div",
+        type=int,
+        choices=(1, 2),
+        default=BRIDGE_DOWNSCALE,
+        help="LiveKit output size divisor (1 retains the full source resolution)",
+    )
     parser.add_argument("--sender-port", type=int, help="override the profile's TCP video port")
     parser.add_argument(
         "--timesync-tool",
@@ -739,7 +768,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
         sender_config = load_sender_config(args.sender_config, args.fps, args.bitrate_mbps, args.sender_port)
         sender = sender_settings(sender_config)
-        width, height = frame_size(sender, args.width, args.height)
+        width, height = frame_size(sender, args.width, args.height, args.bridge_scale_div)
+        if args.bridge_bitrate_mbps is not None and not 1 <= args.bridge_bitrate_mbps <= 4294:
+            raise StartupError("--bridge-bitrate-mbps must fit a positive 32-bit bitrate in bits per second")
         # The bridge identifies the Orin's chrony by the reference id of its IPv4 address.
         if args.orin:
             try:
@@ -753,15 +784,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 room,
                 publisher,
                 track,
-                width // BRIDGE_DOWNSCALE,
-                height // BRIDGE_DOWNSCALE,
+                width // args.bridge_scale_div,
+                height // args.bridge_scale_div,
                 sender.fps,
                 basis,
                 sender.stream_id,
             )
         )
         (workdir / "receiver.yaml").write_text(
-            receiver_yaml(orin_host or "127.0.0.1", sender.port, ipc_socket, width, height, sender.stream_id)
+            receiver_yaml(
+                orin_host or "127.0.0.1",
+                sender.port,
+                ipc_socket,
+                width,
+                height,
+                sender.stream_id,
+                # SIPL pictures are full-range BT.709; the mock sender's are limited-range BT.601.
+                full_range=sender.full_range and not args.mock,
+                color_matrix="bt709" if sender.sipl and not args.mock else "bt601",
+            )
         )
         if args.mock:
             print(f"mock sender: {sender.fps} fps stream {sender.stream_id!r}, timestamps are frame-ready time")
@@ -901,11 +942,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "--socket",
                     ipc_socket,
                     "--stream",
-                    f"{sender.stream_id}={track}:{BRIDGE_DOWNSCALE}",
+                    f"{sender.stream_id}={track}:{args.bridge_scale_div}",
                     "--fps",
                     str(sender.fps),
+                    *(
+                        ["--bitrate-mbps", str(args.bridge_bitrate_mbps)]
+                        if args.bridge_bitrate_mbps is not None
+                        else []
+                    ),
+                    "--nvenc-preset",
+                    str(args.bridge_nvenc_preset),
                     *bridge_timing_arguments(
-                        sender,
                         args.mock,
                         orin_host,
                         tool.reference_id_for(orin_host) if args.orin else None,

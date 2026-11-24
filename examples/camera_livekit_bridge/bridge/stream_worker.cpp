@@ -5,6 +5,7 @@
 
 #include <gpu_ops/gpu_step.hpp>
 #include <ipc_client/cuda_ipc_client.hpp>
+#include <notice_queue/notice_queue.hpp>
 #include <nvenc/nvenc_encoder.hpp>
 #include <video_types/slot_age.hpp>
 #include <video_types/video_types.hpp>
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <ctime>
 #include <cuda_runtime_api.h>
+#include <deque>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -202,8 +204,12 @@ struct StreamWorker::Impl
         // sender's pacer and ages every frame. The transport's target raises it toward the configured maximum.
         encoder_config.bitrate_bps = std::min(config.bitrate_bps, kStartBitrateBps);
         encoder_config.idr_period = config.idr_period;
-        // NVENC copies the source's levels; the stream must say which range they are in or players rescale them.
-        encoder_config.full_range = config.source_full_range;
+        encoder_config.preset = config.nvenc_preset;
+        // NVENC copies the source's levels; the stream must say which range and matrix they use or players
+        // rescale and mis-colour them. Both come from the publisher's catalog.
+        const IpcStream& source = client.streams().front();
+        encoder_config.full_range = source.full_range;
+        encoder_config.matrix_bt709 = source.color_matrix == "bt709";
         NvencEncoder encoder(context, encoder_config);
         // Declared after the encoder so it runs first on every exit, including a throw: the encoder's teardown frees
         // the surfaces a queued copy may still be writing, and destroying a stream does not wait for its work.
@@ -229,26 +235,33 @@ struct StreamWorker::Impl
         uint32_t own_frame_id = 0;
         uint64_t last_session = 0;
         FrameNotice notice;
-        std::optional<FrameNotice> pending; // a newer notice seen while checking the last slot; used next
+        // Notices read but not yet copied, oldest first. The publisher's ring holds one live generation per slot, so
+        // the queue never needs more than the ring's depth: anything older has been overwritten or is about to be.
+        std::deque<QueuedNotice> queue;
+        uint64_t total_read = 0;
+        const std::size_t ring_slots = stream.slots.size();
+        const auto take = [&](FrameNotice&& read)
+        { stats.skipped += enqueue_notice(queue, total_read, ring_slots, std::move(read)); };
         while (running)
         {
-            if (pending)
+            if (queue.empty())
             {
-                notice = std::move(*pending);
-                pending.reset();
+                FrameNotice first;
+                if (!client.next_frame(first, std::chrono::milliseconds(200)))
+                    continue;
+                take(std::move(first));
             }
-            else if (!client.next_frame(notice, std::chrono::milliseconds(200)))
-                continue;
-            // Encode the newest picture: anything queued behind it is older, and a late frame is worse than a skipped
-            // one.
+            // Take every notice already waiting, in order. Pictures that came in a clump are still in their slots, so
+            // they are copied oldest first on this and the following turns instead of all but the last being thrown
+            // away; the checks below drop any whose slot may have been overwritten.
             FrameNotice newer;
             while (running && client.next_frame(newer, std::chrono::milliseconds(0)))
-            {
-                notice = std::move(newer);
-                ++stats.skipped;
-            }
+                take(std::move(newer));
             if (!running)
                 break;
+            QueuedNotice chosen = std::move(queue.front());
+            queue.pop_front();
+            notice = std::move(chosen.notice);
 
             const IpcSlot& slot = client.slot(notice);
             const auto* base = static_cast<const uint8_t*>(slot.device_ptr);
@@ -282,14 +295,12 @@ struct StreamWorker::Impl
             const int64_t copy_done_ns = monotonic_ns();
             {
                 bool overwritten = false;
-                std::size_t newer_count = 0;
                 FrameNotice newer;
                 while (running && client.next_frame(newer, std::chrono::milliseconds(0)))
                 {
-                    ++newer_count;
                     if (newer.slot == notice.slot && newer.slot_generation > notice.slot_generation)
                         overwritten = true;
-                    pending = std::move(newer);
+                    take(std::move(newer));
                 }
                 if (!running)
                 {
@@ -297,7 +308,9 @@ struct StreamWorker::Impl
                     encoder.release(surface);
                     break;
                 }
-                if (stream.slots.size() > 1 && newer_count + 1 >= stream.slots.size())
+                // As many later notices as the ring has other slots means this one may have been overwritten, whether
+                // they were read before the copy or during it, and whether or not they are still queued.
+                if (ring_slots > 1 && total_read - chosen.ordinal + 1 >= ring_slots)
                     overwritten = true;
                 // If the copy finished later than the publisher needs to wrap its ring, the slot may have been
                 // overwritten during it, whether or not the replacement notice has arrived yet.
