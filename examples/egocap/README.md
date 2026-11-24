@@ -157,7 +157,8 @@ process that differs.
 
 ## Configuration
 
-A station's identity, initial operator/task, recording output location, and requested cameras come
+A station's identity, initial operator/task, recording output location, recording writer
+(`recording.video_encoder` / `recording.video_encoder_options`, applied to every camera) and requested cameras come
 from a deployment station file (`EGOCAP_STATION_CONFIG`), never something the browser supplies —
 see [`backend/README.md`](backend/README.md) and the shipped
 [`recording/egocap/stations/ego_stations.example.yaml`](recording/egocap/stations/ego_stations.example.yaml)

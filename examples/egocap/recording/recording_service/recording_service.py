@@ -39,6 +39,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 import yaml
 
@@ -968,7 +969,7 @@ class RecordingService:
         else:
             frame = sample.image
             if sample.pixel_format is PixelFormat.RGB8:
-                frame = np.ascontiguousarray(frame[..., ::-1])
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             take.store.append_video(
                 sample.source, frame, sample.capture_time, sample.receive_time, sample.intrinsics
             )

@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from egocap.core.data_root import calibration_dir
+from egocap.recording.capture_qc import CaptureQcConfig
 from recording_service import (
     CalibrationAsset,
     ConfigurationError,
@@ -68,7 +69,13 @@ from .settings_routes import EffectiveSettings
 from .settings_routes import router as settings_router
 from .setup_routes import router as setup_router
 from .setup_service import CHECKLIST_SECONDS, SetupService, capture_facts
-from .station_config import ResolvedStation, StationConfigError, load_station_config, station_config_path_from_env
+from .station_config import (
+    DEFAULT_VIDEO_ENCODER,
+    ResolvedStation,
+    StationConfigError,
+    load_station_config,
+    station_config_path_from_env,
+)
 from .station_routes import router as station_router
 from .station_service import TAKE_IN_PROGRESS, StationService, session_adapter
 from .station_uptime import DOWN, READY, RECORDING, UPTIME_DIR, UptimeLog, UptimeSampler
@@ -186,6 +193,8 @@ def _recording_config_factory(
     station_label: str | None | Callable[[], str | None],
     output_root: Path,
     on_video_sources: Callable[[frozenset[str], frozenset[str]], None] | None = None,
+    video_encoder: str = DEFAULT_VIDEO_ENCODER,
+    video_encoder_options: dict[str, Any] | None = None,
 ):
     """Builds the real ``ServiceConfig`` lazily, read fresh each time the
     coordinator actually opens/reopens a session (not once at import time)
@@ -199,24 +208,43 @@ def _recording_config_factory(
     the honest choice until that plumbing is added, rather than manufacturing
     calibration values the backend doesn't actually have.
 
+    Every camera is written with ``video_encoder`` / ``video_encoder_options`` (the station's recording writer).
+
     ``station_label`` may be a callable, read at each session open, so a session opened after the operator
     changes the station in use carries the new station's name."""
 
     def factory() -> ServiceConfig:
+        livekit_streams = recordable_livekit_streams(monitor.native.started)
         video_sources = tuple(
-            VideoSourceSpec(cam.name, cam.width, cam.height, cam.fps, intrinsics=False)
+            VideoSourceSpec(
+                cam.name,
+                cam.width,
+                cam.height,
+                cam.fps,
+                encoder=video_encoder,
+                intrinsics=False,
+                encoder_options=video_encoder_options,
+            )
             for cam in monitor.camera_descriptors
         ) + tuple(
             # LiveKit cameras with a capture-time stamp and a configured size are recorded like any camera.
-            VideoSourceSpec(s.name, s.width, s.height, s.fps, intrinsics=False)
-            for s in recordable_livekit_streams(monitor.native.started)
+            VideoSourceSpec(
+                s.name,
+                s.width,
+                s.height,
+                s.fps,
+                encoder=video_encoder,
+                intrinsics=False,
+                encoder_options=video_encoder_options,
+            )
+            for s in livekit_streams
         )
         if on_video_sources is not None:
             # Tells the aligner, once per session open, which cameras this session records and which of them
             # have a sensor capture time (only LiveKit streams stamped that way do).
             on_video_sources(
                 frozenset(v.name for v in video_sources),
-                sensor_capture_names(recordable_livekit_streams(monitor.native.started)),
+                sensor_capture_names(livekit_streams),
             )
         # A supported profile must record actual tracking AND the
         # selected cameras -- pico_controller and every configured camera
@@ -225,11 +253,17 @@ def _recording_config_factory(
         # omission policy in recording_adapter.py) must not by itself
         # invalidate an otherwise-good take.
         required = (PICO_CONTROLLER_SPEC.name, *(v.name for v in video_sources))
+        # A LiveKit camera must average at least 0.86 of its configured fps over the take or the take is rejected.
+        capture_qc = (
+            CaptureQcConfig(camera_expected_fps=tuple((s.name, None) for s in livekit_streams))
+            if livekit_streams
+            else None
+        )
         config = ServiceConfig(
             output_root=output_root,
             numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC),
             video_sources=video_sources,
-            qc=QcConfig(required_sources=required),
+            qc=QcConfig(required_sources=required, capture=capture_qc),
             calibration_assets=_station_calibration_assets(),
             station_label=station_label() if callable(station_label) else station_label,
         )
@@ -472,7 +506,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     A deployment station YAML (``EGOCAP_STATION_CONFIG``, see station_config.py), when
     configured, is loaded exactly once here and seeds the station's label, initial
-    operator/instruction and recording output root through the same existing
+    operator/instruction, recording output root and recording writer through the same existing
     config/context mechanisms below -- not a second configuration path. A
     configured-but-invalid file is a real configuration failure, but NOT a backend
     startup crash: capture preview has nothing to do with recording configuration and
@@ -555,6 +589,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             lambda: station_service.label(),
             recording_output_root,
             aligner.note_video_sources if aligner is not None else None,
+            video_encoder=resolved_station.video_encoder
+            if resolved_station is not None
+            else DEFAULT_VIDEO_ENCODER,
+            video_encoder_options=resolved_station.video_encoder_options if resolved_station is not None else None,
         ),
         queue_capacity=_INGRESS_QUEUE_CAPACITY,
         queue_bytes=lambda: _ingress_queue_bytes(monitor.native.started),
