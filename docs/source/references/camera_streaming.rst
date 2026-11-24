@@ -369,7 +369,9 @@ The source kind is selected by the ``type`` field of each entry in the YAML ``ca
        :ref:`recorded-camera-streaming`.
    * - ``synthetic``
      - Debugging tool — GPU-generated test pattern, no camera or file required. ``stereo: true`` adds
-       a ``disparity_px`` offset between the eyes.
+       a ``disparity_px`` offset between the eyes; with it, ``scene: room`` draws a furnished room
+       seen by a slowly turning pair of eyes instead, with real depth (local only, like the stereo
+       pattern: ``camera_streamer`` does not send it).
 
 .. _camera-streaming-live-camera:
 
@@ -794,6 +796,9 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:
        sensor_mode: 0            # argus only
        repeat_capture: true      # argus only — use repeat requests when supported
        pair_emit_mode: both      # argus independent stereo only: either | both
+       scene: room               # synthetic stereo only, optional — draw a furnished room seen by
+                                 # a slowly turning pair of eyes, in place of the test pattern
+                                 # (local only: not sent over RTP)
        exposure: auto            # zed only, optional — auto | 0..100; also gain, white_balance
                                  # (auto | 2800..6500), brightness, contrast, saturation,
                                  # sharpness (0..8), gamma (1..9). Absent keys leave the camera
