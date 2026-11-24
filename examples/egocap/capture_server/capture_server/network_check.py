@@ -407,7 +407,7 @@ class NetworkCheckService:
         self._task: asyncio.Task[None] | None = None
         self._retiring: asyncio.Task[None] | None = None
         # Advances whenever a session begins or ends, so a teardown that awaited can tell a newer check is running.
-        self._generation = 0
+        self._epoch = 0
         # The capture session this verdict belongs to; None between sessions, when nothing is reported as passed.
         self._session_id: str | None = None
         # Joins that outlived their deadline; held so they are not garbage-collected mid-flight.
@@ -459,7 +459,7 @@ class NetworkCheckService:
         """
         self._cancel_running()
         self._session_id = session_id
-        self._generation += 1
+        self._epoch += 1
         self._begin()
 
     def start(self) -> bool:
@@ -474,11 +474,11 @@ class NetworkCheckService:
         if self._session_id != session_id:
             return
         self._session_id = None
-        self._generation += 1
-        generation = self._generation
+        self._epoch += 1
+        generation = self._epoch
         await self.stop()
         # A newer session may have begun while this one awaited; its verdict is not this teardown's to reset.
-        if self._generation == generation:
+        if self._epoch == generation:
             self._state, self._reason, self._cameras = p.NetworkCheckState.NOT_TESTED, None, ()
             self._completed_ns = self._completed_unix_ns = None
 
@@ -500,12 +500,14 @@ class NetworkCheckService:
 
     async def stop(self) -> None:
         """Cancel a running check and leave the room; no verdict is reported for a check that never finished."""
-        generation = self._generation
+        generation = self._epoch
         task, self._task = self._task, None
         if task is not None and not task.done():
             task.cancel()
+            # A check begun while this one retires waits for it, so two observers never overlap.
+            self._retiring = task
             await asyncio.gather(task, return_exceptions=True)
-        if self._state == p.NetworkCheckState.CHECKING and self._generation == generation:
+        if self._state == p.NetworkCheckState.CHECKING and self._epoch == generation:
             self._state, self._phase = p.NetworkCheckState.NOT_TESTED, None
         # A leave that outlived its deadline gets the same bound here, so shutdown cannot wait on a stuck room.
         if self._background:
