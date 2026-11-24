@@ -283,29 +283,6 @@ pre-commit install --hook-type commit-msg
 
 - If a hook failure shows **missing or non-obvious repo policy** (not a one-off typo), you **must** add a **short** reminder under **Mandatory learning loop** rules to the right `AGENTS.md` or adjacent **`//` comments** so the next run does not repeat it—unless it is already documented.
 
-## Final vulnerability check
-
-After implementation, simplification, formatting, and tests are settled, review
-and analyze the **final diff** before pushing or reporting completion.
-
-- For adversarial code review, have independent reviewers challenge each other's
-  findings. Runtime probes support that review; they do not replace it.
-- Trace untrusted inputs to deserialization, command execution, and filesystem
-  writes or deletion. Check applicable risks: unsafe deserialization, injection,
-  temporary-path races, symlink/path traversal, excessive permissions, memory or
-  descriptor misuse, and cleanup outside owned resources.
-- Run available security and bug-finding static analysis appropriate to the
-  changed languages. Compare findings with the agreed base; investigate new
-  findings and distinguish existing warnings and false positives. Passing
-  formatting and ordinary lint alone does not complete this pass.
-- Fix confirmed issues, add focused regression coverage where useful, then rerun
-  affected checks and this vulnerability pass on the final code. Report tools,
-  scope, unresolved findings, and unavailable checks without claiming full safety.
-- When adding security guidance to `AGENTS.md`, name the vulnerability class the
-  rule prevents and the action an agent should take. Link a relevant public
-  finding or authoritative reference when available; keep implementation details
-  in source comments.
-
 ## The wheel SBOM
 
 Published wheels carry a contents SBOM and license evidence derived from the

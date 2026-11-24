@@ -22,11 +22,6 @@ namespace
 
 using namespace mcap_test;
 
-std::string get_temp_mcap_path()
-{
-    return mcap_test::temp_mcap_path("test_mcap");
-}
-
 std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
 {
     auto writer = std::make_unique<mcap::McapWriter>();
@@ -46,8 +41,8 @@ std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
 TEST_CASE("McapTrackerChannels: typed write produces readable MCAP with correct record content",
           "[mcap][tracker_channels]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT head_data;
     head_data.is_valid = true;
@@ -95,8 +90,8 @@ TEST_CASE("McapTrackerChannels: typed write produces readable MCAP with correct 
 
 TEST_CASE("McapTrackerChannels: an encoded record can be written to a second channel", "[mcap][tracker_channels]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT head_data;
     head_data.is_valid = true;
@@ -165,8 +160,8 @@ TEST_CASE("publish_and_record encodes the payload alone when recording is off", 
 
 TEST_CASE("McapTrackerChannels: write returns the record it wrote", "[mcap][tracker_channels]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     auto head_data = std::make_shared<core::HeadPoseT>();
     head_data->is_valid = true;
@@ -226,8 +221,8 @@ TEST_CASE("pack_record on an absent payload yields an empty payload handle", "[m
 
 TEST_CASE("McapTrackerChannels: null data writes record with timestamp only", "[mcap][tracker_channels]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     {
         auto writer = open_writer(path);
@@ -256,8 +251,8 @@ TEST_CASE("McapTrackerChannels: null data writes record with timestamp only", "[
 
 TEST_CASE("McapTrackerChannels: multi-channel write routes to correct topics", "[mcap][tracker_channels]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT data;
 
@@ -286,8 +281,8 @@ TEST_CASE("McapTrackerChannels: multi-channel write routes to correct topics", "
 
 TEST_CASE("McapTrackerChannels: out-of-range channel_index throws", "[mcap][tracker_channels]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT data;
 
@@ -300,8 +295,8 @@ TEST_CASE("McapTrackerChannels: out-of-range channel_index throws", "[mcap][trac
 
 TEST_CASE("McapTrackerChannels: sequence numbers increment across writes", "[mcap][tracker_channels]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT data;
 
@@ -332,8 +327,8 @@ TEST_CASE("McapTrackerChannels: sequence numbers increment across writes", "[mca
 
 TEST_CASE("McapTrackerChannels: multiple same-type channel instances share one writer", "[mcap][tracker_channels]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT data;
 
@@ -370,8 +365,8 @@ TEST_CASE("McapTrackerChannels: multiple same-type channel instances share one w
 
 TEST_CASE("McapTrackerViewers: reads records from a single channel", "[mcap][tracker_viewers]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT head_data;
     head_data.is_valid = true;
@@ -409,8 +404,8 @@ TEST_CASE("McapTrackerViewers: reads records from a single channel", "[mcap][tra
 
 TEST_CASE("McapTrackerViewers: multi-channel reads filter by index", "[mcap][tracker_viewers]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT data;
 
@@ -445,8 +440,8 @@ TEST_CASE("McapTrackerViewers: multi-channel reads filter by index", "[mcap][tra
 
 TEST_CASE("McapTrackerViewers: read subset of written channels", "[mcap][tracker_viewers]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT data;
     data.is_valid = true;
@@ -478,8 +473,8 @@ TEST_CASE("McapTrackerViewers: read subset of written channels", "[mcap][tracker
 
 TEST_CASE("McapTrackerViewers: out-of-range channel_index throws", "[mcap][tracker_viewers]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     core::HeadPoseT data;
 
@@ -497,8 +492,8 @@ TEST_CASE("McapTrackerViewers: out-of-range channel_index throws", "[mcap][track
 
 TEST_CASE("McapTrackerViewers: handles null data records", "[mcap][tracker_viewers]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     {
         auto writer = open_writer(path);

@@ -15,12 +15,7 @@ add_library(log_bridge_core STATIC
     inc/log_bridge/logger.hpp
 )
 
-if(NOT WIN32)
-    target_sources(log_bridge_core PRIVATE
-        posix_secure_directory.cpp
-        posix_secure_directory.hpp
-    )
-endif()
+
 
 target_include_directories(log_bridge_core
     INTERFACE
@@ -30,6 +25,8 @@ target_include_directories(log_bridge_core
 target_link_libraries(log_bridge_core
     PUBLIC
         spdlog::spdlog
+    PRIVATE
+        secure_directory::secure_directory
 )
 
 add_library(log_bridge::log_bridge_core ALIAS log_bridge_core)

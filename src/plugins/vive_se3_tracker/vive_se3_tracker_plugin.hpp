@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -137,7 +138,7 @@ private:
     bool synthetic_mode_ = false;
     int64_t start_time_ns_ = 0;
     int64_t stale_ns_ = kDefaultStaleMs * 1000000;
-    std::string collections_file_; // live collection-id advertisement path
+    std::optional<std::string> collections_file_; // live collection-id advertisement path
 
     // Latest pose per device_id, written by the VUT receiver thread, snapshotted
     // by the push thread. Guarded by pose_mutex_.

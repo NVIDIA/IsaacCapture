@@ -36,6 +36,7 @@ target_link_libraries(vive_se3_tracker_plugin PRIVATE
     "${_vut_lib}"
     Threads::Threads
     log_bridge::log_bridge_core
+    secure_directory::secure_directory
 )
 
 install(TARGETS vive_se3_tracker_plugin RUNTIME DESTINATION plugins/vive_se3_tracker)

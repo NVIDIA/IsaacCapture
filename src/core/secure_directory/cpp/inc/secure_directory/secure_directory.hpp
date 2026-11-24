@@ -8,9 +8,9 @@
 namespace isaaccapture::detail
 {
 
-// std::filesystem does not expose POSIX ownership, sticky bits, or no-follow
-// traversal. Keep this policy in one testable helper instead of open-coding it
-// at each sink setup site.
+// POSIX paths must have no symlink components or replaceable ancestors; the
+// target must belong to the effective user and forbid other writers. Windows
+// uses filesystem directory creation without POSIX ownership checks.
 bool ensure_secure_directory(const std::filesystem::path& directory);
 
 } // namespace isaaccapture::detail

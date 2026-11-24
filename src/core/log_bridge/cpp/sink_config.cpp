@@ -8,11 +8,9 @@
 #include "sink_config.hpp"
 
 #include "inc/log_bridge/logger.hpp"
-#ifndef _WIN32
-#    include "posix_secure_directory.hpp"
-#endif
 #include "socket_sink.hpp"
 
+#include <secure_directory/secure_directory.hpp>
 #include <spdlog/common.h>
 #include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -359,15 +357,10 @@ const std::vector<spdlog::sink_ptr>& local_sinks()
         console->set_formatter(make_formatter(kConsolePattern));
 
         auto dir = log_dir();
-#ifndef _WIN32
         if (!ensure_secure_directory(dir))
         {
             return std::vector<spdlog::sink_ptr>{ console };
         }
-#else
-        std::error_code dir_ec;
-        std::filesystem::create_directories(dir, dir_ec);
-#endif
 
         // Give each C++ writer a timestamped, PID-qualified path.
         auto filename =

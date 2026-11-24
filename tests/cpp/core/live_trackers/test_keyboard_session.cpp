@@ -428,8 +428,8 @@ TEST_CASE("KeyboardProvider: tap never releases a key the provider holds", "[uni
 
 TEST_CASE("DeviceIOSession: keyboard records and replays", "[unit][keyboard]")
 {
-    const auto path = mcap_test::temp_mcap_path("test_keyboard_session");
-    mcap_test::TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     {
         auto keyboard = std::make_shared<core::KeyboardTracker>();

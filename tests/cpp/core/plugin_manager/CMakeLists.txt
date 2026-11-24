@@ -9,6 +9,7 @@ add_executable(plugin_manager_tests
 
 target_link_libraries(plugin_manager_tests PRIVATE
     teleop_plugin_manager
+    test_support::temporary_directory
     Catch2::Catch2WithMain
 )
 

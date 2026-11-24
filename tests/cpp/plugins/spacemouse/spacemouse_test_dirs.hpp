@@ -6,6 +6,7 @@
 // A throwaway sysfs + /dev pair for the SpaceMouse discovery and connection tests.
 
 #include <sys/stat.h>
+#include <test_support/temporary_directory.hpp>
 
 #include <cstdint>
 #include <cstdlib>
@@ -25,35 +26,19 @@ class FakeDevices
 public:
     FakeDevices()
     {
-#ifndef _WIN32
-        auto pattern = (std::filesystem::temp_directory_path() / "spacemouse_test_XXXXXX").string();
-        if (::mkdtemp(pattern.data()) == nullptr)
-        {
-            throw std::runtime_error("Failed to create temporary SpaceMouse test directory");
-        }
-        // mkdtemp prevents another user from pre-creating the test root.
-        root_ = pattern;
-#else
-        root_ = std::filesystem::temp_directory_path() / ("spacemouse_test_" + std::to_string(std::random_device{}()));
-#endif
         std::filesystem::create_directories(class_dir());
         std::filesystem::create_directories(dev_dir());
-    }
-    ~FakeDevices()
-    {
-        std::error_code ec;
-        std::filesystem::remove_all(root_, ec);
     }
     FakeDevices(const FakeDevices&) = delete;
     FakeDevices& operator=(const FakeDevices&) = delete;
 
     std::filesystem::path class_dir() const
     {
-        return root_ / "class" / "hidraw";
+        return root_.path() / "class" / "hidraw";
     }
     std::filesystem::path dev_dir() const
     {
-        return root_ / "dev";
+        return root_.path() / "dev";
     }
 
     //! Registers `hidraw_name` with `HID_NAME=hid_name` and, when given, a `report_descriptor`;
@@ -75,7 +60,7 @@ public:
     }
 
 private:
-    std::filesystem::path root_;
+    test_support::TemporaryDirectory root_;
 };
 
 } // namespace spacemouse_test

@@ -1,15 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "posix_secure_directory.hpp"
+#include "inc/secure_directory/secure_directory.hpp"
 
-#include <sys/stat.h>
+#ifndef _WIN32
 
-#include <cerrno>
-#include <fcntl.h>
-#include <filesystem>
-#include <unistd.h>
-#include <vector>
+#    include <sys/stat.h>
+
+#    include <cerrno>
+#    include <fcntl.h>
+#    include <filesystem>
+#    include <unistd.h>
+#    include <vector>
 
 namespace isaaccapture::detail
 {
@@ -52,17 +54,20 @@ private:
     int fd_;
 };
 
-bool has_secure_permissions(const struct ::stat& info, bool target)
+bool is_secure_ancestor(const struct ::stat& info)
 {
-    if (!S_ISDIR(info.st_mode) || (info.st_uid != 0 && info.st_uid != ::getuid()) ||
-        (target && info.st_uid != ::getuid()))
+    if (!S_ISDIR(info.st_mode) || (info.st_uid != 0 && info.st_uid != ::geteuid()))
     {
         return false;
     }
-    // Sticky shared ancestors protect their entries; the final log directory
-    // must instead forbid other writers, even when its sticky bit is set.
+    // Sticky shared ancestors protect their entries from other users.
     const bool publicly_writable = (info.st_mode & (S_IWGRP | S_IWOTH)) != 0;
-    return !publicly_writable || (!target && (info.st_mode & S_ISVTX) != 0);
+    return !publicly_writable || (info.st_mode & S_ISVTX) != 0;
+}
+
+bool is_secure_target(const struct ::stat& info)
+{
+    return S_ISDIR(info.st_mode) && info.st_uid == ::geteuid() && (info.st_mode & (S_IWGRP | S_IWOTH)) == 0;
 }
 
 } // namespace
@@ -71,7 +76,7 @@ bool ensure_secure_directory(const std::filesystem::path& directory)
 {
     std::error_code absolute_ec;
     const auto absolute = std::filesystem::absolute(directory, absolute_ec);
-    if (absolute_ec || !absolute.is_absolute())
+    if (absolute_ec)
     {
         return false;
     }
@@ -96,14 +101,22 @@ bool ensure_secure_directory(const std::filesystem::path& directory)
     }
 
     // Traversal needs search permission, not read permission on each ancestor.
-#ifdef O_PATH
+#    ifdef O_PATH
     constexpr int access_mode = O_PATH;
-#else
+#    else
     constexpr int access_mode = O_RDONLY;
-#endif
+#    endif
     constexpr int flags = access_mode | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
     FileDescriptor current(::open("/", flags));
     if (current.get() < 0)
+    {
+        return false;
+    }
+    // The initial root must protect its entries just like every later parent.
+    struct ::stat root_info
+    {
+    };
+    if (::fstat(current.get(), &root_info) != 0 || !is_secure_ancestor(root_info))
     {
         return false;
     }
@@ -127,7 +140,8 @@ bool ensure_secure_directory(const std::filesystem::path& directory)
         struct ::stat info
         {
         };
-        if (::fstat(current.get(), &info) != 0 || !has_secure_permissions(info, index + 1 == components.size()))
+        if (::fstat(current.get(), &info) != 0 ||
+            !(index + 1 == components.size() ? is_secure_target(info) : is_secure_ancestor(info)))
         {
             return false;
         }
@@ -136,3 +150,17 @@ bool ensure_secure_directory(const std::filesystem::path& directory)
 }
 
 } // namespace isaaccapture::detail
+
+#else
+
+namespace isaaccapture::detail
+{
+bool ensure_secure_directory(const std::filesystem::path& directory)
+{
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    return !error;
+}
+} // namespace isaaccapture::detail
+
+#endif

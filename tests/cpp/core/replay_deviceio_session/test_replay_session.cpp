@@ -31,19 +31,12 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <mcap_test_support.hpp>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
-
-#ifdef _WIN32
-#    include <process.h>
-#    define GET_PID() _getpid()
-#else
-#    include <unistd.h>
-#    define GET_PID() ::getpid()
-#endif
 
 namespace fs = std::filesystem;
 
@@ -53,45 +46,6 @@ namespace
 // ============================================================================
 // Helpers
 // ============================================================================
-
-std::string get_temp_mcap_path()
-{
-#ifndef _WIN32
-    auto pattern = (fs::temp_directory_path() / "test_replay_XXXXXX").string();
-    if (::mkdtemp(pattern.data()) == nullptr)
-    {
-        throw std::runtime_error("Failed to create private replay test directory");
-    }
-    // Keep the recording below an atomically created owner-only directory;
-    // McapWriter may safely create and reopen its predictable child name.
-    return (fs::path(pattern) / "recording.mcap").string();
-#else
-    static std::atomic<int> cnt{ 0 };
-    auto fn = "test_replay_" + std::to_string(GET_PID()) + "_" + std::to_string(cnt++) + ".mcap";
-    return (fs::temp_directory_path() / fn).string();
-#endif
-}
-
-struct TempFileCleanup
-{
-    std::string path;
-    explicit TempFileCleanup(const std::string& p) : path(p)
-    {
-    }
-    ~TempFileCleanup() noexcept
-    {
-        std::error_code ec;
-#ifndef _WIN32
-        fs::remove(path, ec);
-        // Remove only an empty container; never recurse from a supplied filename.
-        fs::remove(fs::path(path).parent_path(), ec);
-#else
-        fs::remove(path, ec);
-#endif
-    }
-    TempFileCleanup(const TempFileCleanup&) = delete;
-    TempFileCleanup& operator=(const TempFileCleanup&) = delete;
-};
 
 std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
 {
@@ -228,8 +182,8 @@ std::array<uint8_t, core::MessageChannelTracker::CHANNEL_UUID_SIZE> make_test_uu
 
 TEST_CASE("ReplaySession: head tracker round-trip with multiple frames", "[replay][session][head]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     const std::string base_name = "tracking";
 
     constexpr int num_frames = 5;
@@ -283,8 +237,8 @@ TEST_CASE("ReplaySession: se3 tracker round-trip and null at EOF", "[replay][ses
     REQUIRE(core::Se3TrackerRecordingTraits::replay_channels.size() == 1);
     CHECK(std::string_view(core::Se3TrackerRecordingTraits::replay_channels[0]) == "se3_tracker_tracked");
 
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     const std::string base_name = "se3";
 
     constexpr int num_frames = 3;
@@ -332,8 +286,8 @@ TEST_CASE("ReplaySession: se3 tracker round-trip and null at EOF", "[replay][ses
 
 TEST_CASE("ReplaySession: hand tracker round-trip with left and right", "[replay][session][hand]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     const std::string base_name = "hands";
 
     {
@@ -378,8 +332,8 @@ TEST_CASE("ReplaySession: hand tracker round-trip with left and right", "[replay
 
 TEST_CASE("ReplaySession: joint SE3 pose round-trip keeps both hands distinct", "[replay][session][joint_se3_pose]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     // One collection per hand, as the manus plugin pushes them: a message is always one hand,
     // and which hand it is comes from the collection, not from the payload's shape.
     const std::string left_name = "manus_sensors_left";
@@ -449,8 +403,8 @@ TEST_CASE("ReplaySession: joint SE3 pose round-trip keeps both hands distinct", 
 
 TEST_CASE("ReplaySession: head and hand trackers in one session", "[replay][session][multi]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
 
     constexpr int num_frames = 4;
 
@@ -528,8 +482,8 @@ TEST_CASE("ReplaySession: message channel drains records on their recorded frame
     // Three payloads, all written by a single (recorded) session.update():
     // they share one timestamp, so the first replay update drains all
     // three at once.
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     const std::string control_base = "_teleop_control";
 
     {
@@ -571,8 +525,8 @@ TEST_CASE("ReplaySession: message channel fans recorded events across update tic
 {
     // Three frames, one payload each, with distinct timestamps. Each
     // replay update drains exactly one record.
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     const std::string control_base = "_teleop_control";
 
     constexpr int64_t dt_ns = 10'000'000;
@@ -636,8 +590,8 @@ TEST_CASE("ReplaySession: message channel emits at recorded frame regardless of 
     // logTime offset on tick 1 -- the only way START surfaces on the
     // right tick is by counting frames. Frames without payloads carry
     // data-null sentinels, mirroring what the live impl records.
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     const std::string control_base = "_teleop_control";
 
     constexpr int64_t t0_ns = 5'000'000'000;
@@ -709,8 +663,8 @@ TEST_CASE("ReplaySession: message channel drains payloads alongside sentinels in
     // is the limit case for the grouping logic), all records sharing
     // the timestamp should drain on the same update and the sentinel
     // should be silently dropped.
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     const std::string control_base = "_teleop_control";
 
     constexpr int64_t dt_ns = 10'000'000;
@@ -800,8 +754,8 @@ TEST_CASE("ReplaySession: bad file path throws", "[replay][session][error]")
 
 TEST_CASE("ReplaySession: keyboard tracker round-trip ignores live provider input", "[replay][session][keyboard]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     const std::string base_name = "keyboard_source";
     constexpr uint16_t KEY_W = 17;
     constexpr uint16_t KEY_K = 37;
@@ -901,8 +855,8 @@ TEST_CASE("ReplaySession: tracker metadata is replayed before its data", "[repla
     REQUIRE(core::TactileRecordingTraits::metadata_channels.size() == 1);
     CHECK(std::string_view(core::TactileRecordingTraits::metadata_channels[0]) == "tactile_metadata");
 
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_tactile_recording(path, "tactile", true);
 
     core::TactileTracker tracker("tactile/right");
@@ -933,8 +887,8 @@ TEST_CASE("ReplaySession: tracker metadata is replayed before its data", "[repla
 
 TEST_CASE("ReplaySession: data recorded without its metadata is withheld", "[replay][session][metadata]")
 {
-    auto path = get_temp_mcap_path();
-    TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_tactile_recording(path, "tactile", false);
 
     core::TactileTracker tracker("tactile/right");

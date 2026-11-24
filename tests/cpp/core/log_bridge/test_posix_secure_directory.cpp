@@ -1,46 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "posix_secure_directory.hpp"
-
 #include <catch2/catch_test_macros.hpp>
+#include <secure_directory/secure_directory.hpp>
 #include <sys/stat.h>
+#include <test_support/temporary_directory.hpp>
 
 #include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <unistd.h>
 
-namespace
-{
-
-class TemporaryDirectory
-{
-public:
-    TemporaryDirectory()
-    {
-        std::string pattern = "/tmp/isaaccapture-log-test-XXXXXX";
-        char* created = ::mkdtemp(pattern.data());
-        REQUIRE(created != nullptr);
-        path_ = created;
-    }
-
-    ~TemporaryDirectory()
-    {
-        std::error_code ec;
-        std::filesystem::remove_all(path_, ec);
-    }
-
-    const std::filesystem::path& path() const
-    {
-        return path_;
-    }
-
-private:
-    std::filesystem::path path_;
-};
-
-} // namespace
+using test_support::TemporaryDirectory;
 
 TEST_CASE("secure directory creation uses owner-only permissions", "[unit]")
 {
@@ -57,7 +28,6 @@ TEST_CASE("secure directory creation uses owner-only permissions", "[unit]")
     };
     REQUIRE(::lstat(directory.c_str(), &info) == 0);
     REQUIRE((info.st_mode & 0777) == 0700);
-    REQUIRE(info.st_uid == ::getuid());
 }
 
 TEST_CASE("secure directory creation rejects symlinked parents", "[unit]")

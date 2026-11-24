@@ -224,8 +224,8 @@ TEST_CASE("Metadata samples compare equal up to their zero padding", "[unit][tra
 
 TEST_CASE("A metadata table is recorded at the log time it is given", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tracker_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_recording(path, make_metadata("glove"));
 
     auto reader = open_reader(path);
@@ -246,8 +246,8 @@ TEST_CASE("A metadata table is recorded at the log time it is given", "[unit][tr
 
 TEST_CASE("Replay publishes the data with the metadata it was recorded with", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tracker_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_recording(path, make_metadata("glove"));
 
     auto replay = open_replay(path);
@@ -261,8 +261,8 @@ TEST_CASE("Replay publishes the data with the metadata it was recorded with", "[
 
 TEST_CASE("Replay withholds data recorded without metadata", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tracker_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_recording(path, core::Serialized<core::TestTrackerMetadata>());
 
     auto replay = open_replay(path);
@@ -275,8 +275,8 @@ TEST_CASE("Replay withholds data recorded without metadata", "[unit][tracker_met
 TEST_CASE("Replay tactile metadata is semantically verified before force data is published", "[unit][tracker_metadata]")
 {
     constexpr std::string_view base_name = "tactile";
-    const auto path = temp_mcap_path("test_tactile_replay_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     std::array<uint32_t, 4> indices{};
     std::array<float, 4> weights{ 1.0f, 0.0f, 0.0f, 0.0f };
     std::string reason;
@@ -340,8 +340,8 @@ TEST_CASE("Replay tactile metadata is semantically verified before force data is
 
 TEST_CASE("Live tactile metadata is semantically verified before adoption and recording", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tactile_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     {
         FakeTensorRuntime runtime;
         auto writer = open_writer(path);
@@ -386,8 +386,8 @@ TEST_CASE("Live tactile metadata is semantically verified before adoption and re
 
 TEST_CASE("Live publishes and records data only once the producer's metadata arrives", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tracker_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     {
         LiveSession live(path);
         live.start_data();

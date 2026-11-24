@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "temporary_directory.hpp"
-
 #include <catch2/catch_test_macros.hpp>
 #include <plugin_manager/plugin.hpp>
 #include <plugin_manager/plugin_manager.hpp>
+#include <test_support/temporary_directory.hpp>
 
 #include <chrono>
 #include <csignal>
@@ -15,6 +14,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+
+using test_support::TemporaryDirectory;
 
 namespace
 {
