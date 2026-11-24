@@ -288,6 +288,8 @@ pre-commit install --hook-type commit-msg
 After implementation, simplification, formatting, and tests are settled, review
 and analyze the **final diff** before pushing or reporting completion.
 
+- For adversarial code review, have independent reviewers challenge each other's
+  findings. Runtime probes support that review; they do not replace it.
 - Trace untrusted inputs to deserialization, command execution, and filesystem
   writes or deletion. Check applicable risks: unsafe deserialization, injection,
   temporary-path races, symlink/path traversal, excessive permissions, memory or

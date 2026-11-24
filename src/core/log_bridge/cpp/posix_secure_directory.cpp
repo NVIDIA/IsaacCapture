@@ -95,7 +95,14 @@ bool ensure_secure_directory(const std::filesystem::path& directory)
         return false;
     }
 
-    FileDescriptor current(::open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    // Traversal needs search permission, not read permission on each ancestor.
+#ifdef O_PATH
+    constexpr int access_mode = O_PATH;
+#else
+    constexpr int access_mode = O_RDONLY;
+#endif
+    constexpr int flags = access_mode | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+    FileDescriptor current(::open("/", flags));
     if (current.get() < 0)
     {
         return false;
@@ -111,7 +118,7 @@ bool ensure_secure_directory(const std::filesystem::path& directory)
 
         // Resolve only against the opened parent; O_NOFOLLOW also rejects an
         // entry swapped for a symlink between mkdirat and openat.
-        const int child = ::openat(current.get(), name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        const int child = ::openat(current.get(), name.c_str(), flags);
         if (child < 0)
         {
             return false;

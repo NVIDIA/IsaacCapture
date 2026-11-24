@@ -86,6 +86,8 @@ its own backups.
   each opened parent before creating children. Reject `..` before normalization
   to prevent hidden path traversal. Create directories privately from the start;
   sticky shared ancestors do not make a writable final directory safe.
+- Traversal must not require read permission on searchable ancestors; use
+  traversal-only descriptors where supported and test as a non-root caller.
 
 ## The env-var contract is shared with Python, not parallel to it
 

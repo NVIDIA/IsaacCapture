@@ -114,3 +114,23 @@ TEST_CASE("secure directory creation accepts trailing separators and preserves e
     REQUIRE(::lstat(directory.c_str(), &info) == 0);
     REQUIRE((info.st_mode & 0777) == 0755);
 }
+
+#ifdef __linux__
+TEST_CASE("secure directory traversal does not require ancestor read permission", "[unit]")
+{
+    if (::getuid() == 0)
+    {
+        SKIP("root bypasses directory permissions");
+    }
+    TemporaryDirectory temporary;
+    const auto ancestor = temporary.path() / "searchable";
+    REQUIRE(std::filesystem::create_directory(ancestor));
+    REQUIRE(std::filesystem::create_directory(ancestor / "existing"));
+    REQUIRE(::chmod(ancestor.c_str(), 0300) == 0);
+    const bool existing = isaaccapture::detail::ensure_secure_directory(ancestor / "existing");
+    const bool created = isaaccapture::detail::ensure_secure_directory(ancestor / "new");
+    REQUIRE(::chmod(ancestor.c_str(), 0700) == 0);
+    REQUIRE(existing);
+    REQUIRE(created);
+}
+#endif
