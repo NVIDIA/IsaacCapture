@@ -470,6 +470,54 @@ jobs:
           exit 1
         fi
 
+  # BUILD_PLUGIN_POSE_PROVIDER is off by default, so build-ubuntu and the wheel leave
+  # Pose Provider out. This job turns it on in a build of its own, builds the plugin
+  # with the stub engine and runs its tests.
+  test-pose-provider:
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    strategy:
+      fail-fast: ${{ github.event_name == 'pull_request' }}
+      matrix:
+        arch: ['x64', 'arm64']
+    env:
+      BUILD_DIR: build
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      with:
+        fetch-depth: 0  # configure derives the version from history
+        persist-credentials: false
+
+    - name: Install uv
+      uses: ./.github/actions/setup-uv
+
+    - name: Install Apt dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y $CORE_APT_DEPS
+
+    - name: Configure CMake
+      run: |
+        cmake -B "${BUILD_DIR}" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_PLUGIN_POSE_PROVIDER=ON \
+          -DBUILD_EXAMPLES=OFF \
+          -DBUILD_VIZ=OFF \
+          -DBUILD_PYTHON_BINDINGS=OFF \
+          -DENABLE_CLANG_FORMAT_CHECK=OFF
+
+    - name: Build
+      run: |
+        cmake --build "${BUILD_DIR}" --parallel "$(nproc)" \
+          --target pose_provider_plugin pose_provider_tests
+
+    - name: Run Pose Provider tests
+      run: ctest --test-dir "${BUILD_DIR}" -L pose_provider --no-tests=error --output-on-failure
+
   pip-editable-install:
     # Validates the scikit-build-core (PEP 517/660) from-source install path added
     # for issue #735: an sdist build and `pip install -e .` over the root
@@ -1278,6 +1326,7 @@ jobs:
       - resolve-ci-config
       - build-ubuntu
       - test-sbom-collector
+      - test-pose-provider
       - test-viz-gpu
       - test-viz-sanitizers
       - test-cloudxr
