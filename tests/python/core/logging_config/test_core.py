@@ -155,6 +155,47 @@ class TestLogDir:
                 f"/tmp/isaaccapture-{os.getuid()}"
             )
 
+    @pytest.mark.parametrize(
+        "kind", ["valid", "missing", "symlink", "writable", "sticky", "foreign"]
+    )
+    def test_socket_runtime_requires_an_existing_trusted_xdg(
+        self, monkeypatch, tmp_path, kind
+    ):
+        from isaaccapture.logging_config import _forwarding
+
+        fallback = tmp_path / "fallback"
+        monkeypatch.setattr(_forwarding, "default_runtime_dir", lambda: fallback)
+        xdg = tmp_path / "xdg"
+        if kind == "symlink":
+            xdg.symlink_to(tmp_path, target_is_directory=True)
+        elif kind != "missing":
+            xdg.mkdir(mode=0o755)
+            if kind in ("writable", "sticky"):
+                xdg.chmod(0o777 if kind == "writable" else 0o1777)
+        if kind == "foreign":
+            fstat = os.fstat
+            identity = xdg.stat().st_ino
+
+            def foreign_owner(fd):
+                info = fstat(fd)
+                if info.st_ino == identity:
+                    return SimpleNamespace(
+                        st_mode=info.st_mode, st_uid=os.geteuid() + 1
+                    )
+                return info
+
+            monkeypatch.setattr(
+                _core, "os", SimpleNamespace(**{**vars(os), "fstat": foreign_owner})
+            )
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
+        selected = _forwarding._runtime_dir()
+        assert selected == (xdg / "isaaccapture" if kind == "valid" else fallback)
+        assert _core.ensure_private_dir(selected) == selected
+        if kind == "missing":
+            assert not xdg.exists()
+        elif kind != "valid":
+            assert not (xdg / "isaaccapture").exists()
+
     def test_republishes_an_absolute_path(self, monkeypatch, tmp_path):
         # A child may chdir before its first C++ logger resolves the variable.
         monkeypatch.chdir(tmp_path)

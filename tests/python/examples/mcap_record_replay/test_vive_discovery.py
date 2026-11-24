@@ -167,3 +167,28 @@ def test_help_does_not_load_native_runtime(capsys):
         recorder.main(["record-se3-vive", "--help"])
     assert result.value.code == 0
     assert "--collections" in capsys.readouterr().out
+
+
+def test_default_temp_alias_preserves_child_symlink_refusal(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIVE_SE3_COLLECTIONS_FILE", raising=False)
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    root = tmp_path / "canonical-temp"
+    root.mkdir()
+    alias = tmp_path / "temp-alias"
+    alias.symlink_to(root, target_is_directory=True)
+    resolve = Path.resolve
+
+    def resolve_root(path, *args, **kwargs):
+        return resolve(alias if path == Path("/tmp") else path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve_root)
+    directory = root / f"vive_se3_tracker-{os.geteuid()}"
+    directory.mkdir()
+    path = directory / "vive_se3_collections.txt"
+    path.write_text("trusted\n")
+    path.chmod(0o600)
+    assert recorder.discover_collections() == ["trusted"]
+    target = root / "other"
+    directory.rename(target)
+    directory.symlink_to(target, target_is_directory=True)
+    assert recorder.discover_collections() == []

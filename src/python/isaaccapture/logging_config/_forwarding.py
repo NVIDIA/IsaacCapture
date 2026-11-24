@@ -23,7 +23,13 @@ import threading
 import time
 from pathlib import Path
 
-from ._core import _move_above_std, default_runtime_dir, ensure_private_dir, root_logger
+from ._core import (
+    _move_above_std,
+    default_runtime_dir,
+    ensure_private_dir,
+    is_private_dir,
+    root_logger,
+)
 
 # Match the POSIX-only C++ forwarding transport.
 _HAS_UNIX_SOCKETS = os.name == "posix" and hasattr(socket, "AF_UNIX")
@@ -35,7 +41,7 @@ _MAX_SOCKET_PATH = 103
 def _runtime_dir() -> Path:
     """Return a short per-user directory independent of the log directory."""
     xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
+    if xdg and is_private_dir(Path(xdg)):
         return Path(xdg) / "isaaccapture"
     return default_runtime_dir()
 

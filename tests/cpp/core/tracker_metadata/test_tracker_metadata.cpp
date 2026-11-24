@@ -339,8 +339,8 @@ TEST_CASE("Schema trackers reject a different tensor before decoding or recordin
     constexpr std::string_view expected = "soma_body_joint_poses";
     constexpr std::string_view actual = "soma_body_joint_rotations";
     FakeTensorRuntime runtime;
-    mcap_test::TemporaryMcapFile recording;
-    const auto& path = recording.path();
+    mcap_test::TemporaryMcapFile recording_file;
+    const auto& path = recording_file.path();
     auto writer = open_writer(path);
     core::McapTrackerChannels<core::SomaBodyJointPosesRecord> channels(*writer, BASE_NAME, { "poses" });
     core::SchemaTrackerConfig config{ .collection_id = std::string(collection),

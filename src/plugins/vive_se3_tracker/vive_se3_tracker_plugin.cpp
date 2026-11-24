@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <unistd.h>
@@ -56,7 +57,10 @@ std::optional<std::string> resolve_collections_file()
     if (xdg && *xdg && isaaccapture::is_secure_directory(xdg))
         return std::string(xdg) + "/" + kCollectionsFileName;
 
-    const std::string dir = "/tmp/vive_se3_tracker-" + std::to_string(::geteuid());
+    std::error_code root_error;
+    const auto root = std::filesystem::canonical("/tmp", root_error);
+    const std::string dir =
+        ((root_error ? std::filesystem::path("/tmp") : root) / ("vive_se3_tracker-" + std::to_string(::geteuid()))).string();
     std::string reason;
     if (isaaccapture::ensure_secure_directory(dir, &reason))
         return dir + "/" + kCollectionsFileName;

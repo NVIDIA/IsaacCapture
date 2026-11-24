@@ -26,16 +26,22 @@ LINE_FORMAT = "[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)s] [pid:%(pro
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
-def default_runtime_dir() -> Path:
-    """Resolve the platform temp-root alias before adding our per-user directory."""
+def default_temp_root() -> Path:
+    """Resolve only the platform temporary-root alias, before application children."""
     if not _POSIX:
-        return Path(tempfile.gettempdir()) / "isaaccapture"
+        return Path(tempfile.gettempdir())
     root = Path("/tmp")
     try:
         root = root.resolve(strict=True)
     except (OSError, RuntimeError):
         pass  # Directory validation will report an unusable root without breaking import.
-    return root / f"isaaccapture-{os.getuid()}"
+    return root
+
+
+def default_runtime_dir() -> Path:
+    """Select our per-user directory below the platform temporary root."""
+    name = f"isaaccapture-{os.getuid()}" if _POSIX else "isaaccapture"
+    return default_temp_root() / name
 
 
 # Custom level below DEBUG; emit with ``logger.log(TRACE, ...)``.

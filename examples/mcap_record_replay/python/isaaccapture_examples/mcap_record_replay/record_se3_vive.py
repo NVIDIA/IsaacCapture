@@ -39,12 +39,12 @@ def _collections_file() -> str | None:
 def _automatic_collections_file() -> str | None:
     if os.name != "posix":
         return None
-    from isaaccapture.logging_config._core import is_private_dir
+    from isaaccapture.logging_config._core import default_temp_root, is_private_dir
 
     xdg = os.environ.get("XDG_RUNTIME_DIR")
     if xdg and is_private_dir(Path(xdg)):
         return str(Path(xdg) / "vive_se3_collections.txt")
-    base = Path("/tmp") / f"vive_se3_tracker-{os.geteuid()}"
+    base = default_temp_root() / f"vive_se3_tracker-{os.geteuid()}"
     # Only the publisher creates its directory; discovery validates existing paths.
     if is_private_dir(base):
         return str(base / "vive_se3_collections.txt")
