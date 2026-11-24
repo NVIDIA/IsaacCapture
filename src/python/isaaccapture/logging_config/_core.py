@@ -112,10 +112,10 @@ def _validate_directory(fd: int, directory: Path, *, target: bool) -> None:
     info = os.fstat(fd)
     # Sticky shared ancestors protect entries; the target must forbid other writers.
     if info.st_uid not in (0, os.geteuid()) or (target and info.st_uid != os.geteuid()):
-        raise PermissionError(f"refusing foreign-owned log path: {directory}")
+        raise PermissionError(f"refusing foreign-owned directory path: {directory}")
     writable = info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
     if writable and (target or not info.st_mode & stat.S_ISVTX):
-        raise PermissionError(f"refusing replaceable log path: {directory}")
+        raise PermissionError(f"refusing replaceable directory path: {directory}")
 
 
 def ensure_private_dir(directory: Path) -> Path:
@@ -126,7 +126,7 @@ def ensure_private_dir(directory: Path) -> Path:
 
     parts = directory.absolute().parts[1:]
     if not parts or ".." in parts:
-        raise PermissionError(f"refusing ambiguous log directory path: {directory}")
+        raise PermissionError(f"refusing ambiguous directory path: {directory}")
 
     # Pin parents against pathname swaps; O_PATH needs search permission, not read.
     flags = getattr(os, "O_PATH", os.O_RDONLY)
@@ -134,7 +134,8 @@ def ensure_private_dir(directory: Path) -> Path:
     parent = os.open("/", flags)
     try:
         # The initial root is also a parent and must be checked before mkdirat.
-        _validate_directory(parent, directory, target=False)
+        component = Path("/")
+        _validate_directory(parent, component, target=False)
         for index, name in enumerate(parts):
             try:
                 os.mkdir(name, mode=0o700, dir_fd=parent)
@@ -144,7 +145,8 @@ def ensure_private_dir(directory: Path) -> Path:
             os.close(parent)
             parent = child
 
-            _validate_directory(parent, directory, target=index == len(parts) - 1)
+            component /= name
+            _validate_directory(parent, component, target=index == len(parts) - 1)
     finally:
         os.close(parent)
     return directory

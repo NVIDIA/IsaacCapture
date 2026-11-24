@@ -5,6 +5,8 @@
 // session via ReplaySession::run, and verify tracker data
 // round-trips through update() and the typed tracker query methods.
 
+#include "mcap_test_support.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 #include <deviceio_session/replay_session.hpp>
 #include <deviceio_trackers/hand_tracker.hpp>
@@ -31,14 +33,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <mcap_test_support.hpp>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
-
-namespace fs = std::filesystem;
 
 namespace
 {
@@ -47,15 +46,6 @@ namespace
 // Helpers
 // ============================================================================
 
-std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
-{
-    auto writer = std::make_unique<mcap::McapWriter>();
-    mcap::McapWriterOptions options("teleop-test");
-    options.compression = mcap::Compression::None;
-    auto status = writer->open(path, options);
-    REQUIRE(status.ok());
-    return writer;
-}
 
 core::Pose make_pose(float x, float y, float z, float qw = 1.0f)
 {
@@ -188,7 +178,7 @@ TEST_CASE("ReplaySession: head tracker round-trip with multiple frames", "[repla
 
     constexpr int num_frames = 5;
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         HeadChannels ch(*writer, base_name, to_string_vec(core::HeadRecordingTraits::recording_channels));
         for (int i = 0; i < num_frames; ++i)
         {
@@ -243,7 +233,7 @@ TEST_CASE("ReplaySession: se3 tracker round-trip and null at EOF", "[replay][ses
 
     constexpr int num_frames = 3;
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         Se3TrackerChannels ch(*writer, base_name, to_string_vec(core::Se3TrackerRecordingTraits::recording_channels));
         for (int i = 0; i < num_frames; ++i)
         {
@@ -291,7 +281,7 @@ TEST_CASE("ReplaySession: hand tracker round-trip with left and right", "[replay
     const std::string base_name = "hands";
 
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         HandChannels ch(*writer, base_name, to_string_vec(core::HandRecordingTraits::recording_channels));
 
         for (int i = 0; i < 3; ++i)
@@ -341,7 +331,7 @@ TEST_CASE("ReplaySession: joint SE3 pose round-trip keeps both hands distinct", 
     constexpr float kRightOffset = 100.0f;
 
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         auto channels = to_string_vec(core::JointSe3PoseRecordingTraits::recording_channels);
         JointSe3PoseChannels left_ch(*writer, left_name, channels);
         JointSe3PoseChannels right_ch(*writer, right_name, channels);
@@ -409,7 +399,7 @@ TEST_CASE("ReplaySession: head and hand trackers in one session", "[replay][sess
     constexpr int num_frames = 4;
 
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         HeadChannels head_ch(*writer, "head", to_string_vec(core::HeadRecordingTraits::recording_channels));
         HandChannels hand_ch(*writer, "hands", to_string_vec(core::HandRecordingTraits::recording_channels));
 
@@ -487,7 +477,7 @@ TEST_CASE("ReplaySession: message channel drains records on their recorded frame
     const std::string control_base = "_teleop_control";
 
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         MessageChannelChannels ctrl_ch(
             *writer, control_base, to_string_vec(core::MessageChannelRecordingTraits::channels));
 
@@ -532,7 +522,7 @@ TEST_CASE("ReplaySession: message channel fans recorded events across update tic
     constexpr int64_t dt_ns = 10'000'000;
 
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         MessageChannelChannels ctrl_ch(
             *writer, control_base, to_string_vec(core::MessageChannelRecordingTraits::channels));
 
@@ -601,7 +591,7 @@ TEST_CASE("ReplaySession: message channel emits at recorded frame regardless of 
     constexpr int kStopFrame = 8;
 
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         MessageChannelChannels ctrl_ch(
             *writer, control_base, to_string_vec(core::MessageChannelRecordingTraits::channels));
 
@@ -670,7 +660,7 @@ TEST_CASE("ReplaySession: message channel drains payloads alongside sentinels in
     constexpr int64_t dt_ns = 10'000'000;
 
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         MessageChannelChannels ctrl_ch(
             *writer, control_base, to_string_vec(core::MessageChannelRecordingTraits::channels));
 
@@ -762,7 +752,7 @@ TEST_CASE("ReplaySession: keyboard tracker round-trip ignores live provider inpu
     constexpr uint16_t KEY_Z = 44;
 
     {
-        auto writer = open_writer(path);
+        auto writer = mcap_test::open_writer(path);
         KeyboardChannels ch(*writer, base_name, to_string_vec(core::KeyboardRecordingTraits::recording_channels));
 
         core::KeyboardOutputT frame;
@@ -811,7 +801,7 @@ namespace
 // Live writes the metadata once, before any data it lets through; mirror that order.
 void write_tactile_recording(const std::string& path, const std::string& base_name, bool with_metadata)
 {
-    auto writer = open_writer(path);
+    auto writer = mcap_test::open_writer(path);
     core::McapTrackerChannels<core::TactileDataArrayRecord> data(
         *writer, base_name, to_string_vec(core::TactileRecordingTraits::recording_channels));
     core::McapTrackerChannels<core::TactileMetadata> metadata(

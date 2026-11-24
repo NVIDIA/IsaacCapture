@@ -22,15 +22,6 @@ namespace
 
 using namespace mcap_test;
 
-std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
-{
-    auto writer = std::make_unique<mcap::McapWriter>();
-    mcap::McapWriterOptions options("teleop-test");
-    options.compression = mcap::Compression::None;
-    auto status = writer->open(path, options);
-    REQUIRE(status.ok());
-    return writer;
-}
 
 } // namespace
 

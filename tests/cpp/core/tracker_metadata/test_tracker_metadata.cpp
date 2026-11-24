@@ -60,14 +60,6 @@ core::Serialized<core::Generic3AxisPedalOutputRecord> make_record(float left_ped
         &native, core::DeviceDataTimestamp(time_ns, time_ns, time_ns));
 }
 
-std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
-{
-    auto writer = std::make_unique<mcap::McapWriter>();
-    mcap::McapWriterOptions options("teleop-test");
-    options.compression = mcap::Compression::None;
-    REQUIRE(writer->open(path, options).ok());
-    return writer;
-}
 
 //! Writes what a live session of the tracker records: the metadata, when there is one, then one
 //! sample on the tracked channel replay reads.

@@ -29,8 +29,6 @@ public:
         std::filesystem::create_directories(class_dir());
         std::filesystem::create_directories(dev_dir());
     }
-    FakeDevices(const FakeDevices&) = delete;
-    FakeDevices& operator=(const FakeDevices&) = delete;
 
     std::filesystem::path class_dir() const
     {

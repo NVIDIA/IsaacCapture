@@ -52,17 +52,16 @@ std::optional<std::string> resolve_collections_file()
         return env_cf;
 
     const char* xdg = std::getenv("XDG_RUNTIME_DIR");
-    if (xdg && *xdg && isaaccapture::detail::ensure_secure_directory(xdg))
+    if (xdg && *xdg && isaaccapture::is_secure_directory(xdg))
         return std::string(xdg) + "/" + kCollectionsFileName;
 
     const std::string dir = "/tmp/vive_se3_tracker-" + std::to_string(::geteuid());
-    if (isaaccapture::detail::ensure_secure_directory(dir))
+    std::string reason;
+    if (isaaccapture::ensure_secure_directory(dir, &reason))
         return dir + "/" + kCollectionsFileName;
 
     isaaccapture::Logger::get("isaaccapture.plugins.vive_se3_tracker.ViveSe3TrackerPlugin")
-        ->warn(
-            "could not secure a per-user directory for the collections file; set VIVE_SE3_COLLECTIONS_FILE to a "
-            "private path.");
+        ->warn("Collection advertisement disabled: {}. Set VIVE_SE3_COLLECTIONS_FILE to a private path.", reason);
     // Tracking also works with explicit collection IDs when discovery is unavailable.
     return std::nullopt;
 }

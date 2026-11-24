@@ -9,9 +9,13 @@ add_subdirectory(schema)
 # Grades one binary schema against another; used by the conform test and by replay.
 add_subdirectory(schema_compat)
 
+if(NOT WIN32)
+    add_subdirectory(posix_utils)
+endif()
+add_subdirectory(secure_directory)
+
 # isaaccapture::Logger. Added early -- before any module that might want to
 # log during its own construction.
-add_subdirectory(secure_directory)
 add_subdirectory(log_bridge)
 
 # Chrony evidence parsing and capture-time qualification (no dependency on the rest of the product).

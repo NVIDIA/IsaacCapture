@@ -15,8 +15,6 @@ add_library(log_bridge_core STATIC
     inc/log_bridge/logger.hpp
 )
 
-
-
 target_include_directories(log_bridge_core
     INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/inc>

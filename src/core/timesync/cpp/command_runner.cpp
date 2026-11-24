@@ -3,6 +3,7 @@
 
 #include "inc/timesync/command_runner.hpp"
 
+#include <posix_utils/file_descriptor.hpp>
 #include <sys/wait.h>
 
 #include <algorithm>
@@ -18,22 +19,7 @@ extern char** environ;
 namespace isaaccapture::timesync
 {
 
-namespace
-{
-
-struct Fd
-{
-    int fd = -1;
-    ~Fd()
-    {
-        if (fd >= 0)
-        {
-            close(fd);
-        }
-    }
-};
-
-} // namespace
+using posix_utils::FileDescriptor;
 
 CommandRunner posix_command_runner()
 {
@@ -50,23 +36,23 @@ CommandRunner posix_command_runner()
         {
             return result;
         }
-        Fd read_end{ fds[0] };
-        Fd write_end{ fds[1] };
+        FileDescriptor read_end{ fds[0] };
+        FileDescriptor write_end{ fds[1] };
 
         posix_spawn_file_actions_t actions;
         posix_spawn_file_actions_init(&actions);
-        posix_spawn_file_actions_adddup2(&actions, write_end.fd, STDOUT_FILENO);
+        posix_spawn_file_actions_adddup2(&actions, write_end.get(), STDOUT_FILENO);
         posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
         posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
         // Descriptors 0-2 were set up above; closing a pipe end that landed on one of them (the parent started with
         // it closed) would undo that. Only higher descriptors need closing in the child.
-        if (read_end.fd > STDERR_FILENO)
+        if (read_end.get() > STDERR_FILENO)
         {
-            posix_spawn_file_actions_addclose(&actions, read_end.fd);
+            posix_spawn_file_actions_addclose(&actions, read_end.get());
         }
-        if (write_end.fd > STDERR_FILENO)
+        if (write_end.get() > STDERR_FILENO)
         {
-            posix_spawn_file_actions_addclose(&actions, write_end.fd);
+            posix_spawn_file_actions_addclose(&actions, write_end.get());
         }
 
         std::vector<char*> args;
@@ -84,8 +70,7 @@ CommandRunner posix_command_runner()
             return result;
         }
         result.started = true;
-        close(write_end.fd);
-        write_end.fd = -1;
+        write_end.reset();
 
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         char buffer[4096];
@@ -98,7 +83,7 @@ CommandRunner posix_command_runner()
                 result.timed_out = true;
                 break;
             }
-            pollfd p{ read_end.fd, POLLIN, 0 };
+            pollfd p{ read_end.get(), POLLIN, 0 };
             const int pr = poll(&p, 1, static_cast<int>(left.count()));
             if (pr < 0 && errno == EINTR)
             {
@@ -113,7 +98,7 @@ CommandRunner posix_command_runner()
             {
                 break;
             }
-            const ssize_t n = read(read_end.fd, buffer, sizeof(buffer));
+            const ssize_t n = read(read_end.get(), buffer, sizeof(buffer));
             if (n < 0 && errno == EINTR)
             {
                 continue;

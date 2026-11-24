@@ -357,8 +357,12 @@ const std::vector<spdlog::sink_ptr>& local_sinks()
         console->set_formatter(make_formatter(kConsolePattern));
 
         auto dir = log_dir();
-        if (!ensure_secure_directory(dir))
+        std::string directory_failure;
+        if (!ensure_secure_directory(dir, &directory_failure))
         {
+            // Logger::get() would recurse into this initializer; use the ready sink.
+            spdlog::logger diagnostic("isaaccapture.log_bridge", console);
+            diagnostic.warn("File logging disabled: {}", directory_failure);
             return std::vector<spdlog::sink_ptr>{ console };
         }
 

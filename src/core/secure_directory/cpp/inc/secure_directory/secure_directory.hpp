@@ -4,13 +4,14 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 
-namespace isaaccapture::detail
+namespace isaaccapture
 {
-
-// POSIX paths must have no symlink components or replaceable ancestors; the
-// target must belong to the effective user and forbid other writers. Windows
-// uses filesystem directory creation without POSIX ownership checks.
-bool ensure_secure_directory(const std::filesystem::path& directory);
-
-} // namespace isaaccapture::detail
+// POSIX paths must have no symlinks or replaceable ancestors; the target must
+// belong to the effective user and forbid other writers. Windows uses the
+// filesystem API without POSIX ownership checks. Reasons name the failed component.
+bool ensure_secure_directory(const std::filesystem::path& directory, std::string* reason = nullptr);
+// Apply the same policy without creating any missing path components.
+bool is_secure_directory(const std::filesystem::path& directory, std::string* reason = nullptr);
+} // namespace isaaccapture

@@ -3,164 +3,145 @@
 
 #include "inc/secure_directory/secure_directory.hpp"
 
-#ifndef _WIN32
+#include <system_error>
 
+#ifndef _WIN32
+#    include <posix_utils/file_descriptor.hpp>
 #    include <sys/stat.h>
 
 #    include <cerrno>
 #    include <fcntl.h>
-#    include <filesystem>
 #    include <unistd.h>
 #    include <vector>
+#endif
 
-namespace isaaccapture::detail
+namespace isaaccapture
 {
 namespace
 {
-
-class FileDescriptor
+bool refuse(std::string* reason, const std::filesystem::path& path, const std::string& message)
 {
-public:
-    explicit FileDescriptor(int fd) : fd_(fd)
-    {
-    }
+    if (reason)
+        *reason = path.string() + ": " + message;
+    return false;
+}
 
-    ~FileDescriptor()
-    {
-        if (fd_ >= 0)
-        {
-            ::close(fd_);
-        }
-    }
-
-    FileDescriptor(const FileDescriptor&) = delete;
-    FileDescriptor& operator=(const FileDescriptor&) = delete;
-
-    void reset(int fd)
-    {
-        if (fd_ >= 0)
-        {
-            ::close(fd_);
-        }
-        fd_ = fd;
-    }
-
-    int get() const
-    {
-        return fd_;
-    }
-
-private:
-    int fd_;
-};
-
-bool is_secure_ancestor(const struct ::stat& info)
+#ifndef _WIN32
+const char* ancestor_failure(const struct ::stat& info)
 {
-    if (!S_ISDIR(info.st_mode) || (info.st_uid != 0 && info.st_uid != ::geteuid()))
-    {
-        return false;
-    }
+    if (info.st_uid != 0 && info.st_uid != ::geteuid())
+        return "foreign-owned directory";
     // Sticky shared ancestors protect their entries from other users.
-    const bool publicly_writable = (info.st_mode & (S_IWGRP | S_IWOTH)) != 0;
-    return !publicly_writable || (info.st_mode & S_ISVTX) != 0;
+    if ((info.st_mode & (S_IWGRP | S_IWOTH)) && !(info.st_mode & S_ISVTX))
+        return "replaceable directory";
+    return nullptr;
 }
 
-bool is_secure_target(const struct ::stat& info)
+const char* target_failure(const struct ::stat& info)
 {
-    return S_ISDIR(info.st_mode) && info.st_uid == ::geteuid() && (info.st_mode & (S_IWGRP | S_IWOTH)) == 0;
+    if (info.st_uid != ::geteuid())
+        return "foreign-owned directory";
+    if (info.st_mode & (S_IWGRP | S_IWOTH))
+        return "replaceable directory";
+    return nullptr;
 }
 
-} // namespace
+using DirectoryPolicy = const char* (*)(const struct ::stat&);
 
-bool ensure_secure_directory(const std::filesystem::path& directory)
+bool validate(int fd, const std::filesystem::path& path, DirectoryPolicy policy, std::string* reason)
 {
-    std::error_code absolute_ec;
-    const auto absolute = std::filesystem::absolute(directory, absolute_ec);
-    if (absolute_ec)
+    struct ::stat info
     {
-        return false;
-    }
+    };
+    if (::fstat(fd, &info) != 0)
+        return refuse(
+            reason, path, "cannot inspect directory: " + std::error_code(errno, std::generic_category()).message());
+    // O_DIRECTORY already guarantees the descriptor's type.
+    if (const auto failure = policy(info))
+        return refuse(reason, path, failure);
+    return true;
+}
+#endif
 
-    // Reject traversal before creating anything. Lexical normalization would
-    // erase symlink/.. before the no-follow check could see the symlink.
+bool check_directory(const std::filesystem::path& directory, bool create_missing, std::string* reason)
+{
+    if (reason)
+        reason->clear();
+#ifndef _WIN32
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(directory, error);
+    if (error)
+        return refuse(reason, directory, "cannot resolve absolute path: " + error.message());
+
+    // Reject traversal before creating anything; normalization would hide symlink/..
+    // before the no-follow check could see the symlink.
     std::vector<std::filesystem::path> components;
     for (const auto& component : absolute.relative_path())
     {
         if (component == "..")
-        {
-            return false;
-        }
+            return refuse(reason, absolute, "parent traversal is not allowed");
         if (!component.empty() && component != ".")
-        {
             components.push_back(component);
-        }
     }
     if (components.empty())
     {
-        return false;
+        return refuse(reason, absolute, "a private directory below the root is required");
     }
 
-    // Traversal needs search permission, not read permission on each ancestor.
+    // Search permission suffices for traversal; no ancestor read permission is needed.
 #    ifdef O_PATH
     constexpr int access_mode = O_PATH;
 #    else
     constexpr int access_mode = O_RDONLY;
 #    endif
     constexpr int flags = access_mode | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
-    FileDescriptor current(::open("/", flags));
+    posix_utils::FileDescriptor current(::open("/", flags));
+    std::filesystem::path component_path = "/";
     if (current.get() < 0)
-    {
+        return refuse(reason, component_path,
+                      "cannot open directory: " + std::error_code(errno, std::generic_category()).message());
+    if (!validate(current.get(), component_path, ancestor_failure, reason))
         return false;
-    }
-    // The initial root must protect its entries just like every later parent.
-    struct ::stat root_info
-    {
-    };
-    if (::fstat(current.get(), &root_info) != 0 || !is_secure_ancestor(root_info))
-    {
-        return false;
-    }
 
     for (std::size_t index = 0; index < components.size(); ++index)
     {
         const auto& name = components[index];
-        if (::mkdirat(current.get(), name.c_str(), 0700) != 0 && errno != EEXIST)
-        {
-            return false;
-        }
-
-        // Resolve only against the opened parent; O_NOFOLLOW also rejects an
-        // entry swapped for a symlink between mkdirat and openat.
+        component_path /= name;
+        if (create_missing && ::mkdirat(current.get(), name.c_str(), 0700) != 0 && errno != EEXIST)
+            return refuse(reason, component_path,
+                          "cannot create directory: " + std::error_code(errno, std::generic_category()).message());
+        // Resolve against the opened parent. Refuse an entry swapped for a symlink.
         const int child = ::openat(current.get(), name.c_str(), flags);
         if (child < 0)
-        {
-            return false;
-        }
+            return refuse(reason, component_path,
+                          "cannot open directory: " + std::error_code(errno, std::generic_category()).message());
         current.reset(child);
-        struct ::stat info
-        {
-        };
-        if (::fstat(current.get(), &info) != 0 ||
-            !(index + 1 == components.size() ? is_secure_target(info) : is_secure_ancestor(info)))
-        {
+        const auto policy = index + 1 == components.size() ? target_failure : ancestor_failure;
+        if (!validate(current.get(), component_path, policy, reason))
             return false;
-        }
     }
     return true;
-}
-
-} // namespace isaaccapture::detail
-
 #else
-
-namespace isaaccapture::detail
-{
-bool ensure_secure_directory(const std::filesystem::path& directory)
-{
     std::error_code error;
-    std::filesystem::create_directories(directory, error);
-    return !error;
-}
-} // namespace isaaccapture::detail
-
+    if (create_missing)
+        std::filesystem::create_directories(directory, error);
+    if (error)
+        return refuse(reason, directory, "cannot create directory: " + error.message());
+    const bool exists = std::filesystem::is_directory(directory, error);
+    if (!exists || error)
+        return refuse(reason, directory, error ? error.message() : "not a directory");
+    return true;
 #endif
+}
+} // namespace
+
+bool ensure_secure_directory(const std::filesystem::path& directory, std::string* reason)
+{
+    return check_directory(directory, true, reason);
+}
+
+bool is_secure_directory(const std::filesystem::path& directory, std::string* reason)
+{
+    return check_directory(directory, false, reason);
+}
+} // namespace isaaccapture

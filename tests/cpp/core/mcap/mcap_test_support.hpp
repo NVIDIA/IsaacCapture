@@ -10,6 +10,7 @@
 #include <mcap/reader.hpp>
 #include <mcap/recorded_schemas.hpp>
 #include <mcap/tracker_channels.hpp>
+#include <mcap/writer.hpp>
 #include <schema/head_generated.h>
 #include <test_support/temporary_directory.hpp>
 
@@ -40,6 +41,15 @@ private:
     test_support::TemporaryDirectory directory_;
     std::string path_ = (directory_.path() / "recording.mcap").string();
 };
+
+inline std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
+{
+    auto writer = std::make_unique<mcap::McapWriter>();
+    mcap::McapWriterOptions options("teleop-test");
+    options.compression = mcap::Compression::None;
+    REQUIRE(writer->open(path, options).ok());
+    return writer;
+}
 
 inline std::unique_ptr<mcap::McapReader> open_reader(const std::string& path)
 {
