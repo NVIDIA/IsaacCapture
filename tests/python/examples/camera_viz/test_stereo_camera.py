@@ -204,12 +204,18 @@ def _camera_information(baseline, with_imu=True):
                 left_cam=left, get_camera_baseline=lambda: baseline
             ),
         ),
-        sensors_configuration=types.SimpleNamespace(),
+        # The SDK has a transform whether or not the camera has an IMU.
+        sensors_configuration=types.SimpleNamespace(
+            accelerometer_parameters=types.SimpleNamespace(is_available=with_imu),
+            camera_imu_transform=types.SimpleNamespace(m=np.eye(4)),
+        ),
     )
     if with_imu:
-        m = np.eye(4)
-        m[:3, :3] = [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
-        info.sensors_configuration.camera_imu_transform = types.SimpleNamespace(m=m)
+        info.sensors_configuration.camera_imu_transform.m[:3, :3] = [
+            [0.0, -1.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
     return info
 
 

@@ -125,11 +125,13 @@ def stereo_calibration(info, width: int, height: int) -> StereoCalibration:
     # is in millimetres.
     if baseline_m > 1.0:
         baseline_m *= 1e-3
-    try:
-        transform = info.sensors_configuration.camera_imu_transform
+    # The SDK gives a transform for a camera without an IMU too, so ask it
+    # whether the sensor is there.
+    sensors = info.sensors_configuration
+    R_left_from_imu = None
+    if sensors.accelerometer_parameters.is_available:
+        transform = sensors.camera_imu_transform
         R_left_from_imu = np.asarray(transform.m, dtype=np.float64)[:3, :3]
-    except Exception:  # a camera without an IMU
-        R_left_from_imu = None
     return StereoCalibration(
         width=width,
         height=height,
