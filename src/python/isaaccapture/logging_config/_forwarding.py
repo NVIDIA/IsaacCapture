@@ -266,6 +266,8 @@ if _HAS_UNIX_SOCKETS:
         def server_bind(self) -> None:
             self.socket = _move_socket_above_std(self.socket)
             super().server_bind()
+            # Restrict before listen; chmod cannot revoke an already queued connection.
+            os.chmod(self.server_address, 0o600)
 
         def get_request(self):
             # Accept and register as one step, so _drain() never sees a
@@ -377,8 +379,6 @@ def ensure_receiver() -> str:
             if os.path.lexists(path):
                 os.unlink(path)
             server = ThreadingUnixStreamServer(path, RequestHandler)
-            # Restrict the socket before accepting records.
-            os.chmod(path, 0o600)
             socket_info = os.lstat(path)
             socket_identity = (socket_info.st_dev, socket_info.st_ino)
         except OSError as exc:
