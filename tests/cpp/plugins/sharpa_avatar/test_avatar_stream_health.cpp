@@ -250,3 +250,85 @@ TEST_CASE("Intermittent missing data cannot bypass output setup backoff", "[shar
     CHECK(stream.attempts == 2);
     CHECK_FALSE(stream.recovery.error().has_value());
 }
+
+TEST_CASE("Delivery failure withdraws only its output and preserves retry timing", "[sharpa_avatar][lifecycle]")
+{
+    using plugins::avatar::StreamOutputRecovery;
+    const auto start = StreamOutputRecovery::Clock::time_point{};
+    StreamOutputRecovery failed;
+    StreamOutputRecovery healthy;
+    OutputCounters failed_counts;
+    OutputCounters healthy_counts;
+    std::unique_ptr<CapturingOutput> failed_output;
+    std::unique_ptr<CapturingOutput> healthy_output;
+    int attempts = 0;
+    int deliveries = 0;
+    bool fail = true;
+    const auto create = [&]
+    {
+        ++attempts;
+        return std::make_unique<CapturingOutput>(failed_counts);
+    };
+    bool vendor_exception = false;
+    SECTION("standard runtime error")
+    {
+    }
+    SECTION("vendor exception")
+    {
+        vendor_exception = true;
+    }
+    const auto send = [&](CapturingOutput&)
+    {
+        if (fail)
+        {
+            if (vendor_exception)
+            {
+                throw 1;
+            }
+            throw std::runtime_error("push failed");
+        }
+        ++deliveries;
+    };
+    failed.publish(failed_output, true, start, 2s, create, send);
+    CHECK_FALSE(failed_output);
+    CHECK(failed_counts.withdrawn == 1);
+    REQUIRE(failed.error());
+    CHECK(failed.error()->find("output delivery failed") == 0);
+    healthy.publish(
+        healthy_output, true, start, 2s, [&] { return std::make_unique<CapturingOutput>(healthy_counts); },
+        [](CapturingOutput&) {});
+    CHECK(healthy_counts.active);
+    fail = false;
+    failed.publish(failed_output, false, start + 1ms, 2s, create, send);
+    failed.publish(failed_output, true, start + 1999ms, 2s, create, send);
+    CHECK(attempts == 1);
+    CHECK(deliveries == 0);
+    CHECK(failed.error().has_value());
+    failed.publish(failed_output, true, start + 2s, 2s, create, send);
+    REQUIRE(failed_output);
+    CHECK(attempts == 2);
+    CHECK(deliveries == 1);
+    CHECK_FALSE(failed.error());
+    CHECK(healthy_counts.created == 1);
+}
+
+TEST_CASE("Ingress outages invalidate data without forgetting cached stamps", "[sharpa_avatar][lifecycle]")
+{
+    const auto start = DatasetFreshness::Clock::time_point{};
+    DatasetFreshness human;
+    DatasetFreshness raw;
+    human.observe(1, 0, start);
+    raw.observe(1, 0, start);
+    human.invalidate();
+    raw.invalidate();
+    CHECK_FALSE(human.fresh(start));
+    human.observe(1, 0, start + 4s);
+    raw.observe(2, 0, start + 4s);
+    CHECK_FALSE(human.fresh(start + 4s));
+    CHECK(raw.fresh(start + 4s));
+    human.observe(1, 1, start + 5s);
+    CHECK(human.fresh(start + 5s));
+    human = {};
+    human.observe(1, 1, start + 6s);
+    CHECK(human.fresh(start + 6s));
+}

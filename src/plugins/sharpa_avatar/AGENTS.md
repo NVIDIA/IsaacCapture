@@ -73,7 +73,11 @@ SPDX-License-Identifier: Apache-2.0
   not keep another dataset healthy.
 - Withdraw each unusable dataset's output resource; skipping pushes leaves cached
   samples visible to consumers. Recreate only that dataset on recovery, with
-  isolated, bounded setup retries. Test withdrawal and recovery, not only clocks.
+  isolated, bounded setup and delivery retries. Physical ingress readiness must
+  not depend on output construction, including startup and reconnect. Use the
+  same payload-validity rule for health and delivery; test tracker orchestration
+  as well as helper clocks and resource lifetimes. Retain timestamp baselines
+  across outages on the same SDK handle; clear them only for a new generation.
 - Validate every emitted health state/reason pair through the Python status reducer; producer-only tests do not
   protect the cross-language monitoring contract.
 - Keep the static HUMAN-to-OpenXR index table synchronized with the pinned
