@@ -319,7 +319,7 @@ class TestServiceStop:
     @_posix_only
     @pytest.mark.parametrize(
         "query",
-        ["health_check", "_is_runtime_alive", "_collect_startup_failure_detail"],
+        ["_is_runtime_alive", "_collect_startup_failure_detail"],
     )
     def test_status_cannot_reap_during_group_shutdown(self, tmp_path, query):
         with mock_service_deps(tmp_path) as mocks:
@@ -328,8 +328,23 @@ class TestServiceStop:
             signaling = threading.Event()
             release = threading.Event()
             exited = threading.Event()
-            started = threading.Event()
+            contended = threading.Event()
             completed = threading.Event()
+            runtime_lock = threading.RLock()
+
+            class ObservedLock:
+                def __enter__(self):
+                    if threading.current_thread().name == "runtime-status-reader":
+                        if not runtime_lock.acquire(blocking=False):
+                            contended.set()
+                            runtime_lock.acquire()
+                    else:
+                        runtime_lock.acquire()
+
+                def __exit__(self, *_args):
+                    runtime_lock.release()
+
+            service._runtime_lock = ObservedLock()
             reader_polls = []
             failures = []
 
@@ -345,11 +360,10 @@ class TestServiceStop:
             def stop():
                 try:
                     service.stop()
-                except BaseException as exc:
+                except Exception as exc:
                     failures.append(exc)
 
             def read_status():
-                started.set()
                 try:
                     args = (
                         (tmp_path,)
@@ -357,10 +371,7 @@ class TestServiceStop:
                         else ()
                     )
                     getattr(service, query)(*args)
-                except RuntimeError:
-                    if query != "health_check":
-                        failures.append(AssertionError("unexpected status failure"))
-                except BaseException as exc:
+                except Exception as exc:
                     failures.append(exc)
                 finally:
                     completed.set()
@@ -381,10 +392,10 @@ class TestServiceStop:
                     stopper.start()
                     assert signaling.wait(5)
                     reader.start()
-                    assert started.wait(5)
-                    assert not completed.wait(0.1), (
-                        "status query bypassed shutdown ownership"
+                    assert contended.wait(5), (
+                        "reader did not contend for the owned runtime lock"
                     )
+                    assert not completed.is_set()
                     assert not reader_polls
                 finally:
                     release.set()
@@ -396,6 +407,73 @@ class TestServiceStop:
             assert not reader_polls
             assert not failures
             assert service._runtime_proc is None
+
+    def test_health_rejects_shutdown_without_waiting_for_runtime_lock(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+            runtime_lock = threading.RLock()
+            service._runtime_lock = runtime_lock
+            service._stopping = True
+            completed = threading.Event()
+            errors = []
+
+            def query():
+                try:
+                    service.health_check()
+                except Exception as exc:
+                    errors.append(exc)
+                finally:
+                    completed.set()
+
+            reader = threading.Thread(target=query, daemon=True)
+            try:
+                with runtime_lock:
+                    reader.start()
+                    assert completed.wait(5), (
+                        "health query waited on runtime termination"
+                    )
+                reader.join(timeout=5)
+                assert len(errors) == 1
+                assert isinstance(errors[0], RuntimeError)
+                assert "stopping" in str(errors[0])
+                mocks["proc"].poll.assert_not_called()
+            finally:
+                reader.join(timeout=5)
+                service._stopping = False
+                mocks["proc"].poll.return_value = 0
+                service.stop()
+
+    def test_health_rejects_a_snapshot_whose_owner_was_cleared(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+
+            def completed_shutdown():
+                service._runtime_proc = None
+                service._stopping = False
+                return mocks["proc"], None
+
+            with patch.object(
+                service, "_runtime_status", side_effect=completed_shutdown
+            ):
+                with pytest.raises(RuntimeError, match="not running"):
+                    service.health_check()
+            service.stop()
+
+    def test_health_rejects_a_nested_unobserved_query(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+
+            def poll():
+                with pytest.raises(RuntimeError, match="already in progress"):
+                    service.health_check()
+                return None
+
+            mocks["proc"].poll.side_effect = poll
+            service.health_check()
+            mocks["proc"].poll.assert_called_once_with()
+            mocks["proc"].poll.side_effect = None
+            mocks["proc"].poll.return_value = 0
+            service.stop()
 
     def test_reentrant_stop_rejects_before_locks_and_retains_owner(self, tmp_path):
         with mock_service_deps(tmp_path) as mocks:

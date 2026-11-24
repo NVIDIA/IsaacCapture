@@ -596,8 +596,18 @@ class CloudXRService:
             raise RuntimeError(
                 f"{self._fatal_error}; see {self._oob_status_path}"
             ) from self._fatal_error
+        if self._stopping:
+            raise RuntimeError(
+                "CloudXR service is stopping; runtime liveness is unchecked"
+            )
+        if getattr(self._runtime_query, "active", False):
+            raise RuntimeError("CloudXR runtime status query is already in progress")
         proc, exit_code = self._runtime_status()
-        if proc is None:
+        if self._stopping:
+            raise RuntimeError(
+                "CloudXR service is stopping; runtime liveness is unchecked"
+            )
+        if proc is None or self._runtime_proc is not proc:
             raise RuntimeError("CloudXR service is not running")
 
         if exit_code is not None:
@@ -803,7 +813,7 @@ class CloudXRService:
                 try:
                     proc.wait(timeout=RUNTIME_TERMINATE_TIMEOUT_SEC)
                 except subprocess.TimeoutExpired:
-                    pass
+                    pass  # Exit is unconfirmed; poll before escalating.
                 if proc.poll() is not None:
                     return
             raise RuntimeError("Failed to terminate or kill runtime process group")

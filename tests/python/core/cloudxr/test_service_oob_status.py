@@ -417,7 +417,9 @@ async def test_fatal_callback_ignores_shutdown_before_stop_future_resolves(tmp_p
     assert service.oob_status() is None
     assert service.drain_oob_updates() == []
     assert service._fatal_supervisor is None
-    service.health_check()
+    with pytest.raises(RuntimeError, match="stopping"):
+        service.health_check()
+    assert service._fatal_error is None
 
 
 @pytest.mark.parametrize("raise_error", [False, True])
