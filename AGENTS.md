@@ -283,18 +283,13 @@ pre-commit install --hook-type commit-msg
 
 - If a hook failure shows **missing or non-obvious repo policy** (not a one-off typo), you **must** add a **short** reminder under **Mandatory learning loop** rules to the right `AGENTS.md` or adjacent **`//` comments** so the next run does not repeat it—unless it is already documented.
 
-## Security fixes and review
+## Sonar cleanup PRs
 
-- Verify each static-analysis finding against the affected code and trace the
-  input to the flagged operation. A suppression needs a specific safety reason
-  beside the flagged line; do not exclude a whole file to hide a local finding.
-- When adversarial review is requested, have independent reviewers challenge
-  each other's findings on the final diff. Runtime probes can support that review.
-- Read both human and automated feedback, including unresolved threads from
-  earlier commits. Filtering only recent bot comments can miss maintainer input.
-- Check Sonar, GitHub Code Quality/CodeQL, and CodeRabbit results against the
-  current commit. Skipped reviews and successful tests do not establish that a
-  reported finding has closed; state when a fresh analysis is still needed.
+- Match each reported location to a code fix or a line-specific safety reason.
+  A local finding does not justify excluding the whole file from analysis.
+- Read unresolved maintainer and bot threads from earlier commits too. Verify
+  CodeRabbit reviewed the current head, and report Sonar closure only when an
+  analysis covers the changed code; passing tests or skipped reviews do not.
 
 ## The wheel SBOM
 
@@ -353,9 +348,6 @@ heading that still said the opposite.
 
 **What belongs in `AGENTS.md`**
 
-- Security guidance should name the vulnerability class and the preventive
-  action. Keep operation-specific details in source comments and link a relevant
-  public finding or authoritative reference when available.
 - **High-level** expectations: boundaries between layers, what to avoid, naming or structural conventions, CMake/include policy at a glance, “always / never” rules that stay true across refactors.
 - **Style of work**: how minimal to keep diffs, when to ask for clarification, how this subsystem should relate to OpenXR/schema/deviceio, etc.
 - For build-only requests, use the documented CMake flags and environment first (for example `-DISAAC_TELEOP_PYTHON_VERSION=...`) rather than patching build files to select options.
@@ -367,6 +359,8 @@ heading that still said the opposite.
 
 **Scope — document what *this* branch changes, not main**
 
+- In Sonar fix PRs, limit new guidance to the failure mode in the changed code
+  and a concrete preventive action. Propose general agent-process policy separately.
 - New or updated bullets should capture **learnings from the delta** between **this branch (or commit)** and **`main`** (or whatever long-lived base you are targeting—release branch, parent MR, etc.).
 - Do **not** restate facts that already hold on **`main`** just because this branch touches nearby files. If behavior landed in the **base** history, it belongs in **code comments** next to that code or in **main’s** docs—not as “new” guidance in an `AGENTS.md` introduced only to support a smaller follow-up change.
 - Example: schema- or API-level choices that merged **before** this branch are **out of scope** for `AGENTS.md` edits tied to this branch; they add churn and read like stale noise after merge.
