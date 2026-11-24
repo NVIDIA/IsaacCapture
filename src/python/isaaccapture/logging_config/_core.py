@@ -25,12 +25,18 @@ def logging_enabled() -> bool:
 LINE_FORMAT = "[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)s] [pid:%(process)d] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# POSIX needs per-uid isolation; the Windows temp directory is already per-user.
-_DEFAULT_LOG_DIR = (
-    Path(f"/tmp/isaaccapture-{os.getuid()}/logs")
-    if _POSIX
-    else Path(tempfile.gettempdir()) / "isaaccapture" / "logs"
-)
+
+def default_runtime_dir() -> Path:
+    """Resolve the platform temp-root alias before adding our per-user directory."""
+    if not _POSIX:
+        return Path(tempfile.gettempdir()) / "isaaccapture"
+    root = Path("/tmp")
+    try:
+        root = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        pass  # Directory validation will report an unusable root without breaking import.
+    return root / f"isaaccapture-{os.getuid()}"
+
 
 # Custom level below DEBUG; emit with ``logger.log(TRACE, ...)``.
 TRACE = 5
@@ -94,10 +100,12 @@ def log_dir() -> Path:
     """Resolve and publish the session log directory shared with C++."""
     override = os.environ.get("ISAACCAPTURE_LOG_DIR")
     try:
-        directory = Path(override).expanduser() if override else _DEFAULT_LOG_DIR
+        directory = (
+            Path(override).expanduser() if override else default_runtime_dir() / "logs"
+        )
     except RuntimeError:
         # Containers may have neither HOME nor a passwd entry for ``~``.
-        directory = _DEFAULT_LOG_DIR
+        directory = default_runtime_dir() / "logs"
 
     try:
         directory = directory.absolute()

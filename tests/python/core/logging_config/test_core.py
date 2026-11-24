@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import stat
@@ -109,7 +110,50 @@ class TestLogDir:
         # sink_config.cpp builds this same string; a shared /tmp/isaaccapture
         # would belong to whichever user created it first.
         monkeypatch.delenv("ISAACCAPTURE_LOG_DIR", raising=False)
-        assert _core.log_dir() == Path(f"/tmp/isaaccapture-{os.getuid()}/logs")
+        assert (
+            _core.log_dir()
+            == Path("/tmp").resolve() / f"isaaccapture-{os.getuid()}" / "logs"
+        )
+
+    @pytest.mark.parametrize("channel", ["logs", "socket"])
+    def test_default_root_alias_does_not_bypass_child_validation(
+        self, monkeypatch, tmp_path, channel
+    ):
+        from isaaccapture.logging_config import _forwarding
+
+        root = tmp_path / "platform-temp"
+        root.mkdir()
+        alias = tmp_path / "tmp-alias"
+        alias.symlink_to(root, target_is_directory=True)
+        resolve = Path.resolve
+
+        def resolve_root(path, *args, **kwargs):
+            return resolve(alias if path == Path("/tmp") else path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", resolve_root)
+        monkeypatch.delenv("ISAACCAPTURE_LOG_DIR", raising=False)
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        directory = _core.log_dir() if channel == "logs" else _forwarding._runtime_dir()
+        expected = root / f"isaaccapture-{os.getuid()}"
+        assert directory == (expected / "logs" if channel == "logs" else expected)
+        assert _core.ensure_private_dir(directory) == directory
+
+        # A symlink below that canonical root must still be refused.
+        link = root / "operator-link"
+        link.symlink_to(expected, target_is_directory=True)
+        monkeypatch.setenv("ISAACCAPTURE_LOG_DIR", str(link / "logs"))
+        selected = _core.log_dir()
+        assert selected == link / "logs"
+        with pytest.raises(OSError) as failure:
+            _core.ensure_private_dir(selected)
+        assert failure.value.errno in (errno.ENOTDIR, errno.ELOOP)
+
+    @pytest.mark.parametrize("failure", [OSError, RuntimeError])
+    def test_unusable_default_root_keeps_the_fallback_path(self, monkeypatch, failure):
+        with patch.object(Path, "resolve", side_effect=failure("unusable root")):
+            assert _core.default_runtime_dir() == Path(
+                f"/tmp/isaaccapture-{os.getuid()}"
+            )
 
     def test_republishes_an_absolute_path(self, monkeypatch, tmp_path):
         # A child may chdir before its first C++ logger resolves the variable.
@@ -209,8 +253,9 @@ class TestEnsurePrivateDir:
         link = tmp_path / "logs"
         link.symlink_to(private, target_is_directory=True)
 
-        with pytest.raises(NotADirectoryError):
+        with pytest.raises(OSError) as failure:
             _core.ensure_private_dir(link)
+        assert failure.value.errno in (errno.ENOTDIR, errno.ELOOP)
 
     def test_does_not_create_through_a_symlinked_parent(self, tmp_path):
         destination = tmp_path / "destination"
@@ -218,8 +263,9 @@ class TestEnsurePrivateDir:
         link = tmp_path / "runtime"
         link.symlink_to(destination, target_is_directory=True)
 
-        with pytest.raises(NotADirectoryError):
+        with pytest.raises(OSError) as failure:
             _core.ensure_private_dir(link / "logs")
+        assert failure.value.errno in (errno.ENOTDIR, errno.ELOOP)
         assert not (destination / "logs").exists()
 
     def test_rejects_a_replaceable_path_component(self, tmp_path):

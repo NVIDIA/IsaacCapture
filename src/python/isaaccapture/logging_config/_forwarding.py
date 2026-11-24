@@ -23,7 +23,7 @@ import threading
 import time
 from pathlib import Path
 
-from ._core import _move_above_std, ensure_private_dir, root_logger
+from ._core import _move_above_std, default_runtime_dir, ensure_private_dir, root_logger
 
 # Match the POSIX-only C++ forwarding transport.
 _HAS_UNIX_SOCKETS = os.name == "posix" and hasattr(socket, "AF_UNIX")
@@ -37,7 +37,7 @@ def _runtime_dir() -> Path:
     xdg = os.environ.get("XDG_RUNTIME_DIR")
     if xdg:
         return Path(xdg) / "isaaccapture"
-    return Path(f"/tmp/isaaccapture-{os.getuid()}")
+    return default_runtime_dir()
 
 
 _FRAME_HEADER = struct.Struct(">I")  # 4-byte big-endian payload length prefix

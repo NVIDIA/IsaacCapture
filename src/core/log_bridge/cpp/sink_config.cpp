@@ -226,7 +226,11 @@ std::filesystem::path log_dir()
 #endif
     }
 #ifndef _WIN32
-    return "/tmp/isaaccapture-" + std::to_string(static_cast<unsigned>(::getuid())) + "/logs";
+    // Resolve only the platform root alias, never our children or operator overrides.
+    std::error_code root_ec;
+    const auto root = std::filesystem::canonical("/tmp", root_ec);
+    return (root_ec ? std::filesystem::path("/tmp") : root) /
+           ("isaaccapture-" + std::to_string(static_cast<unsigned>(::getuid()))) / "logs";
 #else
     // Match Python's tempfile.gettempdir(), which is already per-user.
     std::error_code temp_ec;
