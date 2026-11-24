@@ -61,9 +61,10 @@ class TriHandMotionControllerRetargeter(BaseRetargeter):
     The mapping is:
     - Trigger: Controls index finger
     - Squeeze: Controls middle finger
-    - Thumb curl: Proximal/distal angles follow max(trigger, squeeze)
-    - Thumb rotation: Follows 0.5 * (trigger - squeeze), with sign per hand;
-      equal inputs cancel rotation while keeping the thumb curled
+    - Thumb curl: Proximal/distal magnitudes follow max(trigger, squeeze),
+      with positive angles for left and negative for right
+    - Output thumb rotation: 0.5 * (squeeze - trigger) for both hands;
+      equal inputs cancel rotation, while equal nonzero inputs still curl the thumb
 
     Output DOF order:
     0. Thumb Rotation

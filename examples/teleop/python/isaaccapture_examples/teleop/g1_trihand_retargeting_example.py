@@ -46,7 +46,7 @@ def example_trihand_motion_controller():
     print("- Trigger: Controls index finger")
     print("- Squeeze: Controls middle finger")
     print("- Thumb curl: Follows max(trigger, squeeze); either input curls the thumb")
-    print("- Thumb rotation: Follows trigger - squeeze; equal inputs cancel")
+    print("- Thumb rotation: 0.5 * (squeeze - trigger); equal inputs cancel")
     print("- Output: T=thumb proximal curl, I=index proximal, M=middle proximal\n")
 
     # Create controllers source (tracker is internal)
