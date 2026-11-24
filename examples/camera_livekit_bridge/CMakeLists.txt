@@ -65,6 +65,7 @@ endif()
 
 add_subdirectory(video_types)
 add_subdirectory(ipc_client)
+add_subdirectory(notice_queue)
 add_subdirectory(gpu_ops)
 add_subdirectory(nvenc)
 add_subdirectory(chrony_clock)
