@@ -167,11 +167,20 @@ struct H264Decoder::Impl
 
         launch_nv12_to_rgba(nv12, nv12 + luma_size, pitch, pitch, w, h, reinterpret_cast<uint8_t*>(rgba_out),
                             static_cast<int>(rgba_row_bytes), cfg.full_range, stream);
+        // A launch that never ran (e.g. no kernel image for this GPU)
+        // leaves the sync below successful.
+        const cudaError_t launch_err = cudaGetLastError();
         // UnlockFrame returns the surface to NVDEC's pool, so the
         // kernel reading it must finish first.
         const cudaError_t sync_err = cudaStreamSynchronize(stream);
         decoder->UnlockFrame(&nv12);
         check_cu(cuCtxPopCurrent(nullptr), "cuCtxPopCurrent");
+        if (launch_err != cudaSuccess)
+        {
+            std::ostringstream os;
+            os << "H264Decoder: NV12→RGBA kernel launch failed: " << cudaGetErrorString(launch_err);
+            throw std::runtime_error(os.str());
+        }
         if (sync_err != cudaSuccess)
         {
             std::ostringstream os;

@@ -6,6 +6,11 @@
 # install step.
 
 cmake_minimum_required(VERSION 3.20)
+# project() fills CMAKE_CUDA_ARCHITECTURES with nvcc's default, so tell a
+# user-supplied value apart before it runs.
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
+  set(_codec_default_cuda_archs ON)
+endif()
 project(camera_viz_codec LANGUAGES C CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -14,10 +19,16 @@ set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Ampere / Ada / Hopper / Orin / Thor. Override with
-# CMAKE_CUDA_ARCHITECTURES on the configure line for fast iteration.
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES "80;86;87;89;90")
+# nvcc's default (PTX JIT for older GPUs), Ampere / Ada / Hopper / Orin, plus
+# RTX Blackwell sm_120 on nvcc 12.8+ (older nvcc rejects it). Cached so
+# build.sh's reconfigure keeps it. Override with CMAKE_CUDA_ARCHITECTURES on
+# the configure line for fast iteration.
+if(_codec_default_cuda_archs)
+  set(_codec_cuda_archs ${CMAKE_CUDA_ARCHITECTURES} 80 86 87 89 90)
+  if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 12.8)
+    list(APPEND _codec_cuda_archs 120)
+  endif()
+  set(CMAKE_CUDA_ARCHITECTURES "${_codec_cuda_archs}" CACHE STRING "CUDA architectures" FORCE)
 endif()
 
 # ---------------------------------------------------------------------------
