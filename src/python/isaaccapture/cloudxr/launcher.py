@@ -961,7 +961,7 @@ class CloudXRLauncher:
         runtime_live = is_runtime_live(self._run_dir)
         writer_pid = status.get("writerPid")
         runtime_pid = status.get("runtimePid")
-        if not isinstance(writer_pid, int) or not isinstance(runtime_pid, int):
+        if type(writer_pid) is not int or type(runtime_pid) is not int:
             return None
         session_id = status.get("sessionId")
         identity = (session_id, writer_pid, runtime_pid)
@@ -971,10 +971,7 @@ class CloudXRLauncher:
             ):
                 return status
             return None
-        try:
-            os.kill(writer_pid, 0)
-            os.kill(runtime_pid, 0)
-        except (OSError, ValueError):
+        if not all(background.process_exists(pid) for pid in (writer_pid, runtime_pid)):
             return None
         if isinstance(session_id, str) and session_id:
             self._observed_oob_session = identity

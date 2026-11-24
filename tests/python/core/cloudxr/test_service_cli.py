@@ -3,6 +3,7 @@
 
 """Tests for the `python -m isaaccapture.cloudxr.service` CLI."""
 
+import json
 import os
 from unittest.mock import MagicMock, patch
 
@@ -227,6 +228,24 @@ class TestStopAndStatus:
         return cli._build_parser().parse_args(
             [command, "--cloudxr-install-dir", str(tmp_path)]
         )
+
+    @pytest.mark.parametrize("pid", [0, -1, True, 1 << 100])
+    def test_status_treats_malformed_oob_pids_as_unavailable(
+        self, tmp_path, capsys, pid
+    ):
+        status = {"schemaVersion": 1, "writerPid": pid, "runtimePid": os.getpid()}
+        (tmp_path / "oob_status.json").write_text(json.dumps(status))
+        with (
+            patch.object(
+                cli, "_resolve_dirs", return_value=(str(tmp_path), tmp_path / "logs")
+            ),
+            patch.object(cli, "_print_summary_for"),
+            patch("isaaccapture.cloudxr.runtime.is_runtime_live", return_value=True),
+            patch("isaaccapture.cloudxr.background.read_pid", return_value=None),
+            patch("isaaccapture.cloudxr.background.read_run_flags", return_value=[]),
+        ):
+            assert cli._cmd_status(self._args("status", tmp_path)) == 0
+        assert "status unavailable (stale writer)" in capsys.readouterr().out
 
     def test_stop_is_a_noop_when_nothing_runs(self, tmp_path, capsys):
         with patch("isaaccapture.cloudxr.background.read_pid", return_value=None):
