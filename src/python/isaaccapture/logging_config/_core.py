@@ -118,15 +118,16 @@ def ensure_private_dir(directory: Path) -> Path:
     if not parts or ".." in parts:
         raise PermissionError(f"refusing ambiguous log directory path: {directory}")
 
-    # Keep each parent open so a pathname swap cannot redirect the next mkdir.
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    # Pin parents against pathname swaps; O_PATH needs search permission, not read.
+    flags = getattr(os, "O_PATH", os.O_RDONLY)
+    flags |= os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     parent = os.open("/", flags)
     try:
         for index, name in enumerate(parts):
             try:
                 os.mkdir(name, mode=0o700, dir_fd=parent)
             except FileExistsError:
-                pass
+                pass  # Existing entries still undergo the checks below.
             child = os.open(name, flags, dir_fd=parent)
             os.close(parent)
             parent = child

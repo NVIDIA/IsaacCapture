@@ -119,6 +119,24 @@ class TestLogDir:
 
 
 class TestEnsurePrivateDir:
+    @not_root
+    @pytest.mark.skipif(not hasattr(os, "O_PATH"), reason="Linux traversal descriptors")
+    @pytest.mark.parametrize("existing", [False, True])
+    def test_searchable_ancestor_does_not_need_read_permission(
+        self, tmp_path, existing
+    ):
+        ancestor = tmp_path / "searchable"
+        ancestor.mkdir()
+        leaf = ancestor / "logs"
+        if existing:
+            leaf.mkdir(mode=0o700)
+        ancestor.chmod(0o300)
+        try:
+            assert _core.ensure_private_dir(leaf) == leaf
+            (leaf / "probe").write_text("usable")
+        finally:
+            ancestor.chmod(0o700)
+
     def test_narrows_every_component_it_created(self, tmp_path):
         base = tmp_path / "shared"
         base.mkdir()

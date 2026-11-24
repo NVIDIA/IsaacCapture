@@ -43,6 +43,8 @@ stub generation.
   each opened parent before creating children. Create directories privately from
   the start to prevent temporary permission exposure; sticky shared ancestors do
   not make a writable final directory safe.
+- Traversal must not require read permission on searchable ancestors; use
+  traversal-only descriptors where supported and test as a non-root caller.
 
 ## Leader and forwarding children
 
