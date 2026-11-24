@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    message(STATUS "Skipping DGlove: local IPC and clock mapping are Linux-only")
+    message(STATUS "Skipping DAYANGlove: local IPC and clock mapping are Linux-only")
     return()
 endif()
 
 add_subdirectory(format)
 add_subdirectory(reader)
-add_executable(dglove_plugin main.cpp)
-target_link_libraries(dglove_plugin PRIVATE pusherio::pusherio oxr::oxr_core dglove::format)
+add_executable(dayanglove_plugin main.cpp)
+target_link_libraries(dayanglove_plugin PRIVATE pusherio::pusherio oxr::oxr_core dayanglove::format)
 
 set(plugin_files source.py receiver.py plugin.yaml README.md requirements.txt)
 set(protocol_files
@@ -27,7 +27,7 @@ configure_file(
     COPYONLY
 )
 
-install(TARGETS dglove_plugin RUNTIME DESTINATION plugins/dglove COMPONENT dglove)
-install(FILES ${plugin_files} DESTINATION plugins/dglove COMPONENT dglove)
+install(TARGETS dayanglove_plugin RUNTIME DESTINATION plugins/dayanglove COMPONENT dayanglove)
+install(FILES ${plugin_files} DESTINATION plugins/dayanglove COMPONENT dayanglove)
 install(FILES ${protocol_files} "${CMAKE_CURRENT_BINARY_DIR}/protocol/LICENSE-Apache-2.0.txt"
-    DESTINATION plugins/dglove/protocol COMPONENT dglove)
+    DESTINATION plugins/dayanglove/protocol COMPONENT dayanglove)

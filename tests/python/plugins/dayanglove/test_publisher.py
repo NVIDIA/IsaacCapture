@@ -15,10 +15,10 @@ from source import encode_line, encode_sample
 
 @pytest.fixture(scope="module")
 def publisher():
-    binary = os.environ.get("DGLOVE_PUBLISHER")
+    binary = os.environ.get("DAYANGLOVE_PUBLISHER")
     if not binary or not Path(binary).is_file():
         pytest.fail(
-            "Build dglove_plugin and set DGLOVE_PUBLISHER before running test_publisher.py"
+            "Build dayanglove_plugin and set DAYANGLOVE_PUBLISHER before running test_publisher.py"
         )
     return binary
 

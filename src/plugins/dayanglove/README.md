@@ -3,9 +3,9 @@ SPDX-FileCopyrightText: Copyright (c) 2026 mwang259. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-![DGlove hand pose, surface tactile heatmap, and particle tactile heatmap](dglove-effect-github.png)
+![DAYANGlove hand pose, surface tactile heatmap, and particle tactile heatmap](dayanglove-effect-github.png)
 
-<h1 align="center">DGlove for Isaac Capture</h1>
+<h1 align="center">DAYANGlove for Isaac Capture</h1>
 
 <p align="center"><strong>Capture hand pose and palm tactile data from a liquid-metal sensing glove.</strong></p>
 
@@ -19,10 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Overview
 
-DGlove is a tactile glove based on liquid-metal sensing. The DGlove application
-estimates hand pose and sends UDP/Protobuf frames. The Isaac Capture plugin
-validates the frames and publishes them as `DGloveFrame` records for downstream
-applications.
+DAYANGlove is a device integration plugin for NVIDIA Isaac Capture that provides
+access to hand pose and palm tactile data from a custom liquid-metal tactile
+glove. The external DGlove application communicates with the glove, processes
+sensor data, and estimates hand pose. It sends Protobuf frames over UDP. The
+plugin validates the incoming frames and publishes them as FlatBuffers
+`DAYANGloveFrame` records for downstream applications.
 
 The illustration shows hand pose, a continuous surface heatmap, and a particle
 heatmap from left to right.
@@ -35,12 +37,12 @@ heatmap from left to right.
 
 ## Quick start
 
-1. Build the plugin on Linux with `-DBUILD_PLUGIN_DGLOVE=ON`.
-2. Start CloudXR, load its exported environment, and launch the DGlove plugin.
-3. Connect the glove in the DGlove application and enable UDP output. For a
-   same-host setup, the default destination is `127.0.0.1:50051`. If you change
-   the port, use the same port in the application and receiver. Run
-   `dglove_reader` to inspect the published frames.
+1. Build the plugin on Linux with `-DBUILD_PLUGIN_DAYANGLOVE=ON`.
+2. Start CloudXR, load its exported environment, and launch the DAYANGlove plugin.
+3. Connect the glove in the DGlove application and enable UDP output. If the
+   application and plugin run on the same machine, send data to
+   `127.0.0.1:50051`. If you change the port, use the same port in the application
+   and receiver. Run `dayanglove_reader` to inspect the published frames.
 
 See the [setup and usage guide](USAGE.md) for commands, UDP diagnostics, and
 synthetic tests.

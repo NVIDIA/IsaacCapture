@@ -8,14 +8,14 @@ import sys
 import pytest
 from repo_paths import repo_root
 
-sys.path.insert(0, str(repo_root() / "src/plugins/dglove"))
+sys.path.insert(0, str(repo_root() / "src/plugins/dayanglove"))
 from receiver import DEFAULT_PROTOCOL, load_frame_type  # noqa: E402
 
 
 def pytest_addoption(parser):
     parser.addoption(
         "--protocol-python",
-        default=os.environ.get("DGLOVE_PROTOCOL_PY", str(DEFAULT_PROTOCOL)),
+        default=os.environ.get("DAYANGLOVE_PROTOCOL_PY", str(DEFAULT_PROTOCOL)),
     )
 
 
@@ -23,7 +23,9 @@ def pytest_addoption(parser):
 def frame_type(request):
     protocol = request.config.getoption("--protocol-python")
     if not protocol:
-        pytest.fail("Supply --protocol-python or DGLOVE_PROTOCOL_PY from DGlove")
+        pytest.fail(
+            "Supply --protocol-python or DAYANGLOVE_PROTOCOL_PY from DAYANGlove"
+        )
     return load_frame_type(Path(protocol))
 
 

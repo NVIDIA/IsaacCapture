@@ -4,7 +4,7 @@
 #pragma once
 
 #include <flatbuffers/minireflect.h>
-#include <schema/dglove_generated.h>
+#include <schema/dayanglove_generated.h>
 
 #include <array>
 #include <charconv>
@@ -12,7 +12,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace dglove
+namespace dayanglove
 {
 inline std::string frame_json(const uint8_t* buffer)
 {
@@ -33,11 +33,11 @@ inline std::string frame_json(const uint8_t* buffer)
             const auto result = std::to_chars(digits.data(), digits.data() + digits.size(), value,
                                               std::chars_format::general, std::numeric_limits<double>::max_digits10);
             if (result.ec != std::errc{})
-                throw std::runtime_error("Cannot format DGlove number");
+                throw std::runtime_error("Cannot format DAYANGlove number");
             s.append(digits.data(), result.ptr);
         }
     } visitor;
-    flatbuffers::IterateFlatBuffer(buffer, core::DGloveFrame::MiniReflectTypeTable(), &visitor);
+    flatbuffers::IterateFlatBuffer(buffer, core::DAYANGloveFrame::MiniReflectTypeTable(), &visitor);
     return visitor.s;
 }
-} // namespace dglove
+} // namespace dayanglove

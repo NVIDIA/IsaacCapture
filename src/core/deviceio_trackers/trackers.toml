@@ -122,7 +122,7 @@ metadata = "TactileMetadata"
 max_flatbuffer_size = 16384
 
 [[tracker]]
-name = "dglove"
-table = "DGloveFrame"
-class = "DGloveTracker"
+name = "dayanglove"
+table = "DAYANGloveFrame"
+class = "DAYANGloveTracker"
 max_flatbuffer_size = 4096

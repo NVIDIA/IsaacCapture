@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 mwang259. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Bridge DGlove UDP frames into the local SchemaPusher process."""
+"""Bridge DAYANGlove UDP frames into the local SchemaPusher process."""
 
 import argparse
 import json
@@ -21,7 +21,7 @@ MAX_LINE_BYTES = 16384
 def encode_line(packet):
     line = (json.dumps(packet, ensure_ascii=False, allow_nan=False) + "\n").encode()
     if len(line) > MAX_LINE_BYTES:
-        raise ValueError("DGlove IPC frame exceeds size limit")
+        raise ValueError("DAYANGlove IPC frame exceeds size limit")
     return line
 
 
@@ -52,7 +52,9 @@ class PublisherPipe:
 
     def check(self):
         if self.process.poll() is not None:
-            raise RuntimeError(f"DGlove publisher exited: {self.process.returncode}")
+            raise RuntimeError(
+                f"DAYANGlove publisher exited: {self.process.returncode}"
+            )
 
     def send(self, line):
         self.check()
@@ -62,7 +64,7 @@ class PublisherPipe:
             self.check()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError("DGlove publisher input stalled")
+                raise TimeoutError("DAYANGlove publisher input stalled")
             _, writable, _ = select.select([], [self.process.stdin], [], remaining)
             if writable:
                 try:
@@ -82,9 +84,9 @@ class PublisherPipe:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
-            raise RuntimeError("DGlove publisher failed to shut down") from None
+            raise RuntimeError("DAYANGlove publisher failed to shut down") from None
         if code:
-            raise RuntimeError(f"DGlove publisher exited: {code}")
+            raise RuntimeError(f"DAYANGlove publisher exited: {code}")
 
 
 class PublisherBridge:
@@ -127,12 +129,12 @@ def main(argv=None):
     parser.add_argument(
         "--publisher",
         type=Path,
-        default=Path(__file__).resolve().with_name("dglove_plugin"),
+        default=Path(__file__).resolve().with_name("dayanglove_plugin"),
     )
     parser.add_argument("--protocol-python", type=Path, default=DEFAULT_PROTOCOL)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=50051)
-    parser.add_argument("--collection-prefix", default="dglove")
+    parser.add_argument("--collection-prefix", default="dayanglove")
     parser.add_argument("--stale-after", type=positive_float, default=1.0)
     parser.add_argument("--duration", type=positive_float)
     args = parser.parse_args(argv)
@@ -161,7 +163,7 @@ def main(argv=None):
             bridge = PublisherBridge(pipe)
             try:
                 started = time.monotonic()
-                print(f"DGlove UDP ready: {receiver.address}", flush=True)
+                print(f"DAYANGlove UDP ready: {receiver.address}", flush=True)
                 while not stopped and (
                     args.duration is None or time.monotonic() - started < args.duration
                 ):
@@ -172,7 +174,7 @@ def main(argv=None):
                 pipe.close()
         return 0
     except (OSError, ValueError, RuntimeError, ImportError) as exc:
-        print(f"DGlove source: {exc}", file=sys.stderr)
+        print(f"DAYANGlove source: {exc}", file=sys.stderr)
         return 1
 
 

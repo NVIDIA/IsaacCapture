@@ -5,8 +5,8 @@ include "timestamp.fbs";
 
 namespace core;
 
-// DGlove v1 network fields retain their source names, order, types and units.
-table DGloveFrame {
+// DAYANGlove v1 network fields retain their source names, order, types and units.
+table DAYANGloveFrame {
     schema_version: uint32 (id: 0);
     glove_id: string (id: 1);
     hand: uint32 (id: 2); // 1 left, 2 right.
@@ -35,9 +35,9 @@ table DGloveFrame {
     available: bool (id: 25); // Local lifecycle event; false removes the collection.
 }
 
-table DGloveFrameRecord {
-    data: DGloveFrame (id: 0);
+table DAYANGloveFrameRecord {
+    data: DAYANGloveFrame (id: 0);
     timestamp: DeviceDataTimestamp (id: 1);
 }
 
-root_type DGloveFrameRecord;
+root_type DAYANGloveFrameRecord;

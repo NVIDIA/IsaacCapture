@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 mwang259. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <dglove_format/json.hpp>
+#include <dayanglove_format/json.hpp>
 #include <flatbuffers/idl.h>
 #include <log_bridge/logger.hpp>
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <pusherio/schema_pusher.hpp>
-#include <schema/dglove_bfbs_generated.h>
-#include <schema/dglove_generated.h>
+#include <schema/dayanglove_bfbs_generated.h>
+#include <schema/dayanglove_generated.h>
 
 #include <array>
 #include <cerrno>
@@ -32,10 +32,10 @@ void stop(int)
     stopped = 1;
 }
 
-void validate(const core::DGloveFrame& frame)
+void validate(const core::DAYANGloveFrame& frame)
 {
     if (frame.hand() != 1 && frame.hand() != 2)
-        throw std::runtime_error("Invalid DGlove hand");
+        throw std::runtime_error("Invalid DAYANGlove hand");
     const auto count = [](const auto* values) { return values ? values->size() : 0; };
     if (!frame.received_monotonic_ns() ||
         frame.received_monotonic_ns() > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
@@ -43,12 +43,12 @@ void validate(const core::DGloveFrame& frame)
     const bool pose = frame.available() && frame.pose_valid();
     if (count(frame.mano_pose45()) != (pose ? 45 : 0) || count(frame.joints21_xyz_m()) != (pose ? 63 : 0) ||
         count(frame.palm_adc()) != (frame.available() ? 210 : 0))
-        throw std::runtime_error("Invalid DGlove array lengths");
+        throw std::runtime_error("Invalid DAYANGlove array lengths");
     for (const auto* values : { frame.mano_pose45(), frame.joints21_xyz_m() })
         if (values)
             for (float value : *values)
                 if (!std::isfinite(value))
-                    throw std::runtime_error("Non-finite DGlove pose");
+                    throw std::runtime_error("Non-finite DAYANGlove pose");
     if (frame.palm_adc())
         for (uint32_t value : *frame.palm_adc())
             if (value > 4095)
@@ -58,7 +58,7 @@ void validate(const core::DGloveFrame& frame)
          frame.session_id()->size() == 0 || !frame.output_sequence() || !frame.frame_number() ||
          frame.mirror_x() != (frame.hand() == 1) || frame.device_sequence() > 255 || frame.status() > 255 ||
          !std::isfinite(frame.source_timestamp())))
-        throw std::runtime_error("Invalid DGlove source metadata");
+        throw std::runtime_error("Invalid DAYANGlove source metadata");
 }
 } // namespace
 
@@ -66,7 +66,7 @@ int main(int argc, char** argv)
 try
 {
     bool validate_only = false, roundtrip = false;
-    std::string prefix = "dglove";
+    std::string prefix = "dayanglove";
     double stale_after = 1.0;
     for (int i = 1; i < argc; ++i)
     {
@@ -81,7 +81,7 @@ try
             stale_after = std::stod(arg.substr(14));
         else if (arg == "--help")
         {
-            std::cout << "dglove_plugin [--collection-prefix=dglove] [--stale-after=1]\n"
+            std::cout << "dayanglove_plugin [--collection-prefix=dayanglove] [--stale-after=1]\n"
                          "              [--validate-only [--roundtrip-json]]\n";
             return 0;
         }
@@ -94,14 +94,16 @@ try
     flatbuffers::Parser parser;
     parser.builder_.ForceDefaults(true);
     parser.opts.strict_json = true;
-    if (!parser.Deserialize(core::DGloveFrameRecordBinarySchema::data(), core::DGloveFrameRecordBinarySchema::size()) ||
-        !parser.SetRootType("core.DGloveFrame"))
-        throw std::runtime_error("Cannot load DGlove schema");
+    if (!parser.Deserialize(
+            core::DAYANGloveFrameRecordBinarySchema::data(), core::DAYANGloveFrameRecordBinarySchema::size()) ||
+        !parser.SetRootType("core.DAYANGloveFrame"))
+        throw std::runtime_error("Cannot load DAYANGlove schema");
     std::signal(SIGINT, stop);
     std::signal(SIGTERM, stop);
     std::unique_ptr<core::OpenXRSession> xr;
     if (!validate_only)
-        xr = std::make_unique<core::OpenXRSession>("DGlovePlugin", core::SchemaPusher::get_required_extensions(), false);
+        xr = std::make_unique<core::OpenXRSession>(
+            "DAYANGlovePlugin", core::SchemaPusher::get_required_extensions(), false);
     std::array<std::unique_ptr<core::SchemaPusher>, 2> pushers;
     std::array<uint64_t, 2> last_sequences{}, last_times{};
     std::array<std::string, 2> sessions;
@@ -112,22 +114,22 @@ try
         const auto* buffer = parser.builder_.GetBufferPointer();
         const auto size = parser.builder_.GetSize();
         flatbuffers::Verifier verifier(buffer, size);
-        if (size > kCapacity || !verifier.VerifyBuffer<core::DGloveFrame>())
-            throw std::runtime_error("Invalid or oversized DGlove FlatBuffer");
-        const auto& frame = *flatbuffers::GetRoot<core::DGloveFrame>(buffer);
+        if (size > kCapacity || !verifier.VerifyBuffer<core::DAYANGloveFrame>())
+            throw std::runtime_error("Invalid or oversized DAYANGlove FlatBuffer");
+        const auto& frame = *flatbuffers::GetRoot<core::DAYANGloveFrame>(buffer);
         validate(frame);
         const auto side = frame.hand() - 1;
         if (frame.available())
         {
             if ((frame.session_id()->str() == sessions[side] && frame.output_sequence() <= last_sequences[side]) ||
                 frame.received_monotonic_ns() <= last_times[side])
-                throw std::runtime_error("DGlove local time or sequence moved backwards");
+                throw std::runtime_error("DAYANGlove local time or sequence moved backwards");
             sessions[side] = frame.session_id()->str();
             last_sequences[side] = frame.output_sequence();
             last_times[side] = frame.received_monotonic_ns();
         }
         if (roundtrip)
-            std::cout << dglove::frame_json(buffer) << '\n';
+            std::cout << dayanglove::frame_json(buffer) << '\n';
         if (!frame.available())
         {
             pushers[side].reset();
@@ -140,14 +142,14 @@ try
         const auto local_ns = static_cast<int64_t>(frame.received_monotonic_ns());
         const double age = static_cast<double>(core::os_monotonic_now_ns() - local_ns) * 1e-9;
         if (age > stale_after || age < -0.1)
-            throw std::runtime_error("Stale DGlove IPC frame or receiver clock mismatch");
+            throw std::runtime_error("Stale DAYANGlove IPC frame or receiver clock mismatch");
         if (!pushers[side])
             pushers[side] = std::make_unique<core::SchemaPusher>(
                 xr->get_handles(), core::SchemaPusherConfig{ .collection_id = prefix + (side == 0 ? "/left" : "/right"),
                                                              .max_flatbuffer_size = kCapacity,
-                                                             .tensor_identifier = "dglove",
-                                                             .localized_name = "DGlove source data",
-                                                             .app_name = "DGlovePlugin" });
+                                                             .tensor_identifier = "dayanglove",
+                                                             .localized_name = "DAYANGlove source data",
+                                                             .app_name = "DAYANGlovePlugin" });
         pushers[side]->push_buffer(buffer, size, local_ns, 0);
     };
     std::string pending;
@@ -194,6 +196,6 @@ try
 }
 catch (const std::exception& exc)
 {
-    isaaccapture::Logger::get("isaaccapture.plugins.dglove")->error("{}", exc.what());
+    isaaccapture::Logger::get("isaaccapture.plugins.dayanglove")->error("{}", exc.what());
     return 1;
 }

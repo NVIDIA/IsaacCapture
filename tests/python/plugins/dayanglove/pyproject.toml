@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [project]
-name = "dglove-receiver-tests"
+name = "dayanglove-receiver-tests"
 version = "0.0.0"
 requires-python = ">=3.11,<3.14"
 dependencies = ["protobuf>=5.29,<8", "pytest>=8"]

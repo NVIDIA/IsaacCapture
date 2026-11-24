@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 mwang259. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Receive DGlove v1 datagrams without importing its application or models."""
+"""Receive DAYANGlove v1 datagrams without importing its application or models."""
 
 import argparse
 from collections import Counter, deque
@@ -24,14 +24,17 @@ DEFAULT_PROTOCOL = Path(__file__).resolve().parent / "protocol/glove_frame_pb2.p
 def load_frame_type(protocol_python=DEFAULT_PROTOCOL):
     """Load the trusted, upstream-generated glove_frame_pb2.py supplied by the operator."""
     path = Path(protocol_python).resolve(strict=True)
-    spec = importlib.util.spec_from_file_location("_dglove_wire", path)
+    spec = importlib.util.spec_from_file_location("_dayanglove_wire", path)
     if spec is None or spec.loader is None:
         raise ValueError("Expected a generated Python protocol file")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     frame_type = getattr(module, "GloveFrame", None)
-    if frame_type is None or frame_type.DESCRIPTOR.full_name != "dglove.v1.GloveFrame":
-        raise ValueError("Expected dglove.v1.GloveFrame")
+    if (
+        frame_type is None
+        or frame_type.DESCRIPTOR.full_name != "dayanglove.v1.GloveFrame"
+    ):
+        raise ValueError("Expected dayanglove.v1.GloveFrame")
     return frame_type
 
 
@@ -255,7 +258,7 @@ def main(argv=None):
             args.summary_file.write_text(json.dumps(summary, indent=2) + "\n")
         return 0 if summary["counts"].get("accepted", 0) else 2
     except (OSError, ValueError, ImportError) as exc:
-        print(f"DGlove receiver: {exc}", file=sys.stderr)
+        print(f"DAYANGlove receiver: {exc}", file=sys.stderr)
         return 2
 
 

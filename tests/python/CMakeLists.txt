@@ -3,8 +3,8 @@
 
 add_subdirectory(core)
 
-if(TARGET dglove_plugin)
-    add_subdirectory(plugins/dglove)
+if(TARGET dayanglove_plugin)
+    add_subdirectory(plugins/dayanglove)
 endif()
 
 if(BUILD_PYTHON_BINDINGS AND NOT SKBUILD)

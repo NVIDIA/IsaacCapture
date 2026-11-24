@@ -77,7 +77,7 @@ def test_relocated_folder_loads_bundled_protocol_without_repository(tmp_path):
         folder,
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    script = "from receiver import load_frame_type; assert load_frame_type().DESCRIPTOR.full_name == 'dglove.v1.GloveFrame'"
+    script = "from receiver import load_frame_type; assert load_frame_type().DESCRIPTOR.full_name == 'dayanglove.v1.GloveFrame'"
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=folder,

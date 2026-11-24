@@ -56,9 +56,9 @@ from ._schema import (
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
-    # DGlove types.
-    DGloveFrame,
-    DGloveFrameRecord,
+    # DAYANGlove types.
+    DAYANGloveFrame,
+    DAYANGloveFrameRecord,
     # Tactile types.
     TactileDataArray,
     TactileDataArrayRecord,
@@ -203,9 +203,9 @@ __all__ = [
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",
-    # DGlove types.
-    "DGloveFrame",
-    "DGloveFrameRecord",
+    # DAYANGlove types.
+    "DAYANGloveFrame",
+    "DAYANGloveFrameRecord",
     # Tactile types.
     "TactileDataArray",
     "TactileDataArrayRecord",

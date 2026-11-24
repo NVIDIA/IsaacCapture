@@ -1,5 +1,5 @@
 syntax = "proto3";
-package dglove.v1;
+package dayanglove.v1;
 
 // One UDP datagram = one GloveFrame. Fields never change numbers or units.
 // MANO is canonical RIGHT hand, wrist-relative, irrespective of physical hand.

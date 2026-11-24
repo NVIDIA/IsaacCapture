@@ -196,7 +196,7 @@ rebuild = false
 # Each `ignore` is a deliberate call, not a backlog marker -- see its comment.
 [tool.ruff]
 target-version = "py311"
-extend-exclude = ["src/plugins/dglove/protocol/glove_frame_pb2.py"]
+extend-exclude = ["src/plugins/dayanglove/protocol/glove_frame_pb2.py"]
 force-exclude = true
 
 [tool.ruff.lint]

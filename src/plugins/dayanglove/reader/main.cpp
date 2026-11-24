@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 mwang259. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <dayanglove_format/json.hpp>
 #include <deviceio_session/deviceio_session.hpp>
-#include <deviceio_trackers/dglove_tracker.hpp>
-#include <dglove_format/json.hpp>
+#include <deviceio_trackers/dayanglove_tracker.hpp>
 #include <log_bridge/logger.hpp>
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/os_time.hpp>
@@ -32,7 +32,7 @@ void stop(int)
 int main(int argc, char** argv)
 try
 {
-    std::string prefix = "dglove";
+    std::string prefix = "dayanglove";
     double seconds = 10;
     for (int i = 1; i < argc; ++i)
     {
@@ -48,10 +48,10 @@ try
         throw std::runtime_error("Invalid duration or collection prefix");
     std::signal(SIGINT, stop);
     std::signal(SIGTERM, stop);
-    const std::array readers{ std::make_shared<core::DGloveTracker>(prefix + "/left"),
-                              std::make_shared<core::DGloveTracker>(prefix + "/right") };
+    const std::array readers{ std::make_shared<core::DAYANGloveTracker>(prefix + "/left"),
+                              std::make_shared<core::DAYANGloveTracker>(prefix + "/right") };
     const std::vector<std::shared_ptr<core::ITracker>> trackers{ readers[0], readers[1] };
-    core::OpenXRSession xr("DGloveReader", core::DeviceIOSession::get_required_extensions(trackers), false);
+    core::OpenXRSession xr("DAYANGloveReader", core::DeviceIOSession::get_required_extensions(trackers), false);
     auto session = core::DeviceIOSession::run(trackers, xr.get_handles());
     std::array<uint64_t, 2> last_times{};
     std::array<bool, 2> active{};
@@ -83,17 +83,17 @@ try
                 continue;
             last_times[side] = data->received_monotonic_ns();
             ++received;
-            std::cout << dglove::frame_json(data.buffer().data()) << '\n';
+            std::cout << dayanglove::frame_json(data.buffer().data()) << '\n';
         }
         std::cout.flush();
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     if (!received)
-        throw std::runtime_error("No DGlove frames received");
+        throw std::runtime_error("No DAYANGlove frames received");
     return 0;
 }
 catch (const std::exception& exc)
 {
-    isaaccapture::Logger::get("isaaccapture.plugins.dglove.reader")->error("{}", exc.what());
+    isaaccapture::Logger::get("isaaccapture.plugins.dayanglove.reader")->error("{}", exc.what());
     return 1;
 }
