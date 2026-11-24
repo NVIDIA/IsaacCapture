@@ -3,6 +3,7 @@
 
 #include <camera/camera_host.hpp>
 #include <camera/camera_reader.hpp>
+#include <camera/cuda_pool.hpp>
 #include <camera/options.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -66,6 +67,7 @@ struct ManualControl
 {
     FrameOutput* output = nullptr; // set while the camera runs
     std::size_t streams = 0;
+    std::optional<CudaDeviceUuid> cuda_device; // set for a camera whose frames are in CUDA memory
 
     // Publishes one frame set whose every pixel is `value`. False when it had to be dropped.
     bool publish(std::uint8_t value)
@@ -82,7 +84,15 @@ struct ManualControl
                 }
                 return false;
             }
-            std::fill(image->data.begin(), image->data.end(), std::byte{ value });
+            if (cuda_device)
+            {
+                const std::vector<std::byte> pixels(WIDTH * HEIGHT, std::byte{ value });
+                copy_to_cuda(*cuda_device, image->cuda, pixels); // done when it returns
+            }
+            else
+            {
+                std::fill(image->data.begin(), image->data.end(), std::byte{ value });
+            }
             images[stream].slot = image->slot;
         }
         output->publish(images, {});
@@ -115,6 +125,11 @@ public:
             stream.slot_bytes = WIDTH * HEIGHT;
             stream.slot_count = m_slot_count;
             stream.frame_rate = 30.0;
+            if (m_control.cuda_device)
+            {
+                stream.memory = MemoryKind::CUDA;
+                stream.cuda_device = *m_control.cuda_device;
+            }
             group.streams.push_back(stream);
         }
         return group;
@@ -241,6 +256,14 @@ bool wait_until(const std::function<bool()>& condition)
 bool all_pixels_are(const FrameSet& frames, std::uint8_t value)
 {
     const auto pixels = frames.image(0).data;
+    return std::all_of(pixels.begin(), pixels.end(), [value](std::byte pixel) { return pixel == std::byte{ value }; });
+}
+
+// The same of an image in CUDA memory, which is copied to the host to be looked at.
+bool all_cuda_pixels_are(const ImageView& image, std::uint8_t value)
+{
+    std::vector<std::byte> pixels(image.stream->slot_bytes);
+    copy_from_cuda(image.stream->cuda_device, pixels, image.cuda_plane(0)); // the slot's start
     return std::all_of(pixels.begin(), pixels.end(), [value](std::byte pixel) { return pixel == std::byte{ value }; });
 }
 
@@ -495,4 +518,92 @@ TEST_CASE("a camera that restarts says so, and what a reader holds stays as it w
     REQUIRE(after.has_value());
     REQUIRE(after->generation() == 1);
     REQUIRE(all_pixels_are(*after, 12));
+}
+
+TEST_CASE("a camera in CUDA memory is read where it is, on the device", "[gpu][camera]")
+{
+    if (!cuda_unavailable().empty())
+    {
+        SKIP(cuda_unavailable());
+    }
+    const CudaDeviceUuid device = cuda_device_uuid(0);
+    TemporaryDirectory directory;
+    ManualControl head;
+    head.cuda_device = device;
+    ManualControl wrist; // in host memory, next to it
+    auto host = std::make_unique<CameraHost>(directory.socket_path());
+    host->add_camera(std::make_unique<ManualSource>("head", 2, head), 4);
+    host->add_camera(std::make_unique<ManualSource>("wrist", 1, wrist), 4);
+    host->start();
+
+    // The description says where the frames are.
+    const std::vector<GroupListing> groups = CameraReader::list({ .endpoint = directory.socket_path() });
+    REQUIRE(groups.size() == 2);
+    const StreamDescription& listed = groups[0].group.streams[1];
+    REQUIRE(listed.memory == MemoryKind::CUDA);
+    REQUIRE(listed.cuda_device == device);
+    REQUIRE(groups[1].group.streams[0].memory == MemoryKind::HOST);
+    REQUIRE(groups[1].group.streams[0].cuda_device == CudaDeviceUuid{});
+
+    // The camera is given a slot's place on the device, and asks for the kind of memory it has.
+    REQUIRE(head.output->slot_cuda_memory(1, 3) != 0);
+    REQUIRE_THROWS_AS(head.output->slot_memory(1, 3), std::logic_error);
+    REQUIRE_THROWS_AS(wrist.output->slot_cuda_memory(0, 0), std::logic_error);
+
+    CameraReader reader = CameraReader::open(
+        "head", { .window = 2, .order = DeliveryOrder::NEWEST }, { .endpoint = directory.socket_path() });
+    REQUIRE(head.publish(0x21));
+    const std::optional<FrameSet> held = reader.next(2s);
+    REQUIRE(held.has_value());
+    REQUIRE(held->image_count() == 2);
+    const ImageView image = held->image(1);
+    REQUIRE(image.stream->memory == MemoryKind::CUDA);
+    REQUIRE(image.stream->on_gpu());
+    REQUIRE(image.data.empty());
+    REQUIRE(image.cuda_plane(0) != 0);
+    REQUIRE(image.cuda_plane(0) != held->image(0).cuda_plane(0));
+    REQUIRE(image.cuda_device_index == 0);
+    REQUIRE_THROWS_AS(image.cuda_plane(1), std::out_of_range);
+    REQUIRE_THROWS_AS(image.plane(0), std::logic_error);
+    REQUIRE(all_cuda_pixels_are(image, 0x21));
+    REQUIRE(all_cuda_pixels_are(held->image(0), 0x21));
+
+    // A held frame set is not written again, however many the camera publishes after it.
+    for (std::uint8_t value = 1; value <= 12; ++value)
+    {
+        head.publish(value);
+    }
+    REQUIRE(all_cuda_pixels_are(image, 0x21));
+    const std::optional<FrameSet> newest = reader.next(2s);
+    REQUIRE(newest.has_value());
+    REQUIRE(all_cuda_pixels_are(newest->image(0), 12));
+
+    // And the memory is the reader's for as long as it holds the frame set: the plugin may go.
+    host.reset();
+    REQUIRE(all_cuda_pixels_are(image, 0x21));
+    REQUIRE(all_cuda_pixels_are(newest->image(1), 12));
+}
+
+TEST_CASE("a camera in CUDA memory that the plugin has no device for is refused", "[unit][camera]")
+{
+    TemporaryDirectory directory;
+    CameraHost host(directory.socket_path());
+
+    // No device named.
+    ManualControl nowhere;
+    nowhere.cuda_device = CudaDeviceUuid{};
+    REQUIRE_THROWS_WITH(host.add_camera(std::make_unique<ManualSource>("head", 1, nowhere)),
+                        ContainsSubstring("does not say on which device"));
+
+    // A device this machine does not have, or a machine without CUDA: either way it is said why.
+    ManualControl elsewhere;
+    elsewhere.cuda_device = CudaDeviceUuid{ 0xde, 0xad, 0xbe, 0xef };
+    REQUIRE_THROWS_AS(host.add_camera(std::make_unique<ManualSource>("head", 1, elsewhere)), std::runtime_error);
+    REQUIRE(host.camera_count() == 0);
+
+    // The host goes on with the cameras it can serve.
+    ManualControl camera;
+    host.add_camera(std::make_unique<ManualSource>("head", 1, camera));
+    host.start();
+    REQUIRE(camera.publish(1));
 }

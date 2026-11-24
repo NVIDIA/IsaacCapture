@@ -3,12 +3,15 @@
 
 #include "inc/camera_synthetic/synthetic_backend.hpp"
 
+#include <camera/cuda_pool.hpp>
 #include <camera/options.hpp>
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <span>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -22,6 +25,7 @@ using core::camera::FrameOutput;
 using core::camera::FrameTimeline;
 using core::camera::GroupDescription;
 using core::camera::ImageInfo;
+using core::camera::MemoryKind;
 using core::camera::OptionReader;
 using core::camera::PixelFormat;
 using core::camera::PlaneSize;
@@ -47,6 +51,8 @@ public:
         const std::uint32_t fps = options.number("fps", 60, 1, 1000);
         const std::uint32_t streams = options.number("streams", 2, 1, core::camera::MAX_STREAMS_PER_GROUP);
         const std::string format_name = options.text("format", "bgra8");
+        const std::string memory_name = options.text("memory", "host");
+        const std::uint32_t gpu = options.number("gpu", 0, 0, 255);
         options.finish();
 
         PixelFormat format = PixelFormat::BGRA8;
@@ -65,6 +71,25 @@ public:
         else if (format_name != "bgra8")
         {
             options.fail("option 'format' is '" + format_name + "'; it takes bgra8, rgba8, gray8 or nv12");
+        }
+        if (memory_name == "gpu")
+        {
+            try
+            {
+                m_cuda_device = core::camera::cuda_device_uuid(gpu);
+            }
+            catch (const std::runtime_error& error)
+            {
+                options.fail(error.what());
+            }
+        }
+        else if (memory_name != "host")
+        {
+            options.fail("option 'memory' is '" + memory_name + "'; it takes host or gpu");
+        }
+        else if (config.options.contains("gpu"))
+        {
+            options.fail("option 'gpu' names the device of memory=gpu; this camera's frames are in host memory");
         }
 
         m_period = std::chrono::nanoseconds(1'000'000'000 / fps);
@@ -87,7 +112,16 @@ public:
             }
             stream.slot_bytes = offset;
             stream.frame_rate = fps;
+            if (memory_name == "gpu")
+            {
+                stream.memory = MemoryKind::CUDA;
+                stream.cuda_device = m_cuda_device;
+            }
             m_group.streams.push_back(stream);
+        }
+        if (memory_name == "gpu")
+        {
+            m_staging.resize(m_group.streams.front().slot_bytes);
         }
     }
 
@@ -177,8 +211,15 @@ private:
                 }
                 return false;
             }
-            std::memset(image->data.data(), std::to_integer<int>(synthetic_fill(frame, stream)), image->data.size());
-            std::memcpy(image->data.data(), &frame, sizeof(frame));
+            // A camera in CUDA memory makes the image on the host and copies it to the device;
+            // the copy has finished when the call returns, so the image is whole when published.
+            const std::span<std::byte> pixels = m_staging.empty() ? image->data : std::span<std::byte>(m_staging);
+            std::memset(pixels.data(), std::to_integer<int>(synthetic_fill(frame, stream)), pixels.size());
+            std::memcpy(pixels.data(), &frame, sizeof(frame));
+            if (!m_staging.empty())
+            {
+                core::camera::copy_to_cuda(m_cuda_device, image->cuda, pixels);
+            }
             images[stream] = {};
             images[stream].slot = image->slot;
             images[stream].device_frame_id = frame;
@@ -187,6 +228,8 @@ private:
     }
 
     GroupDescription m_group;
+    core::camera::CudaDeviceUuid m_cuda_device = {};
+    std::vector<std::byte> m_staging; // one image on the host, for a camera in CUDA memory
     std::chrono::nanoseconds m_period{};
     std::thread m_thread;
     std::atomic<bool> m_stopping{ false };

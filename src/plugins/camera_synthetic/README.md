@@ -85,12 +85,21 @@ stops with an error that says so.
 | `fps` | 60 | 1 to 1000 |
 | `streams` | 2 | 1 to 8, captured together as one frame set |
 | `format` | `bgra8` | `bgra8`, `rgba8`, `gray8`, `nv12` |
+| `memory` | `host` | `host`, or `gpu` for frames on a GPU |
+| `gpu` | 0 | with `memory=gpu`: the device, by its index in the plugin's process |
 
 The streams of a camera `head` are `head/left` and `head/right` when there are two, and
 `head/0`, `head/1`, ... otherwise. Frame n of stream s starts with n as eight little-endian
 bytes; every other byte of the image is `(n + 17 * s) & 0xff`
 (`core/inc/camera_synthetic/synthetic_backend.hpp`). An option the plugin does not know is an
 error.
+
+A camera with `memory=gpu` stands in for a camera whose SDK delivers frames on a GPU: a
+reader gets them on the device, with no copy
+([A camera on a GPU](../../core/camera/README.md#a-camera-on-a-gpu)). The frames are in
+the memory of a CUDA device. The pattern is made on the host and copied to the device, so
+its `capture -> sdk ready` time is that copy. It needs the NVIDIA driver and a build with
+the CUDA Toolkit; without either the plugin says so and stops.
 
 ## Measuring
 
@@ -127,7 +136,9 @@ head: 2 stream(s) on /run/user/1000/isaaccapture/camera-synthetic.sock
 
 The bench finds the plugin as a reader does. `--instance=NAME` or `--endpoint=PATH` reads
 from that one plugin instead. `--window` and `--order` read as a recorder would, and
-`--check-synthetic` checks every byte of every image against the synthetic pattern.
+`--check-synthetic` checks every byte of every image against the synthetic pattern. A
+stream in CUDA memory is listed with its device (`CUDA memory on GPU-...`), and its images
+are copied to the host to be checked.
 
 ## Layout
 
@@ -157,3 +168,6 @@ with `camera_bench`, `plugin.yaml` and this file.
   file whose cameras are all another backend's stops the plugin; the plugin manager starts
   and stops the plugin; the bench finds a camera, reports each step and lists what is
   published and where.
+- **GPU** (`ctest -L gpu`), skipped where there is no CUDA device: a camera in CUDA memory
+  is read on the device by a reader in another process, every byte checked, also after the
+  plugin was killed under it; the bench lists and checks such a camera.

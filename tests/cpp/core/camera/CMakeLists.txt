@@ -12,6 +12,7 @@ add_executable(camera_tests
     test_camera_reader.cpp
     test_codec.cpp
     test_cross_process.cpp
+    test_cuda_pool.cpp
     test_endpoint.cpp
     test_endpoint_path.cpp
     test_host_pool.cpp

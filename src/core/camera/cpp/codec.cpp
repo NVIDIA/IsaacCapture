@@ -5,6 +5,7 @@
 
 #include <schema/camera_protocol_generated.h>
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <stdexcept>
@@ -25,6 +26,7 @@ static_assert(static_cast<std::uint32_t>(PixelFormat::RGBA8) == CameraPixelForma
 static_assert(static_cast<std::uint32_t>(PixelFormat::NV12) == CameraPixelFormat_Nv12);
 static_assert(static_cast<std::uint32_t>(PixelFormat::GRAY8) == CameraPixelFormat_Gray8);
 static_assert(static_cast<std::uint32_t>(MemoryKind::HOST) == CameraMemoryKind_Host);
+static_assert(static_cast<std::uint32_t>(MemoryKind::CUDA) == CameraMemoryKind_Cuda);
 static_assert(static_cast<std::uint32_t>(DeliveryOrder::DEFAULT) == CameraDeliveryOrder_Default);
 static_assert(static_cast<std::uint32_t>(DeliveryOrder::NEWEST) == CameraDeliveryOrder_Newest);
 static_assert(static_cast<std::uint32_t>(DeliveryOrder::IN_ORDER) == CameraDeliveryOrder_InOrder);
@@ -59,9 +61,15 @@ flatbuffers::Offset<CameraGroup> build_group(Builder& builder, const GroupDescri
         }
         const auto id = builder.CreateString(stream.id);
         const auto plane_vector = builder.CreateVectorOfStructs(planes.data(), stream.plane_count);
+        flatbuffers::Offset<flatbuffers::Vector<std::uint8_t>> cuda_device;
+        if (stream.memory == MemoryKind::CUDA)
+        {
+            cuda_device = builder.CreateVector(stream.cuda_device.data(), stream.cuda_device.size());
+        }
         streams.push_back(CreateCameraStream(builder, id, static_cast<CameraPixelFormat>(stream.pixel_format),
                                              static_cast<CameraMemoryKind>(stream.memory), stream.width, stream.height,
-                                             plane_vector, stream.slot_bytes, stream.slot_count, stream.frame_rate));
+                                             plane_vector, stream.slot_bytes, stream.slot_count, stream.frame_rate,
+                                             cuda_device));
     }
     const auto id = builder.CreateString(group.id);
     const auto stream_vector = builder.CreateVector(streams);
@@ -106,9 +114,15 @@ std::optional<DeliveryOrder> order_of(CameraDeliveryOrder order)
 std::string unsupported_by_this_build(const CameraStream& stream, StreamDescription& description)
 {
     const std::string name = "camera stream '" + description.id + "'";
-    if (stream.memory() != CameraMemoryKind_Host)
+    if (stream.memory() != CameraMemoryKind_Host && stream.memory() != CameraMemoryKind_Cuda)
     {
         return name + " is in a kind of memory this build does not know (" + std::to_string(stream.memory()) + ")";
+    }
+    const auto* cuda_device = stream.cuda_device();
+    if (stream.memory() == CameraMemoryKind_Cuda &&
+        (cuda_device == nullptr || cuda_device->size() != description.cuda_device.size()))
+    {
+        return name + " names its CUDA device in a form this build does not know";
     }
     const auto pixel_format = pixel_format_of(stream.pixel_format());
     if (!pixel_format)
@@ -122,7 +136,11 @@ std::string unsupported_by_this_build(const CameraStream& stream, StreamDescript
         return name + " has more planes than this build can describe";
     }
     description.pixel_format = *pixel_format;
-    description.memory = MemoryKind::HOST;
+    description.memory = static_cast<MemoryKind>(stream.memory());
+    if (description.memory == MemoryKind::CUDA)
+    {
+        std::copy(cuda_device->begin(), cuda_device->end(), description.cuda_device.begin());
+    }
     description.plane_count = plane_count;
     for (std::uint32_t i = 0; i < plane_count; ++i)
     {
