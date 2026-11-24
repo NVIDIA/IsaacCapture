@@ -127,6 +127,8 @@ LEFT, RIGHT, COLOR = Socket("CAM_B"), Socket("CAM_C"), Socket("CAM_A")
 
 R_LEFT_FROM_COLOR = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 R_LEFT_FROM_IMU = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]])
+#: The size the stand-in's sensors are calibrated at.
+NATIVE = (1280, 800)
 
 
 class Calibration:
@@ -145,9 +147,10 @@ class Calibration:
             raise AssertionError("asked for another pair of cameras")
         return matrix.tolist()
 
-    def getCameraIntrinsics(self, socket, width, height):
-        focal = {LEFT: 300.0, RIGHT: 301.0, COLOR: 600.0}[socket]
-        return [[focal, 0.0, width / 2.0], [0.0, focal, height / 2.0], [0.0, 0.0, 1.0]]
+    def getDefaultIntrinsics(self, socket):
+        focal = {LEFT: 600.0, RIGHT: 602.0, COLOR: 600.0}[socket]
+        matrix = [[focal, 0.0, 630.0], [0.0, focal, 410.0], [0.0, 0.0, 1.0]]
+        return matrix, *NATIVE
 
     def getDistortionCoefficients(self, socket):
         return [{LEFT: 0.1, RIGHT: 0.2, COLOR: 0.3}[socket]] + [0.0] * 13
@@ -171,7 +174,7 @@ def test_the_calibration_is_handed_over_in_metres_left_to_right():
     assert (calibration.width, calibration.height) == (640, 400)
     assert not calibration.rectified and calibration.distortion_model == "brown_conrady"
     assert calibration.left_K[0, 0] == 300.0 and calibration.right_K[0, 0] == 301.0
-    assert calibration.left_K[0, 2] == 320.0 and calibration.left_K[1, 2] == 200.0
+    assert calibration.left_K[0, 2] == 315.0 and calibration.left_K[1, 2] == 205.0
     assert calibration.left_D[0] == 0.1 and calibration.right_D[0] == 0.2
     np.testing.assert_array_equal(calibration.R, np.eye(3))
     np.testing.assert_allclose(calibration.T, [-0.075, 0.001, 0.0])
@@ -181,9 +184,50 @@ def test_the_calibration_is_handed_over_in_metres_left_to_right():
     )
     picture = calibration.picture
     assert (picture.width, picture.height) == (1280, 800)
-    assert picture.K[0, 0] == 600.0 and picture.K[0, 2] == 640.0 and picture.D[0] == 0.3
+    assert picture.K[0, 0] == 600.0 and picture.K[0, 2] == 630.0 and picture.D[0] == 0.3
     np.testing.assert_array_equal(picture.R_left_from_picture, R_LEFT_FROM_COLOR)
     assert picture.distortion_model == "brown_conrady"
+
+
+@pytest.mark.parametrize(
+    "size, focal, centre",
+    [
+        ((1280, 720), 600.0, (630.0, 370.0)),  # wider: rows are cropped
+        ((640, 360), 300.0, (315.0, 185.0)),
+        ((640, 480), 360.0, (314.0, 246.0)),  # narrower: columns are cropped
+        ((800, 800), 600.0, (390.0, 410.0)),
+    ],
+)
+def test_intrinsics_follow_the_crop_when_the_shape_differs(size, focal, centre):
+    calibration = oakd.stereo_calibration(
+        Calibration(), (LEFT, RIGHT, COLOR), size, size
+    )
+    for K in (calibration.left_K, calibration.picture.K):
+        np.testing.assert_allclose([K[0, 0], K[1, 1]], [focal, focal])
+        np.testing.assert_allclose([K[0, 2], K[1, 2]], centre)
+
+
+@pytest.mark.parametrize("size", [(640, 400), (1280, 720), (640, 480), (800, 800)])
+def test_intrinsics_agree_with_depthai_s_own_scale_and_crop(size):
+    dai = pytest.importorskip("depthai", reason="needs the real depthai")
+    socket = dai.CameraBoardSocket.CAM_B
+    native = [[562.7, 0.0, 636.3], [0.0, 562.7, 415.3], [0.0, 0.0, 1.0]]
+    handler = dai.CalibrationHandler()
+    handler.setCameraIntrinsics(socket, native, *NATIVE)
+
+    scale = max(size[0] / NATIVE[0], size[1] / NATIVE[1])
+    cropped = dai.ImgTransformation(*NATIVE, native)
+    cropped.addScale(scale, scale)
+    cropped.addCrop(
+        round((NATIVE[0] * scale - size[0]) / 2),
+        round((NATIVE[1] * scale - size[1]) / 2),
+        *size,
+    )
+    np.testing.assert_allclose(
+        oakd.output_intrinsics(handler, socket, size),
+        cropped.getIntrinsicMatrix(),
+        atol=1e-3,
+    )
 
 
 def test_the_pair_alone_has_no_picture_calibration_and_no_imu_without_one():
@@ -332,10 +376,11 @@ class _CameraNode:
         self.queue = _Queue()
         return self
 
-    def requestOutput(self, size, type, fps):  # noqa: A002 - depthai's name
+    def requestOutput(self, size, type, resizeMode, fps):  # noqa: A002, N803
         if size in _Device.refused_sizes:
             raise RuntimeError(f"the sensor has no mode for {size[0]}x{size[1]}")
         self.size, self.type, self.fps = size, type, fps
+        self.resize = resizeMode
         return _Output(self.queue)
 
 
@@ -469,6 +514,7 @@ def depthai(monkeypatch):
     dai.ImgFrame = types.SimpleNamespace(
         Type=types.SimpleNamespace(GRAY8="GRAY8", NV12="NV12")
     )
+    dai.ImgResizeMode = types.SimpleNamespace(CROP="CROP")
     dai.CameraControl = types.SimpleNamespace(
         FrameSyncMode=types.SimpleNamespace(OUTPUT="OUTPUT", INPUT="INPUT")
     )
@@ -544,6 +590,8 @@ def test_the_left_sensor_drives_the_sync_and_the_exposure_is_limited(depthai):
     assert (cameras["CAM_B"].size, cameras["CAM_B"].type) == ((64, 40), "GRAY8")
     assert (cameras["CAM_A"].size, cameras["CAM_A"].type) == ((128, 80), "NV12")
     assert {camera.fps for camera in cameras.values()} == {45}
+    # The resize the calibration's intrinsics are worked out for.
+    assert {camera.resize for camera in cameras.values()} == {"CROP"}
 
 
 @requires_gpu

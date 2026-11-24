@@ -112,6 +112,24 @@ def imu_rotation(calib, left):
     return left_from_imu[:3, :3]
 
 
+def output_intrinsics(calib, socket, size) -> np.ndarray:
+    """The intrinsics of ``socket``'s image at ``size``.
+
+    The camera scales its calibrated image until it covers ``size`` and
+    crops what is left over evenly from both sides (``ImgResizeMode.CROP``).
+    The handler's own resize scales by width, which is another image when
+    ``size`` is narrower than the sensor.
+    """
+    matrix, native_width, native_height = calib.getDefaultIntrinsics(socket)
+    K = np.array(matrix, dtype=np.float64)
+    width, height = size
+    scale = max(width / native_width, height / native_height)
+    K[:2] *= scale
+    K[0, 2] -= (native_width * scale - width) / 2.0
+    K[1, 2] -= (native_height * scale - height) / 2.0
+    return K
+
+
 def stereo_calibration(calib, sockets, size, picture_size=None) -> StereoCalibration:
     """The device's calibration of its stereo pair, and of its colour
     camera when ``picture_size`` is given.
@@ -137,9 +155,7 @@ def stereo_calibration(calib, sockets, size, picture_size=None) -> StereoCalibra
         picture = PictureCalibration(
             width=picture_size[0],
             height=picture_size[1],
-            K=np.asarray(
-                calib.getCameraIntrinsics(color, *picture_size), dtype=np.float64
-            ),
+            K=output_intrinsics(calib, color, picture_size),
             D=_coefficients(calib, color, picture_model),
             R_left_from_picture=left_from_color[:3, :3],
             distortion_model=picture_model,
@@ -147,13 +163,9 @@ def stereo_calibration(calib, sockets, size, picture_size=None) -> StereoCalibra
     return StereoCalibration(
         width=width,
         height=height,
-        left_K=np.asarray(
-            calib.getCameraIntrinsics(left, width, height), dtype=np.float64
-        ),
+        left_K=output_intrinsics(calib, left, size),
         left_D=_coefficients(calib, left, model),
-        right_K=np.asarray(
-            calib.getCameraIntrinsics(right, width, height), dtype=np.float64
-        ),
+        right_K=output_intrinsics(calib, right, size),
         right_D=_coefficients(calib, right, model),
         R=right_from_left[:3, :3],
         T=right_from_left[:3, 3] / 100.0,
@@ -479,7 +491,13 @@ class OakdStereoSource(FrameSource):
                 camera.initialControl.setFrameSyncMode(
                     sync.OUTPUT if name == "left" else sync.INPUT
                 )
-            out = camera.requestOutput(stream_size, type=frame_type, fps=self._fps)
+            # CROP is the geometry output_intrinsics describes.
+            out = camera.requestOutput(
+                stream_size,
+                type=frame_type,
+                resizeMode=dai.ImgResizeMode.CROP,
+                fps=self._fps,
+            )
             self._queues[name] = out.createOutputQueue(maxSize=8, blocking=False)
 
         self._imu_queue = None
