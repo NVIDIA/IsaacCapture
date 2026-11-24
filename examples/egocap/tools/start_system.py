@@ -4,7 +4,7 @@
 
 """Starts the whole Ego Capture stack with one command and stops it together on Ctrl-C.
 
-    uv run python tools/start_system.py --orin user@orin --deploy-script PATH --bridge PATH --livekit-server PATH
+    uv run python tools/start_system.py --orin user@192.0.2.10 --bridge PATH --livekit-server PATH
 
 In order: deploy and start the Orin sender over ssh (for the SIPL backend this first stops nvargus-daemon, which
 holds the cameras), a LiveKit server, CaptureServer, the backend (which owns the recorder), the camera receiver
@@ -16,15 +16,13 @@ children are stopped, last started first, when this script ends on Ctrl-C, on SI
 Orin sender runs for ``--seconds``; when it ends the whole stack is stopped.
 
 The sender settings come from the checked-in profile ``configs/default-camera-settings.yaml`` (see
-CAMERA_SETTINGS.md). CaptureServer runs real acquisition (a built IsaacCapture checkout and tracking hardware)
+CAMERA_SETTINGS.md). CaptureServer runs real acquisition (the installed isaaccapture and tracking hardware)
 unless ``--mock`` gives it synthetic tracking and cameras. ``--mock`` also replaces the Orin sender with a local
 mock sender (no ``--orin``), so nothing real is started; the receiver, bridge and page are the same.
 
-The sender release the profile describes, its deploy tool, the timesync tool, the LiveKit server, the bridge and
-the mock sender are not part of this tree's base, so the tools' paths are options (or ``EGOCAP_DEPLOY_SCRIPT``,
-``EGOCAP_TIMESYNC_TOOL``, ``EGOCAP_LIVEKIT_SERVER``, ``EGOCAP_BRIDGE``, ``EGOCAP_MOCK_SENDER``). The pure
-helpers sit above the supervisor so they can be tested without
-starting anything.
+The deploy tool, the timesync tool and the mock sender are in this repository and found from it. The LiveKit server
+and the bridge are built separately, so their paths are options (or ``EGOCAP_LIVEKIT_SERVER``, ``EGOCAP_BRIDGE``).
+The pure helpers sit above the supervisor so they can be tested without starting anything.
 """
 
 from __future__ import annotations
@@ -56,6 +54,8 @@ LIVEKIT_DEV_KEY = "devkey"
 LIVEKIT_DEV_SECRET = "secret"
 CONTROL_TOKEN_MARKER = "Recording control token for this run:"
 TIMESYNC_TOOL = REPO_ROOT / "src/core/timesync/tools/timesync_tool.py"
+DEPLOY_SCRIPT = REPO_ROOT / "examples/camera_streamer/argus_sender/deploy/deploy_sender.py"
+MOCK_SENDER = REPO_ROOT / "examples/camera_streamer/mock_sender/mock_sender.py"
 DEFAULT_SENDER_CONFIG = EGOCAP_ROOT / "configs/default-camera-settings.yaml"
 DEFAULT_STATION_CONFIG = EGOCAP_ROOT / "recording/egocap/stations/ego_stations.example.yaml"
 # The page reads latency from the sensor's capture time; see CAMERA_SETTINGS.md.
@@ -355,7 +355,7 @@ def load_timesync_tool(path: Path):
     import importlib.util
 
     if not path.is_file():
-        raise StartupError(f"the timesync tool {path} does not exist (--timesync-tool or EGOCAP_TIMESYNC_TOOL)")
+        raise StartupError(f"the timesync tool {path} does not exist (--timesync-tool)")
     spec = importlib.util.spec_from_file_location("timesync_tool", path)
     if spec is None or spec.loader is None:
         raise StartupError(f"cannot load {path}")
@@ -633,12 +633,10 @@ def default_receiver_command() -> str:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """The command line; every external tool's path may also come from an environment variable."""
+    """The command line; the LiveKit server and bridge paths may also come from environment variables."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--orin", help="user@host of the Jetson; omit to start only the PC side")
-    parser.add_argument(
-        "--deploy-script", default=os.environ.get("EGOCAP_DEPLOY_SCRIPT"), help="the sender's deploy_sender.py"
-    )
+    parser.add_argument("--deploy-script", type=Path, default=DEPLOY_SCRIPT, help="the sender's deploy_sender.py")
     parser.add_argument(
         "--livekit-server", default=os.environ.get("EGOCAP_LIVEKIT_SERVER"), help="livekit-server binary"
     )
@@ -649,6 +647,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="command that runs the camera receiver (takes --config FILE)",
     )
     parser.add_argument("--release", default="egocap-start", help="release name for the Orin deploy")
+    parser.add_argument(
+        "--sender-verbose", action="store_true", help="run the Orin sender with --verbose (per-second frame rates)"
+    )
     parser.add_argument("--skip-deploy", action="store_true", help="reuse the release named by --release")
     parser.add_argument(
         "--sender-config", type=Path, default=DEFAULT_SENDER_CONFIG, help="sender profile uploaded to the Orin"
@@ -687,7 +688,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--timesync-tool",
         type=Path,
-        default=Path(os.environ.get("EGOCAP_TIMESYNC_TOOL", TIMESYNC_TOOL)),
+        default=TIMESYNC_TOOL,
         help="the timesync module's timesync_tool.py",
     )
     parser.add_argument("--chrony-cmd-port", type=int, default=12301, help="command port of this PC's chronyd")
@@ -702,6 +703,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--host-lan-ip", help="this PC's address toward the Orin (default: found from the route)")
     parser.add_argument(
+        "--mock-tracking",
+        action="store_true",
+        help="CaptureServer gives synthetic tracking (no headset); the Orin camera and the recording stay real",
+    )
+    parser.add_argument(
         "--mock",
         action="store_true",
         help="no hardware: synthetic tracking and cameras from CaptureServer, and a local mock sender instead of "
@@ -710,8 +716,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mock-sender",
         type=Path,
-        default=Path(os.environ["EGOCAP_MOCK_SENDER"]) if os.environ.get("EGOCAP_MOCK_SENDER") else None,
-        help="camera_streamer's mock_sender.py (not in this tree), used with --mock (needs ffmpeg with libx265)",
+        default=MOCK_SENDER,
+        help="camera_streamer's mock_sender.py, used with --mock (needs ffmpeg with libx265)",
     )
     parser.add_argument(
         "--capture-camera",
@@ -746,23 +752,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     for sig in STOP_SIGNALS:
         signal.signal(sig, _raise_interrupt)
     try:
-        # The deploy is checked first so a missing tool fails before anything is running.
+        # The tools are checked first so a missing one fails before anything is running.
+        if args.orin and not args.deploy_script.is_file():
+            raise StartupError(f"--orin needs the sender deploy script; {args.deploy_script} is not a file")
         if args.orin and args.mock:
             raise StartupError("--mock replaces the Orin sender with a local mock sender; do not pass --orin")
-        if args.orin and not args.deploy_script:
-            raise StartupError("--orin needs --deploy-script (or EGOCAP_DEPLOY_SCRIPT)")
         if args.orin and not (args.bridge and args.livekit_server):
             raise StartupError("--orin needs --bridge and --livekit-server to carry the video to the page")
         # The camera chain (sender, receiver, bridge, LiveKit) runs for the Orin, or for --mock when the tools to
         # carry its video are given; without them --mock is just CaptureServer's own synthetic cameras.
         chain = bool(args.orin) or (args.mock and bool(args.bridge and args.livekit_server))
-        if chain and args.mock and not (args.mock_sender and args.mock_sender.is_file()):
+        if chain and args.mock and not args.mock_sender.is_file():
             raise StartupError(
-                "--mock with --bridge and --livekit-server needs --mock-sender (or EGOCAP_MOCK_SENDER)"
+                "--mock with --bridge and --livekit-server needs the mock sender; "
+                f"{args.mock_sender} is not a file"
             )
         # Real acquisition opens only the cameras it is given, and a station file naming any other one is rejected
         # for the whole session, so catch it here instead of at the first Begin.
-        if not args.mock:
+        if not (args.mock or args.mock_tracking):
             check_station_cameras(args.station_config, args.capture_camera)
         basis = MOCK_TIMESTAMP_BASIS if args.mock else TIMESTAMP_BASIS
         # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
@@ -827,8 +834,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         pythonpath = os.pathsep.join(
             [
                 *(str(EGOCAP_ROOT / sub) for sub in ("backend", "recording", "capture_server", ".")),
-                # CaptureServer imports the Manus calibration worker, which is not part of this folder.
-                str(REPO_ROOT / "src/plugins/manus_calibration/python"),
             ]
         )
 
@@ -843,7 +848,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # 1. The Orin sender: deploy a release (never activating a service), then run it for a bounded time.
         if args.orin:
             orin_contacted = True
-            deploy = [python, args.deploy_script, args.orin]
+            deploy = [python, str(args.deploy_script), args.orin]
             # nvargus-daemon returns at boot and holds the cameras, which SIPL capture needs free; a sender left
             # by an earlier run outlives its ssh session.
             subprocess.run([*deploy, "stop"], check=False, timeout=ORIN_COMMAND_TIMEOUT_S)
@@ -866,6 +871,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     str(workdir / "sender.yaml"),
                     "--seconds",
                     str(args.seconds),
+                    *(["--verbose"] if args.sender_verbose else []),
                 ],
             )
         # 1b. With --mock a local mock sender stands in for the Orin, so nothing real is started.
@@ -885,7 +891,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 python,
                 "-m",
                 "capture_server",
-                *(["--mock"] if args.mock else []),
+                *(["--mock"] if args.mock or args.mock_tracking else []),
                 *(arg for camera in args.capture_camera for arg in ("--camera", camera)),
                 # The descriptor advertises a LiveKit stream, so it is given only when something publishes one.
                 *(["--livekit-streams", str(workdir / "streams.yaml")] if chain else []),
@@ -1071,7 +1077,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             # Ending the local ssh does not end the remote sender; ask it to stop so it frees the cameras.
             try:
                 subprocess.run(
-                    [sys.executable, args.deploy_script, args.orin, "stop"],
+                    [sys.executable, str(args.deploy_script), args.orin, "stop"],
                     check=False,
                     timeout=ORIN_COMMAND_TIMEOUT_S,
                 )

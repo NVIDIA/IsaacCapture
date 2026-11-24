@@ -8,8 +8,10 @@ Import-isolation checks run in a fresh interpreter, because what a process has a
 is the thing under test.
 """
 
+import importlib
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -112,6 +114,54 @@ def test_mock_setup_needs_no_isaac_root_and_loads_no_hardware_sdk():
         "print('OK')\n"
     )
     assert result.returncode == 0 and "OK" in result.stdout, result.stderr
+
+
+def test_load_isaac_capture_reports_an_unimportable_installed_package_as_unavailable(monkeypatch):
+    from capture_server.acquisition import isaac_sdk
+
+    monkeypatch.setattr(isaac_sdk, "_loaded", None)
+    monkeypatch.delenv("ISAAC_ROOT", raising=False)
+    monkeypatch.setitem(sys.modules, "isaaccapture", None)
+
+    with pytest.raises(isaac_sdk.IsaacCaptureUnavailable, match="install the built IsaacCapture wheel"):
+        isaac_sdk.load_isaac_capture()
+
+
+def test_source_checkout_root_is_this_checkout_when_run_from_the_source_tree():
+    from capture_server.acquisition import isaac_sdk
+
+    root = isaac_sdk.source_checkout_root()
+    assert root is not None and (root / "examples" / "egocap").is_dir()
+    assert root == Path(__file__).resolve().parents[4]
+
+
+def _plugin_config_search_paths(monkeypatch, checkout):
+    pytest.importorskip("isaaccapture")
+    from capture_server.acquisition import isaac_sdk
+
+    teleop = importlib.import_module("isaaccapture.teleop_session_manager")
+    seen: dict = {}
+    monkeypatch.setattr(isaac_sdk, "_loaded", None)
+    monkeypatch.setattr(teleop, "PluginConfig", lambda **kwargs: seen.update(kwargs))
+    if checkout is not False:
+        monkeypatch.setattr(isaac_sdk, "source_checkout_root", lambda: checkout)
+    isaac_sdk.load_isaac_capture().PluginConfig(plugin_name="manus")
+    return seen["search_paths"], teleop
+
+
+def test_plugin_config_default_search_paths_add_the_checkout_install_plugins(monkeypatch, tmp_path):
+    paths, teleop = _plugin_config_search_paths(monkeypatch, tmp_path)
+    assert paths == [teleop.BUNDLED_PLUGINS_DIR, tmp_path / "install" / "plugins"]
+
+
+def test_plugin_config_default_search_paths_are_the_bundled_plugins_outside_a_checkout(monkeypatch):
+    paths, teleop = _plugin_config_search_paths(monkeypatch, None)
+    assert paths == [teleop.BUNDLED_PLUGINS_DIR]
+
+
+def test_plugin_config_default_search_paths_use_this_checkouts_install_plugins(monkeypatch):
+    paths, teleop = _plugin_config_search_paths(monkeypatch, False)
+    assert paths == [teleop.BUNDLED_PLUGINS_DIR, Path(__file__).resolve().parents[4] / "install" / "plugins"]
 
 
 def test_real_setup_never_loads_the_mock_sdk_files():

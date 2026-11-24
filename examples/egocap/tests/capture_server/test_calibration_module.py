@@ -47,20 +47,20 @@ def test_find_worker_rejects_a_non_executable_or_missing_override(tmp_path):
     assert cal.find_worker(tmp_path / "absent") is None
 
 
-def test_find_worker_looks_under_the_manus_install_of_isaac_root(tmp_path, monkeypatch):
+def test_find_worker_looks_under_the_manus_install_of_the_source_checkout(tmp_path, monkeypatch):
     worker = _executable(tmp_path / "install" / "plugins" / "manus" / cal.WORKER_NAME)
-    monkeypatch.setenv("ISAAC_ROOT", str(tmp_path))
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: tmp_path)
     assert cal.find_worker(None) == worker
 
 
-def test_find_worker_is_none_without_isaac_root_or_override(monkeypatch):
-    monkeypatch.delenv("ISAAC_ROOT", raising=False)
+def test_find_worker_is_none_without_a_source_checkout_or_override(monkeypatch):
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: None)
     assert cal.find_worker(None) is None
 
 
 def test_find_worker_is_none_when_the_install_has_no_worker(tmp_path, monkeypatch):
     (tmp_path / "install" / "plugins" / "manus").mkdir(parents=True)
-    monkeypatch.setenv("ISAAC_ROOT", str(tmp_path))
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: tmp_path)
     assert cal.find_worker(None) is None
 
 

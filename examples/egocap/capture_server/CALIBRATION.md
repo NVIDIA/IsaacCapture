@@ -22,7 +22,7 @@ capture-server --manus-calibration-dir /var/lib/egocap/mcal \
 - `--manus-calibration-dir` enables the feature. New files are written there as plain `.mcal` files. It is the
   plain folder, so other tools can read the files from it, and it is created on first use.
 - The worker is the explicit `--manus-calibrator` path (an unusable path is a startup error), else
-  `$ISAAC_ROOT/install/plugins/manus/manus_glove_calibrator`, where the Manus component installs it. When no
+  `install/plugins/manus/manus_glove_calibrator` of the source checkout, where the Manus component installs it. When no
   worker is found, ordinary capture is unaffected and only a calibration request is rejected with
   `INVALID_CONFIG` saying so.
 - Stop every other Manus consumer first: the dongles are not shared.

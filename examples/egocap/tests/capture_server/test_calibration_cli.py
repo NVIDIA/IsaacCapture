@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from capture_server import calibration as cal
 from capture_server import server as server_module
 from capture_server.calibration import WORKER_NAME, CalibrationConfig, find_worker
 from capture_server.server import _build_arg_parser, _calibration_config, main
@@ -30,7 +31,7 @@ def _executable(path: Path) -> Path:
 
 
 def _install_worker(isaac_root: Path, *, executable: bool = True) -> Path:
-    """Where the Manus component installs the worker under ISAAC_ROOT."""
+    """Where the Manus component installs the worker under a source checkout root."""
     directory = isaac_root / "install" / "plugins" / "manus"
     directory.mkdir(parents=True)
     path = directory / WORKER_NAME
@@ -100,9 +101,9 @@ def test_an_explicit_worker_and_a_directory_set_both(tmp_path):
 
 
 def test_an_explicit_worker_that_does_not_exist_is_an_error_not_a_silent_fallback(tmp_path, monkeypatch):
-    # A worker installed under ISAAC_ROOT must not hide a wrong explicit path.
+    # A worker installed in the source checkout must not hide a wrong explicit path.
     _install_worker(tmp_path / "root")
-    monkeypatch.setenv("ISAAC_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: tmp_path / "root")
 
     with pytest.raises(ValueError, match="is not an executable file"):
         _calibration_config(
@@ -153,7 +154,7 @@ def test_a_bad_calibration_option_exits_with_status_two_and_the_reason(tmp_path,
 
 def test_find_worker_prefers_an_explicit_executable_over_the_install(tmp_path, monkeypatch):
     _install_worker(tmp_path / "root")
-    monkeypatch.setenv("ISAAC_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: tmp_path / "root")
     explicit = _executable(tmp_path / "explicit-worker")
 
     assert find_worker(explicit) == explicit
@@ -161,7 +162,7 @@ def test_find_worker_prefers_an_explicit_executable_over_the_install(tmp_path, m
 
 def test_find_worker_does_not_fall_back_when_the_explicit_path_is_unusable(tmp_path, monkeypatch):
     _install_worker(tmp_path / "root")
-    monkeypatch.setenv("ISAAC_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: tmp_path / "root")
     plain = tmp_path / "not-executable"
     plain.write_text("x")
     plain.chmod(0o644)
@@ -170,25 +171,25 @@ def test_find_worker_does_not_fall_back_when_the_explicit_path_is_unusable(tmp_p
     assert find_worker(tmp_path / "missing") is None
 
 
-def test_find_worker_falls_back_to_the_manus_install_under_isaac_root(tmp_path, monkeypatch):
+def test_find_worker_falls_back_to_the_manus_install_of_the_source_checkout(tmp_path, monkeypatch):
     installed = _install_worker(tmp_path / "root")
-    monkeypatch.setenv("ISAAC_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: tmp_path / "root")
 
     assert find_worker(None) == installed
 
 
 def test_find_worker_ignores_a_non_executable_file_in_the_install(tmp_path, monkeypatch):
     _install_worker(tmp_path / "root", executable=False)
-    monkeypatch.setenv("ISAAC_ROOT", str(tmp_path / "root"))
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: tmp_path / "root")
 
     assert find_worker(None) is None
 
 
-def test_find_worker_without_isaac_root_finds_nothing_even_if_the_worker_is_on_path(tmp_path, monkeypatch):
+def test_find_worker_without_a_source_checkout_finds_nothing_even_if_the_worker_is_on_path(tmp_path, monkeypatch):
     path_dir = tmp_path / "bin"
     path_dir.mkdir()
     _executable(path_dir / WORKER_NAME)
-    monkeypatch.delenv("ISAAC_ROOT", raising=False)
+    monkeypatch.setattr(cal, "source_checkout_root", lambda: None)
     monkeypatch.setenv("PATH", str(path_dir))
 
     assert find_worker(None) is None

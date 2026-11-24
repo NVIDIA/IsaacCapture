@@ -2053,8 +2053,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--manus-calibrator",
         default=None,
         metavar="PATH",
-        help="the manus_glove_calibrator executable (default: the Manus install under "
-        "$ISAAC_ROOT/install/plugins)",
+        help="the manus_glove_calibrator executable (default: the Manus install under install/plugins/manus "
+        "of the source checkout this runs from; none for an installed package)",
     )
     return parser
 
@@ -2079,8 +2079,8 @@ def _calibration_config(args: argparse.Namespace) -> CalibrationConfig | None:
         if args.manus_calibrator is not None:
             raise ValueError(f"--manus-calibrator {args.manus_calibrator} is not an executable file")
         print(
-            "capture-server: no manus_glove_calibrator found under $ISAAC_ROOT/install/plugins/manus; "
-            "generating new calibrations is unavailable (pass --manus-calibrator PATH)",
+            "capture-server: no manus_glove_calibrator found under install/plugins/manus of the source checkout "
+            "this runs from; generating new calibrations is unavailable (pass --manus-calibrator PATH)",
             file=sys.stderr,
         )
     return CalibrationConfig(directory=Path(args.manus_calibration_dir), worker_path=worker)

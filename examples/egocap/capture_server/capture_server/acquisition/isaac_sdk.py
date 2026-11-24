@@ -2,12 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Resolve the real IsaacCapture SDK from ``ISAAC_ROOT`` for live tracking.
+"""Import the IsaacCapture SDK for live tracking.
 
-``ISAAC_ROOT`` is a separate, built IsaacCapture checkout; the importable package (with its native
-libraries) is its ``build/python_package/Release/isaaccapture`` tree. No bundled copy and no
-other installed copy may satisfy this dependency: the loaded package must originate from that tree.
-Only the real path calls this; mock setup never reads ``ISAAC_ROOT`` or imports the SDK.
+The SDK is the ``isaaccapture`` package installed in this interpreter's environment (see the capture_server README
+for installing the built wheel). Only the real path calls this; mock setup never imports the SDK.
 """
 
 from __future__ import annotations
@@ -15,7 +13,6 @@ from __future__ import annotations
 import importlib
 import logging
 import os
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,7 +22,13 @@ __all__ = ["IsaacCaptureUnavailable", "load_isaac_capture"]
 
 _log = logging.getLogger(__name__)
 
-_BUILD_SUBDIR = Path("build/python_package/Release")
+
+def source_checkout_root() -> Path | None:
+    """The repository root when this file runs from a source checkout, else None (an installed package)."""
+    parents = Path(__file__).resolve().parents
+    if len(parents) > 5 and parents[3].name == "egocap" and parents[4].name == "examples":
+        return parents[5]
+    return None
 
 
 class IsaacCaptureUnavailable(RuntimeError):
@@ -36,7 +39,7 @@ _loaded: SimpleNamespace | None = None
 
 
 def load_isaac_capture() -> SimpleNamespace:
-    """Import the IsaacCapture build under ``$ISAAC_ROOT`` and return the names the adapter composes.
+    """Import the installed ``isaaccapture`` and return the names the adapter composes.
 
     Cached after the first success. The returned namespace has the adapter's ``sdk`` surface
     (``HeadSource``, ``ControllersSource``, ``HandsSource``, ``OutputCombiner``, ``PluginConfig``,
@@ -45,32 +48,13 @@ def load_isaac_capture() -> SimpleNamespace:
     global _loaded
     if _loaded is not None:
         return _loaded
-    root_text = os.environ.get("ISAAC_ROOT")
-    if not root_text:
-        raise IsaacCaptureUnavailable(
-            "ISAAC_ROOT is not set; point it at a built IsaacCapture checkout to use real tracking"
-        )
-    root = Path(root_text).expanduser().resolve()
-    build_dir = root / _BUILD_SUBDIR
-    package_dir = build_dir / "isaaccapture"
-    if not (package_dir / "__init__.py").is_file():
-        raise IsaacCaptureUnavailable(
-            f"no built isaaccapture package at {package_dir}; build IsaacCapture in ISAAC_ROOT={root}"
-        )
-    if "isaaccapture" not in sys.modules and str(build_dir) not in sys.path:
-        sys.path.insert(0, str(build_dir))
     try:
         package = importlib.import_module("isaaccapture")
     except ImportError as exc:
-        raise IsaacCaptureUnavailable(f"cannot import isaaccapture from {package_dir}: {exc}") from exc
-    # Importing the package root already loads some of its native pieces, so this rejects a wrong-origin copy
-    # before this module imports any of the submodules it needs, not before all SDK side effects.
-    origin = Path(package.__file__).resolve()
-    if package_dir not in origin.parents:
         raise IsaacCaptureUnavailable(
-            f"isaaccapture was imported from {origin}, not from ISAAC_ROOT={root}; "
-            "another copy is already loaded or shadows it"
-        )
+            f"cannot import isaaccapture ({exc}); install the built IsaacCapture wheel into this environment"
+        ) from exc
+    package_dir = Path(package.__file__).resolve().parent
     try:
         teleop = importlib.import_module("isaaccapture.teleop_session_manager")
         sources = importlib.import_module("isaaccapture.retargeting_engine.deviceio_source_nodes")
@@ -99,9 +83,10 @@ def load_isaac_capture() -> SimpleNamespace:
         # just the plugins built into the wheel (gamepad, spacemouse); out-of-tree plugins such as Manus are
         # placed by IsaacCapture's own ``cmake --install --component manus`` under the checkout's
         # ``install/plugins``, which is why a request that searched the bundled directory alone never found them.
+        checkout = source_checkout_root()
         kwargs["search_paths"] = kwargs.get("search_paths") or [
             teleop.BUNDLED_PLUGINS_DIR,
-            root / "install" / "plugins",
+            *([checkout / "install" / "plugins"] if checkout else []),
         ]
         return teleop.PluginConfig(**kwargs)
 

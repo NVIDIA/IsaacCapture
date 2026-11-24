@@ -12,11 +12,12 @@
 version: 1
 capture_backend: sipl
 
-# Where SIPL finds the camera. These paths are on the Orin and describe the tested head-camera wiring.
+# Where SIPL finds the camera. The platform file ships with the release and is resolved from the release directory,
+# where the sender runs; the tuning folder is a system path on the Orin. They describe the tested head-camera wiring.
 sipl:
-  platform_config_json: /opt/isaaccapture/camera-platform.json  # sensor size, sensor rate and trigger mode live here
+  platform_config_json: src/configs/shw5g_csi_cd.json  # the vendor SHW5G platform: CSI-CD deserializer, links 2 and 3
   platform_config_name: SHW5G_2  # the platform inside that file
-  link_masks: [256, 0]  # which deserializer links are powered, one mask per deserializer
+  link_masks: [0, 256]  # which deserializer links are powered, one mask per deserializer: link 2 on the CSI-CD deserializer
   nito_dir: /var/nvidia/nvcam/settings/sipl  # image-tuning files
 
 network:
