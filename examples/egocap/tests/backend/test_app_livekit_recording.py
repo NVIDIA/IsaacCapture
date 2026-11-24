@@ -293,3 +293,21 @@ def test_config_factory_passes_the_station_encoder_to_native_cameras_and_livekit
         ("head", "ffmpeg_h264_nvenc", {"crf": 12}),
         ("cam16", "ffmpeg_h264_nvenc", {"crf": 12}),
     ]
+
+
+def test_config_factory_declares_capture_qc_fps_for_each_recordable_livekit_stream(tmp_path):
+    stream = _stream(16, p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US)
+    config = app_module._recording_config_factory(
+        _monitor([stream]), None, tmp_path, video_encoder="ffmpeg_h264_nvenc", video_encoder_options={"crf": 12}
+    )()
+    assert config.qc.capture.camera_expected_fps == ((stream.name, None),)
+    assert [(v.name, v.encoder, v.encoder_options) for v in config.video_sources] == [
+        (stream.name, "ffmpeg_h264_nvenc", {"crf": 12})
+    ]
+
+
+@pytest.mark.parametrize("started", [None, SimpleNamespace(streams=[])])
+def test_config_factory_has_no_capture_qc_without_a_recordable_livekit_stream(tmp_path, started):
+    camera = SimpleNamespace(name="head", width=8, height=6, fps=15.0)
+    monitor = SimpleNamespace(camera_descriptors=(camera,), native=SimpleNamespace(started=started))
+    assert app_module._recording_config_factory(monitor, None, tmp_path)().qc.capture is None

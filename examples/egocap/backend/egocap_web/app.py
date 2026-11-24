@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from egocap.core.data_root import calibration_dir
+from egocap.recording.capture_qc import CaptureQcConfig
 from recording_service import (
     CalibrationAsset,
     ConfigurationError,
@@ -207,6 +208,7 @@ def _recording_config_factory(
     changes the station in use carries the new station's name."""
 
     def factory() -> ServiceConfig:
+        livekit_streams = recordable_livekit_streams(monitor.native.started)
         video_sources = tuple(
             VideoSourceSpec(
                 cam.name,
@@ -229,14 +231,14 @@ def _recording_config_factory(
                 intrinsics=False,
                 encoder_options=video_encoder_options,
             )
-            for s in recordable_livekit_streams(monitor.native.started)
+            for s in livekit_streams
         )
         if on_video_sources is not None:
             # Tells the aligner, once per session open, which cameras this session records and which of them
             # have a sensor capture time (only LiveKit streams stamped that way do).
             on_video_sources(
                 frozenset(v.name for v in video_sources),
-                sensor_capture_names(recordable_livekit_streams(monitor.native.started)),
+                sensor_capture_names(livekit_streams),
             )
         # A supported profile must record actual tracking AND the
         # selected cameras -- pico_controller and every configured camera
@@ -245,11 +247,17 @@ def _recording_config_factory(
         # omission policy in recording_adapter.py) must not by itself
         # invalidate an otherwise-good take.
         required = (PICO_CONTROLLER_SPEC.name, *(v.name for v in video_sources))
+        # A LiveKit camera must average at least 0.86 of its configured fps over the take or the take is rejected.
+        capture_qc = (
+            CaptureQcConfig(camera_expected_fps=tuple((s.name, None) for s in livekit_streams))
+            if livekit_streams
+            else None
+        )
         config = ServiceConfig(
             output_root=output_root,
             numeric_sources=(PICO_CONTROLLER_SPEC, MANUS_GLOVE_SPEC),
             video_sources=video_sources,
-            qc=QcConfig(required_sources=required),
+            qc=QcConfig(required_sources=required, capture=capture_qc),
             calibration_assets=_station_calibration_assets(),
             station_label=station_label() if callable(station_label) else station_label,
         )
