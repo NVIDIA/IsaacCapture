@@ -33,6 +33,11 @@ public:
         }
     }
 
+    void invalidate() noexcept
+    {
+        m_last_fresh_data.reset();
+    }
+
     bool fresh(Clock::time_point now) const noexcept
     {
         return m_last_fresh_data && now - *m_last_fresh_data < kAvatarDataTimeout;
@@ -81,6 +86,35 @@ public:
             }
         }
         return output.get();
+    }
+
+    template <typename Output, typename Factory, typename Send>
+    void publish(std::unique_ptr<Output>& output,
+                 bool usable,
+                 Clock::time_point now,
+                 Clock::duration retry_interval,
+                 Factory&& create,
+                 Send&& send)
+    {
+        if (auto* current = update(output, usable, now, retry_interval, std::forward<Factory>(create)))
+        {
+            try
+            {
+                std::forward<Send>(send)(*current);
+            }
+            catch (const std::exception& error)
+            {
+                m_error = std::string("output delivery failed: ") + error.what();
+                m_retry_after = now + retry_interval;
+                output.reset();
+            }
+            catch (...)
+            {
+                m_error = "output delivery failed with an unknown error";
+                m_retry_after = now + retry_interval;
+                output.reset();
+            }
+        }
     }
 
     const std::optional<std::string>& error() const noexcept

@@ -370,12 +370,14 @@ void GloveState::reset() noexcept
         }
     }
     clear_current_data();
+    for (auto& dataset : datasets)
+    {
+        dataset.freshness = {};
+    }
     device.reset();
     observed_ingress_generation = 0;
     last_ingress.reset();
     haptic_error.reset();
-    output_setup_error.reset();
-    last_output_setup_attempt.reset();
     started = false;
     ready = false;
 }
@@ -387,7 +389,8 @@ void GloveState::clear_current_data() noexcept
     robot_frame = {};
     for (auto& dataset : datasets)
     {
-        dataset.freshness = {};
+        // A retained SDK handle can still return the pre-outage cached sample.
+        dataset.freshness.invalidate();
         dataset.output = {};
         dataset.fetch_error.reset();
     }
@@ -673,15 +676,6 @@ void AvatarTracker::refresh_glove_activity()
         const bool ingress_fresh = state.last_ingress && now - *state.last_ingress < kAvatarDataTimeout;
         if (ingress_fresh && !state.ready)
         {
-            if (state.last_output_setup_attempt && now - *state.last_output_setup_attempt < kOutputSetupRetryInterval)
-            {
-                continue;
-            }
-            state.last_output_setup_attempt = now;
-            if (!try_create_output_resources(side))
-            {
-                continue;
-            }
             state.ready = true;
             if (m_config.haptic)
             {
@@ -702,53 +696,6 @@ void AvatarTracker::refresh_glove_activity()
             state.clear_current_data();
         }
     }
-}
-
-bool AvatarTracker::try_create_output_resources(::avatar::DeviceSide side)
-{
-    const size_t index = side_index(side);
-    GloveState& state = glove(side);
-    try
-    {
-        std::unique_ptr<plugin_utils::HandInjector> injector;
-        std::array<std::unique_ptr<core::SchemaPusher>, 2> joint_pushers;
-
-        if (m_config.human)
-        {
-            injector = std::make_unique<plugin_utils::HandInjector>(
-                m_handles.instance, m_handles.session, xr_hand(side), m_handles.space);
-        }
-        for (const ::avatar::DeviceDataCategory category : kJointDataCategories)
-        {
-            if (!dataset_enabled(category))
-            {
-                continue;
-            }
-            const std::string localized_name =
-                "Avatar " + std::string(to_string(category)) + " " + std::string(to_string(side));
-            joint_pushers[joint_category_index(category)] = std::make_unique<core::SchemaPusher>(
-                m_handles, core::SchemaPusherConfig{ .collection_id = collection_id(side, category),
-                                                     .max_flatbuffer_size = kJointFlatbufferSize,
-                                                     .tensor_identifier = "joint_state",
-                                                     .localized_name = localized_name });
-        }
-
-        m_injectors[index] = std::move(injector);
-        m_joint_pushers[index] = std::move(joint_pushers);
-        state.output_setup_error.reset();
-        return true;
-    }
-    catch (const std::exception& error)
-    {
-        state.output_setup_error = "output setup failed: " + std::string(error.what());
-        logger()->warn("{} glove output setup failed; this side will retry: {}", to_string(side), error.what());
-    }
-    catch (...)
-    {
-        state.output_setup_error = "output setup failed with an unknown error";
-        logger()->warn("{} glove output setup failed; this side will retry.", to_string(side));
-    }
-    return false;
 }
 
 void AvatarTracker::destroy_output_resources(::avatar::DeviceSide side) noexcept
@@ -792,7 +739,9 @@ void AvatarTracker::refresh_data()
         {
             ::avatar::AvatarDataFrame frame;
             const auto error = state.device->fetch_data(frame, ::avatar::DeviceDataCategory::HUMAN);
-            if (error == ::avatar::ErrorCode::SUCCESS)
+            if (error == ::avatar::ErrorCode::SUCCESS &&
+                frame.payload_case() == payload_case(::avatar::DeviceDataCategory::HUMAN) &&
+                !frame.skeleton.landmark.empty())
             {
                 note_result(::avatar::DeviceDataCategory::HUMAN, error, &frame.skeleton.header.stamp);
                 state.landmarks = std::move(frame.skeleton.landmark);
@@ -812,7 +761,8 @@ void AvatarTracker::refresh_data()
             ::avatar::AvatarDataFrame frame;
             const auto error = state.device->fetch_data(frame, category);
             ::avatar::AvatarDataFrame& cached = cached_joint_frame(state, category);
-            if (error == ::avatar::ErrorCode::SUCCESS)
+            if (error == ::avatar::ErrorCode::SUCCESS && frame.payload_case() == payload_case(category) &&
+                !hand_payload(frame, category).joint.position.empty())
             {
                 note_result(category, error, &hand_payload(frame, category).header.stamp);
                 cached = std::move(frame);
@@ -867,10 +817,6 @@ void AvatarTracker::publish_device_status()
             {
                 fetch_error = dataset.output.error();
             }
-            else if (state.output_setup_error)
-            {
-                fetch_error = state.output_setup_error;
-            }
             else if (dataset.fetch_error && !has_no_current_data)
             {
                 fetch_error = "Avatar SDK fetch_data failed: " + std::string(error_name(*dataset.fetch_error)) + " (" +
@@ -883,7 +829,7 @@ void AvatarTracker::publish_device_status()
                 .ever_observed = m_ever_observed[index],
                 .ingress_fresh = ingress_fresh,
                 .ever_received_ingress = state.ever_received_ingress,
-                .data_fresh = dataset.freshness.fresh(now),
+                .data_fresh = dataset_usable(state, category, now),
                 .ever_received_data = dataset.ever_received_data,
                 .fetch_has_no_current_data = has_no_current_data,
                 .fetch_error = std::move(fetch_error),
@@ -921,6 +867,14 @@ void AvatarTracker::update()
     refresh_data();
     log_waiting_gloves();
     process_haptics();
+    if (m_config.raw || m_config.robot)
+    {
+        push_joint_frames();
+    }
+    if (m_config.human)
+    {
+        inject_hand_data();
+    }
     try
     {
         publish_device_status();
@@ -941,14 +895,6 @@ void AvatarTracker::update()
             logger()->warn("Device status publishing failed; tracking will continue.");
             m_status_publish_error_logged = true;
         }
-    }
-    if (m_config.raw || m_config.robot)
-    {
-        push_joint_frames();
-    }
-    if (m_config.human)
-    {
-        inject_hand_data();
     }
 }
 
@@ -1030,6 +976,22 @@ bool AvatarTracker::dataset_enabled(::avatar::DeviceDataCategory category) const
     return false;
 }
 
+bool AvatarTracker::dataset_usable(const GloveState& state,
+                                   ::avatar::DeviceDataCategory category,
+                                   std::chrono::steady_clock::time_point now) const
+{
+    if (!dataset_enabled(category) || !state.ready || !state.datasets[data_category_index(category)].freshness.fresh(now))
+    {
+        return false;
+    }
+    if (category == ::avatar::DeviceDataCategory::HUMAN)
+    {
+        return !state.landmarks.empty();
+    }
+    const auto& frame = cached_joint_frame(state, category);
+    return frame.payload_case() == payload_case(category) && !hand_payload(frame, category).joint.position.empty();
+}
+
 void AvatarTracker::push_joint_frames()
 {
     for (const ::avatar::DeviceSide side : kDeviceSides)
@@ -1038,13 +1000,10 @@ void AvatarTracker::push_joint_frames()
         {
             GloveState& state = glove(side);
             auto& dataset = state.datasets[data_category_index(category)];
-            const auto& frame = cached_joint_frame(state, category);
             const auto now = std::chrono::steady_clock::now();
-            const bool usable = dataset_enabled(category) && state.ready && dataset.freshness.fresh(now) &&
-                                frame.payload_case() == payload_case(category) &&
-                                !hand_payload(frame, category).joint.position.empty();
-            auto* pusher = dataset.output.update(
-                m_joint_pushers[side_index(side)][joint_category_index(category)], usable, now, kOutputSetupRetryInterval,
+            dataset.output.publish(
+                m_joint_pushers[side_index(side)][joint_category_index(category)], dataset_usable(state, category, now),
+                now, kOutputSetupRetryInterval,
                 [this, side, category]
                 {
                     const std::string localized_name =
@@ -1054,11 +1013,9 @@ void AvatarTracker::push_joint_frames()
                                                              .max_flatbuffer_size = kJointFlatbufferSize,
                                                              .tensor_identifier = "joint_state",
                                                              .localized_name = localized_name });
-                });
-            if (pusher)
-            {
-                push_joint_frame(state, side, category, *pusher);
-            }
+                },
+                [this, &state, side, category](core::SchemaPusher& pusher)
+                { push_joint_frame(state, side, category, pusher); });
         }
     }
 }
@@ -1068,20 +1025,7 @@ void AvatarTracker::push_joint_frame(const GloveState& glove,
                                      ::avatar::DeviceDataCategory category,
                                      core::SchemaPusher& pusher)
 {
-    if (!glove.datasets[data_category_index(category)].freshness.fresh(std::chrono::steady_clock::now()))
-    {
-        return;
-    }
-    const ::avatar::AvatarDataFrame& frame = cached_joint_frame(glove, category);
-    if (frame.payload_case() != payload_case(category))
-    {
-        return;
-    }
-    const ::avatar::Hand& hand = hand_payload(frame, category);
-    if (hand.joint.position.empty())
-    {
-        return;
-    }
+    const auto& hand = hand_payload(cached_joint_frame(glove, category), category);
 
     core::JointStateOutputT output;
     output.device_id = collection_id(side, category);
@@ -1265,29 +1209,23 @@ void AvatarTracker::inject_hand_data()
         GloveState& state = glove(side);
         auto& dataset = state.datasets[data_category_index(::avatar::DeviceDataCategory::HUMAN)];
         const auto now = std::chrono::steady_clock::now();
-        const bool usable = m_config.human && state.ready && dataset.freshness.fresh(now) && !state.landmarks.empty();
-        auto* injector =
-            dataset.output.update(m_injectors[side_index(side)], usable, now, kOutputSetupRetryInterval,
-                                  [this, side]
-                                  {
-                                      return std::make_unique<plugin_utils::HandInjector>(
-                                          m_handles.instance, m_handles.session, xr_hand(side), m_handles.space);
-                                  });
-        if (injector == nullptr)
-        {
-            return;
-        }
-        const std::vector<::avatar::Pose>& landmarks = state.landmarks;
-
-        // No optical/controller wrist: inject wrist-relative at identity with
-        // VALID-only flags so HandsSource still has a skeleton to draw.
-        const plugin_utils::WristSample wrist = m_wrist_source->query(side == ::avatar::DeviceSide::LEFT, time);
-        const XrPosef root = wrist.valid ? wrist.pose : oxr_utils::identity_posef();
-
-        XrHandJointLocationEXT joints[XR_HAND_JOINT_COUNT_EXT];
-        map_landmarks_to_openxr(landmarks, root, wrist.valid && wrist.tracked, joints);
-
-        injector->push(joints, time);
+        dataset.output.publish(
+            m_injectors[side_index(side)], dataset_usable(state, ::avatar::DeviceDataCategory::HUMAN, now), now,
+            kOutputSetupRetryInterval,
+            [this, side]
+            {
+                return std::make_unique<plugin_utils::HandInjector>(
+                    m_handles.instance, m_handles.session, xr_hand(side), m_handles.space);
+            },
+            [this, &state, side, time](plugin_utils::HandInjector& injector)
+            {
+                // No optical/controller wrist: keep valid wrist-relative joints at identity.
+                const auto wrist = m_wrist_source->query(side == ::avatar::DeviceSide::LEFT, time);
+                const XrPosef root = wrist.valid ? wrist.pose : oxr_utils::identity_posef();
+                XrHandJointLocationEXT joints[XR_HAND_JOINT_COUNT_EXT];
+                map_landmarks_to_openxr(state.landmarks, root, wrist.valid && wrist.tracked, joints);
+                injector.push(joints, time);
+            });
     };
 
     for (const ::avatar::DeviceSide side : kDeviceSides)

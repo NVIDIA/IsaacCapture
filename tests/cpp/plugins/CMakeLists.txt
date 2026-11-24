@@ -7,8 +7,9 @@ if(TARGET avatar_plugin_core)
     add_subdirectory(sharpa_avatar)
 endif()
 
-# The SpaceMouse and gamepad plugins (and their core libraries) are Linux only.
+# These plugin tests are Linux only.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_subdirectory(sharpa_avatar/integration)
     add_subdirectory(spacemouse)
     add_subdirectory(gamepad)
 endif()
