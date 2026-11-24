@@ -131,7 +131,7 @@ shows as its sections.
 |---|---|
 | signal | schema, finite values, no valid joint at the origin, unit quaternions, timestamps, payload presence, rate regularity, minimum rate (30 Hz), gaps, joint speed |
 | shape | required joints valid, how often all 26 joints are valid (measured), stable valid set, radius, metres, bone-length constancy, proportions, joint index assignment, handedness, flex direction, optional joints |
-| placement | not at the origin, wrist not frozen, quaternion component order, position and orientation in one frame |
+| placement | not at the origin, wrist not frozen, quaternion component order, no finger joint turned over about its bone, position and orientation in one frame |
 | windows | label structure and alignment, each step performed and in order, flat hand, fist, pinch finger identity and contact, fingers coplanar and level on the table, both hands at one table height, drift between the flat windows, fingertip gap with palms pressed together, fingertip contact while each hand rolls |
 
 The required joints are the wrist and the 20 finger joints. PALM and the four non-thumb

@@ -12,6 +12,7 @@ from dataclasses import replace
 import flatbuffers
 import pytest
 import synth
+from cts_common.vectors import multiply
 
 from hand_cts._schema import GENERATED_DIR  # noqa: F401  (puts core on sys.path)
 from hand_cts.checks import build
@@ -74,6 +75,93 @@ def test_component_order_catches_wxyz_on_a_turned_hand():
 
     outcome = _run("quaternion.component_order", [scramble(f) for f in frames])
     assert outcome.status is Status.FAIL
+
+
+def _distal_turned_over(local):
+    half_turn = synth.axis_angle((0.0, 0.0, 1.0), math.pi)
+    turned = list(local)
+    for distal in (9, 10, 14, 15, 19, 20, 24, 25):
+        position, q = turned[distal]
+        turned[distal] = (position, multiply(q, half_turn))
+    return turned
+
+
+def test_finger_roll_passes_a_curling_hand_turned_in_the_room():
+    turned = synth.axis_angle((1.0, 0.7, 0.2), math.radians(70))
+    assert _run("quaternion.finger_roll", both(orientation=turned)).status is (
+        Status.PASS
+    )
+
+
+def test_finger_roll_catches_a_distal_turned_over_that_component_order_misses():
+    frames = both(transform=_distal_turned_over)
+    assert _run("quaternion.component_order", frames).status is Status.PASS
+    outcome = _run("quaternion.finger_roll", frames)
+    assert outcome.status is Status.FAIL
+    assert "INDEX_DISTAL on INDEX_INTERMEDIATE 100%" in outcome.detail
+
+
+def test_finger_roll_judges_each_knuckle_against_the_wrist():
+    def knuckles_turned_over(local):
+        half_turn = synth.axis_angle((0.0, 0.0, 1.0), math.pi)
+        turned = list(local)
+        for joint in range(7, 26):
+            if joint not in (11, 16, 21):
+                position, q = turned[joint]
+                turned[joint] = (position, multiply(q, half_turn))
+        return turned
+
+    outcome = _run("quaternion.finger_roll", both(transform=knuckles_turned_over))
+    assert outcome.status is Status.FAIL
+    assert outcome.measurements["right"]["turned_over_joints"] == 4
+    assert "INDEX_PROXIMAL on WRIST" in outcome.detail
+
+
+def _index_distal_in(frames, ticks, turned=False, invalid=False):
+    """INDEX_DISTAL in the given ticks turned over about its bone, or marked invalid."""
+    half_turn = synth.axis_angle((0.0, 0.0, 1.0), math.pi)
+    out = []
+    for frame in frames:
+        if frame.sequence in ticks:
+            joints = list(frame.joints)
+            j = joints[9]
+            joints[9] = replace(
+                j,
+                orientation=multiply(j.orientation, half_turn)
+                if turned
+                else j.orientation,
+                is_valid=j.is_valid and not invalid,
+            )
+            frame = replace(frame, joints=tuple(joints))
+        out.append(frame)
+    return out
+
+
+def test_finger_roll_fails_a_joint_turned_over_in_more_than_a_fifth_of_frames():
+    rare = _index_distal_in(both(), range(18), turned=True)
+    assert _run("quaternion.finger_roll", rare).status is Status.PASS
+    often = _index_distal_in(both(), range(30), turned=True)
+    assert _run("quaternion.finger_roll", often).status is Status.FAIL
+
+
+def test_finger_roll_counts_only_frames_where_both_joints_are_valid():
+    frames = _index_distal_in(both(), range(18), turned=True)
+    frames = _index_distal_in(frames, range(60, 120), invalid=True)
+    outcome = _run("quaternion.finger_roll", frames)
+    assert outcome.status is Status.FAIL
+    assert outcome.measurements["right"]["worst_rate"] == pytest.approx(18 / 60)
+
+
+def test_finger_roll_leaves_the_thumb_alone():
+    def thumb_turned_over(local):
+        half_turn = synth.axis_angle((0.0, 0.0, 1.0), math.pi)
+        return [
+            (p, multiply(q, half_turn)) if i in (3, 4, 5) else (p, q)
+            for i, (p, q) in enumerate(local)
+        ]
+
+    frames = both(transform=thumb_turned_over)
+    assert _run("quaternion.finger_roll", frames).status is Status.PASS
 
 
 def test_flex_direction_needs_the_tips_to_go_palmward():

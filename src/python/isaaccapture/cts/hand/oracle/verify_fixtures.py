@@ -144,6 +144,12 @@ def verify(entry: dict, labels: dict) -> None:
         expect(hm.length(first[hm.WRIST][0]) > 50, f"{name}: not centimetres")
     elif name == "defect_quaternion_wxyz":
         expect(abs(first[hm.WRIST][1][0]) > 0.9, f"{name}: w not in the x slot")
+    elif name == "defect_distal_turned_over":
+        dorsal = [hm.quat_rotate(first[i][1], (0.0, 1.0, 0.0)) for i in (8, 9)]
+        bone = hm.unit(hm.sub(first[10][0], first[9][0]))
+        minus_z = hm.quat_rotate(first[9][1], (0.0, 0.0, -1.0))
+        expect(hm.dot(*dorsal) < -0.5, f"{name}: INDEX_DISTAL +Y not turned over")
+        expect(hm.dot(minus_z, bone) > 0.99, f"{name}: INDEX_DISTAL -Z left its bone")
     elif name == "defect_source_switch":
         early = sum(v for *_, v in right[60][1])
         late = sum(v for *_, v in right[-60][1])
