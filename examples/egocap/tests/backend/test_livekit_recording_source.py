@@ -120,6 +120,7 @@ class FakeReceiver:
     stop_gate: asyncio.Event | None = None
     mapping_ready = True
     tracks: dict[int, str] = {}
+    lost: set[int] = set()
 
     def __init__(self, streams, token, clock_sync=False):
         self.clock_sync_requested = clock_sync
@@ -133,6 +134,9 @@ class FakeReceiver:
 
     def track_ids(self):
         return dict(FakeReceiver.tracks)
+
+    def is_lost(self, stream_id):
+        return stream_id in FakeReceiver.lost
 
     async def start(self):
         self.events.append("start")
@@ -173,6 +177,7 @@ def fake_receiver(monkeypatch):
     FakeReceiver.start_gate = FakeReceiver.stop_gate = None
     FakeReceiver.mapping_ready = True
     FakeReceiver.tracks = {}
+    FakeReceiver.lost = set()
     monkeypatch.setattr(lrec, "LiveKitFrameReceiver", FakeReceiver)
 
 
@@ -632,3 +637,39 @@ async def test_no_reported_tested_tracks_means_no_refusal():
     source = make_source(streams, tested_tracks=lambda: {})
     await prepare_with_frames(source, streams)
     await source.stop()
+
+
+async def test_a_camera_republished_between_prepare_and_start_refuses_the_start_and_feeds_nothing():
+    streams = [livekit_stream(16)]
+    FakeReceiver.tracks = {16: "t16"}
+    source = make_source(streams, tested_tracks=lambda: {16: "t16"})
+    await prepare_with_frames(source, streams)
+    receiver = FakeReceiver.instances[0]
+    FakeReceiver.tracks = {16: "t16-new"}
+    ingress = FakeIngress()
+    with pytest.raises(RuntimeError, match="cam16: the camera was republished since the network check"):
+        source.start(ingress, lambda message: None)
+    receiver.queues[16].put_nowait(frame(16))
+    await asyncio.sleep(0.01)
+    assert "clear" not in receiver.events
+    assert ingress.offered == []
+    await source.stop()
+
+
+async def test_a_lost_track_refuses_the_start_even_with_a_frame_still_queued():
+    streams = [livekit_stream(16)]
+    FakeReceiver.tracks = {16: "t16"}
+    FakeReceiver.lost = {16}
+    source = make_source(streams, tested_tracks=lambda: {16: "t16"})
+    with pytest.raises(RuntimeError, match="cam16: the LiveKit track was lost before recording started"):
+        await prepare_with_frames(source, streams)
+    assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_a_lost_track_is_reported_before_the_republished_message():
+    streams = [livekit_stream(16)]
+    FakeReceiver.tracks = {16: "t16-new"}
+    FakeReceiver.lost = {16}
+    source = make_source(streams, tested_tracks=lambda: {16: "t16"})
+    with pytest.raises(RuntimeError, match="was lost before recording started"):
+        await prepare_with_frames(source, streams)

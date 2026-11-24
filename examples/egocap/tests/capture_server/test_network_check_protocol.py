@@ -426,3 +426,35 @@ def test_server_status_reply_is_not_a_session_message():
     wire = _wire(_reply())
     with pytest.raises(p.ProtocolError):
         p.parse_server_message(wire)
+
+
+@pytest.mark.parametrize("rate", [240, 240.0, 1000.5])
+def test_camera_expected_fps_accepts_rates_above_the_generic_rate_limit(rate):
+    wire = _wire(_camera())
+    wire["expected_fps"] = rate
+    assert p.NetworkCheckCamera.from_json(wire).expected_fps == float(rate)
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), float("-inf"), True, "30", None], ids=repr)
+def test_camera_expected_fps_rejects_a_non_positive_or_non_finite_rate(bad):
+    wire = _wire(_camera())
+    wire["expected_fps"] = bad
+    with pytest.raises(p.ProtocolError, match="expected_fps"):
+        p.NetworkCheckCamera.from_json(wire)
+
+
+def _server_camera_wire(fps) -> dict:
+    wire = json.loads(json.dumps(p.ServerCamera(name="c", transport="livekit", selected=False).to_json()))
+    wire["fps"] = fps
+    return wire
+
+
+@pytest.mark.parametrize("rate", [240, 240.0])
+def test_server_camera_fps_accepts_rates_above_the_generic_rate_limit(rate):
+    assert p.ServerCamera.from_json(_server_camera_wire(rate)).fps == float(rate)
+
+
+@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), True], ids=repr)
+def test_server_camera_fps_rejects_a_non_positive_or_non_finite_rate(bad):
+    with pytest.raises(p.ProtocolError, match="fps"):
+        p.ServerCamera.from_json(_server_camera_wire(bad))

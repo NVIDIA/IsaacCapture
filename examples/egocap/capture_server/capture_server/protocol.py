@@ -1079,6 +1079,13 @@ def _require_strict_bool(value: Any, context: str) -> bool:
     return value
 
 
+def _require_positive_rate(value: Any, context: str) -> float:
+    """A positive finite frame rate; a reply carries any rate the stream descriptors accept."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
+        raise ProtocolError(f"{context} must be a positive finite number")
+    return float(value)
+
+
 def _require_rate_hz(value: Any, context: str) -> float:
     # `0 < value <= _MAX_RATE_HZ` already rejects NaN (every comparison
     # with NaN is False) and +/-inf (inf is never <= a finite bound), so
@@ -1905,7 +1912,7 @@ class NetworkCheckCamera:
             stream_id=stream_id,
             name=name,
             passed=passed,
-            expected_fps=_require_rate_hz(data.get("expected_fps"), "network check camera.expected_fps"),
+            expected_fps=_require_positive_rate(data.get("expected_fps"), "network check camera.expected_fps"),
             reasons=_require_text_tuple(data.get("reasons"), "network check camera.reasons"),
             track_id=_require_optional_text(data.get("track_id"), "network check camera.track_id"),
             **measured,
@@ -3024,7 +3031,7 @@ class ServerCamera:
             track=_require_optional_text(data.get("track"), "server camera.track"),
             width=_require_optional_number(data.get("width"), "server camera.width", integer=True),
             height=_require_optional_number(data.get("height"), "server camera.height", integer=True),
-            fps=None if fps is None else _require_rate_hz(fps, "server camera.fps"),
+            fps=None if fps is None else _require_positive_rate(fps, "server camera.fps"),
             stream_id=_require_optional_number(data.get("stream_id"), "server camera.stream_id", integer=True),
             state=None if state is None else _require_int_enum(state, DeviceState, "server camera.state"),
             error=_require_optional_text(data.get("error"), "server camera.error"),

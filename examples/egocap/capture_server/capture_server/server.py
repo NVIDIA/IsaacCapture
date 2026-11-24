@@ -62,7 +62,7 @@ from . import protocol as p
 from .acquisition import Acquisition, CameraSourceError, SourceExited
 from .calibration import CalibrationConfig, CalibrationSession, build_worker, find_worker
 from .livekit_token import API_KEY_ENV, API_SECRET_ENV, subscriber_token
-from .network_check import NetworkCheckPolicy, NetworkCheckService
+from .network_check import NetworkCheckPolicy, NetworkCheckService, require_secure_livekit_urls
 
 _LOG = logging.getLogger("isaaccapture.capture_server.server")
 
@@ -214,6 +214,8 @@ class ServerConfig:
             raise ValueError(f"ServerConfig.livekit_streams: {exc}") from exc
         if self.network_check is not None and not self.livekit_streams:
             raise ValueError("ServerConfig.network_check needs livekit_streams to check")
+        if self.network_check is not None:
+            require_secure_livekit_urls(self.livekit_streams)
         jpeg_names = set(self.cameras or ()) | set(self.known_cameras or ())
         clashes = sorted(jpeg_names & {s.name for s in self.livekit_streams})
         if clashes:

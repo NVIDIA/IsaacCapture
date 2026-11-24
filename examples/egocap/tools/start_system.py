@@ -744,6 +744,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         # The camera chain (sender, receiver, bridge, LiveKit) runs for the Orin, or for --mock when the tools to
         # carry its video are given; without them --mock is just CaptureServer's own synthetic cameras.
         chain = bool(args.orin) or (args.mock and bool(args.bridge and args.livekit_server))
+        # The check needs the LiveKit camera chain; without it no streams file is given to CaptureServer.
+        if args.network_check and not chain:
+            raise StartupError(
+                "--network-check needs the camera chain: use --orin, or --mock with --bridge and --livekit-server"
+            )
         if chain and args.mock and not (args.mock_sender and args.mock_sender.is_file()):
             raise StartupError(
                 "--mock with --bridge and --livekit-server needs --mock-sender (or EGOCAP_MOCK_SENDER)"

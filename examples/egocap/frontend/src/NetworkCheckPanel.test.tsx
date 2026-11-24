@@ -147,6 +147,54 @@ describe("NetworkCheckPanel", () => {
       expect(rows[2].textContent).toContain("Not measured");
     });
 
+    it("marks a live READY pass as Passed with the pass class", () => {
+      const { container } = render(<NetworkCheckPanel check={check()} live={true} />);
+      expect(screen.getByText("Passed")).toBeTruthy();
+      expect(container.querySelector(".netcheck-camera--pass")).not.toBeNull();
+      expect(container.querySelector(".netcheck-camera--last-known")).toBeNull();
+    });
+
+    it("marks a live UNSUITABLE failing camera as Failed with the fail class", () => {
+      const { container } = render(
+        <NetworkCheckPanel
+          check={check({
+            state: NetworkCheckState.UNSUITABLE,
+            reason: "head_camera drops frames",
+            cameras: [camera({ passed: false, reasons: ["late"] })],
+          })}
+          live={true}
+        />,
+      );
+      expect(screen.getByText("Failed")).toBeTruthy();
+      expect(container.querySelector(".netcheck-camera--fail")).not.toBeNull();
+    });
+
+    it.each([
+      ["a READY check that is not live", NetworkCheckState.READY, false],
+      ["a live STALE check", NetworkCheckState.STALE, true],
+    ])("shows %s as last known, never in the pass class", (_name, state, live) => {
+      const { container } = render(<NetworkCheckPanel check={check({ state })} live={live} />);
+      expect(screen.getByText("Passed (last known)")).toBeTruthy();
+      expect(container.querySelector(".netcheck-camera--last-known")).not.toBeNull();
+      expect(container.querySelector(".netcheck-camera--pass")).toBeNull();
+    });
+
+    it("labels retained failed and unmeasured cameras as last known too", () => {
+      render(
+        <NetworkCheckPanel
+          check={check({
+            cameras: [
+              camera({ stream_id: 2, name: "left_wrist", passed: false }),
+              camera({ stream_id: 3, name: "right_wrist", passed: null }),
+            ],
+          })}
+          live={false}
+        />,
+      );
+      expect(screen.getByText("Failed (last known)")).toBeTruthy();
+      expect(screen.getByText("Not measured (last known)")).toBeTruthy();
+    });
+
     it("renders null measurements as unknown, never zero", () => {
       render(
         <NetworkCheckPanel

@@ -1153,3 +1153,33 @@ def test_capture_server_child_gets_the_livekit_credentials(recorded_main):
     env = next(c.env for c in recorded_main.children if c.name == "capture-server")
     assert env["LIVEKIT_API_KEY"] == ss.LIVEKIT_DEV_KEY
     assert env["LIVEKIT_API_SECRET"] == ss.LIVEKIT_DEV_SECRET
+
+
+def test_network_check_without_the_camera_chain_is_refused(recorded_main, capsys):
+    assert ss.main(["--mock", "--network-check"]) == 1
+    assert "--network-check needs the camera chain" in capsys.readouterr().err
+    assert recorded_main.children == []
+
+
+def test_plain_mock_without_the_camera_chain_still_starts(recorded_main):
+    assert ss.main(["--mock"]) == 0
+
+
+def test_network_check_with_orin_is_accepted(recorded_main):
+    assert ss.main([*ORIN_ARGV, *CAMERA_ARGS, "--network-check"]) == 0
+
+
+def test_network_check_with_the_mock_chain_is_accepted(recorded_main, tmp_path: Path):
+    mock_sender = tmp_path / "mock_sender.py"
+    mock_sender.write_text("")
+    argv = [
+        "--mock",
+        "--bridge",
+        "b",
+        "--livekit-server",
+        "l",
+        "--mock-sender",
+        str(mock_sender),
+        "--network-check",
+    ]
+    assert ss.main(argv) == 0

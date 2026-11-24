@@ -853,3 +853,29 @@ async def test_the_step_is_learned_from_the_smallest_delta(receiver):
     # A first gap of two steps looks like stride 4 until a smaller step is seen; later gaps use the smaller one.
     counters = await _ids(receiver, (4, 8, 10, 12))
     assert counters.id_step == 2 and counters.missing_frames == 0
+
+
+# ---- is_lost and track_ids of a lost stream ----
+
+
+async def test_a_stream_is_lost_from_its_loss_until_it_is_republished(receiver):
+    assert not receiver.is_lost(1)
+    track = subscribe(receiver)
+    assert not receiver.is_lost(1)
+    _unsubscribe(receiver, track)
+    assert receiver.is_lost(1)
+    subscribe(receiver)
+    assert not receiver.is_lost(1)
+
+
+async def test_a_failing_reader_removes_its_stream_from_track_ids(receiver):
+    track = subscribe(receiver, "left")
+    subscribe(receiver, "right")
+    assert set(receiver.track_ids()) == {1, 2}
+    bad = event(1, frame_id=1)
+    bad.frame.height = 99
+    waiter = asyncio.ensure_future(receiver.next_frame_or_lost(1))
+    track.push(bad)
+    assert await asyncio.wait_for(waiter, 1) is None
+    assert receiver.is_lost(1)
+    assert set(receiver.track_ids()) == {2}

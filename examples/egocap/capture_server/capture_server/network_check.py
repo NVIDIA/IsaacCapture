@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import logging
 import math
@@ -27,6 +28,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
+from urllib.parse import urlparse
 
 from . import protocol as p
 from .frame_timing import frame_age_is_plausible, uncertainty_budget_ns
@@ -106,6 +108,9 @@ class NetworkCheckPolicy:
             raise ValueError("network_check.min_delivery_fraction must be a number in (0, 1]")
         if type(self.max_low_windows) is not int or self.max_low_windows < 0:
             raise ValueError("network_check.max_low_windows must be a nonnegative integer")
+        # The window is measured in whole nanoseconds; one that rounds to none would divide every rate by zero.
+        if int(self.window_s * 1e9) < 1:
+            raise ValueError("network_check.window_s must be at least one nanosecond")
         if self.startup_s + self.window_s > MAX_TOTAL_S:
             raise ValueError(f"network_check.startup_s plus window_s must not exceed {MAX_TOTAL_S:g} s")
 
@@ -117,7 +122,8 @@ class NetworkCheckPolicy:
         known = {f.name for f in fields(cls)}
         unknown = set(raw) - known
         if unknown:
-            raise ValueError(f"network_check has unknown key(s): {sorted(unknown)}")
+            # Keys from YAML can be any type; sorting their text keeps the error a ValueError, never a TypeError.
+            raise ValueError(f"network_check has unknown key(s): {sorted(map(str, unknown))}")
         values: dict[str, Any] = {}
         for name, value in raw.items():
             if name == "max_low_windows":
@@ -127,6 +133,24 @@ class NetworkCheckPolicy:
             else:
                 values[name] = _finite_number(value, name)
         return cls(**values)
+
+
+def is_loopback_url(url: str) -> bool:
+    """Whether ``url`` names this machine: ``localhost`` or a loopback IP literal."""
+    host = urlparse(url).hostname or ""
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def require_secure_livekit_urls(streams: Sequence[p.LiveKitCameraStream]) -> None:
+    """The check sends a viewer token to the room's URL, so only a loopback host may be reached without TLS."""
+    for url in sorted({s.url for s in streams}):
+        if urlparse(url).scheme == "ws" and not is_loopback_url(url):
+            raise ValueError(f"network_check needs a wss:// LiveKit URL for a non-loopback host, got {url!r}")
 
 
 def streams_generation(streams: Sequence[p.LiveKitCameraStream]) -> str:
@@ -181,6 +205,7 @@ class StreamWindow:
     missing_timestamp: int = 0
     mapping_problems: int = 0
     implausible_age: int = 0
+    wrong_size: int = 0
     lost: bool = False
     overflow: int = 0
     publication_changes: int = 0
@@ -204,6 +229,7 @@ class StreamWindow:
         receive_ns: int,
         age_s: float | None,
         mapping_ok: bool,
+        size_ok: bool = True,
     ) -> None:
         """Record one received frame. ``capture_s`` and ``age_s`` are None when the frame has no usable timing."""
         if not self.start_ns <= receive_ns <= self.end_ns:
@@ -217,7 +243,10 @@ class StreamWindow:
         self.unique += 1
         if age_s is not None:
             self._ages_s.append(age_s)
-        if capture_s is None:
+        if not size_ok:
+            # A camera that changes size mid-window is not the stream that was offered.
+            self.wrong_size += 1
+        elif capture_s is None:
             self.missing_timestamp += 1
         elif not mapping_ok:
             self.mapping_problems += 1
@@ -280,6 +309,10 @@ class StreamWindow:
             reasons.append("its publication was replaced")
         if self.missing_timestamp:
             reasons.append(f"{self.missing_timestamp} frame(s) arrived without a capture time")
+        if self.wrong_size:
+            reasons.append(
+                f"{self.wrong_size} frame(s) were not the offered {self.stream.width}x{self.stream.height}"
+            )
         if self.mapping_problems:
             reasons.append(f"the clock mapping was missing or too uncertain for {self.mapping_problems} frame(s)")
         if self.implausible_age:
@@ -373,6 +406,8 @@ class NetworkCheckService:
         self._completed_unix_ns: int | None = None
         self._task: asyncio.Task[None] | None = None
         self._retiring: asyncio.Task[None] | None = None
+        # Advances whenever a session begins or ends, so a teardown that awaited can tell a newer check is running.
+        self._generation = 0
         # The capture session this verdict belongs to; None between sessions, when nothing is reported as passed.
         self._session_id: str | None = None
         # Joins that outlived their deadline; held so they are not garbage-collected mid-flight.
@@ -424,6 +459,7 @@ class NetworkCheckService:
         """
         self._cancel_running()
         self._session_id = session_id
+        self._generation += 1
         self._begin()
 
     def start(self) -> bool:
@@ -438,9 +474,13 @@ class NetworkCheckService:
         if self._session_id != session_id:
             return
         self._session_id = None
+        self._generation += 1
+        generation = self._generation
         await self.stop()
-        self._state, self._reason, self._cameras = p.NetworkCheckState.NOT_TESTED, None, ()
-        self._completed_ns = self._completed_unix_ns = None
+        # A newer session may have begun while this one awaited; its verdict is not this teardown's to reset.
+        if self._generation == generation:
+            self._state, self._reason, self._cameras = p.NetworkCheckState.NOT_TESTED, None, ()
+            self._completed_ns = self._completed_unix_ns = None
 
     def _cancel_running(self) -> None:
         task, self._task = self._task, None
@@ -460,11 +500,12 @@ class NetworkCheckService:
 
     async def stop(self) -> None:
         """Cancel a running check and leave the room; no verdict is reported for a check that never finished."""
+        generation = self._generation
         task, self._task = self._task, None
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        if self._state == p.NetworkCheckState.CHECKING:
+        if self._state == p.NetworkCheckState.CHECKING and self._generation == generation:
             self._state, self._phase = p.NetworkCheckState.NOT_TESTED, None
         # A leave that outlived its deadline gets the same bound here, so shutdown cannot wait on a stuck room.
         if self._background:
@@ -572,20 +613,28 @@ class NetworkCheckService:
     async def _first_frame(
         self, receiver: LiveKitFrameReceiver, stream: p.LiveKitCameraStream, deadline: float
     ) -> str | None:
-        """Why this camera has no usable first frame, or None when it has one."""
-        remaining = deadline - asyncio.get_running_loop().time()
-        try:
-            frame = await receiver.next_frame_or_lost(stream.stream_id, timeout=max(remaining, 0.0))
-        except asyncio.TimeoutError:
-            return f"no frame arrived within the {self._policy.startup_s:g} s startup allowance"
-        if frame is None:
-            return "its LiveKit track was lost before the check started"
-        if frame.user_timestamp_us is None:
-            return "the first frame carries no capture time (the bridge publishes none while time sync is not up)"
-        if frame.image.shape[:2] != (stream.height, stream.width):
-            got = f"{frame.image.shape[1]}x{frame.image.shape[0]}"
-            return f"frames are {got}, expected {stream.width}x{stream.height}"
-        return None
+        """Why this camera has no usable first frame by the deadline, or None once it has one.
+
+        An untimed frame is normal while the bridge's clock settles, so reading continues until a usable frame
+        arrives, the track is lost or the startup allowance ends; the last problem seen is the one reported.
+        """
+        loop = asyncio.get_running_loop()
+        problem = f"no frame arrived within the {self._policy.startup_s:g} s startup allowance"
+        while (remaining := deadline - loop.time()) > 0:
+            try:
+                frame = await receiver.next_frame_or_lost(stream.stream_id, timeout=remaining)
+            except asyncio.TimeoutError:
+                return problem
+            if frame is None:
+                return "its LiveKit track was lost before the check started"
+            if frame.user_timestamp_us is None:
+                problem = "no frame carried a capture time (the bridge publishes none while time sync is not up)"
+            elif frame.image.shape[:2] != (stream.height, stream.width):
+                got = f"{frame.image.shape[1]}x{frame.image.shape[0]}"
+                problem = f"frames are {got}, expected {stream.width}x{stream.height}"
+            else:
+                return None
+        return problem
 
     @staticmethod
     def _mapping_problem(receiver: LiveKitFrameReceiver, budget_ns: int) -> str | None:
@@ -610,6 +659,8 @@ class NetworkCheckService:
         self._set_phase("measuring")
         start_ns = self._now_ns()
         end_ns = start_ns + int(self._policy.window_s * 1e9)
+        # The result is about the publication measured when the window began, not whichever one is current later.
+        start_tracks = receiver.track_ids()
         windows = {
             s.stream_id: StreamWindow(
                 s,
@@ -624,16 +675,28 @@ class NetworkCheckService:
         }
         await asyncio.gather(*(self._observe(receiver, windows[s.stream_id], budget_ns) for s in self._streams))
         clock_sync = receiver.clock_sync
+        end_tracks = receiver.track_ids()
         for stream_id, window in windows.items():
-            window.finish(receiver.counters[stream_id])
+            # A camera whose track is gone or replaced by the end is not the one whose frames were measured; the
+            # receiver's own counter misses a replacement that follows a detach.
+            if end_tracks.get(stream_id) != start_tracks.get(stream_id):
+                window.publication_changes += 1
             # A mapping that jumped during the window is a fault of every camera placed on it.
             if clock_sync is not None and clock_sync.discontinuity:
                 window.mapping_problems += 1
-        tracks = receiver.track_ids()
-        return tuple(replace(w.result(), track_id=tracks.get(w.stream.stream_id)) for w in windows.values())
+        return tuple(replace(w.result(), track_id=start_tracks.get(w.stream.stream_id)) for w in windows.values())
 
     async def _observe(self, receiver: LiveKitFrameReceiver, window: StreamWindow, budget_ns: int) -> None:
         """Feed one camera's frames to its window until the window's end instant or its track's loss."""
+        stream_id = window.stream.stream_id
+        try:
+            await self._feed_window(receiver, window, budget_ns)
+        finally:
+            # Read when this camera's window ends: what the receiver loses afterwards is not part of it.
+            window.finish(receiver.counters[stream_id])
+
+    async def _feed_window(self, receiver: LiveKitFrameReceiver, window: StreamWindow, budget_ns: int) -> None:
+        """Read frames into the window until its end instant or its track's loss."""
         stream_id = window.stream.stream_id
         while (remaining := (window.end_ns - self._now_ns()) / 1e9) > 0:
             try:
@@ -655,4 +718,5 @@ class NetworkCheckService:
                 receive_ns=frame.receive_time_ns,
                 age_s=age_s,
                 mapping_ok=mapping is not None and mapping.uncertainty_ns <= budget_ns,
+                size_ok=frame.image.shape[:2] == (window.stream.height, window.stream.width),
             )

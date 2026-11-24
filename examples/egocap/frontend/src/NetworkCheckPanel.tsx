@@ -63,12 +63,15 @@ function longestSilence(camera: NetworkCheckCamera): number | null {
   return known.length === 0 ? null : Math.max(...known);
 }
 
-function CameraRow({ camera }: { camera: NetworkCheckCamera }) {
-  const verdict = camera.passed === null ? "not judged" : camera.passed ? "pass" : "fail";
+/** `current` is false when the result is out of date or the feed is not live: a retained verdict is then a last-known
+ * fact, shown neutrally and never in the pass colour. */
+function CameraRow({ camera, current }: { camera: NetworkCheckCamera; current: boolean }) {
+  const verdict = !current ? "last-known" : camera.passed === null ? "not judged" : camera.passed ? "pass" : "fail";
+  const label = camera.passed === null ? "Not measured" : camera.passed ? "Passed" : "Failed";
   return (
     <li className={`netcheck-camera netcheck-camera--${verdict.replace(" ", "-")}`}>
       <span className="netcheck-camera-name">{camera.name}</span>
-      <span className="netcheck-camera-verdict">{camera.passed === null ? "Not measured" : camera.passed ? "Passed" : "Failed"}</span>
+      <span className="netcheck-camera-verdict">{current ? label : `${label} (last known)`}</span>
       <span>
         Delivery rate: {show(camera.delivered_fps, " fps", 1)} (configured: {camera.expected_fps} fps)
       </span>
@@ -126,7 +129,7 @@ export function NetworkCheckPanel({ check, live, onRun, runBlockedReason = null 
       {refusal !== null && <p className="netcheck-reason">{refusal}</p>}
       <ul className="netcheck-cameras" aria-label="Camera delivery">
         {check.cameras.map((camera) => (
-          <CameraRow key={camera.stream_id} camera={camera} />
+          <CameraRow key={camera.stream_id} camera={camera} current={live && check.state !== NetworkCheckState.STALE} />
         ))}
       </ul>
       {check.completed_at_unix_ns !== null && (

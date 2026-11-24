@@ -402,3 +402,31 @@ def test_a_result_with_shrinking_frame_age_is_a_wire_valid_camera():
     assert camera.passed is True
     assert camera.age_growth_ms < 0
     assert p.NetworkCheckCamera.from_json(camera.to_json()) == camera
+
+
+def test_wrong_size_frames_are_not_usable_and_the_reason_names_the_offered_size():
+    window = _window()
+    _feed(window)
+    for i in range(5):
+        window.add_frame(
+            frame_id=10_000 + i,
+            capture_s=1.0,
+            receive_ns=window.start_ns + SEC,
+            age_s=0.05,
+            mapping_ok=True,
+            size_ok=False,
+        )
+    camera = _finished(window)
+    assert camera.usable_frames == 30 * 60
+    assert camera.passed is False
+    assert any("5 frame(s) were not the offered 6x4" in r for r in camera.reasons)
+
+
+def test_a_wrong_size_frame_is_not_also_counted_as_missing_a_capture_time():
+    window = _window()
+    window.add_frame(
+        frame_id=1, capture_s=None, receive_ns=window.start_ns + SEC, age_s=None, mapping_ok=True, size_ok=False
+    )
+    reasons = _finished(window).reasons
+    assert any("not the offered" in r for r in reasons)
+    assert not any("without a capture time" in r for r in reasons)

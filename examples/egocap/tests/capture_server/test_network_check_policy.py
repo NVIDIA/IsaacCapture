@@ -100,3 +100,14 @@ def test_from_mapping_applies_the_same_range_checks_as_the_constructor():
         NetworkCheckPolicy.from_mapping({"min_delivery_fraction": 1.5})
     with pytest.raises(ValueError, match="must be positive"):
         NetworkCheckPolicy.from_mapping({"window_s": 0})
+
+
+def test_a_window_that_rounds_to_no_nanoseconds_is_rejected():
+    with pytest.raises(ValueError, match="at least one nanosecond"):
+        NetworkCheckPolicy(window_s=5e-10)
+    assert NetworkCheckPolicy(window_s=1e-9).window_s == 1e-9
+
+
+def test_from_mapping_rejects_unknown_keys_of_mixed_types_with_a_value_error():
+    with pytest.raises(ValueError, match="unknown key"):
+        NetworkCheckPolicy.from_mapping({"bogus": 1, 7: 2})

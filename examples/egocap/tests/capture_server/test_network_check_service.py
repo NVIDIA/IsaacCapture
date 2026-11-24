@@ -120,6 +120,8 @@ class FakeReceiver:
         self.entered_measure = asyncio.Event()
         self.on_measure = None
         self.lost: set[int] = set()
+        self.stream_gates: dict[int, asyncio.Event] = {}
+        self.track_script: list[dict[int, str]] | None = None
 
     async def start(self):
         self.starts += 1
@@ -134,6 +136,8 @@ class FakeReceiver:
             await self.stop_gate.wait()
 
     def track_ids(self):
+        if self.track_script:
+            return self.track_script.pop(0) if len(self.track_script) > 1 else self.track_script[0]
         return {s.stream_id: f"TR_{s.stream_id}" for s in self.streams}
 
     def clear_queued(self):
@@ -144,9 +148,11 @@ class FakeReceiver:
         await asyncio.sleep(0)
         if not self.measuring:
             mode = self.startup.get(stream_id, "frame")
-            if mode == "timeout":
+            if isinstance(mode, list):
+                mode = mode.pop(0) if len(mode) > 1 else mode[0]
+            if isinstance(mode, str) and mode == "timeout":
                 raise asyncio.TimeoutError
-            if mode == "lost":
+            if isinstance(mode, str) and mode == "lost":
                 return None
             if isinstance(mode, ReceivedFrame):
                 return mode
@@ -157,6 +163,8 @@ class FakeReceiver:
                 self.on_measure(self)
         if self.measure_gate is not None:
             await self.measure_gate.wait()
+        if stream_id in self.stream_gates:
+            await self.stream_gates[stream_id].wait()
         script = self.scripts.get(stream_id, [])
         if script:
             return script.pop(0)
@@ -350,11 +358,11 @@ async def test_a_track_lost_before_the_check_started_is_unsuitable():
 
 
 async def test_a_first_frame_without_a_capture_time_is_unsuitable():
-    harness = Harness(startup={16: frame(16, T0, 0, stamped=False)})
+    harness = Harness(policy=_policy(startup_s=0.2), startup={16: frame(16, T0, 0, stamped=False)})
     harness.service.begin_session("s1")
     status = await harness.finished()
     assert status.state is p.NetworkCheckState.UNSUITABLE
-    assert "cam16" in status.reason and "no capture time" in status.reason
+    assert "cam16" in status.reason and "no frame carried a capture time" in status.reason
 
 
 async def test_a_first_frame_of_the_wrong_geometry_is_unsuitable():
@@ -747,3 +755,159 @@ async def test_the_measured_cameras_carry_their_track_ids():
     harness.service.begin_session("s1")
     status = await harness.finished()
     assert {c.stream_id: c.track_id for c in status.cameras} == {16: "TR_16", 17: "TR_17"}
+
+
+# -- startup frames ---------------------------------------------------------------------------------------
+
+
+async def test_startup_reads_past_untimed_frames_until_a_timed_one_arrives():
+    untimed = frame(16, T0, 0, stamped=False)
+    harness = Harness(
+        startup={16: [untimed, untimed, untimed, frame(16, T0, 0)]}, scripts={16: healthy(16), 17: healthy(17)}
+    )
+    harness.service.begin_session("s1")
+    status = await harness.finished()
+    assert status.state is p.NetworkCheckState.READY
+
+
+async def test_only_untimed_frames_until_the_deadline_report_the_missing_capture_time():
+    harness = Harness(policy=_policy(startup_s=0.2), startup={16: [frame(16, T0, 0, stamped=False)]})
+    harness.service.begin_session("s1")
+    status = await harness.finished()
+    assert status.state is p.NetworkCheckState.UNSUITABLE
+    assert status.cameras[0].reasons[0].startswith("no frame carried a capture time")
+    assert harness.receiver.cleared == 0
+
+
+async def test_a_track_lost_after_untimed_startup_frames_still_reports_lost():
+    harness = Harness(startup={16: [frame(16, T0, 0, stamped=False), "lost"]})
+    harness.service.begin_session("s1")
+    status = await harness.finished()
+    assert status.state is p.NetworkCheckState.UNSUITABLE
+    assert "lost before the check started" in status.reason
+
+
+async def test_wrong_size_startup_frames_then_a_correct_one_pass():
+    wrong = frame(16, T0, 0, shape=(8, 12, 3))
+    harness = Harness(startup={16: [wrong, wrong, frame(16, T0, 0)]}, scripts={16: healthy(16), 17: healthy(17)})
+    harness.service.begin_session("s1")
+    assert (await harness.finished()).state is p.NetworkCheckState.READY
+
+
+# -- counters and tracks pinned to the window ------------------------------------------------------------
+
+
+async def test_receiver_losses_after_a_cameras_window_ends_do_not_change_its_verdict():
+    harness = Harness(scripts={16: healthy(16), 17: healthy(17)})
+    harness.service.begin_session("s1")
+    await asyncio.sleep(0)
+    receiver = harness.receiver
+    receiver.stream_gates[17] = gate = asyncio.Event()
+    await _until(lambda: not receiver.scripts[16])
+    await asyncio.sleep(0.02)
+    counters = receiver.counters[16]
+    counters.queue_overflow += 5
+    counters.publication_changes += 1
+    counters.missing_frames += 3
+    gate.set()
+    status = await harness.finished()
+    camera = status.cameras[0]
+    assert (camera.stream_id, camera.passed, camera.reasons, camera.missing_frames) == (16, True, (), 0)
+    assert status.state is p.NetworkCheckState.READY
+
+
+async def test_the_reported_track_is_the_one_measured_at_the_window_start():
+    ids = {16: "A16", 17: "A17"}
+    harness = _healthy_harness()
+    harness.service.begin_session("s1")
+    await asyncio.sleep(0)
+    harness.receiver.track_script = [ids, {16: "B16", 17: "A17"}]
+    status = await harness.finished()
+    first, second = status.cameras
+    assert (first.passed, first.track_id) == (False, "A16")
+    assert "its publication was replaced" in first.reasons[-1]
+    assert (second.passed, second.track_id) == (True, "A17")
+    assert "B16" not in repr(status)
+
+
+async def test_a_track_missing_at_the_window_end_fails_without_a_counter_change():
+    harness = _healthy_harness()
+    harness.service.begin_session("s1")
+    await asyncio.sleep(0)
+    harness.receiver.track_script = [{16: "A16", 17: "A17"}, {17: "A17"}]
+    status = await harness.finished()
+    first = status.cameras[0]
+    assert (first.passed, first.track_id) == (False, "A16")
+    assert "its publication was replaced" in first.reasons[-1]
+    assert status.cameras[1].passed is True
+
+
+async def test_wrong_size_frames_during_the_window_make_the_camera_fail_naming_the_offered_size():
+    wrong = [frame(16, T0 + 10_000_000 * i, 1000 + i, shape=(8, 12, 3)) for i in range(4)]
+    harness = Harness(scripts={16: healthy(16) + wrong, 17: healthy(17)})
+    harness.service.begin_session("s1")
+    status = await harness.finished()
+    first = status.cameras[0]
+    assert first.passed is False
+    assert any("4 frame(s) were not the offered 6x4" in r for r in first.reasons)
+    assert status.cameras[1].passed is True
+
+
+# -- teardown races -------------------------------------------------------------------------------------
+
+
+async def _slow_leave_in_measurement(harness: Harness) -> asyncio.Event:
+    harness.service.begin_session("A")
+    await asyncio.sleep(0)
+    receiver = harness.receiver
+    receiver.measure_gate = asyncio.Event()
+    stop_gate = receiver.stop_gate = asyncio.Event()
+    await asyncio.wait_for(receiver.entered_measure.wait(), 5)
+    return stop_gate
+
+
+async def test_ending_a_session_while_a_newer_one_begins_does_not_reset_the_newer_check(monkeypatch):
+    monkeypatch.setattr("capture_server.network_check._LEAVE_TIMEOUT_S", 5.0)
+    harness = _healthy_harness()
+    stop_gate = await _slow_leave_in_measurement(harness)
+    ending = asyncio.ensure_future(harness.service.end_session("A"))
+    await asyncio.sleep(0)
+    harness.service.begin_session("B")
+    assert harness.service.snapshot().state is p.NetworkCheckState.CHECKING
+    stop_gate.set()
+    await asyncio.wait_for(ending, 5)
+    status = harness.service.snapshot()
+    assert (status.state, status.session_id) == (p.NetworkCheckState.CHECKING, "B")
+    assert (await harness.finished()).state is p.NetworkCheckState.READY
+
+
+async def test_ending_a_session_while_a_newer_one_begins_keeps_the_newer_verdict(monkeypatch):
+    monkeypatch.setattr("capture_server.network_check._LEAVE_TIMEOUT_S", 0.1)
+    harness = _healthy_harness()
+    stop_gate = await _slow_leave_in_measurement(harness)
+    first = harness.receiver
+    ending = asyncio.ensure_future(harness.service.end_session("A"))
+    # A's leave has begun and is stuck, so B is held off by it.
+    await _until(lambda: first.stops == 1)
+    harness.service.begin_session("B")
+    # B cannot connect while A's leave is stuck, so it reaches a verdict before A's teardown returns.
+    await _until(lambda: harness.service.snapshot().state is p.NetworkCheckState.UNSUITABLE)
+    stop_gate.set()
+    await asyncio.wait_for(ending, 5)
+    status = harness.service.snapshot()
+    assert (status.state, status.session_id) == (p.NetworkCheckState.UNSUITABLE, "B")
+    assert status.completed_at_unix_ns is not None and "has not closed yet" in status.reason
+
+
+async def test_stop_after_a_newer_session_began_leaves_its_state_alone(monkeypatch):
+    monkeypatch.setattr("capture_server.network_check._LEAVE_TIMEOUT_S", 5.0)
+    harness = _healthy_harness()
+    stop_gate = await _slow_leave_in_measurement(harness)
+    stopping = asyncio.ensure_future(harness.service.stop())
+    await asyncio.sleep(0)
+    harness.service.begin_session("B")
+    stop_gate.set()
+    await asyncio.wait_for(stopping, 5)
+    status = harness.service.snapshot()
+    assert (status.state, status.session_id) == (p.NetworkCheckState.CHECKING, "B")
+    assert (await harness.finished()).state is p.NetworkCheckState.READY

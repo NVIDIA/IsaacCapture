@@ -22,11 +22,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import ipaddress
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
-from urllib.parse import urlparse
 
 from capture_server import protocol as p
 from capture_server.frame_timing import (
@@ -36,6 +34,7 @@ from capture_server.frame_timing import (
     uncertainty_budget_ns,
 )
 from capture_server.livekit_receiver import LIVEKIT_MISSING, LiveKitFrameReceiver, livekit_available
+from capture_server.network_check import is_loopback_url
 from recording_service import PixelFormat, VideoSample
 
 from .recording_adapter import MANUS_GLOVE_SOURCE, PICO_CONTROLLER_SOURCE, RecordingIngress
@@ -89,17 +88,6 @@ def tracking_event_time(latency: Mapping[str, float]) -> dict[str, dict[str, Any
         else {"meaning": "host_poll_time", "qualified": False}
         for name in (PICO_CONTROLLER_SOURCE, MANUS_GLOVE_SOURCE)
     }
-
-
-def is_loopback_url(url: str) -> bool:
-    """Whether ``url`` names this machine: ``localhost`` or a loopback IP literal."""
-    host = urlparse(url).hostname or ""
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def unrecordable_reason(started: Any, capture_server_url: str | None = None) -> str | None:
@@ -382,7 +370,7 @@ class LiveKitRecordingSource:
                         f"{stream.name}: frames are {frame.image.shape[1]}x{frame.image.shape[0]}, "
                         f"expected {stream.width}x{stream.height}"
                     )
-            self._require_tested_tracks(receiver)
+            self._require_current_tracks(receiver)
             await self._wait_for_mapping(receiver)
         except asyncio.TimeoutError as exc:
             await self.stop()
@@ -436,11 +424,14 @@ class LiveKitRecordingSource:
 
         task.add_done_callback(_done)
 
-    def _require_tested_tracks(self, receiver: LiveKitFrameReceiver) -> None:
-        """Refuse the start if a camera is now on a different LiveKit track than the one the check measured."""
+    def _require_current_tracks(self, receiver: LiveKitFrameReceiver) -> None:
+        """Refuse the start if a camera's track is lost, or is a different one than the check measured."""
         tested = self._tested_tracks() if self._tested_tracks is not None else {}
         now = receiver.track_ids()
         for stream in self._streams:
+            # A frame can still be queued after its track ended, so loss is checked directly.
+            if receiver.is_lost(stream.stream_id):
+                raise RuntimeError(f"{stream.name}: the LiveKit track was lost before recording started")
             if stream.stream_id in tested and now.get(stream.stream_id) != tested[stream.stream_id]:
                 raise RuntimeError(
                     f"{stream.name}: the camera was republished since the network check; run it again"
@@ -478,6 +469,8 @@ class LiveKitRecordingSource:
         """Begin feeding the take's ingress with frames acquired from now on."""
         if self._receiver is None:
             return
+        # The camera may have been republished while storage opened; the take must record the tested publication.
+        self._require_current_tracks(self._receiver)
         # Frames queued while storage was opening were acquired before the take started.
         self._receiver.clear_queued()
         source_names = {s.stream_id: s.name for s in self._streams}

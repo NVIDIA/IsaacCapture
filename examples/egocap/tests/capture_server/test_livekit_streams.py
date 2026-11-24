@@ -22,7 +22,7 @@ from capture_server import protocol as p
 from capture_server.__main__ import main
 from capture_server.client import CaptureClient, _StreamRegistry
 from capture_server.livekit_streams import load_livekit_offer, load_livekit_streams
-from capture_server.network_check import NetworkCheckPolicy
+from capture_server.network_check import NetworkCheckPolicy, is_loopback_url, require_secure_livekit_urls
 from capture_server.server import ServerConfig, StationCamera
 from tests.support.capture_server import poll_until, start_capture_server, stop_capture_server
 
@@ -624,3 +624,65 @@ def test_loader_rejects_an_unknown_basis(tmp_path, value):
     text = f"livekit: {{url: wss://lk, room: r, publisher: o, timestamp_basis: {value}, streams: []}}\n"
     with pytest.raises(ValueError, match="timestamp_basis"):
         load_livekit_streams(_write(tmp_path, text))
+
+
+def _secure_config(url: str) -> ServerConfig:
+    return ServerConfig(livekit_streams=(_stream(url=url),), network_check=NetworkCheckPolicy())
+
+
+@pytest.mark.parametrize("url", ["ws://192.168.1.50:7880", "ws://example.com"])
+def test_server_config_rejects_a_network_check_on_a_plain_ws_non_loopback_url(url):
+    with pytest.raises(ValueError, match="wss://"):
+        _secure_config(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "wss://192.168.1.50:7881",
+        "wss://example.com",
+        "ws://localhost:7880",
+        "ws://127.0.0.1:7880",
+        "ws://[::1]:7880",
+    ],
+)
+def test_server_config_accepts_a_network_check_on_tls_or_loopback_urls(url):
+    assert _secure_config(url).network_check is not None
+
+
+def test_plain_ws_non_loopback_streams_are_fine_without_a_network_check():
+    assert ServerConfig(livekit_streams=(_stream(url="ws://example.com"),)).livekit_streams
+
+
+def test_cli_rejects_a_network_check_on_a_plain_ws_non_loopback_url_with_exit_code_2(tmp_path, capsys):
+    text = _NC_HEAD.replace("wss://lk", "ws://example.com") + "  network_check: {}\n"
+    assert main(["--mock", "--livekit-streams", str(_write(tmp_path, text))]) == 2
+    assert "wss://" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("ws://localhost:7880", True),
+        ("ws://LOCALHOST", True),
+        ("ws://127.0.0.1", True),
+        ("ws://[::1]:7880", True),
+        ("wss://192.168.1.2", False),
+        ("ws://example.com", False),
+        ("ws://", False),
+    ],
+)
+def test_is_loopback_url(url, expected):
+    assert is_loopback_url(url) is expected
+
+
+def test_require_secure_livekit_urls_names_the_offending_url():
+    with pytest.raises(ValueError, match="ws://example.com"):
+        require_secure_livekit_urls((_stream(), _stream(stream_id=17, url="ws://example.com")))
+    require_secure_livekit_urls(())
+
+
+def test_the_backend_still_exposes_is_loopback_url():
+    from egocap_web import livekit_recording
+
+    assert livekit_recording.is_loopback_url is is_loopback_url
