@@ -108,7 +108,7 @@ Prints the same report, then serves a viewer on `http://127.0.0.1:8080`. Options
 
 | | |
 |---|---|
-| **Both hands, one playhead** | Each digit in its own colour (legend in the sidebar). A joint whose `is_valid` went false is drawn **red at the position it was last seen**; tick *name held joints* to label them. *separate hands* moves the left hand 15 cm to −x and the right to +x, so a take with no wrist pose does not draw both hands on top of each other. |
+| **Both hands, one playhead** | Each digit in its own colour (legend in the sidebar). A joint whose `is_valid` went false is drawn **red at the position it was last seen**; tick *name held joints* to label them. Under *View*, *separate hands* moves the left hand 15 cm to −x and the right to +x, so a take with no wrist pose does not draw both hands on top of each other; *left hand* and *right hand* show or hide a whole hand, and the five digit boxes hide that digit on both hands without bringing back a hidden hand. *fill missing joints* draws PALM and any metacarpal the glove never reported in light grey, estimated from the wrist and knuckles, so a 21-joint layout shows connected fingers; the estimates are never checked. *joint axes* draws each joint's recorded orientation, X red, Y green, Z blue; in the OpenXR joint frame +Z points back toward the wrist and +Y out of the back of the hand. |
 | **The labelled step** | The step under the playhead, or `unlabelled`. |
 | **Frame rate and valid joints** | Per hand: rate over the last 8 s, valid joints over the whole take, and the valid count at the playhead. |
 | **Grid** | At the table height the flat steps measured, or on the stage floor when no flat step was held. |

@@ -156,3 +156,14 @@ def test_the_tee_leaves_a_source_without_a_path_pathless():
     """``report.run`` reads ``path`` with a default; the panel must not forge one."""
     report = run(TeeSource(synth.StubSource(synth.frames(5))))
     assert "None" not in report.source
+
+
+def test_an_invalid_joint_keeps_the_orientation_it_last_had_when_valid():
+    turned = (0.0, 0.0, math.sin(0.25), math.cos(0.25))
+    first = synth.rest_skeleton()
+    first = (synth.joint(first[0].position, turned), *first[1:])
+    second = (synth.joint(first[0].position, synth.IDENTITY, False), *first[1:])
+    track = build([synth.frame(0, joints=first), synth.frame(1, joints=second)])
+    assert track.samples[0].orientations[0] == turned
+    assert track.samples[1].orientations[0] == turned
+    assert track.samples[1].valid[0] is False

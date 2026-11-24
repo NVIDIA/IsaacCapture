@@ -10,6 +10,7 @@ from math import nan
 from typing import Protocol
 
 Vec3 = tuple[float, float, float]
+Quaternion = tuple[float, float, float, float]
 
 
 class Topology(Protocol):
@@ -24,7 +25,8 @@ class Sample:
     """One frame reduced to what a viewer draws.
 
     ``positions`` holds each joint's last valid position, ``None`` if never valid;
-    ``valid`` says whether a drawn joint is live or held.
+    ``valid`` says whether a drawn joint is live or held. ``orientations`` is held the
+    same way, x,y,z,w as recorded; empty when the producer did not keep them.
     """
 
     sequence: int
@@ -33,6 +35,7 @@ class Sample:
     valid: tuple[bool, ...]
     interval_ms: float | None
     step: str | None
+    orientations: tuple[Quaternion | None, ...] = ()
 
     @property
     def valid_count(self) -> int:

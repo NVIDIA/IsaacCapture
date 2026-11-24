@@ -97,11 +97,18 @@ class Panel:
             self._playing = gui.add_checkbox("play", initial_value=False)
             self._speed = gui.add_dropdown("speed", tuple(SPEEDS), initial_value="1x")
             self._name_held = gui.add_checkbox("name held joints", initial_value=True)
+            self._axes = gui.add_checkbox(
+                "joint axes", initial_value=False, hint="X red, Y green, Z blue"
+            )
             self._readout = gui.add_html("")
 
             @self._scrub.on_update
             def _(_: viser.GuiEvent) -> None:
                 self._seek(int(self._scrub.value))
+
+            @self._axes.on_update
+            def _(_: viser.GuiEvent) -> None:
+                self._draw()
 
         if self._recording is not None:
             self._build_submission(gui)
@@ -209,7 +216,7 @@ class Panel:
             return
         sample = samples[self._index]
         with self._server.atomic():
-            self._skeleton.draw(sample, self._name_held.value)
+            self._skeleton.draw(sample, self._name_held.value, self._axes.value)
             self._readout.content = render.playhead(
                 t_s=sample.t_s,
                 duration_s=self._track.duration_s,

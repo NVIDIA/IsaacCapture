@@ -132,3 +132,19 @@ def test_the_printed_address_is_the_port_viser_bound(monkeypatch, capsys):
     ]
     assert port != asked
     assert f":{port} " in line
+
+
+def test_joint_axes_follow_the_toggle_and_the_recorded_orientation(server):
+    panel = panel_over(synth.frames(5), server)
+    axes = panel._skeleton._axes
+    assert len(axes.batched_positions) == 0
+
+    panel._axes.value = True
+    panel._draw()
+    assert len(axes.batched_positions) == NUM_JOINTS
+    # Recorded x,y,z,w identity reaches viser as w,x,y,z.
+    assert tuple(axes.batched_wxyzs[0]) == (1.0, 0.0, 0.0, 0.0)
+
+    panel._axes.value = False
+    panel._draw()
+    assert len(axes.batched_positions) == 0
