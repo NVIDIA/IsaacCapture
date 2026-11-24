@@ -15,7 +15,8 @@ from cloudxr_py_test_ns.wss import (
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
-TOKEN = "test-control-token"
+# Dummy credential for isolated authentication tests; never used in production.
+TOKEN = "test-control-token"  # NOSONAR
 
 
 class FakeRequest:
