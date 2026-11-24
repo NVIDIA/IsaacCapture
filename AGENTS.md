@@ -283,6 +283,19 @@ pre-commit install --hook-type commit-msg
 
 - If a hook failure shows **missing or non-obvious repo policy** (not a one-off typo), you **must** add a **short** reminder under **Mandatory learning loop** rules to the right `AGENTS.md` or adjacent **`//` comments** so the next run does not repeat it—unless it is already documented.
 
+## Security fixes and review
+
+- Verify each static-analysis finding against the affected code and trace the
+  input to the flagged operation. A suppression needs a specific safety reason
+  beside the flagged line; do not exclude a whole file to hide a local finding.
+- When adversarial review is requested, have independent reviewers challenge
+  each other's findings on the final diff. Runtime probes can support that review.
+- Read both human and automated feedback, including unresolved threads from
+  earlier commits. Filtering only recent bot comments can miss maintainer input.
+- Check Sonar, GitHub Code Quality/CodeQL, and CodeRabbit results against the
+  current commit. Skipped reviews and successful tests do not establish that a
+  reported finding has closed; state when a fresh analysis is still needed.
+
 ## The wheel SBOM
 
 Published wheels carry a contents SBOM and license evidence derived from the
@@ -340,6 +353,9 @@ heading that still said the opposite.
 
 **What belongs in `AGENTS.md`**
 
+- Security guidance should name the vulnerability class and the preventive
+  action. Keep operation-specific details in source comments and link a relevant
+  public finding or authoritative reference when available.
 - **High-level** expectations: boundaries between layers, what to avoid, naming or structural conventions, CMake/include policy at a glance, “always / never” rules that stay true across refactors.
 - **Style of work**: how minimal to keep diffs, when to ask for clarification, how this subsystem should relate to OpenXR/schema/deviceio, etc.
 - For build-only requests, use the documented CMake flags and environment first (for example `-DISAAC_TELEOP_PYTHON_VERSION=...`) rather than patching build files to select options.
