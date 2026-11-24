@@ -695,3 +695,59 @@ async def test_ending_a_session_during_its_check_cancels_it_and_leaves_the_room_
             assert (check.state, check.session_id) == (State.NOT_TESTED, None)
     finally:
         await stop_capture_server(running)
+
+
+async def test_a_slow_room_leave_for_one_session_does_not_block_the_next_begin_or_reset_its_check(
+    unused_tcp_port, monkeypatch
+):
+    factory = RealServiceFactory(["healthy"])
+    release = asyncio.Event()
+    entered = asyncio.Event()
+    begun: list[str] = []
+
+    def build(streams, policy, make_token, **kwargs):
+        service = factory(streams, policy, make_token, **kwargs)
+        real_end, real_begin = service.end_session, service.begin_session
+
+        async def slow_end(session_id):
+            if session_id == "A":
+                entered.set()
+                await release.wait()
+            await real_end(session_id)
+
+        def recording_begin(session_id):
+            begun.append(session_id)
+            real_begin(session_id)
+
+        service.end_session, service.begin_session = slow_end, recording_begin
+        return service
+
+    monkeypatch.setattr(server_module, "NetworkCheckService", build)
+    running = await start_capture_server(unused_tcp_port, config=_config())
+    try:
+        async with _connect(unused_tcp_port) as ws:
+            await ws.send(json.dumps(_begin("A")))
+            await _recv_until(ws, p.SessionBegun)
+            await _check_state(unused_tcp_port, State.READY, "A")
+            await ws.send(_stop("A"))
+            await _recv_until(ws, p.SessionStopped)
+            await asyncio.wait_for(entered.wait(), 5)
+
+            await ws.send(json.dumps(_begin("B")))
+            begun_b = await _recv_until(ws, p.SessionBegun)
+            assert begun_b.session_id == "B"
+            assert begun == ["A", "B"]
+            assert "A" in running.server._completed
+
+            await ws.send(_stop("A"))
+            replay = await _recv_until(ws, p.SessionStopped)
+            assert replay.session_id == "A"
+
+            release.set()
+            await asyncio.sleep(0.2)
+            check = (await _query_status(unused_tcp_port)).network_check
+            assert check.session_id == "B"
+            assert check.state is not State.NOT_TESTED
+    finally:
+        release.set()
+        await stop_capture_server(running)

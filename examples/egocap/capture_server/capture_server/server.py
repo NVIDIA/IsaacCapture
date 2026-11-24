@@ -1900,19 +1900,23 @@ class CaptureServer:
         try:
             await session.run()
         finally:
-            if self._network_check is not None:
-                await self._network_check.end_session(session.session_id)
-            if session.terminal is not None:
-                self._completed[session.session_id] = session.terminal
-                self._completed.move_to_end(session.session_id)
-                while len(self._completed) > _COMPLETED_TOMBSTONE_CAPACITY:
-                    self._completed.popitem(last=False)
-            # Admission reopens only when the session's own cleanup
-            # genuinely succeeded -- a failed source release leaves this
-            # connection unable to admit a new session rather than silently
-            # reusing hardware/state that was never actually released.
-            if self._active_session is session and session.cleanup_ok:
-                self._active_session = None
+            try:
+                if session.terminal is not None:
+                    self._completed[session.session_id] = session.terminal
+                    self._completed.move_to_end(session.session_id)
+                    while len(self._completed) > _COMPLETED_TOMBSTONE_CAPACITY:
+                        self._completed.popitem(last=False)
+                # Admission reopens only when the session's own cleanup
+                # genuinely succeeded -- a failed source release leaves this
+                # connection unable to admit a new session rather than silently
+                # reusing hardware/state that was never actually released.
+                if self._active_session is session and session.cleanup_ok:
+                    self._active_session = None
+            finally:
+                # Leaving the room can take seconds; the bookkeeping and admission above are already settled, and
+                # a newer session's check is left alone by this teardown.
+                if self._network_check is not None:
+                    await self._network_check.end_session(session.session_id)
 
     async def _handle_stop(self, ws: ServerConnection, data: dict[str, Any]) -> None:
         try:
