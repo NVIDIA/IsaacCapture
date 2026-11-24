@@ -13,6 +13,7 @@ from .interface import (
     Frame,
     FrameSource,
     ImuSamples,
+    PictureCalibration,
     SourceSpec,
     StereoCalibration,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "Frame",
     "FrameSource",
     "ImuSamples",
+    "PictureCalibration",
     "SourceSpec",
     "StereoCalibration",
     "VizRunner",

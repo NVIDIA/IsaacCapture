@@ -24,6 +24,12 @@ cameras:
     enabled: true
     type: oakd
     mode: mono                  # mono | stereo | stereo_rgb (mono only for now)
+    # Opened as a stereo camera, by build_stereo_camera: `stereo` is the
+    # mono pair alone; `stereo_rgb` adds the colour camera's image of the
+    # same instant as the frame's picture, which takes a colour sensor on
+    # the pair's frame sync. rgb_width / rgb_height size that picture; it
+    # runs at the pair's fps, and rgb_fps and camera_socket are not used.
+    # exposure_limit_ms: 8      # stereo camera only: bounds motion blur
     device_id: ""               # empty → first available; use list-cameras to pick
     camera_socket: RGB          # mono mode: which sensor
     width: 1280

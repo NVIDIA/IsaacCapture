@@ -8,6 +8,7 @@ contract — the teleop hot path never round-trips through host memory.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -17,6 +18,7 @@ from ..pipeline import FrameSource
 from ._helpers import PairedFrameSource, set_notify_sink, set_verbose
 from .argus import ArgusSource
 from .oakd import OakdSource
+from .oakd_stereo import OakdStereoSource
 from .rtp_h264 import RtpH264Source
 from .synthetic import SyntheticSource, SyntheticStereoSource
 from .v4l2 import V4l2Source
@@ -28,6 +30,7 @@ from .zed import video_settings as _zed_video_settings
 __all__ = [
     "ArgusSource",
     "OakdSource",
+    "OakdStereoSource",
     "PairedFrameSource",
     "RtpH264Source",
     "SyntheticSource",
@@ -248,6 +251,40 @@ def _video_stereo_arguments(spec: dict, name: str) -> dict:
         ) from exc
 
 
+def _oakd_stereo_arguments(spec: dict, name: str, mode: str) -> dict:
+    """What a stereo ``type: oakd`` entry passes to its source, checked."""
+    try:
+        arguments = {
+            "width": int(spec["width"]),
+            "height": int(spec["height"]),
+            "fps": int(spec.get("fps", 30)),
+            "picture_width": int(spec.get("rgb_width", 0)),
+            "picture_height": int(spec.get("rgb_height", 0)),
+            "exposure_limit_ms": float(spec.get("exposure_limit_ms", 0.0)),
+        }
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"camera {name!r}: width, height, fps, rgb_width, rgb_height and "
+            f"exposure_limit_ms are numbers ({exc})"
+        ) from exc
+    if min(arguments["width"], arguments["height"], arguments["fps"]) <= 0:
+        raise ValueError(f"camera {name!r}: width, height and fps must be above 0")
+    if arguments["picture_width"] < 0 or arguments["picture_height"] < 0:
+        raise ValueError(
+            f"camera {name!r}: rgb_width and rgb_height cannot be negative"
+        )
+    limit = arguments["exposure_limit_ms"]
+    if not (math.isfinite(limit) and limit >= 0.0):
+        raise ValueError(
+            f"camera {name!r}: exposure_limit_ms is a finite number, 0 or above"
+        )
+    return {
+        **arguments,
+        "device_id": str(spec.get("device_id", "")),
+        "picture": mode == "stereo_rgb",
+    }
+
+
 def _stereo_arguments(spec: dict) -> tuple:
     """``(type, name, arguments)`` of a stereo camera entry. Raises
     ValueError, with the reason, for any other entry."""
@@ -294,9 +331,24 @@ def _stereo_arguments(spec: dict) -> tuple:
             "`sync_session: true`, one session for both sensors"
         )
     if kind == "oakd":
-        refuse("an oakd camera is not offered as a stereo camera yet")
+        # As build_local_camera reads it: `stereo: true` is short for
+        # `mode: stereo`, and an explicit mode wins.
+        mode = str(spec.get("mode", "stereo" if stereo else "mono")).lower()
+        if mode == "mono":
+            refuse(
+                "an oakd entry opens one camera unless it sets `stereo: true` or "
+                "`mode: stereo_rgb`, the pair with the colour camera's picture"
+            )
+        if mode not in ("stereo", "stereo_rgb"):
+            raise ValueError(
+                f"camera {name!r}: unknown oakd mode {mode!r} "
+                "(stereo cameras: stereo, stereo_rgb)"
+            )
+        require("width", "height")
+        return kind, name, _oakd_stereo_arguments(spec, name, mode)
     raise ValueError(
-        f"camera {name!r}: unknown camera type {kind!r} (stereo cameras: zed, video)"
+        f"camera {name!r}: unknown camera type {kind!r} "
+        "(stereo cameras: zed, oakd, video)"
     )
 
 
@@ -314,20 +366,24 @@ class StereoCameraTraits:
     ``calibrated``: it stores its stereo calibration, for ``calibration()``;
     one that does not needs it from elsewhere, such as a file.
     ``rectified``: its images are already rectified.
+    ``picture``: it delivers a picture of its own beside the pair, in
+    ``Frame.picture``.
     """
 
     calibrated: bool
     rectified: bool
+    picture: bool = False
 
 
 def describe_stereo_camera(spec: dict) -> StereoCameraTraits:
     """The traits of the stereo camera ``spec`` describes. Raises
     ValueError, as ``check_stereo_camera`` does, for an entry that is not
     one. Opens nothing."""
-    kind, _name, _arguments = _stereo_arguments(spec)
+    kind, _name, arguments = _stereo_arguments(spec)
     return StereoCameraTraits(
-        calibrated=kind == "zed",
+        calibrated=kind in ("zed", "oakd"),
         rectified=kind == "zed",
+        picture=kind == "oakd" and arguments["picture"],
     )
 
 
@@ -342,12 +398,15 @@ def build_stereo_camera(spec: dict, *, imu: bool = False) -> FrameSource:
     ``dropped_captures``.
 
     ``calibration()`` gives the stereo calibration of a camera that stores
-    one; ``describe_stereo_camera`` says which cameras do. ``imu=True``
-    asks a camera with an IMU to read it, for ``imu()``. Raises ValueError
-    for an entry that is not a stereo camera.
+    one, and a camera whose pair is not what one wants to look at also
+    fills ``picture``; ``describe_stereo_camera`` says which cameras do
+    either. ``imu=True`` asks a camera with an IMU to read it, for
+    ``imu()``. Raises ValueError for an entry that is not a stereo camera.
     """
     kind, name, arguments = _stereo_arguments(spec)
     if kind == "zed":
         return ZedStereoSource.build(name=name, imu=imu, **arguments)
+    if kind == "oakd":
+        return OakdStereoSource(name=name, imu=imu, **arguments)
     # video: a side-by-side file already emits both eyes in one frame.
     return VideoFileSource(name=name, stereo=True, hold=True, **arguments)
