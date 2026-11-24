@@ -152,6 +152,19 @@ def test_finger_roll_counts_only_frames_where_both_joints_are_valid():
     assert outcome.measurements["right"]["worst_rate"] == pytest.approx(18 / 60)
 
 
+def test_finger_roll_judges_a_tip_against_its_distal():
+    def tips_turned_over(local):
+        half_turn = synth.axis_angle((0.0, 0.0, 1.0), math.pi)
+        return [
+            (p, multiply(q, half_turn)) if i in (10, 15, 20, 25) else (p, q)
+            for i, (p, q) in enumerate(local)
+        ]
+
+    outcome = _run("quaternion.finger_roll", both(transform=tips_turned_over))
+    assert outcome.status is Status.FAIL
+    assert "INDEX_TIP on INDEX_DISTAL" in outcome.detail
+
+
 def test_finger_roll_leaves_the_thumb_alone():
     def thumb_turned_over(local):
         half_turn = synth.axis_angle((0.0, 0.0, 1.0), math.pi)

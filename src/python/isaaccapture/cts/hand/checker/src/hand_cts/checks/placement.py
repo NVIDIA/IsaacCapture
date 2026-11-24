@@ -15,7 +15,7 @@ from cts_common.vectors import rotate_by_inverse
 
 from ..frames import Frame, Vec3
 from ..labels import ROLLS, StepTimeline
-from ..profile import CHAINS, FINGERS, JOINT_NAMES, TIP, WRIST
+from ..profile import CHAINS, FINGERS, JOINT_NAMES, TIP, WRIST, phalanges
 from .base import HandCheck, angle_deg, hand_axes, per_hand, percentile
 
 GROUP = "placement"
@@ -182,12 +182,11 @@ class _ComponentOrder(HandCheck):
 
 
 def _roll_pairs() -> tuple[tuple[int, int], ...]:
-    """Wrist to knuckle and the two finger hinges, per finger; the thumb rolls by nature."""
+    """Wrist to knuckle, then each joint on its parent to the tip; the thumb rolls by nature."""
     pairs = []
     for finger in FINGERS:
-        chain = CHAINS[finger]
-        pairs.append((WRIST, chain[0]))
-        pairs.extend(zip(chain[:2], chain[1:3]))
+        pairs.append((WRIST, CHAINS[finger][0]))
+        pairs.extend(phalanges(finger))
     return tuple(pairs)
 
 
