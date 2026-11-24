@@ -31,9 +31,12 @@ def _service_for_status(tmp_path):
     service._fatal_error = None
     service._fatal_supervisor = None
     service._stopping = False
+    service._runtime_lock = threading.RLock()
+    service._runtime_query = threading.local()
     service._wss_log_path = tmp_path / "wss.log"
     service._runtime_proc = MagicMock()
     service._runtime_proc.pid = os.getpid()
+    service._runtime_proc.returncode = None
     service._runtime_proc.poll.return_value = None
     service._wss_thread = None
     service._connect_requested = None
