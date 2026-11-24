@@ -12,7 +12,8 @@ import pytest
 from cloudxr_py_test_ns.oob_teleop_hub import OOBControlHub
 from cloudxr_py_test_ns.wss import CORS_HEADERS, _make_http_handler, add_cors_headers
 
-TOKEN = "test-control-token"
+# Dummy credential for isolated authentication tests; never used in production.
+TOKEN = "test-control-token"  # NOSONAR
 PATH = "/api/oob/v1/connect"
 
 

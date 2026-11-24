@@ -21,7 +21,8 @@ import pytest
 
 from oob_teleop_hub import MAX_FRAME_BYTES, OOBControlHub
 
-TOKEN = "test-control-token"
+# Dummy credential for isolated authentication tests; never used in production.
+TOKEN = "test-control-token"  # NOSONAR
 
 
 class QueueWS:
