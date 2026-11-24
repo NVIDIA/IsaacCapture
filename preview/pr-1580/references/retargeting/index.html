@@ -645,9 +645,10 @@ rotation matrix flattened to 9 elements. Applied as
 <p class="sd-card-text">Simple VR controller-based hand control. Maps trigger and squeeze inputs to G1 TriHand finger
 joint angles (7 DOF per hand). No external dependencies.</p>
 <p class="sd-card-text"><strong>Mapping:</strong> trigger → index finger, squeeze → middle finger. Either input curls the thumb:
-proximal and distal curl follow <code class="docutils literal notranslate"><span class="pre">max(trigger,</span> <span class="pre">squeeze)</span></code>, while thumb rotation follows
-<code class="docutils literal notranslate"><span class="pre">0.5</span> <span class="pre">*</span> <span class="pre">(trigger</span> <span class="pre">-</span> <span class="pre">squeeze)</span></code> with sign per hand. Equal trigger and squeeze values cancel
-rotation while keeping the thumb curled. The example prints thumb proximal curl as <code class="docutils literal notranslate"><span class="pre">T=</span></code>.
+proximal and distal curl magnitudes follow <code class="docutils literal notranslate"><span class="pre">max(trigger,</span> <span class="pre">squeeze)</span></code>. Output thumb rotation is
+<code class="docutils literal notranslate"><span class="pre">0.5</span> <span class="pre">*</span> <span class="pre">(squeeze</span> <span class="pre">-</span> <span class="pre">trigger)</span></code> for both hands. Equal inputs cancel rotation; equal nonzero
+inputs still curl the thumb. Zero inputs produce zero joint angles.
+The example prints thumb proximal curl as <code class="docutils literal notranslate"><span class="pre">T=</span></code>.
 Good for quick prototyping and testing.</p>
 <p class="sd-card-text"><strong>Configuration:</strong></p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">isaaccapture.retargeters</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
@@ -682,7 +683,7 @@ Good for quick prototyping and testing.</p>
 <tbody>
 <tr class="row-even"><td><p class="sd-card-text">0</p></td>
 <td><p class="sd-card-text">Thumb rotation</p></td>
-<td><p class="sd-card-text">(trigger - squeeze) * 0.5 (sign per hand)</p></td>
+<td><p class="sd-card-text">(squeeze - trigger) * 0.5</p></td>
 </tr>
 <tr class="row-odd"><td><p class="sd-card-text">1</p></td>
 <td><p class="sd-card-text">Thumb proximal</p></td>
@@ -711,6 +712,8 @@ Good for quick prototyping and testing.</p>
 </tbody>
 </table>
 </div>
+<p class="sd-card-text">The table shows final right-hand output angles. For the left hand, negate the curl
+angles at indices 1–6; thumb rotation at index 0 is the same for both hands.</p>
 </div>
 </details><details class="sd-sphinx-override sd-dropdown sd-card sd-mb-3">
 <summary class="sd-summary-title sd-card-header">
