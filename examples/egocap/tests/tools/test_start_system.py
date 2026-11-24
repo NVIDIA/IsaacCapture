@@ -88,7 +88,7 @@ def test_main_rejects_a_hostname_orin(monkeypatch, capsys, tmp_path: Path):
         "--orin",
         "user@some-host-name",
         "--deploy-script",
-        "x",
+        str(ss.DEPLOY_SCRIPT),
         "--bridge",
         "b",
         "--livekit-server",
@@ -114,7 +114,7 @@ def test_main_refuses_to_start_without_a_built_frontend(monkeypatch, capsys, tmp
         "--orin",
         "user@192.0.2.10",
         "--deploy-script",
-        "x",
+        str(ss.DEPLOY_SCRIPT),
         "--bridge",
         "b",
         "--livekit-server",
@@ -150,7 +150,16 @@ def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sen
     monkeypatch.setattr(ss.Stack, "wait_until", lambda *_, **__: None)
     monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
     monkeypatch.setattr(ss.subprocess, "run", lambda *_, **__: None)
-    argv = ["--orin", "user@192.0.2.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv = [
+        "--orin",
+        "user@192.0.2.5",
+        "--deploy-script",
+        str(ss.DEPLOY_SCRIPT),
+        "--bridge",
+        "b",
+        "--livekit-server",
+        "l",
+    ]
     argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "192.0.2.2", *CAMERA_ARGS]
     assert ss.main(argv) == 1
     assert "stop after the bridge" in capsys.readouterr().err
@@ -541,7 +550,16 @@ def _command(recorded, name: str) -> str:
 
 
 def test_sender_verbose_is_passed_to_the_deploy_run_only_when_asked(recorded_main):
-    argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv = [
+        "--orin",
+        "user@192.0.2.10",
+        "--deploy-script",
+        str(ss.DEPLOY_SCRIPT),
+        "--bridge",
+        "b",
+        "--livekit-server",
+        "l",
+    ]
     assert ss.main([*argv, *CAMERA_ARGS]) == 0
     assert "--verbose" not in _command(recorded_main, "sender")
     recorded_main.children.clear()
@@ -550,7 +568,16 @@ def test_sender_verbose_is_passed_to_the_deploy_run_only_when_asked(recorded_mai
 
 
 def test_main_starts_the_orin_chain_in_order(recorded_main):
-    argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv = [
+        "--orin",
+        "user@192.0.2.10",
+        "--deploy-script",
+        str(ss.DEPLOY_SCRIPT),
+        "--bridge",
+        "b",
+        "--livekit-server",
+        "l",
+    ]
     assert ss.main([*argv, *CAMERA_ARGS, "--bridge-bitrate-mbps", "50", "--bridge-scale-div", "1"]) == 0
     names = [c.name for c in recorded_main.children]
     assert names == ["sender", "livekit", "capture-server", "backend", "receiver", "bridge", "timesync-follower"]
@@ -571,11 +598,20 @@ def test_main_starts_the_orin_chain_in_order(recorded_main):
     assert "--config" in _command(recorded_main, "receiver")
     release_deploys = [d for d in recorded_main.deploys if "--with-sipl" in d]
     assert len(release_deploys) == 1
-    assert [str(release_deploys[0][1]), release_deploys[0][2]] == ["x", "user@192.0.2.10"]
+    assert [str(release_deploys[0][1]), release_deploys[0][2]] == [str(ss.DEPLOY_SCRIPT), "user@192.0.2.10"]
 
 
 def test_mock_tracking_mocks_only_the_capture_server(recorded_main):
-    argv = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv = [
+        "--orin",
+        "user@192.0.2.10",
+        "--deploy-script",
+        str(ss.DEPLOY_SCRIPT),
+        "--bridge",
+        "b",
+        "--livekit-server",
+        "l",
+    ]
     assert ss.main([*argv, *CAMERA_ARGS, "--mock-tracking"]) == 0
     assert [c.name for c in recorded_main.children] == [
         "sender",
@@ -773,13 +809,17 @@ def test_a_remote_stop_that_times_out_on_exit_does_not_raise(recorded_main, monk
     assert "could not confirm that the Orin sender stopped" in capsys.readouterr().err
 
 
-DEPLOY_TOOL = ss.REPO_ROOT / "examples/camera_streamer/argus_sender/deploy/deploy_sender.py"
+DEPLOY_TOOL = ss.DEPLOY_SCRIPT
 
 
-@pytest.mark.skipif(
-    not DEPLOY_TOOL.is_file(),
-    reason="the deploy tool comes from the camera-streaming tools PR, absent from this tree",
-)
+def test_a_missing_deploy_script_fails_before_anything_starts(recorded_main, tmp_path: Path, capsys):
+    missing = tmp_path / "no_deploy.py"
+    argv = ["--orin", "user@192.0.2.10", "--deploy-script", str(missing), "--bridge", "b", "--livekit-server", "l"]
+    assert ss.main([*argv, *CAMERA_ARGS]) == 1
+    assert f"--orin needs the sender deploy script; {missing} is not a file" in capsys.readouterr().err
+    assert recorded_main.children == [] and recorded_main.deploys == []
+
+
 def test_every_deploy_command_the_launcher_issues_is_accepted_by_the_real_deploy_tool(recorded_main, monkeypatch):
     spec = importlib.util.spec_from_file_location("deploy_sender_real", DEPLOY_TOOL)
     tool = importlib.util.module_from_spec(spec)
@@ -789,8 +829,8 @@ def test_every_deploy_command_the_launcher_issues_is_accepted_by_the_real_deploy
         if name.startswith("cmd_"):
             monkeypatch.setattr(tool, name, lambda *a, _name=name, **k: dispatched.append(_name))
     assert ss.main([*ORIN_ARGV, *CAMERA_ARGS]) == 0
-    issued = [d[2:] for d in recorded_main.deploys if str(d[1]) == "x"]
-    issued += [c.command[2:] for c in recorded_main.children if str(c.command[1]) == "x"]
+    issued = [d[2:] for d in recorded_main.deploys if str(d[1]) == str(ss.DEPLOY_SCRIPT)]
+    issued += [c.command[2:] for c in recorded_main.children if str(c.command[1]) == str(ss.DEPLOY_SCRIPT)]
     assert any(command[1] == "stop-daemon" for command in issued)
     for command in issued:
         # `target command ...` is exactly how the launcher calls the tool; the real parser must accept it.
@@ -820,7 +860,16 @@ def test_main_starts_the_mock_chain_in_order(recorded_main, tmp_path: Path):
     assert "manus_calibration" not in pythonpath
 
 
-ORIN_ARGV = ["--orin", "user@192.0.2.10", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+ORIN_ARGV = [
+    "--orin",
+    "user@192.0.2.10",
+    "--deploy-script",
+    str(ss.DEPLOY_SCRIPT),
+    "--bridge",
+    "b",
+    "--livekit-server",
+    "l",
+]
 
 
 def test_main_returns_zero_when_the_sender_finishes_its_run(recorded_main, monkeypatch, capsys):
@@ -1042,7 +1091,16 @@ def _run_main_with_stub_children(monkeypatch, tmp_path: Path, extra_argv: list[s
     monkeypatch.setattr(ss.Stack, "stop_all", lambda *_: None)
     monkeypatch.setattr(ss.subprocess, "run", lambda cmd, **__: runs.append(list(cmd)) or _Done())
     monkeypatch.setattr(ss.time, "sleep", lambda *_: None)
-    argv = ["--orin", "user@192.0.2.5", "--deploy-script", "x", "--bridge", "b", "--livekit-server", "l"]
+    argv = [
+        "--orin",
+        "user@192.0.2.5",
+        "--deploy-script",
+        str(ss.DEPLOY_SCRIPT),
+        "--bridge",
+        "b",
+        "--livekit-server",
+        "l",
+    ]
     argv += ["--timesync-tool", str(timesync), "--host-lan-ip", "192.0.2.2", *CAMERA_ARGS, *extra_argv]
     return ss.main(argv), started, runs, receiver_dir
 

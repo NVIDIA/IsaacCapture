@@ -40,17 +40,24 @@ No IsaacCapture SDK is needed to install, run, or test this package in mock mode
 Real tracking needs the built `isaaccapture` wheel in this package's Python 3.12 environment; camera-only
 sessions need none (the SDK is imported only when a session requests tracking).
 
-**IsaacCapture.** Build the wheel from this repository. Sync the environment first (add `--extra oak` for OAK-D
-cameras, below), then install the wheel into that environment's interpreter:
+**IsaacCapture.** Build the wheel from this repository with `-DISAAC_TELEOP_PYTHON_VERSION=3.12` (the default is
+3.11, which produces no cp312 wheel). Sync every extra you need in one command (`--extra oak` for OAK-D cameras,
+below; `--extra livekit` when the launcher records LiveKit video), then install the wheel into that environment's
+interpreter. The wheel depends on a transition package built into the same directory that no index serves, so point
+`--find-links` at it; `--reinstall-package` makes a rebuilt wheel with the same version replace the installed one:
 
 ```sh
 cd egocap
-uv sync --extra oak
-uv pip install --python .venv/bin/python /path/to/IsaacCapture/build/wheels/isaaccapture-*-cp312-*.whl
+uv sync --extra oak --extra livekit
+uv pip install --python .venv/bin/python --reinstall-package isaaccapture \
+    --find-links /path/to/IsaacCapture/build/wheels \
+    /path/to/IsaacCapture/build/wheels/isaaccapture-*-cp312-*.whl
 ```
 
-`isaaccapture` is not a declared dependency, so a later plain `uv sync` removes it; re-sync with
-`uv sync --inexact` (or install the wheel again) afterwards.
+`isaaccapture` is not a declared dependency, so any later `uv sync` removes it, and `uv sync --inexact` does not
+bring it back once it is gone: install the wheel again afterwards. The Manus plugin and worker are looked up under
+`install/plugins` of the source checkout the code runs from; with an editable install of another worktree that is
+that worktree's `install/plugins`, and `--manus-calibrator` overrides the worker only.
 
 The server imports whatever `isaaccapture` that environment provides, and a missing or unloadable one fails
 the session with the import error. Validated with `isaaccapture` 1.7+local, which also provides CloudXR

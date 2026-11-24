@@ -4,7 +4,7 @@
 
 """Starts the whole Ego Capture stack with one command and stops it together on Ctrl-C.
 
-    uv run python tools/start_system.py --orin user@orin --deploy-script PATH --bridge PATH --livekit-server PATH
+    uv run python tools/start_system.py --orin user@192.0.2.10 --bridge PATH --livekit-server PATH
 
 In order: deploy and start the Orin sender over ssh (for the SIPL backend this first stops nvargus-daemon, which
 holds the cameras), a LiveKit server, CaptureServer, the backend (which owns the recorder), the camera receiver
@@ -16,7 +16,7 @@ children are stopped, last started first, when this script ends on Ctrl-C, on SI
 Orin sender runs for ``--seconds``; when it ends the whole stack is stopped.
 
 The sender settings come from the checked-in profile ``configs/default-camera-settings.yaml`` (see
-CAMERA_SETTINGS.md). CaptureServer runs real acquisition (a built IsaacCapture checkout and tracking hardware)
+CAMERA_SETTINGS.md). CaptureServer runs real acquisition (the installed isaaccapture and tracking hardware)
 unless ``--mock`` gives it synthetic tracking and cameras. ``--mock`` also replaces the Orin sender with a local
 mock sender (no ``--orin``), so nothing real is started; the receiver, bridge and page are the same.
 
@@ -633,7 +633,7 @@ def default_receiver_command() -> str:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """The command line; every external tool's path may also come from an environment variable."""
+    """The command line; the LiveKit server and bridge paths may also come from environment variables."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--orin", help="user@host of the Jetson; omit to start only the PC side")
     parser.add_argument("--deploy-script", type=Path, default=DEPLOY_SCRIPT, help="the sender's deploy_sender.py")
@@ -752,7 +752,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for sig in STOP_SIGNALS:
         signal.signal(sig, _raise_interrupt)
     try:
-        # The deploy is checked first so a missing tool fails before anything is running.
+        # The tools are checked first so a missing one fails before anything is running.
+        if args.orin and not args.deploy_script.is_file():
+            raise StartupError(f"--orin needs the sender deploy script; {args.deploy_script} is not a file")
         if args.orin and args.mock:
             raise StartupError("--mock replaces the Orin sender with a local mock sender; do not pass --orin")
         if args.orin and not (args.bridge and args.livekit_server):
@@ -762,7 +764,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         chain = bool(args.orin) or (args.mock and bool(args.bridge and args.livekit_server))
         if chain and args.mock and not args.mock_sender.is_file():
             raise StartupError(
-                f"--mock with --bridge and --livekit-server needs the mock sender; {args.mock_sender} is no file"
+                "--mock with --bridge and --livekit-server needs the mock sender; "
+                f"{args.mock_sender} is not a file"
             )
         # Real acquisition opens only the cameras it is given, and a station file naming any other one is rejected
         # for the whole session, so catch it here instead of at the first Begin.

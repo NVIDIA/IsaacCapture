@@ -83,9 +83,9 @@ missing, timing is unqualified or the mapping has not settled, the page shows no
 
 ## Sender profile keys
 
-These keys belong to the sender release the profile targets, which is not part of this tree: it supports the SIPL
-backend and the timing extension. An older `argus_sender` in this repository has a different parser and rejects some
-of these keys, so check a release's parser before using a key. Defaults are that parser's own and can differ from the
+These keys belong to the sender build the profile targets: the SIPL backend and the timing extension. A different
+`argus_sender` build, including an older one in this repository, may have a different parser and reject some of
+these keys, so check the parser of the sender you deploy before using a key. Defaults are that parser's own and can differ from the
 shipped profile.
 
 | Key | Default / requirement | Meaning and consumer |
