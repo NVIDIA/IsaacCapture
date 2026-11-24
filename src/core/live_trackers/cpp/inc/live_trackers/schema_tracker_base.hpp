@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #pragma once
@@ -153,6 +153,7 @@ private:
     PFN_xrCreateTensorListNV m_create_list_fn{ nullptr };
     PFN_xrGetTensorListPropertiesNV m_get_list_props_fn{ nullptr };
     PFN_xrGetTensorCollectionPropertiesNV m_get_coll_props_fn{ nullptr };
+    PFN_xrGetTensorPropertiesNV m_get_tensor_props_fn{ nullptr };
     PFN_xrGetTensorDataNV m_get_data_fn{ nullptr };
     PFN_xrUpdateTensorListNV m_update_list_fn{ nullptr };
     PFN_xrDestroyTensorListNV m_destroy_list_fn{ nullptr };

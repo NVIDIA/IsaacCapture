@@ -47,7 +47,8 @@ once present (`uv run python build_support.py` from the project root builds them
 
 ## Configuration
 
-The station's identity, initial operator/task, recording output location, and requested cameras
+The station's identity, initial operator/task, recording output location, the recording writer
+(`recording.video_encoder` / `recording.video_encoder_options`, applied to every camera) and requested cameras
 come from a deployment station YAML pointed at by `EGOCAP_STATION_CONFIG` (see
 [`station_config.py`](egocap_web/station_config.py) and the shipped
 [`recording/egocap/stations/ego_stations.example.yaml`](../recording/egocap/stations/ego_stations.example.yaml)

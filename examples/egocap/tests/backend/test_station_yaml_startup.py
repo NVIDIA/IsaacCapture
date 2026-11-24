@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 from egocap_web import app as app_module
 from egocap_web.recording_command import RecordingContext, handle_recording_command, parse_recording_command
 from egocap_web.recording_session import RecordingSessionCoordinator, TaskContext
+from egocap_web.station_config import DEFAULT_VIDEO_ENCODER
 from recording_service import FieldSpec, NumericSourceSpec, ServiceConfig
 
 NUMERIC = NumericSourceSpec("s", (FieldSpec("v", "float64"),))
@@ -81,6 +82,47 @@ meta:
     monkeypatch.setenv("EGOCAP_STATION_CONFIG", str(path))
     with TestClient(app_module.app) as client:
         assert client.app.state.recording_context.snapshot()["auto_fill_operator_name"] is True
+
+
+def _spy_recording_config_factory(monkeypatch) -> dict:
+    seen: dict = {}
+    real = app_module._recording_config_factory
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "_recording_config_factory", spy)
+    return seen
+
+
+def test_configured_station_encoder_and_options_reach_the_recording_config_factory(monkeypatch, tmp_path):
+    path = _write_station_yaml(
+        tmp_path,
+        """
+meta:
+  egocap_station_name: Test Station
+recording:
+  video_encoder: ffmpeg_h264_nvenc
+  video_encoder_options:
+    crf: 20
+""",
+    )
+    monkeypatch.setenv("EGOCAP_STATION_CONFIG", str(path))
+    seen = _spy_recording_config_factory(monkeypatch)
+    with TestClient(app_module.app):
+        pass
+    assert seen["video_encoder"] == "ffmpeg_h264_nvenc"
+    assert seen["video_encoder_options"] == {"crf": 20}
+
+
+def test_no_station_file_passes_the_default_encoder_to_the_recording_config_factory(monkeypatch):
+    monkeypatch.delenv("EGOCAP_STATION_CONFIG", raising=False)
+    seen = _spy_recording_config_factory(monkeypatch)
+    with TestClient(app_module.app):
+        pass
+    assert seen["video_encoder"] == DEFAULT_VIDEO_ENCODER
+    assert seen["video_encoder_options"] is None
 
 
 def test_invalid_station_config_blocks_recording_but_not_capture_preview(monkeypatch, tmp_path):

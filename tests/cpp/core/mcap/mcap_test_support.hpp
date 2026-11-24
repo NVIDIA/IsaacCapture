@@ -28,7 +28,7 @@ namespace mcap_test
 
 namespace fs = std::filesystem;
 
-//! Owns the private directory containing a recording until readers and writers close.
+//! Use this owning fixture for recordings; keep it alive until readers and writers close.
 class TemporaryMcapFile
 {
 public:

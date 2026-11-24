@@ -30,6 +30,11 @@ add_subdirectory(oxr_utils)
 # Build Plugin Manager
 add_subdirectory(plugin_manager)
 
+# Camera interface: Linux only, for its shared memory and the socket between processes
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_subdirectory(camera)
+endif()
+
 # Build OXR library (depends on oxr_utils for types)
 add_subdirectory(oxr)
 
