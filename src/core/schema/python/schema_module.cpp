@@ -7,6 +7,7 @@
 
 // Include binding definitions.
 #include "controller_bindings.h"
+#include "dglove_bindings.h"
 #include "full_body_bindings.h"
 #include "gamepad_bindings.h"
 #include "hand_bindings.h"
@@ -63,6 +64,8 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind OGLO tactile glove types (OgloGloveSample table).
     core::bind_oglo_tactile(m);
+
+    core::bind_dglove(m);
 
     // Bind tactile types (TactileDataArray, TactileMetadata tables).
     core::bind_tactile_array(m);

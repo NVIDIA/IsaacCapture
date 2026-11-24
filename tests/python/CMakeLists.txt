@@ -3,6 +3,10 @@
 
 add_subdirectory(core)
 
+if(TARGET dglove_plugin)
+    add_subdirectory(plugins/dglove)
+endif()
+
 if(BUILD_PYTHON_BINDINGS AND NOT SKBUILD)
     add_subdirectory(packaging)
 endif()
