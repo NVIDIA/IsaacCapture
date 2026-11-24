@@ -6,12 +6,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import signal
 import time
 
 import pytest
-from conftest import BOTH, commands, wait_for
+from conftest import BOTH, assert_reaped, commands, wait_for
 from isaaccapture_manus_calibration import protocol as proto
 from isaaccapture_manus_calibration.worker import (
     AttemptEnded,
@@ -63,13 +62,6 @@ def assert_nothing_saved(store) -> None:
     """The folder holds no finished file and no half-written one."""
     assert store.saved_attempts() == []
     assert store.leftovers() == []
-
-
-def assert_reaped(attempt) -> None:
-    proc = attempt._proc
-    assert proc is not None and proc.returncode is not None
-    with pytest.raises(ProcessLookupError):
-        os.kill(proc.pid, 0)
 
 
 async def assert_no_tasks_left() -> None:

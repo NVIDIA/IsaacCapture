@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import BOTH, Folder, commands, drive, wait_for
+from conftest import BOTH, Folder, assert_reaped, commands, drive, wait_for
 from isaaccapture_manus_calibration import protocol as proto
 from isaaccapture_manus_calibration.worker import (
     AttemptEnded,
@@ -74,14 +74,6 @@ def assert_nothing_saved(store) -> None:
     """The folder holds no finished file and no half-written one."""
     assert store.saved_attempts() == []
     assert store.leftovers() == []
-
-
-def assert_reaped(attempt) -> None:
-    # The supervisor's process handle is the only record of the exit status.
-    proc = attempt._proc
-    assert proc is not None and proc.returncode is not None
-    with pytest.raises(ProcessLookupError):
-        os.kill(proc.pid, 0)
 
 
 def run(coro):
