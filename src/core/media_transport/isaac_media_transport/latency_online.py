@@ -14,6 +14,7 @@ import shlex
 import threading
 import time
 
+from .latency import open_trace
 from .latency_bus import SocketTail, endpoint
 from .latency_monitor import (
     ClockSamples,
@@ -165,8 +166,7 @@ class OnlineLatency:
             )
             if config.get("file_enabled", False):
                 root = Path(config.get("log_dir", "/tmp")).expanduser()
-                root.mkdir(parents=True, exist_ok=True)
-                stream = (root / f"umb-{run_id}-online.jsonl").open("a")
+                stream = open_trace(root / f"umb-{run_id}-online.jsonl")
             next_probe = next_report = time.monotonic()
             previous_count = 0
             last_valid = time.monotonic()
