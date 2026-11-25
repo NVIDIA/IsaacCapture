@@ -240,6 +240,8 @@ pre-commit install --hook-type commit-msg
 
 ## Remote pushes
 
+- Lead backport PR descriptions with the source PR and source/destination branches;
+  retain related issue links and verified Internal Bug IDs, stating partial coverage.
 - When moving a focused fix from a release branch onto `main`, identify its
   original base and replay only the fix commits. Do not carry release-only CI
   changes or duplicate upstream features into the new branch.
