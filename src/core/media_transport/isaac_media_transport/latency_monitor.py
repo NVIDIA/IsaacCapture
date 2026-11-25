@@ -659,9 +659,9 @@ async def recording_guide(collection_start_ns, measurement_start_ns, end_ns, res
 async def wait_for_traces(remote, host_tails, run_id, *, timeout=10):
     """Require new stage records from every selected log before the countdown."""
     first_stages = {}
-    ready = set()
     deadline = time.monotonic() + timeout
     while True:
+        ready = set()
         _, _, response = await remote.request("status")
         statuses = [("client", status) for status in response["traces"]]
         statuses.extend(("host", tail.status()) for tail in host_tails)
@@ -825,21 +825,17 @@ async def monitor(args):
                     t.status()["size"] for t in tails
                 ):
                     raise ValueError("Startup capture requires empty/new trace files")
-                print(
-                    "STARTUP COLLECTION READY — start the media processes now",
-                    flush=True,
+            if not getattr(args, "capture_startup", False):
+                # Skip old process histories only when measuring already-running media.
+                _, _, following = await remote.request("follow")
+                write_record(
+                    results,
+                    dict(
+                        record_type="trace_follow",
+                        client_offsets=following["offsets"],
+                        host_offsets=[tail.follow() for tail in tails],
+                    ),
                 )
-            # Replaying unequal per-process histories can complete current frame
-            # joins before their sender records arrive. Follow both sites live.
-            _, _, following = await remote.request("follow")
-            write_record(
-                results,
-                dict(
-                    record_type="trace_follow",
-                    client_offsets=following["offsets"],
-                    host_offsets=[tail.follow() for tail in tails],
-                ),
-            )
             joiner.collection_start_ns = time.monotonic_ns()
             joiner.measurement_start_ns = joiner.collection_start_ns + int(
                 args.warmup * 1e9
@@ -856,6 +852,11 @@ async def monitor(args):
                     measurement_end_ns=joiner.measurement_end_ns,
                 ),
             )
+            if getattr(args, "capture_startup", False):
+                print(
+                    "STARTUP COLLECTION READY — start the media processes now",
+                    flush=True,
+                )
             if not getattr(args, "capture_startup", False):
                 guide = asyncio.create_task(
                     recording_guide(
@@ -865,11 +866,8 @@ async def monitor(args):
                         results,
                     )
                 )
-            next_probe = next_report = time.monotonic()
-            while time.monotonic_ns() < joiner.measurement_end_ns:
-                if time.monotonic() >= next_probe:
-                    await probe()
-                    next_probe = time.monotonic() + 1
+
+            async def read_frames():
                 _, _, response = await remote.request("read")
                 if response["clock_id"] != clocks.source:
                     raise ValueError("Remote clock identity changed")
@@ -882,6 +880,14 @@ async def monitor(args):
                     joiner.add(event, now)
                 for row in joiner.flush(now):
                     write_record(results, row)
+                return now
+
+            next_probe = next_report = time.monotonic()
+            while time.monotonic_ns() < joiner.measurement_end_ns:
+                if time.monotonic() >= next_probe:
+                    await probe()
+                    next_probe = time.monotonic() + 1
+                now = await read_frames()
                 if time.monotonic() >= next_report:
                     snapshot = joiner.summary()
                     write_record(results, snapshot)
@@ -891,6 +897,15 @@ async def monitor(args):
                     print(terminal_summary(snapshot, phase), flush=True)
                     next_report = time.monotonic() + 5
                 await asyncio.sleep(0.1)
+            # Preserve the capture cutoff while allowing buffered terminal markers to arrive.
+            drain_end = time.monotonic() + 1.0
+            while time.monotonic() < drain_end:
+                try:
+                    async with asyncio.timeout(drain_end - time.monotonic()):
+                        await read_frames()
+                except TimeoutError:
+                    break
+                await asyncio.sleep(0.05)
             if guide:
                 await guide
         except (OSError, ValueError, TimeoutError, KeyError) as exc:

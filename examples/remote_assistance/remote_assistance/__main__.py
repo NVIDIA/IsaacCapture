@@ -150,6 +150,7 @@ def receive(settings, cam, args):
                         )
                         images.append(cv2.cvtColor(pixels, cv2.COLOR_RGBA2BGR))
                     joined = np.concatenate(images, axis=1)
+                    display = cv2.resize(joined, None, fx=args.scale, fy=args.scale)
                     for track, frame in zip(tracks, frames, strict=True):
                         if frame.metadata:
                             timing.record(
@@ -157,16 +158,16 @@ def receive(settings, cam, args):
                                 track,
                                 frame.metadata.user_timestamp,
                             )
+                    submit_begin_ns = time.monotonic_ns()
+                    for track, frame in zip(tracks, frames, strict=True):
+                        if frame.metadata:
                             timing.record(
                                 "viewer_submit_begin",
                                 track,
                                 frame.metadata.user_timestamp,
+                                at_ns=submit_begin_ns,
                             )
-                    submit_begin_ns = time.monotonic_ns() if live_timing.enabled else 0
-                    cv2.imshow(
-                        "Media bridge",
-                        cv2.resize(joined, None, fx=args.scale, fy=args.scale),
-                    )
+                    cv2.imshow("Media bridge", display)
                     if live_timing.enabled:
                         live_timing.observe(
                             sample.received_ns, submit_begin_ns, time.monotonic_ns()

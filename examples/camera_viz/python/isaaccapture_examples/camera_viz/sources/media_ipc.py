@@ -43,10 +43,12 @@ class MediaIpcSource(FrameSource):
         self._receiver.stop()
         self.latency_reporter.close()
 
+    def report_status(self):
+        self.latency_reporter.report(lambda text: notify("latency", text))
+
     def latest(self):
         from isaac_media_transport.transport import ReceivedPair
 
-        self.latency_reporter.report(lambda text: notify("latency", text))
         sample = self._receiver.latest()
         if sample is None:
             return None

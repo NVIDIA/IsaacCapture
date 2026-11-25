@@ -63,17 +63,26 @@ def main():
                 udp_port=args.udp_port,
             )
         )
+        updates = {}
+        # Validate every site's layout and YAML before changing any generated file.
         for role in ("host", "client"):
             site = Path(output) / role
-            target = site / "latency.yaml"
-            target.write_text(yaml.safe_dump(latency, sort_keys=False))
-            target.chmod(0o600)
             for name in ("camera.yaml", "session.yaml"):
                 target = site / name
                 cfg = yaml.safe_load(target.read_text())
+                if not isinstance(cfg, dict) or not isinstance(
+                    cfg.get("livekit", {}), dict
+                ):
+                    raise ValueError(
+                        f"Provisioner must produce mapping configs: {target}"
+                    )
                 cfg.get("livekit", {}).pop("latency", None)
                 cfg["latency_config"] = "latency.yaml"
-                target.write_text(yaml.safe_dump(cfg, sort_keys=False))
+                updates[target] = yaml.safe_dump(cfg, sort_keys=False)
+            updates[site / "latency.yaml"] = yaml.safe_dump(latency, sort_keys=False)
+        for target, content in updates.items():
+            target.write_text(content)
+            target.chmod(0o600)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
     print(f"Created {output}/host and {output}/client using {args.transport}.")

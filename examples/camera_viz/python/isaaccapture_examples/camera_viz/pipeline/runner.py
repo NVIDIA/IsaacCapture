@@ -350,6 +350,10 @@ class VizRunner:
         while not self._stop.wait(timeout=period):
             now = time.monotonic()
             try:
+                for source in self._sources:
+                    report = getattr(source, "report_status", None)
+                    if report is not None:
+                        report()
                 self._print_stats(now - last)
             except Exception:  # noqa: BLE001 — a broken pipe must not stop the feed
                 logger.debug("status panel write failed", exc_info=True)

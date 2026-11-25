@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import struct
 import threading
 import uuid
 
@@ -80,9 +81,14 @@ class EventBuffer:
                             break
                         raw.extend(chunk)
                     request = json.loads(raw)
-                    offset = int(request.get("offset", 0))
+                    if not isinstance(request, dict):
+                        raise ValueError("Latency request must be an object")
+                    value = request.get("offset")
+                    offset = int(value) if value is not None else None
                     with self._lock:
-                        selected = [(n, e) for n, e in self._events if n > offset][:256]
+                        selected = [
+                            (n, e) for n, e in self._events if n > (offset or 0)
+                        ][:256]
                         last = next(
                             (
                                 e
@@ -96,10 +102,10 @@ class EventBuffer:
                             sequence=self._seq,
                             gap=bool(
                                 self._events
-                                and offset
+                                and offset is not None
                                 and offset < self._events[0][0] - 1
                             ),
-                            next=selected[-1][0] if selected else offset,
+                            next=selected[-1][0] if selected else (offset or 0),
                             events=[e for _, e in selected],
                             last=last,
                         )
@@ -120,13 +126,18 @@ class SocketTail:
 
     def __init__(self, path):
         self.path = str(Path(path).expanduser())
-        self.offset = 0
+        self.offset = None
         self.instance = None
 
     def _request(self):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
             conn.settimeout(0.5)
             conn.connect(self.path)
+            _, uid, _ = struct.unpack(
+                "3i", conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+            )
+            if uid != os.getuid():
+                raise PermissionError("Latency peer must belong to the current user")
             conn.sendall(json.dumps({"offset": self.offset}).encode() + b"\n")
             result = bytearray()
             while not result.endswith(b"\n"):

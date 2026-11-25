@@ -279,9 +279,10 @@ def test_helper_protocol_clock_and_incremental_trace_reads(tmp_path):
     asyncio.run(check())
 
 
-@pytest.mark.parametrize("slow_read", [False, True])
+@pytest.mark.parametrize("slow_read", [False, True, "drain"])
+@pytest.mark.parametrize("capture_startup", [False, True])
 def test_monitor_writes_live_results_and_manifest_with_local_ssh_double(
-    tmp_path, monkeypatch, slow_read, capsys
+    tmp_path, monkeypatch, slow_read, capture_startup, capsys
 ):
     source, host = tmp_path / "source.jsonl", tmp_path / "host.jsonl"
     now = time.monotonic_ns()
@@ -295,6 +296,9 @@ def test_monitor_writes_live_results_and_manifest_with_local_ssh_double(
             )
         )
     )
+    if capture_startup:
+        source.write_text("")
+        host.write_text("")
     create_process = asyncio.create_subprocess_exec
 
     async def local_helper(*command, **options):
@@ -308,6 +312,7 @@ def test_monitor_writes_live_results_and_manifest_with_local_ssh_double(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", local_helper)
     args = SimpleNamespace(
         output=tmp_path / "result",
+        capture_startup=capture_startup,
         client="user@host",
         client_log=[str(source)],
         host_log=[str(host)],
@@ -324,7 +329,9 @@ def test_monitor_writes_live_results_and_manifest_with_local_ssh_double(
 
     async def delayed_request(self, kind):
         nonlocal sent_frame
-        if kind == "status":
+        if capture_startup:
+            assert kind != "follow"
+        if kind == "status" and not capture_startup:
             for path in (source, host):
                 with path.open("a") as stream:
                     stream.write(
@@ -332,8 +339,27 @@ def test_monitor_writes_live_results_and_manifest_with_local_ssh_double(
                         + "\n"
                     )
         if kind == "read" and not sent_frame:
+            if slow_read == "drain":
+                recorded = [
+                    json.loads(line)
+                    for line in (args.output / "results.jsonl").read_text().splitlines()
+                ]
+                end = next(
+                    row["measurement_end_ns"]
+                    for row in recorded
+                    if row["record_type"] == "measurement_window"
+                )
+                if time.monotonic_ns() < end:
+                    return await request(self, kind)
             await asyncio.sleep(0.06)
-            current = time.monotonic_ns()
+            records = [
+                json.loads(line)
+                for line in (args.output / "results.jsonl").read_text().splitlines()
+            ]
+            window = next(
+                row for row in records if row["record_type"] == "measurement_window"
+            )
+            current = window["measurement_start_ns"] + 10_000_000
             with source.open("a") as stream:
                 for stage, offset in (
                     ("capture_available", -1_000_000),
@@ -363,11 +389,12 @@ def test_monitor_writes_live_results_and_manifest_with_local_ssh_double(
                         + "\n"
                     )
             sent_frame = True
-        if kind == "read" and slow_read:
+        if kind == "read" and slow_read is True:
             await asyncio.sleep(0.2)
             # A stalled SSH read must not defer the end-of-recording prompt.
             cues = (args.output / "results.jsonl").read_text()
-            assert '"cue":"stop_recording"' in cues
+            if not capture_startup:
+                assert '"cue":"stop_recording"' in cues
         return await request(self, kind)
 
     monkeypatch.setattr(RemoteReader, "request", delayed_request)
@@ -391,6 +418,10 @@ def test_monitor_writes_live_results_and_manifest_with_local_ssh_double(
     assert manifest["relative_drift_assumption_ppm"] == 1000
     assert (args.output / "summary.json").is_file()
     window = next(r for r in records if r["record_type"] == "measurement_window")
+    if capture_startup:
+        assert "STARTUP COLLECTION READY" in capsys.readouterr().out
+        assert not any(row["record_type"] == "trace_follow" for row in records)
+        return
     cues = [r for r in records if r["record_type"] == "operator_cue"]
     for cue, boundary in (
         ("warmup", "collection_start_ns"),

@@ -29,7 +29,7 @@ from .latency_monitor import (
 def helper_script():
     return "\n".join(
         (
-            "import hashlib, json, os, socket, sys, time\nfrom pathlib import Path",
+            "import hashlib, json, os, socket, struct, sys, time\nfrom pathlib import Path",
             inspect.getsource(endpoint),
             inspect.getsource(SocketTail),
             inspect.getsource(clock_identity),
@@ -168,8 +168,7 @@ class OnlineLatency:
                 root = Path(config.get("log_dir", "/tmp")).expanduser()
                 stream = open_trace(root / f"umb-{run_id}-online.jsonl")
             next_probe = next_report = time.monotonic()
-            previous_count = 0
-            last_valid = time.monotonic()
+            freshness = {}
             while not self._stop.is_set():
                 if time.monotonic() >= next_probe:
                     await probe()
@@ -193,13 +192,12 @@ class OnlineLatency:
                         metric["session_mean_ms"] = metric["mean_ms"]
                         values = joiner.samples[name]
                         metric["mean_ms"] = sum(values) / len(values)
-                    count = snapshot["valid_total_count"]
-                    if count > previous_count:
-                        last_valid = time.monotonic()
-                    previous_count = count
+                    now_s = time.monotonic()
+                    expire_stale_tracks(snapshot, freshness, now_s)
+                    count = snapshot["fresh_total_count"]
                     with self._lock:
                         self._snapshot = snapshot
-                        self._updated = last_valid
+                        self._updated = now_s
                         self._error = (
                             None
                             if count
@@ -228,6 +226,8 @@ class OnlineLatency:
             for name, metric in snapshot["metrics"].items()
             if name.endswith("/totals/" + TOTAL_SPAN)
         ]
+        if not totals:
+            return ("Partial P2P: unavailable", "No fresh qualified frame totals")
         values = " | ".join(
             f"{name.rsplit('.', 1)[-1]} {value['mean_ms']:.1f}±{value['max_uncertainty_ms']:.1f} ms"
             for name, value in totals
@@ -250,6 +250,28 @@ class OnlineLatency:
     def close(self):
         self._stop.set()
         self._thread.join(6)
+
+
+def expire_stale_tracks(snapshot, freshness, now, max_age=3):
+    """Keep session counters, but expose current measurements only for fresh eyes."""
+    fresh = set()
+    for track, counts in snapshot["tracks"].items():
+        count = counts.get("valid_totals", 0)
+        previous, updated = freshness.get(track, (0, float("-inf")))
+        if count > previous:
+            updated = now
+        freshness[track] = (count, updated)
+        if count and now - updated <= max_age:
+            fresh.add(track)
+    snapshot["metrics"] = {
+        name: metric
+        for name, metric in snapshot["metrics"].items()
+        if name.split("/", 1)[0] in fresh
+    }
+    snapshot["fresh_total_count"] = sum(
+        snapshot["tracks"][track].get("valid_totals", 0) for track in fresh
+    )
+    snapshot["stale_tracks"] = sorted(set(snapshot["tracks"]) - fresh)
 
 
 def format_report(snapshot, uncertainty_budget_ms):
