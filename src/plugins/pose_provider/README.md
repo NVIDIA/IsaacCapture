@@ -18,6 +18,7 @@ stream through an interchangeable pose estimation engine.
 | --- | --- | --- |
 | `engine_api/` | `pose_provider::pose_engine_api` | Header-only engine interface: `IPoseEngine`, its records and `ResolvedPoseSetup`; standard library only |
 | `camera_input/` | `pose_provider::pose_camera_input` | Header-only camera input interface: `ICameraInput`, its events and `StereoFrame`, for one stereo camera source read without blocking |
+| `undistort/` | `pose_provider::pose_undistort` | Undistortion of one camera image to a distortion-free pinhole of the same size and optical frame: the widest valid output calibration, its map and bilinear `Gray8` resampling |
 | `engines/stub/` | `pose_provider::pose_engine_stub` | Adapter of the full contract with no engine library behind it |
 | `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, status and failure handling around one engine adapter; links no adapter |
 | `app/` | `pose_provider_plugin` | The plugin executable; links the adapter that `POSE_ENGINE_TARGET` names. Its manifest is [`plugin.yaml`](plugin.yaml) |
@@ -36,13 +37,13 @@ To use an engine adapter instead of the stub, also pass
 `-DPOSE_ENGINE_<NAME>=ON -D<NAME>_ROOT=<engine library directory>`.
 
 `POSE_ENGINE_TARGET` names the adapter that `pose_provider_plugin` links: the one enabled
-adapter, or the stub. `pose_provider_tests` checks the stub against the engine contract and a
-scripted camera input against the camera input contract, and runs `PoseProvider` on the stub
-and on a scripted engine; the `pose_engine_*` tests check adapter registration. The build
-places `pose_provider_plugin` beside a copy of `plugin.yaml` in
-`build/src/plugins/pose_provider/`, so `build/src/plugins` works as a `PluginManager` search
-path. No target here has install rules, and a pip build with `BUILD_PLUGIN_POSE_PROVIDER` on
-stops at configuration.
+adapter, or the stub. `pose_provider_tests` checks the stub against the engine contract, a
+scripted camera input against the camera input contract and the undistortion on synthetic
+lenses, and runs `PoseProvider` on the stub and on a scripted engine; the `pose_engine_*`
+tests check adapter registration. The build places `pose_provider_plugin` beside a copy of
+`plugin.yaml` in `build/src/plugins/pose_provider/`, so `build/src/plugins` works as a
+`PluginManager` search path. No target here has install rules, and a pip build with
+`BUILD_PLUGIN_POSE_PROVIDER` on stops at configuration.
 
 ## Run
 
