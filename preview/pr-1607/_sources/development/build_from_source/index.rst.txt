@@ -380,8 +380,7 @@ differently:
 
 .. _build-from-source-editable-examples:
 
-Install an example into this venv with ``--no-sources``. For SOMA examples on aarch64, first
-install the dependency in :ref:`one-time-setup`:
+Install an example into this venv with ``--no-sources``:
 
 .. code-block:: bash
 
