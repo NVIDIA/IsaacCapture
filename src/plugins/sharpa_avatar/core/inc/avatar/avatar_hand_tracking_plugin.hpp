@@ -118,6 +118,7 @@ struct GloveState
     struct DatasetState
     {
         DatasetFreshness freshness;
+        StreamOutputRecovery output;
         std::optional<::avatar::ErrorCode> fetch_error;
         bool ever_received_data = false;
     };
@@ -131,8 +132,6 @@ struct GloveState
     uint64_t observed_ingress_generation = 0;
     std::optional<std::chrono::steady_clock::time_point> last_ingress;
     std::optional<std::string> haptic_error;
-    std::optional<std::string> output_setup_error;
-    std::optional<std::chrono::steady_clock::time_point> last_output_setup_attempt;
     bool ever_received_ingress = false;
     bool started = false;
     bool ready = false;
@@ -234,6 +233,8 @@ public:
     void update();
 
 private:
+    friend struct AvatarTrackerTestAccess;
+
     static constexpr std::size_t kAvatarFingerCount = 5;
 
     void initialize_openxr();
@@ -244,7 +245,6 @@ private:
     void try_connect_missing_gloves();
     void start_glove_if_present(GloveState& glove, ::avatar::DeviceSide side);
     void refresh_glove_activity();
-    bool try_create_output_resources(::avatar::DeviceSide side);
     void destroy_output_resources(::avatar::DeviceSide side) noexcept;
     void refresh_data();
     void log_waiting_gloves();
@@ -257,6 +257,9 @@ private:
                           ::avatar::DeviceDataCategory category,
                           core::SchemaPusher& pusher);
     bool dataset_enabled(::avatar::DeviceDataCategory category) const;
+    bool dataset_usable(const GloveState& state,
+                        ::avatar::DeviceDataCategory category,
+                        std::chrono::steady_clock::time_point now) const;
     bool apply_haptic_command(::avatar::DeviceSide side, const std::array<float, kAvatarFingerCount>& powers);
     bool send_haptic_command(::avatar::DeviceSide side, const std::array<float, kAvatarFingerCount>& powers);
     void stop_haptics(::avatar::DeviceSide side) noexcept;
