@@ -45,6 +45,7 @@ from .sources import resolve_video_paths, set_notify_sink, set_verbose
 def _parse_args(argv: Optional[list[str]]):
     parser = argparse.ArgumentParser(description="Televiz camera_viz — display side")
     parser.add_argument("config", type=Path, help="YAML config file")
+    parser.add_argument("--source", choices=("local", "rtp", "ipc"), default=None)
     parser.add_argument(
         "--mode",
         choices=("window", "xr"),
@@ -171,13 +172,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             f"got {type(cfg).__name__}"
         )
 
+    if cfg.get("latency_config"):
+        policy = yaml.safe_load(
+            (args.config.parent / cfg["latency_config"]).read_text()
+        )
+        if not isinstance(policy, dict):
+            raise ValueError("Latency config must be a YAML mapping")
+        cfg.setdefault("livekit", {})["latency"] = policy
+
     # Top-level ``verbose:`` enables per-source periodic breadcrumbs.
     set_verbose(bool(cfg.get("verbose", False)))
     resolve_video_paths(cfg, args.config.parent)
 
-    source_mode = cfg.get("source", "local").lower()
-    if source_mode not in ("local", "rtp"):
-        raise ValueError(f"camera_viz: source must be local|rtp, got {source_mode!r}")
+    source_mode = (args.source or cfg.get("source", "local")).lower()
+    if source_mode not in ("local", "rtp", "ipc"):
+        raise ValueError(
+            f"camera_viz: source must be local|rtp|ipc, got {source_mode!r}"
+        )
 
     effective_mode = (args.mode or cfg.get("display", {}).get("mode", "xr")).lower()
     config.check_shapes_are_displayable(cfg, effective_mode)
@@ -269,6 +280,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         if source_mode == "local":
             entries = config.build_local_entries(cfg, is_xr)
+        elif source_mode == "ipc":
+            entries = config.build_ipc_entries(cfg, is_xr)
         else:
             entries = config.build_rtp_entries(cfg, is_xr)
 

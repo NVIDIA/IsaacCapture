@@ -121,6 +121,22 @@ image checks, but is not a GPU display path or an optical-latency reference.
 A GPU application can consume `IpcReceiver` directly; see the
 [core interface](../../src/core/media_transport/README.md).
 
+#### GPU desktop and XR / CloudXR viewer
+
+For low-latency desktop or headset viewing, install the existing GPU renderer
+on the host:
+
+```bash
+cd $IC_DIR
+examples/camera_viz/camera_viz.sh setup
+uv pip install --python examples/camera_viz/.venv/bin/python src/core/media_transport
+```
+
+Follow the [camera viewer setup guide](../camera_viz/README.md) for the CUDA,
+Vulkan and CloudXR prerequisites. This is video-only: no robot policy or Pico
+Manager is required. The IPC adapter uses the core package, not a second
+LiveKit connection or decoder.
+
 ### Client Setup
 
 #### Sensing / Argus capture
@@ -192,6 +208,7 @@ Required - select the camera template from the remote_assistance folder:
 ```bash
 # For a camera-free test, select camera-synthetic.yaml instead.
 export CAMERA_CONFIG="$IC_DIR/examples/remote_assistance/camera-s56-stereo.yaml"
+export LATENCY_CONFIG="$IC_DIR/examples/remote_assistance/latency.yaml"
 ```
 
 Then generate the bundles with this command:
@@ -201,7 +218,8 @@ cd $IC_DIR
 examples/remote_assistance/.venv/bin/python -m remote_assistance.network_setup \
   --transport "$TRANSPORT" --host-ip "${HOST_IP:?Set HOST_IP}" \
   --output "$BUNDLE" --camera-config "$CAMERA_CONFIG" \
-  --session-config examples/remote_assistance/session.yaml
+  --session-config examples/remote_assistance/session.yaml \
+  --latency-config "$LATENCY_CONFIG"
 ```
 
 Generation creates `host/` and `client/`, with scoped tokens and TLS certificates.
@@ -366,24 +384,62 @@ examples/remote_assistance/.venv/bin/python -m remote_assistance receiver \
   "$BUNDLE/host/camera.yaml"
 ```
 
-#### Camera Viewer — diagnostic desktop
+#### Camera Viewer — desktop or XR
 
-Keep the sender and CUDA receiver running. In another host terminal:
+Keep the sender and CUDA receiver running. Choose either viewer below.
+For the CUDA preset, use the GPU desktop viewer to keep frames on the GPU.
+In another host terminal:
+
+```bash
+# repeat the exports from before in a new terminal
+export IC_DIR="$HOME/IsaacCapture"
+export TRANSPORT=livekit
+export BUNDLE="$HOME/remote-assistance-$TRANSPORT"
+cd $IC_DIR
+
+examples/camera_viz/.venv/bin/python -m isaaccapture_examples.camera_viz \
+  "$BUNDLE/host/camera.yaml" --source ipc --mode window
+```
+
+This uses the same GPU renderer and latency markers as the XR route below.
+Use Ctrl+C to stop it. Complete the GPU viewer prerequisites above first.
+
+The **OpenCV diagnostic viewer** is an alternative for image inspection. It
+copies frames to CPU, converts their colors and joins stereo images before
+submission, adding work that the GPU viewer avoids. Use the GPU viewer for
+latency comparisons. To run the diagnostic viewer instead, stop the GPU viewer
+and use the same exports:
+
+```bash
+source "$BUNDLE/host/credentials.env"
+examples/remote_assistance/.venv/bin/python -m remote_assistance viewer \
+  "$BUNDLE/host/camera.yaml" --ipc --scale 1.0
+```
+
+For the synthetic CPU preset, skip the separate receiver and omit `--ipc` from
+this diagnostic command. `--headless` counts received samples without a window.
+`--seconds 30` bounds any example process for a smoke test. Press `q` while the
+diagnostic window has focus, close its window, or use Ctrl+C to stop it.
+
+For **XR / CloudXR**, stop the desktop viewer and run this alternative using
+the same host camera YAML and receiver socket:
 
 ```bash
 export IC_DIR="$HOME/IsaacCapture"
 export TRANSPORT=livekit
 export BUNDLE="$HOME/remote-assistance-$TRANSPORT"
 cd $IC_DIR
-source "$BUNDLE/host/credentials.env"
-examples/remote_assistance/.venv/bin/python -m remote_assistance viewer \
-  "$BUNDLE/host/camera.yaml" --ipc --scale 1.0
+examples/camera_viz/.venv/bin/python -m isaaccapture_examples.camera_viz \
+  "$BUNDLE/host/camera.yaml" --source ipc --mode xr
 ```
 
-This diagnostic viewer copies frames to CPU. GPU desktop/XR integration follows
-in the next review. For the synthetic CPU preset, skip the receiver and omit
-`--ipc`. Use `--headless` to count samples without a window, `--seconds 30` for a
-bounded smoke test, and Ctrl+C to stop.
+Connect the headset using the CloudXR connection instructions printed by the
+viewer. It starts the CloudXR runtime and presents the left and right tracks
+to their corresponding eyes, keeping decoded frames on the GPU. Headset-to-host
+reachability and CloudXR's own network requirements are separate from the
+client-to-host LiveKit firewall rules above; see the linked viewer guide.
+Use Ctrl+C to stop the XR viewer. This IPC route requires the CUDA receiver;
+it does not apply to the synthetic CPU preset.
 
 ## Optional opaque-message test
 
@@ -419,9 +475,123 @@ examples/remote_assistance/.venv/bin/python -m remote_assistance messages \
 This exchanges demonstration status messages only. Robot command schemas,
 controller arming, watchdog actions and recovery policy belong to the application.
 
-## Transport plugins
+## Transport plugins and timing
 
 See the [transport contract](../../src/core/media_transport/README.md) for payload
-ownership, timestamp units, feedback and external-plugin registration, and the
-[LiveKit plugin](../../src/plugins/transport_livekit/README.md) for SDK dependencies.
-Online latency reporting and GPU viewer integration follow in the next review.
+ownership, timestamp units, feedback, and external-plugin registration. See the
+[LiveKit plugin](../../src/plugins/transport_livekit/README.md) for SDK dependencies
+and optional native receive support.
+
+### One measurement policy for both sites
+
+Instrumentation settings live in **`$IC_DIR/examples/remote_assistance/latency.yaml`**,
+not in camera templates. Use the same file with S56, SHW5G, or other camera
+configurations and with any transport that supplies the stage markers. Camera
+resolution, sensor IDs and encoding settings still belong in the camera template.
+
+```yaml
+enabled: true                # The single master switch
+file_enabled: false          # Retain JSONL stage records and qualified results
+terminal_enabled: true       # Periodic viewer reports
+hud_enabled: false           # Persistent XR panel
+report_interval_s: 5
+run_id: ""                   # Bundle generation assigns a shared unique ID
+log_dir: /tmp
+clock:
+  client: "${CLIENT_USER}@${CLIENT_IP}"
+  client_python: python3
+  max_age_s: 2
+  max_uncertainty_ms: 5
+  drift_ppm: 1000
+```
+
+The review preset enables online measurements and terminal reports by default.
+To turn all instrumentation off, change **only `enabled` to `false`**. Select any
+combination of file, terminal and HUD outputs. HUD-only mode sets `hud_enabled:
+true`, `terminal_enabled: false`, and `file_enabled: false`; the master remains
+true. File logging and the HUD remain off in the shipped preset.
+
+On the host, set `CLIENT_USER` and `CLIENT_IP` as in Network setup and verify
+non-interactive SSH access (or put the actual `user@address` in `clock.client`):
+
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=5 "$CLIENT_USER@$CLIENT_IP" true
+```
+
+The host must trust the client's SSH host key and have a working login key. Do
+not disable host-key verification. The helper requires only the client's Python
+standard library and does not require sudo or change either computer's clock.
+
+Generate the bundles using `--latency-config "$LATENCY_CONFIG"`, transfer the
+client bundle, and restart the processes with the new credentials. Generation
+resolves the SSH address and places the same `latency.yaml` and run ID in both
+bundles. The camera YAML references that sidecar by a relative path. Templates
+and already generated bundles are separate: editing a template does not change
+a running process. Use a new generated run ID when changing test conditions.
+
+Start the sender, receiver (for CUDA IPC) and chosen viewer normally. **No
+separate latency-monitor terminal is required.** The viewer starts clock probes
+and joins markers in the background. An SSH or telemetry failure marks latency
+unavailable and retries; it does not stop video.
+
+### What the partial photon-to-photon total measures
+
+The primary total spans **camera frame available to the sender → viewer
+submission begins**, using the same endpoints as the prototype's online
+comparison. It estimates the bridge's measurable portion of the path, including
+encoding, transport, decoding, pairing, IPC and viewer preparation. It excludes
+sensor exposure/readout before the capture callback and physical display/XR
+presentation after submission. The earlier approximately 36 ms result is a
+measured baseline, not a value this code assumes or guarantees.
+
+| Available stage markers | What they help locate |
+| --- | --- |
+| `capture_available`, `encoder_submit`, `encoded_ready`, `access_unit_ready` | Capture handoff and encoding on the client |
+| `publish_begin`, `transport_submit`, `transport_available` | Application/transport handoff across the clock-mapped network boundary |
+| `decode_begin`, `decode_ready`, `pair_ready` | Host decoding and stereo coordination |
+| `ipc_export_begin`, `ipc_export_ready`, `ipc_import_begin`, `ipc_copy_ready` | CUDA IPC handoff |
+| `viewer_take`, `viewer_ready`, `viewer_submit_begin`, `viewer_submit_end` | Viewer preparation and submission-call cost |
+
+A span covering missing intermediate markers is labelled a **partial span**, not
+attributed to one stage. Totals require matching capture and viewer endpoints.
+Submission-end timing is diagnostic and is not added to the primary total.
+Native transport diagnostics, where supplied, overlap other spans and must not
+be summed with them. The synthetic software path can measure the total without
+exposing native encoding/network sub-stages. Capture plugins must timestamp the
+actual frame-availability boundary and preserve frame identity for comparable
+measurements; configuration alone cannot invent missing markers.
+
+The clock estimator reuses authenticated four-timestamp SSH probes. It bounds
+the client-to-host monotonic-clock offset using round-trip measurements and an
+explicit relative drift allowance. It does **not** assume symmetric network
+latency. Stale mappings, excessive uncertainty, disagreeing clock samples,
+process restarts and incomplete frame joins invalidate results. The displayed
+estimate is conditional on that drift allowance; inspect bounds and uncertainty
+in recorded results when comparing small differences. This is not a guarantee
+of exposure synchronization or full optical latency.
+
+### Outputs and overhead
+
+- **Terminal:** the final viewer periodically reports each track's partial total,
+  rolling mean/p95 (up to 300 samples per interval), sample count and available stage intervals. Missing or stale
+  totals say unavailable rather than zero.
+- **HUD:** the IPC/XR viewer shows qualified per-eye partial totals in a persistent
+  head-locked panel, with the measured clock uncertainty shown as ± milliseconds. It does not add a HUD to OpenCV or headless operation.
+- **Files:** each process writes `umb-<run_id>-<role>.jsonl` under its site's
+  `log_dir`. The viewer also writes `umb-<run_id>-online.jsonl` with per-frame
+  qualified intervals, uncertainty and summaries. Headless mode has no viewer
+  submission, so it cannot produce this total.
+
+File logging is optional: online joins use bounded same-user memory buffers and
+Unix sockets, with metadata fetched over SSH. No pixels travel through the
+measurement channel. Buffer overruns or restarts discard incomplete joins;
+telemetry failures do not block media. Enabling instrumentation still costs
+clock reads, metadata processing and periodic probes; HUD rendering and file
+I/O add their own costs. Recheck overhead and the optical baseline on your
+hardware before choosing production defaults.
+
+Clock qualification and event collection live in the transport core, independent
+of camera SDKs and transport implementations. This example's stage schema is
+video-specific. Audio, tactile and control streams can reuse the clock mapping
+and collection strategy, but need their own frame/message identities and clearly
+defined start/end stages; they are not measured by this example yet.
