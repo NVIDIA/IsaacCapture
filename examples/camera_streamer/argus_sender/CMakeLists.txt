@@ -194,8 +194,10 @@ if(WITH_SIPL)
     find_library(NVSCIBUF_LIBRARY NAMES nvscibuf HINTS ${NVIDIA_LIBRARY_DIRS})
     find_library(NVSCISYNC_LIBRARY NAMES nvscisync HINTS ${NVIDIA_LIBRARY_DIRS})
     find_library(NVBUFSURFACE_NVSCI_LIBRARY NAMES nvbufsurface_nvsci HINTS ${NVIDIA_LIBRARY_DIRS})
+    # The VIC converts a YUV camera's UYVY capture output to NV12 for the encoder.
+    find_library(NVBUFSURFTRANSFORM_LIBRARY NAMES nvbufsurftransform HINTS ${NVIDIA_LIBRARY_DIRS})
     foreach(sipl_var SIPL_INCLUDE_DIR SIPL_QUERY_INCLUDE_DIR NVSCI_INCLUDE_DIR NVSIPL_LIBRARY NVSIPL_QUERY_LIBRARY
-                     NVSCIBUF_LIBRARY NVSCISYNC_LIBRARY NVBUFSURFACE_NVSCI_LIBRARY)
+                     NVSCIBUF_LIBRARY NVSCISYNC_LIBRARY NVBUFSURFACE_NVSCI_LIBRARY NVBUFSURFTRANSFORM_LIBRARY)
         if(NOT ${sipl_var})
             message(FATAL_ERROR "WITH_SIPL=ON but ${sipl_var} was not found")
         endif()
@@ -220,6 +222,7 @@ if(WITH_SIPL)
         ${NVSCISYNC_LIBRARY}
         ${NVBUFSURFACE_LIBRARY}
         ${NVBUFSURFACE_NVSCI_LIBRARY}
+        ${NVBUFSURFTRANSFORM_LIBRARY}
         Threads::Threads
     )
     target_sources(argus_sender PRIVATE src/SiplSender.cpp)

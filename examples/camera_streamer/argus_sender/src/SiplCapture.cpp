@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// SIPL capture. The ISP0 surface is handed on as native NV12 and returned to SIPL when
+// SIPL capture. A raw sensor's ISP0 surface is handed on as native NV12 and returned to SIPL when
 // the consumer drops its lease; there is no RGBA conversion. Needs C++17 because the SIPL headers do.
 
 #include "SiplCapture.h"
@@ -14,6 +14,7 @@
 
 #include <NvSIPLCamera.hpp>
 #include <NvSIPLCameraQuery.hpp>
+#include <NvSIPLCapStructs.h>
 #include <NvSIPLClient.hpp>
 #include <NvSIPLCommon.hpp>
 #include <NvSIPLPipelineMgr.hpp>
@@ -27,8 +28,10 @@
 #include <mutex>
 #include <nvbufsurface.h>
 #include <nvbufsurface_nvscibuf.h>
+#include <nvbufsurftransform.h>
 #include <nvscibuf.h>
 #include <nvscisync.h>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -212,6 +215,66 @@ std::vector<CameraDescriptor> flatten(const nvsipl::sensorconfig::SensorSystemCo
     return out;
 }
 
+// Calls fn(sensor) for every sensor of the configuration; the nesting is the one `flatten` walks.
+template <typename Config, typename Fn>
+void forEachSensor(Config& config, Fn fn)
+{
+    for (auto& module : config.modules)
+    {
+        std::visit(
+            [&](auto& moduleType)
+            {
+                for (auto& sensorVariant : moduleType.sensorConfigs)
+                    std::visit(fn, sensorVariant);
+            },
+            module.moduleType);
+    }
+}
+
+// Sensors that share a sensor group (a stereo pair) run as one SIPL pipeline group: the sensor with device index 0
+// is the primary, and the others take its ISP program and auto control. Returns the ids of those others.
+std::set<uint32_t> groupSecondaries(const nvsipl::sensorconfig::SensorSystemConfig& config)
+{
+    std::set<uint32_t> out;
+    forEachSensor(config,
+                  [&](const auto& sensor)
+                  {
+                      if (sensor.sensorGroup > 0 && sensor.deviceIndex > 0)
+                          out.insert(sensor.id);
+                  });
+    return out;
+}
+
+// A virtual channel with no Bayer order (cfa 0, which no NVSIPL_PIXEL_ORDER_* value is) belongs to a YUV camera with
+// its own ISP. The query library leaves such a channel at its RAW12 default, which SIPL rejects at
+// GetImageAttributes, so it is declared YUV422/UYVY before SetPlatformCfg. Returns the ids of the sensors corrected.
+std::set<uint32_t> declareYuv422Sensors(nvsipl::sensorconfig::SensorSystemConfig& config)
+{
+    std::set<uint32_t> out;
+    forEachSensor(config,
+                  [&](auto& sensor)
+                  {
+                      for (auto& vc : sensor.vcInfoList)
+                      {
+                          if (vc.cfa != 0)
+                              continue;
+                          vc.inputFormat = NVSIPL_CAP_INPUT_FORMAT_TYPE_YUV422;
+                          vc.cfa = NVSIPL_PIXEL_ORDER_UYVY;
+                          out.insert(sensor.id);
+                      }
+                  });
+    return out;
+}
+
+// One value of a reconciled buffer attribute list.
+template <typename T>
+T attrValue(const NvSciBufAttrKeyValuePair& attr)
+{
+    if (attr.value == nullptr)
+        throw std::runtime_error("the capture buffer attributes lack a plane geometry key");
+    return *static_cast<const T*>(attr.value);
+}
+
 } // namespace
 
 std::vector<CameraDescriptor> querySiplCameras(const std::string& platformConfigJson,
@@ -239,11 +302,20 @@ struct SiplCapture::Impl
         NvBufSurface* surface = nullptr;
     };
 
-    // The newest frame the consumer has not taken. A frame replaced before it is taken goes straight back to SIPL.
+    // An NV12 picture converted from a YUV camera's capture output. Leased to the consumer like a SIPL buffer.
+    struct Nv12Out
+    {
+        NvBufSurface* surface = nullptr;
+        bool inUse = false;
+    };
+
+    // The newest frame the consumer has not taken. A frame replaced before it is taken goes straight back to its
+    // owner: SIPL for an ISP0 buffer, the sensor's NV12 pool for a converted picture (`nv12`; `buffer` is then null).
     struct Pending
     {
         INvSIPLClient::INvSIPLBuffer* buffer = nullptr;
-        const Slot* slot = nullptr;
+        Nv12Out* nv12 = nullptr;
+        const NvBufSurface* surface = nullptr;
         uint64_t sequence = 0;
         // The capture timestamp as a platform TSC in nanoseconds; 0 unless the mapping check passed.
         uint64_t sensorTscNs = 0;
@@ -258,6 +330,11 @@ struct SiplCapture::Impl
     struct Sensor
     {
         CameraDescriptor info;
+        // In a sensor group without being its primary; see groupSecondaries.
+        bool groupSecondary = false;
+        // A YUV camera: pictures come from the capture output (ICP) as UYVY and are converted to NV12 by the VIC;
+        // the ISP is not used and there is no NITO. See declareYuv422Sensors.
+        bool yuvPassthrough = false;
         nvsipl::NvSIPLPipelineConfiguration pipelineConfig{};
         nvsipl::NvSIPLPipelineQueues queues{};
         NvSciBufAttrList bufAttrs = nullptr;
@@ -266,6 +343,9 @@ struct SiplCapture::Impl
         NvSciBufAttrList icpAttrs = nullptr;
         std::vector<NvSciBufObj> icpBufObjects;
         std::vector<Slot> slots;
+        // YUV cameras only: the NV12 pictures handed to the consumer.
+        std::vector<Nv12Out> nv12Pool;
+        bool nv12Starved = false;
         NvSciSyncObj syncObj = nullptr;
         // One wait context can wait on only one fence at a time, so each sensor's frame thread has its own.
         NvSciSyncCpuWaitContext cpuWaitContext = nullptr;
@@ -337,11 +417,23 @@ struct SiplCapture::Impl
         throw std::runtime_error(failureMessage.empty() ? "SIPL capture failed" : failureMessage);
     }
 
+    // sensor.mutex held by the caller.
+    static void releasePending(Pending& pending)
+    {
+        if (pending.buffer)
+            pending.buffer->Release();
+        if (pending.nv12)
+            pending.nv12->inUse = false;
+        pending.buffer = nullptr;
+        pending.nv12 = nullptr;
+    }
+
     void configure();
     void allocateBuffers(Sensor& sensor);
     void allocateIcpBuffers(Sensor& sensor);
+    void allocateYuvBuffers(Sensor& sensor);
     void registerBuffers(Sensor& sensor);
-    void allocateSync(Sensor& sensor);
+    void allocateSync(Sensor& sensor, INvSIPLClient::ConsumerDesc::OutputType output);
     void registerNito(Sensor& sensor);
     void frameLoop(Sensor& sensor);
     void eventLoop(Sensor& sensor);
@@ -372,6 +464,10 @@ void SiplCapture::Impl::configure()
         throw std::runtime_error("no modules left in '" + config.platformConfigName +
                                  "' after applying the link masks; check the masks against the configuration");
 
+    const std::set<uint32_t> yuvSensors = declareYuv422Sensors(*systemConfig);
+    for (uint32_t id : yuvSensors)
+        std::fprintf(stderr, "[sipl] sensor %u: YUV422/UYVY camera, capture output converted to NV12 by the VIC\n", id);
+
     descriptors = flatten(*systemConfig);
     if (descriptors.empty())
         throw std::runtime_error("platform configuration '" + config.platformConfigName + "' declares no sensors");
@@ -381,21 +477,27 @@ void SiplCapture::Impl::configure()
         throw std::runtime_error("INvSIPLCamera::GetInstance returned null");
     checkSipl(camera->SetPlatformCfg(*systemConfig), "SetPlatformCfg");
 
+    const std::set<uint32_t> secondaries = groupSecondaries(*systemConfig);
     for (const auto& info : descriptors)
     {
         std::unique_ptr<Sensor> sensor(new Sensor());
         sensor->info = info;
+        sensor->groupSecondary = secondaries.count(info.id) != 0;
+        sensor->yuvPassthrough = yuvSensors.count(info.id) != 0;
         checkSci(NvSciSyncCpuWaitContextAlloc(syncModule, &sensor->cpuWaitContext), "NvSciSyncCpuWaitContextAlloc");
         SensorClockMap::Config clockConfig;
         sensor->clockMap.reset(new SensorTimeMapper(counterHz, clockConfig, readCounterPair));
-        // ISP0 only: ICP would double the capture bandwidth for a raw stream nothing here consumes.
-        sensor->pipelineConfig.captureOutputRequested = false;
-        sensor->pipelineConfig.isp0OutputRequested = true;
+        // ISP0 only for a raw sensor: ICP would double the capture bandwidth for a raw stream nothing here consumes.
+        // A YUV camera is the opposite: its capture output is the picture and the ISP cannot take it.
+        sensor->pipelineConfig.captureOutputRequested = sensor->yuvPassthrough;
+        sensor->pipelineConfig.isp0OutputRequested = !sensor->yuvPassthrough;
         sensor->pipelineConfig.isp1OutputRequested = false;
         sensor->pipelineConfig.isp2OutputRequested = false;
         // Subframe is enabled by default and then needs a slice count that is not set here.
         sensor->pipelineConfig.disableSubframe = true;
         sensor->pipelineConfig.bufferCfg.maxIsp0BufferCount = config.isp0Buffers;
+        if (sensor->yuvPassthrough)
+            sensor->pipelineConfig.bufferCfg.maxCaptureBufferCount = config.isp0Buffers;
         checkSipl(camera->SetPipelineCfg(info.id, sensor->pipelineConfig, sensor->queues), "SetPipelineCfg");
         sensors.push_back(std::move(sensor));
     }
@@ -405,13 +507,26 @@ void SiplCapture::Impl::configure()
     // out of order, and the first Register call then fails with NVSIPL_STATUS_INVALID_STATE.
     for (auto& sensor : sensors)
     {
+        if (sensor->yuvPassthrough)
+        {
+            allocateYuvBuffers(*sensor);
+            allocateSync(*sensor, kIcp);
+            continue;
+        }
         allocateIcpBuffers(*sensor);
         allocateBuffers(*sensor);
-        allocateSync(*sensor);
+        allocateSync(*sensor, kIsp0);
     }
     checkSipl(camera->Init(), "INvSIPLCamera::Init");
     for (auto& sensor : sensors)
         registerBuffers(*sensor);
+    // Auto control comes after every sensor's images: a group primary is refused with NVSIPL_STATUS_INVALID_STATE
+    // while its secondary has none registered.
+    for (auto& sensor : sensors)
+    {
+        if (!sensor->groupSecondary && !sensor->yuvPassthrough)
+            registerNito(*sensor);
+    }
 }
 
 void SiplCapture::Impl::allocateBuffers(Sensor& sensor)
@@ -473,16 +588,102 @@ void SiplCapture::Impl::allocateIcpBuffers(Sensor& sensor)
     }
 }
 
+// A YUV camera's capture output: UYVY buffers SIPL fills, each with an NvBufSurface view the VIC reads, and the NV12
+// pictures the VIC writes for the encoder. NvmmImageFillNvSciBufAttrList knows no UYVY, so the buffers are allocated
+// from SIPL's attributes alone and each view is imported from the DMA-BUF and the reconciled geometry.
+void SiplCapture::Impl::allocateYuvBuffers(Sensor& sensor)
+{
+    NvSciBufAttrList siplAttrs = nullptr;
+    NvSciBufAttrList conflict = nullptr;
+    checkSci(NvSciBufAttrListCreate(bufModule, &siplAttrs), "NvSciBufAttrListCreate icp");
+    NvSciBufType bufType = NvSciBufType_Image;
+    NvSciBufAttrValAccessPerm perm = NvSciBufAccessPerm_ReadWrite;
+    NvSciBufAttrKeyValuePair kvp[] = {
+        { NvSciBufGeneralAttrKey_Types, &bufType, sizeof(bufType) },
+        { NvSciBufGeneralAttrKey_RequiredPerm, &perm, sizeof(perm) },
+    };
+    checkSci(NvSciBufAttrListSetAttrs(siplAttrs, kvp, 2), "NvSciBufAttrListSetAttrs icp");
+    checkSipl(camera->GetImageAttributes(sensor.info.id, kIcp, siplAttrs), "GetImageAttributes ICP");
+    NvSciBufAttrList unreconciled[] = { siplAttrs };
+    checkSci(NvSciBufAttrListReconcile(unreconciled, 1U, &sensor.bufAttrs, &conflict), "NvSciBufAttrListReconcile icp");
+    NvSciBufAttrListFree(siplAttrs);
+    if (conflict)
+        NvSciBufAttrListFree(conflict);
+
+    NvSciBufAttrKeyValuePair geometry[] = {
+        { NvSciBufImageAttrKey_PlaneCount, nullptr, 0 },  { NvSciBufImageAttrKey_PlaneWidth, nullptr, 0 },
+        { NvSciBufImageAttrKey_PlaneHeight, nullptr, 0 }, { NvSciBufImageAttrKey_PlanePitch, nullptr, 0 },
+        { NvSciBufImageAttrKey_PlaneOffset, nullptr, 0 }, { NvSciBufImageAttrKey_PlaneAlignedSize, nullptr, 0 },
+        { NvSciBufImageAttrKey_Size, nullptr, 0 },        { NvSciBufImageAttrKey_Layout, nullptr, 0 },
+    };
+    checkSci(NvSciBufAttrListGetAttrs(sensor.bufAttrs, geometry, sizeof(geometry) / sizeof(geometry[0])),
+             "NvSciBufAttrListGetAttrs icp geometry");
+    if (attrValue<uint32_t>(geometry[0]) != 1)
+        throw std::runtime_error("expected one UYVY plane from the capture output");
+    NvBufSurfaceMapParams map{};
+    map.num_planes = 1;
+    map.gpuId = static_cast<uint32_t>(config.gpuId);
+    map.memType = NVBUF_MEM_SURFACE_ARRAY;
+    map.scanformat = NVBUF_DISPLAYSCANFORMAT_PROGRESSIVE;
+    map.colorFormat = NVBUF_COLOR_FORMAT_UYVY;
+    map.planes[0].width = attrValue<uint32_t>(geometry[1]);
+    map.planes[0].height = attrValue<uint32_t>(geometry[2]);
+    map.planes[0].pitch = attrValue<uint32_t>(geometry[3]);
+    map.planes[0].offset = static_cast<uint32_t>(attrValue<uint64_t>(geometry[4]));
+    map.planes[0].psize = static_cast<uint32_t>(attrValue<uint64_t>(geometry[5]));
+    map.totalSize = static_cast<uint32_t>(attrValue<uint64_t>(geometry[6]));
+    map.layout = attrValue<NvSciBufAttrValImageLayoutType>(geometry[7]) == NvSciBufImage_PitchLinearType ?
+                     NVBUF_LAYOUT_PITCH :
+                     NVBUF_LAYOUT_BLOCK_LINEAR;
+
+    sensor.slots.resize(config.isp0Buffers);
+    for (uint32_t i = 0; i < config.isp0Buffers; ++i)
+    {
+        Slot& slot = sensor.slots[i];
+        checkSci(NvSciBufObjAlloc(sensor.bufAttrs, &slot.buf), "NvSciBufObjAlloc icp");
+        sensor.bufObjects.push_back(slot.buf);
+        int fd = -1;
+        checkSci(NvSciBufObjGetDmaBufFd(slot.buf, &fd), "NvSciBufObjGetDmaBufFd");
+        map.fd = static_cast<uint64_t>(fd);
+        if (NvBufSurfaceImport(&slot.surface, &map) != 0 || slot.surface == nullptr)
+            throw std::runtime_error("NvBufSurfaceImport failed for a UYVY capture buffer");
+        slot.surface->numFilled = 1;
+    }
+
+    // Block-linear NV12 like the ISP0 path. The _709_ER tag asks the VIC to expand the camera's limited range, so
+    // every stream of a SIPL profile is full range as the consumers are told.
+    sensor.nv12Pool.resize(config.isp0Buffers);
+    for (Nv12Out& out : sensor.nv12Pool)
+    {
+        NvBufSurfaceAllocateParams alloc{};
+        alloc.params.width = sensor.info.width;
+        alloc.params.height = sensor.info.height;
+        alloc.params.layout = NVBUF_LAYOUT_BLOCK_LINEAR;
+        alloc.params.colorFormat = NVBUF_COLOR_FORMAT_NV12_709_ER;
+        alloc.params.memType = NVBUF_MEM_SURFACE_ARRAY;
+        alloc.memtag = NvBufSurfaceTag_CAMERA;
+        if (NvBufSurfaceAllocate(&out.surface, 1, &alloc) != 0 || out.surface == nullptr)
+            throw std::runtime_error("NvBufSurfaceAllocate NV12 failed");
+        out.surface->numFilled = 1;
+    }
+}
+
 void SiplCapture::Impl::registerBuffers(Sensor& sensor)
 {
+    if (sensor.yuvPassthrough)
+    {
+        checkSipl(camera->RegisterImages(sensor.info.id, kIcp, sensor.bufObjects), "RegisterImages ICP");
+        checkSipl(camera->RegisterNvSciSyncObj(sensor.info.id, kIcp, nvsipl::NVSIPL_EOFSYNCOBJ, sensor.syncObj),
+                  "RegisterNvSciSyncObj ICP");
+        return;
+    }
     checkSipl(camera->RegisterImages(sensor.info.id, kIcp, sensor.icpBufObjects), "RegisterImages ICP");
     checkSipl(camera->RegisterImages(sensor.info.id, kIsp0, sensor.bufObjects), "RegisterImages ISP0");
     checkSipl(camera->RegisterNvSciSyncObj(sensor.info.id, kIsp0, nvsipl::NVSIPL_EOFSYNCOBJ, sensor.syncObj),
               "RegisterNvSciSyncObj");
-    registerNito(sensor);
 }
 
-void SiplCapture::Impl::allocateSync(Sensor& sensor)
+void SiplCapture::Impl::allocateSync(Sensor& sensor, INvSIPLClient::ConsumerDesc::OutputType output)
 {
     NvSciSyncAttrList signaler = nullptr;
     NvSciSyncAttrList waiter = nullptr;
@@ -499,8 +700,8 @@ void SiplCapture::Impl::allocateSync(Sensor& sensor)
         { NvSciSyncAttrKey_RequiredPerm, &perm, sizeof(perm) },
     };
     checkSci(NvSciSyncAttrListSetAttrs(waiter, kvp, 2), "NvSciSyncAttrListSetAttrs");
-    checkSipl(
-        camera->FillNvSciSyncAttrList(sensor.info.id, kIsp0, signaler, nvsipl::SIPL_SIGNALER), "FillNvSciSyncAttrList");
+    checkSipl(camera->FillNvSciSyncAttrList(sensor.info.id, output, signaler, nvsipl::SIPL_SIGNALER),
+              "FillNvSciSyncAttrList");
 
     NvSciSyncAttrList unreconciled[] = { signaler, waiter };
     checkSci(NvSciSyncAttrListReconcile(unreconciled, 2U, &reconciled, &conflict), "NvSciSyncAttrListReconcile");
@@ -526,7 +727,7 @@ void SiplCapture::Impl::dropPending(Sensor& sensor)
     std::lock_guard<std::mutex> guard(sensor.mutex);
     if (sensor.hasPending)
     {
-        sensor.pending.buffer->Release();
+        releasePending(sensor.pending);
         sensor.hasPending = false;
     }
 }
@@ -535,10 +736,20 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
 {
     try
     {
+        nvsipl::INvSIPLFrameCompletionQueue* queue =
+            sensor.yuvPassthrough ? sensor.queues.captureCompletionQueue : sensor.queues.isp0CompletionQueue;
+        if (sensor.yuvPassthrough)
+        {
+            // Transform session parameters are per thread.
+            NvBufSurfTransformConfigParams session{};
+            session.compute_mode = NvBufSurfTransformCompute_VIC;
+            if (NvBufSurfTransformSetSessionParams(&session) != NvBufSurfTransformError_Success)
+                throw std::runtime_error("NvBufSurfTransformSetSessionParams failed");
+        }
         while (running.load())
         {
             INvSIPLClient::INvSIPLBuffer* buffer = nullptr;
-            const SIPLStatus status = sensor.queues.isp0CompletionQueue->Get(buffer, config.frameTimeoutMs * 1000U);
+            const SIPLStatus status = queue->Get(buffer, config.frameTimeoutMs * 1000U);
             if (status == nvsipl::NVSIPL_STATUS_TIMED_OUT)
                 continue;
             if (status == nvsipl::NVSIPL_STATUS_EOF)
@@ -571,11 +782,45 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
                 }
             }
             if (!slot)
-                throw std::runtime_error("ISP0 delivered a buffer this process never registered");
+                throw std::runtime_error("SIPL delivered a buffer this process never registered");
 
             Pending next;
             next.buffer = buffer;
-            next.slot = slot;
+            next.surface = slot->surface;
+            if (sensor.yuvPassthrough)
+            {
+                Nv12Out* out = nullptr;
+                {
+                    std::lock_guard<std::mutex> guard(sensor.mutex);
+                    for (Nv12Out& candidate : sensor.nv12Pool)
+                    {
+                        if (!candidate.inUse)
+                        {
+                            candidate.inUse = true;
+                            out = &candidate;
+                            break;
+                        }
+                    }
+                }
+                // Every NV12 picture pending or with the encoder: this capture goes back to SIPL unconverted.
+                if (!out && !sensor.nv12Starved)
+                    std::fprintf(stderr, "[sipl] sensor %u: no free NV12 picture, dropping\n", sensor.info.id);
+                sensor.nv12Starved = !out;
+                if (!out)
+                    continue;
+                // Same size, whole picture: a format conversion only. The call returns when the VIC has written.
+                NvBufSurfTransformParams transform{};
+                if (NvBufSurfTransform(slot->surface, out->surface, &transform) != NvBufSurfTransformError_Success)
+                {
+                    std::lock_guard<std::mutex> guard(sensor.mutex);
+                    out->inUse = false;
+                    throw std::runtime_error("NvBufSurfTransform UYVY to NV12 failed");
+                }
+                // The consumer gets the NV12 picture; `owned` returns the capture buffer to SIPL.
+                next.buffer = nullptr;
+                next.nv12 = out;
+                next.surface = out->surface;
+            }
             // The capture counter in the SIPL clock domain, unscaled: the start-of-frame value, not end-of-frame.
             next.readyMonotonicNs = monotonicNs();
             // The start-of-frame value counts the platform counter's ticks (measured against CNTVCT_EL0 on the board);
@@ -608,12 +853,13 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
             {
                 std::lock_guard<std::mutex> guard(sensor.mutex);
                 if (sensor.hasPending)
-                    sensor.pending.buffer->Release();
+                    releasePending(sensor.pending);
                 next.sequence = ++sensor.received;
                 sensor.pending = next;
                 sensor.hasPending = true;
-                // `pending` owns the buffer now, and its release path (a replacement or stop) takes over.
-                owned.dismiss();
+                // `pending` owns the SIPL buffer now, and its release path (a replacement or stop) takes over.
+                if (next.buffer)
+                    owned.dismiss();
             }
             std::lock_guard<std::mutex> wakeGuard(wakeMutex);
             wake.notify_all();
@@ -694,6 +940,12 @@ void SiplCapture::Impl::cleanup()
         }
         sensor->slots.clear();
         sensor->bufObjects.clear();
+        for (Nv12Out& out : sensor->nv12Pool)
+        {
+            if (out.surface)
+                NvBufSurfaceDestroy(out.surface);
+        }
+        sensor->nv12Pool.clear();
         for (NvSciBufObj obj : sensor->icpBufObjects)
             NvSciBufObjFree(obj);
         sensor->icpBufObjects.clear();
@@ -815,7 +1067,7 @@ bool SiplCapture::acquireLatest(uint32_t cameraId, CaptureFrame* frame)
         sensor->hasPending = false;
     }
 
-    const NvBufSurfaceParams& params = taken.slot->surface->surfaceList[0];
+    const NvBufSurfaceParams& params = taken.surface->surfaceList[0];
     CaptureFrame out;
     out.cameraId = cameraId;
     out.sessionEpoch = m_impl->config.sessionEpoch;
@@ -839,9 +1091,15 @@ bool SiplCapture::acquireLatest(uint32_t cameraId, CaptureFrame* frame)
         out.surface.offsetBytes[plane] = params.planeParams.offset[plane];
     }
     out.surface.blockLinear = params.layout == NVBUF_LAYOUT_BLOCK_LINEAR;
+    // ISP0 writes BT.709 extended range; a YUV camera's picture is converted to the same by the VIC.
     out.surface.colorRange = COLOR_RANGE_FULL;
-    INvSIPLClient::INvSIPLBuffer* buffer = taken.buffer;
-    out.lease = FrameLease([buffer]() { buffer->Release(); });
+    Impl::Pending held = taken;
+    out.lease = FrameLease(
+        [sensor, held]() mutable
+        {
+            std::lock_guard<std::mutex> guard(sensor->mutex);
+            Impl::releasePending(held);
+        });
     *frame = std::move(out);
     return true;
 }
