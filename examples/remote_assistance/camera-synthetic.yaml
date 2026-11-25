@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+livekit:
+  transport: livekit
+  publisher: client-camera
+  viewer_identity: host-video
+  probe_identity: host-probe
+  codec: h264
+  bitrate_mbps: 2
+  video_encoder: software
+  video_decoder: software
+  decoded_memory: cpu
+cameras:
+  - name: cam
+    type: synthetic
+    width: 640
+    height: 360
+    fps: 30
