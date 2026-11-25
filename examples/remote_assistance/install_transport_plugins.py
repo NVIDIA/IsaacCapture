@@ -3,6 +3,7 @@
 """Build only selected transport plugins, optionally installing into an interpreter."""
 
 import argparse
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -53,7 +54,12 @@ def main():
         output = args.output.expanduser().resolve()
         if output.exists() and (not output.is_dir() or any(output.iterdir())):
             raise ValueError("Choose an empty wheel directory")
-        output.mkdir(parents=True, exist_ok=True)
+        output.mkdir(parents=True, exist_ok=True, mode=0o700)
+        info = output.stat()
+        if info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise ValueError(
+                "Wheel directory must be owned by you and not writable by others"
+            )
         wheels = []
         for project in [
             repo / "src/core/media_transport",
@@ -66,7 +72,8 @@ def main():
                 )
                 for wheel in Path(temp).glob("*.whl"):
                     target = output / wheel.name
-                    target.write_bytes(wheel.read_bytes())
+                    with target.open("xb") as destination:
+                        destination.write(wheel.read_bytes())
                     wheels.append(str(target))
         if args.python:
             subprocess.run(

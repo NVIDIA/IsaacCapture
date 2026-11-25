@@ -166,9 +166,9 @@ class GstCapture:
             # Input rate limiting is not packet loss: encoded IDs must stay contiguous
             # so GPU receivers only reset on gaps after encoding/publication.
             item = (payload, key, stamp, self.count)
+            self.last_frame = time.monotonic()
             self.count += 1
             self.bytes += len(payload)
-            self.last_frame = time.monotonic()
             if self.units.push(item):
                 self.force_key.set()
             return Gst.FlowReturn.OK
@@ -308,7 +308,13 @@ async def _publish_track(settings, spec, stop, session):
     accepted = rejected = 0
     try:
         source = await session.publish(spec, encoded=True)
-        await asyncio.to_thread(capture.start)
+        startup = asyncio.create_task(asyncio.to_thread(capture.start))
+        try:
+            await asyncio.shield(startup)
+        except BaseException:
+            # Cancellation cannot stop a worker: join it before changing pipeline state.
+            await asyncio.gather(startup, return_exceptions=True)
+            raise
         logger.info(
             "Requested %s -> %s pre-encoded transport, %dx%d at %s fps; track=%s",
             backend,

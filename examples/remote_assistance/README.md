@@ -38,7 +38,7 @@ steps below; recreating it removes its installed packages.
 ```bash
 examples/remote_assistance/.venv/bin/python examples/remote_assistance/install_transport_plugins.py \
   --transport "${TRANSPORT:?Select TRANSPORT}" \
-  --output "/tmp/transport-wheels-$(date +%Y%m%d-%H%M%S)" \
+  --output "$(mktemp -d /tmp/transport-wheels-XXXXXXXXXX)" \
   --python examples/remote_assistance/.venv/bin/python
 ```
 
@@ -217,6 +217,9 @@ docker compose -f "$BUNDLE/host/compose.yaml" up -d --force-recreate
 ```
 
 #### Transfer the bundle and check signaling
+
+On a first installation, complete [Firewall Setup](#firewall-setup) on both sites
+before running the SSH/SCP transfer below.
 
 Use the same host setup terminal so `BUNDLE`, `CLIENT_USER`, and the addresses
 are still set:
