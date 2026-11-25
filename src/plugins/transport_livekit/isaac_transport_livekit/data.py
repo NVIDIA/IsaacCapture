@@ -52,7 +52,8 @@ class DataSession:
     @property
     def ready(self):
         return (
-            self.room.isconnected()
+            not self.closed.is_set()
+            and self.room.isconnected()
             and self._peer_lease is not None
             and time.monotonic() - self._peer_lease_at < self.receiver.max_age_s
         )
@@ -70,6 +71,8 @@ class DataSession:
         self.closed.set()
 
     def _received(self, packet):
+        if self.closed.is_set():
+            return
         if packet.participant is None or packet.participant.identity != self.peer:
             self.stats["wrong_peer"] += 1
             return
