@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+diff --git a/livekit-ffi/Cargo.toml b/livekit-ffi/Cargo.toml
+--- a/livekit-ffi/Cargo.toml
++++ b/livekit-ffi/Cargo.toml
+@@ -168,0 +169,3 @@
++
++[target.'cfg(target_os = "linux")'.dependencies]
++libc = "0.2"
+diff --git a/livekit-ffi/protocol/video_frame.proto b/livekit-ffi/protocol/video_frame.proto
+--- a/livekit-ffi/protocol/video_frame.proto
++++ b/livekit-ffi/protocol/video_frame.proto
+@@ -240,0 +241 @@
++  optional uint64 native_available_ns = 5;
+diff --git a/livekit-ffi/src/room_apis/server/video_stream.rs b/livekit-ffi/src/room_apis/server/video_stream.rs
+--- a/livekit-ffi/src/room_apis/server/video_stream.rs
++++ b/livekit-ffi/src/room_apis/server/video_stream.rs
+@@ -157,0 +158 @@
++                        let native_available_ns = umb_monotonic_ns();
+@@ -164 +165 @@
+-                                        payload, keyframe: native.encoded_keyframe(), metadata,
++                                        payload, keyframe: native.encoded_keyframe(), metadata, native_available_ns,
+@@ -345,0 +347,13 @@
++
++/// Linux CLOCK_MONOTONIC matches Python's monotonic_ns; absent elsewhere.
++fn umb_monotonic_ns() -> Option<u64> {
++    #[cfg(target_os = "linux")]
++    {
++        let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
++        // SAFETY: ts is valid writable storage; CLOCK_MONOTONIC needs no privileges.
++        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } == 0 {
++            return (ts.tv_sec as u64).checked_mul(1_000_000_000)?.checked_add(ts.tv_nsec as u64);
++        }
++    }
++    None
++}

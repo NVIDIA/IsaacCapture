@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+diff --git a/livekit-ffi/src/lib.rs b/livekit-ffi/src/lib.rs
+--- a/livekit-ffi/src/lib.rs
++++ b/livekit-ffi/src/lib.rs
+@@ -79,0 +80,11 @@
++
++/// Enable zero playout delay before the shared WebRTC runtime is created.
++/// Returns zero on success, one if a default runtime already exists.
++#[cfg(all(feature = "room-apis", not(target_arch = "wasm32")))]
++#[unsafe(no_mangle)]
++pub extern "C" fn livekit_umb_enable_zero_playout_delay() -> i32 {
++    match livekit::webrtc::enable_zero_playout_delay() {
++        Ok(()) => 0,
++        Err(_) => 1,
++    }
++}
