@@ -8,6 +8,10 @@ This protocol is independent of the Sensing receiver's unacknowledged v2 ring.
 """
 
 import base64
+import ctypes
+import fcntl
+from functools import lru_cache
+import stat
 from dataclasses import asdict
 import json
 import logging
@@ -23,7 +27,7 @@ from .transport import FrameMetadata, ReceivedFrame, ReceivedPair, VideoFrame
 from .latency import get_recorder
 
 log = logging.getLogger("isaaccapture.remote_assistance.gpu_ipc")
-PROTOCOL = "ra-cuda-1"
+PROTOCOL = "ra-cuda-2"
 
 
 def send(sock, message):
@@ -41,6 +45,80 @@ def receive(sock):
     if flags & socket.MSG_TRUNC:
         raise ValueError("Truncated IPC descriptor")
     return json.loads(data)
+
+
+def require_same_user(sock):
+    _, uid, _ = struct.unpack(
+        "3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+    )
+    if uid != os.getuid():
+        raise PermissionError("CUDA IPC peer must belong to the current user")
+
+
+@lru_cache(maxsize=1)
+def _address_range_function():
+    library = ctypes.CDLL("libcuda.so.1")
+    function = library.cuMemGetAddressRange_v2
+    function.argtypes = [
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.c_uint64,
+    ]
+    function.restype = ctypes.c_int
+    return function
+
+
+def validate_allocation(pointer, size):
+    # Descriptor dimensions are untrusted; ask CUDA about the imported allocation.
+    base, extent = ctypes.c_uint64(), ctypes.c_size_t()
+    result = _address_range_function()(
+        ctypes.byref(base), ctypes.byref(extent), pointer
+    )
+    if result or pointer < base.value or pointer - base.value + size > extent.value:
+        raise ValueError("CUDA IPC frame exceeds the imported allocation")
+
+
+def lock_endpoint(path):
+    fd = os.open(str(path) + ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+        ):
+            raise PermissionError("Invalid CUDA IPC endpoint lock")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if path.exists():
+            info = path.lstat()
+            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+                raise PermissionError("Refusing to replace a non-owned socket")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as probe:
+                probe.settimeout(0.2)
+                try:
+                    probe.connect(str(path))
+                except ConnectionRefusedError:
+                    path.unlink()
+                else:
+                    raise FileExistsError("CUDA IPC endpoint is already serving")
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def finish_import(sock):
+    """Decline offers racing shutdown before asking the exporter to release them."""
+    sock.settimeout(5)
+    send(sock, {"bye": True})
+    while True:
+        msg = receive(sock)
+        if msg == {"bye": True}:
+            return
+        if msg.get("protocol") != PROTOCOL or "seq" not in msg:
+            raise ValueError("Unexpected IPC shutdown response")
+        # This offer was never mapped, so it is safe to decline without a GPU wait.
+        send(sock, {"decline": msg["seq"]})
 
 
 def socket_path(settings):
@@ -137,10 +215,10 @@ class IpcServer:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         bound = False
+        lock_fd = None
         try:
-            listener.bind(
-                str(self.path)
-            )  # Never unlink another running receiver's socket.
+            lock_fd = lock_endpoint(self.path)
+            listener.bind(str(self.path))
             bound = True
             self.path.chmod(0o600)
             listener.listen(1)
@@ -161,11 +239,9 @@ class IpcServer:
                         continue
                     with conn:
                         conn.settimeout(5)
-                        _, uid, _ = struct.unpack(
-                            "3i",
-                            conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12),
-                        )
-                        if uid != os.getuid():
+                        try:
+                            require_same_user(conn)
+                        except PermissionError:
                             continue
                         outstanding = False
                         try:
@@ -182,6 +258,7 @@ class IpcServer:
                                         raise ValueError(
                                             "Unexpected IPC client message"
                                         )
+                                    send(conn, {"bye": True})
                                     break
                                 sample = self.receiver.latest()
                                 if sample is None:
@@ -192,11 +269,20 @@ class IpcServer:
                                 outstanding = True
                                 start = time.monotonic()
                                 send(conn, message)
-                                if receive(conn) != {"ack": self.sent}:
+                                reply = receive(conn)
+                                closing = reply == {"bye": True}
+                                if closing:
+                                    reply = receive(conn)
+                                if reply != {"ack": self.sent} and not (
+                                    closing and reply == {"decline": self.sent}
+                                ):
                                     raise ValueError(
                                         "Invalid CUDA lease acknowledgment"
                                     )
                                 outstanding = False
+                                if closing:
+                                    send(conn, {"bye": True})
+                                    break
                                 self.ack_ms = (time.monotonic() - start) * 1000
                                 if self.sent % 150 == 0 or self.ack_ms > 30:
                                     log.info(
@@ -225,6 +311,8 @@ class IpcServer:
             listener.close()
             if bound:
                 self.path.unlink(missing_ok=True)
+            if lock_fd is not None:
+                os.close(lock_fd)
 
 
 class IpcReceiver:
@@ -267,6 +355,7 @@ class IpcReceiver:
                 raise ValueError("Invalid CUDA IPC handle")
             pointer = cp.cuda.runtime.ipcOpenMemHandle(handle)
             try:
+                validate_allocation(pointer, w * h * 4)
                 owner = cp.cuda.UnownedMemory(
                     pointer, w * h * 4, self, device_id=self.gpu
                 )
@@ -309,6 +398,7 @@ class IpcReceiver:
                             self.sock = sock
                             sock.settimeout(0.5)
                             sock.connect(str(self.path))
+                            require_same_user(sock)
                             send(
                                 sock,
                                 dict(
@@ -325,7 +415,7 @@ class IpcReceiver:
                                 with self.lock:
                                     self.overwritten += self.frame is not None
                                     self.frame = frame
-                            send(sock, {"bye": True})
+                            finish_import(sock)
                     except (ConnectionError, FileNotFoundError, EOFError):
                         self.stop_event.wait(0.25)
         except Exception as exc:

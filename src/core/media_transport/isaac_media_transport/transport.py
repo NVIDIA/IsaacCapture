@@ -108,25 +108,44 @@ class MessageSession(Protocol):
 class VideoPublication(Protocol):
     def capture_encoded(
         self, payload: bytes, keyframe: bool, timestamp_us: int, index: int
-    ) -> bool: ...
-    def capture_rgba(self, rgba, captured_ns: int, index: int) -> None: ...
-    def feedback(self) -> EncoderFeedback: ...
-    async def close(self) -> None: ...
+    ) -> bool:
+        """Submit an encoded access unit and return whether it was accepted."""
+
+    def capture_rgba(self, rgba, captured_ns: int, index: int) -> None:
+        """Submit a raw RGBA frame with its capture time and sequence."""
+
+    def feedback(self) -> EncoderFeedback:
+        """Return the current encoder feedback."""
+
+    async def close(self) -> None:
+        """Close this publication."""
 
 
 class VideoSession(Protocol):
-    async def start(self) -> None: ...
-    async def publish(self, spec: dict, *, encoded: bool) -> VideoPublication: ...
-    async def close(self) -> None: ...
+    async def start(self) -> None:
+        """Start the video session."""
+
+    async def publish(self, spec: dict, *, encoded: bool) -> VideoPublication:
+        """Publish a stream described by spec."""
+
+    async def close(self) -> None:
+        """Close the video session and its publications."""
 
 
 class FrameReceiver(Protocol):
     overwritten: int
 
-    def start(self) -> None: ...
-    def latest(self) -> ReceivedFrame | ReceivedPair | None: ...
-    def pairing_stats(self) -> dict: ...
-    def stop(self) -> None: ...
+    def start(self) -> None:
+        """Start receiving frames."""
+
+    def latest(self) -> ReceivedFrame | ReceivedPair | None:
+        """Return the latest available sample, or None."""
+
+    def pairing_stats(self) -> dict:
+        """Return stereo pairing diagnostics."""
+
+    def stop(self) -> None:
+        """Stop receiving and release resources."""
 
 
 class TransportProvisioner(Protocol):
@@ -139,7 +158,8 @@ class TransportProvisioner(Protocol):
         *,
         write_camera_profiles: Callable | None = None,
         **options,
-    ): ...
+    ):
+        """Generate transport configuration for the two sites."""
 
 
 class TransportAdapter(Protocol):
@@ -147,10 +167,17 @@ class TransportAdapter(Protocol):
 
     def messages(
         self, settings: dict, identity: str, peer: str, topics, on_message: Callable
-    ) -> MessageSession: ...
-    def video_sender(self, settings: dict, stop: asyncio.Event) -> VideoSession: ...
-    def video_receiver(self, settings: dict, **selection) -> FrameReceiver: ...
-    def provisioner(self) -> TransportProvisioner: ...
+    ) -> MessageSession:
+        """Create a message session."""
+
+    def video_sender(self, settings: dict, stop: asyncio.Event) -> VideoSession:
+        """Create a video publishing session."""
+
+    def video_receiver(self, settings: dict, **selection) -> FrameReceiver:
+        """Create a decoded frame receiver."""
+
+    def provisioner(self) -> TransportProvisioner:
+        """Return the bundle configuration generator."""
 
 
 def get_transport(settings=None) -> TransportAdapter:

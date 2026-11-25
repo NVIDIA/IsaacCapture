@@ -9,6 +9,12 @@ from .latency import get_recorder
 
 
 class CudaDecoder:
+    """Decode contiguous H.264 access units supplied by the transport adapter.
+
+    The adapter must reset after a sequence gap and withhold dependent frames
+    until an IDR arrives; this decoder has no transport loss/keyframe metadata.
+    """
+
     codec = "NVDEC/CUDA (PyNvVideoCodec)"
 
     def __init__(self, settings):

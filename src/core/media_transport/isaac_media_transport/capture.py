@@ -186,15 +186,18 @@ class CaptureEndpoint:
             frames=[],
         )
         output_created = False
+        active = False
         try:
             output.mkdir(parents=True, exist_ok=False)
             output_created = True
             if spec["on_active"]:
+                active = True
                 spec["on_active"](True)
             self._write(job, spec, manifest, output, seconds)
             with self.lock:
                 job["collecting"] = False
-            if spec["on_active"]:
+            if active:
+                active = False
                 spec["on_active"](False)
             if job["error"]:
                 raise RuntimeError(job["error"])
@@ -236,15 +239,22 @@ class CaptureEndpoint:
             manifest.update(status="failed", error=str(exc))
             raise
         finally:
+            # Keep admission closed until deactivation and the manifest are finished.
             with self.lock:
-                self.job = None
-            if spec["on_active"]:
-                spec["on_active"](False)
-            if output_created:
-                manifest["capture_dropped"] = job["dropped"]
-                (output / "manifest.json").write_text(
-                    json.dumps(manifest, indent=2) + "\n"
-                )
+                job["collecting"] = False
+            try:
+                if active:
+                    spec["on_active"](False)
+            finally:
+                try:
+                    if output_created:
+                        manifest["capture_dropped"] = job["dropped"]
+                        (output / "manifest.json").write_text(
+                            json.dumps(manifest, indent=2) + "\n"
+                        )
+                finally:
+                    with self.lock:
+                        self.job = None
 
     def _write(self, job, spec, manifest, output, seconds):
         encoded = spec["encoding"] != "rgba"

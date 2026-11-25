@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import socket
+import stat
 import threading
 import time
 import uuid
@@ -184,6 +185,32 @@ _recorders = {}
 _registry_lock = threading.Lock()
 
 
+def open_trace(path):
+    """Append only to an owned regular file, without following a filename symlink."""
+    path = Path(path).expanduser().absolute()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(
+        path,
+        os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+        0o600,
+    )
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+        ):
+            raise PermissionError(
+                "Latency trace must be an owned, unlinked regular file"
+            )
+        os.fchmod(fd, 0o600)
+        return os.fdopen(fd, "a", encoding="utf-8")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 class Recorder:
     enabled = True
 
@@ -199,9 +226,8 @@ class Recorder:
             raise ValueError(
                 "Latency queue capacity and summary interval must be positive"
             )
-        self.path = Path(log_path).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._stream = self.path.open("a", encoding="utf-8")
+        self.path = Path(log_path).expanduser().absolute()
+        self._stream = open_trace(self.path)
         self.base = dict(
             schema=SCHEMA, run_id=run_id, pid=os.getpid(), **clock_identity()
         )
@@ -379,7 +405,7 @@ def get_recorder(settings):
     path = config.get("log_path") or trace_log_path(
         config.get("run_id"), config.get("_process_role"), config.get("log_dir", "/tmp")
     )
-    path = Path(path).expanduser().resolve()
+    path = Path(path).expanduser().absolute()
     key = (os.getpid(), path)
     with _registry_lock:
         recorder = _recorders.get(key)

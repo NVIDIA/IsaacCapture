@@ -39,7 +39,8 @@ Its Boolean result reports acceptance, not delivery or rendering. Feedback must
 reach the encoder: a keyframe flag cannot turn a delta picture into a keyframe.
 
 The CUDA H.264 path requires one picture per access unit and no B-frames. On a
-sequence gap it discards dependent pictures until a fresh keyframe arrives.
+sequence gap the transport adapter must reset the decoder and discard dependent
+pictures until a fresh keyframe arrives.
 Do not apply a newest-frame policy to arbitrary compressed delta pictures.
 
 Encoded submission timestamps are microseconds; `FrameMetadata.user_timestamp`
