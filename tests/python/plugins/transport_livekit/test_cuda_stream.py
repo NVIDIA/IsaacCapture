@@ -19,7 +19,7 @@ def packet(index, key):
     e.encoded.payload = b"access-unit"
     e.encoded.keyframe = key
     e.encoded.metadata.frame_id = index
-    e.encoded.metadata.user_timestamp = index * 1000000
+    e.encoded.metadata.user_timestamp = index * 1000000 + 999
     return e.encoded
 
 
@@ -50,6 +50,7 @@ def test_sequence_gap_skips_delta_until_keyframe():
         resets = []
 
         def decode(payload, stamp, index):
+            assert stamp == index * 1000000 + 999
             decoded.append(index)
             return [SimpleNamespace(frame="CUDA image", metadata=(index, stamp))]
 

@@ -109,6 +109,7 @@ class CudaStream:
         self.closed = False
         self.decode_task = None
         self._callback_times = OrderedDict()
+        self._pending_encoded = 0
         self._callback_lock = threading.Lock()
         self.ffi = FfiClient.instance
         self.events = self.ffi.queue.subscribe(
@@ -130,7 +131,7 @@ class CudaStream:
         self.stats_task = (
             asyncio.create_task(sample_stats(track, name, self.timing))
             if self.timing.enabled
-            and settings.get("latency", {}).get("sdk_stats", False)
+            and (settings.get("latency") or {}).get("sdk_stats", False)
             else None
         )
 
@@ -140,14 +141,19 @@ class CudaStream:
             and self.handle is not None
             and event.video_stream_event.stream_handle == self.handle.handle
         )
-        if matches and self.timing.enabled:
-            # SDK 1.1.20 invokes this on its FFI callback thread, before scheduling
-            # queue delivery. Retain the event to prevent id reuse after overflow.
-            at = time.monotonic_ns()
+        if matches:
+            event_type = event.video_stream_event.WhichOneof("message")
             with self._callback_lock:
-                self._callback_times[id(event)] = (event, at)
-                if len(self._callback_times) > 128:
-                    self._callback_times.popitem(last=False)
+                if event_type is None:
+                    if self._pending_encoded >= 64:
+                        return (
+                            False  # The frame-ID gap forces recovery at the next IDR.
+                        )
+                    self._pending_encoded += 1
+                if self.timing.enabled:
+                    self._callback_times[id(event)] = (event, time.monotonic_ns())
+                    if len(self._callback_times) > 128:
+                        self._callback_times.popitem(last=False)
         return matches
 
     async def _pump(self):
@@ -156,11 +162,12 @@ class CudaStream:
                 ffi_event = await self.events.get()
                 available_ns = time.monotonic_ns() if self.timing.enabled else None
                 callback_ns = None
-                if self.timing.enabled:
-                    with self._callback_lock:
-                        saved = self._callback_times.pop(id(ffi_event), None)
-                    if saved is not None:
-                        callback_ns = saved[1]
+                with self._callback_lock:
+                    if ffi_event.video_stream_event.WhichOneof("message") is None:
+                        self._pending_encoded -= 1
+                    saved = self._callback_times.pop(id(ffi_event), None)
+                if saved is not None:
+                    callback_ns = saved[1]
                 event = ffi_event.video_stream_event
                 if event.HasField("eos"):
                     raise RuntimeError(f"{self.name}: encoded stream ended")
@@ -244,7 +251,7 @@ class CudaStream:
                 asyncio.to_thread(
                     self.decoder.decode,
                     packet.payload,
-                    meta.user_timestamp // 1000,
+                    meta.user_timestamp,
                     index,
                 )
             )

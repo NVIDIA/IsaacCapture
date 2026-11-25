@@ -178,15 +178,21 @@ class VideoReceiver:
         if self.settings.get("capture_socket"):
             from isaac_media_transport.capture import CaptureEndpoint
 
+            fps = float(self.settings.get("capture_fps", 30))
             self._capture_endpoint = CaptureEndpoint(self.settings["capture_socket"])
-            for name in self.tracks:
-                self._capture_endpoint.register(
-                    name,
-                    stage="receiver-decoded-before-resize-and-xr",
-                    width=0,
-                    height=0,
-                    fps=float(self.settings.get("capture_fps", 30)),
-                )
+            try:
+                for name in self.tracks:
+                    self._capture_endpoint.register(
+                        name,
+                        stage="receiver-decoded-before-resize-and-xr",
+                        width=0,
+                        height=0,
+                        fps=fps,
+                    )
+            except BaseException:
+                self._capture_endpoint.close()
+                self._capture_endpoint = None
+                raise
         self._ready.clear()
         self.error = None
         self._thread = threading.Thread(
@@ -300,8 +306,10 @@ class VideoReceiver:
             readers[publication.sid] = task
 
             def finished(task):
-                if not task.cancelled() and task.exception():
-                    self.error = task.exception()
+                error = None if task.cancelled() else task.exception()
+                # Replaced or unsubscribed readers no longer own receiver health.
+                if readers.get(publication.sid) is task and error is not None:
+                    self.error = error
                     self._stop.set()
 
             task.add_done_callback(finished)

@@ -105,13 +105,21 @@ class LiveKitVideoSession:
             if encoded
             else rtc.VideoSource(width, height)
         )
+        published = False
         try:
             track = rtc.LocalVideoTrack.create_video_track(spec["name"], source)
             await self.room.local_participant.publish_track(track, options)
+            published = True
+            return LiveKitVideoPublication(
+                self.room, track, source, settings=self.settings
+            )
         except BaseException:
-            await source.aclose()
+            try:
+                if published:
+                    await self.room.local_participant.unpublish_track(track.sid)
+            finally:
+                await source.aclose()
             raise
-        return LiveKitVideoPublication(self.room, track, source, settings=self.settings)
 
     async def close(self):
         await disconnect(self.room)
@@ -121,7 +129,7 @@ class LiveKitVideoPublication:
     def __init__(self, room, track, source, *, settings=None):
         self.room, self.track, self.source = room, track, source
         self.stats_task = None
-        if (settings or {}).get("latency", {}).get("sdk_stats", False):
+        if ((settings or {}).get("latency") or {}).get("sdk_stats", False):
             import asyncio
             from isaac_media_transport.latency import get_recorder
             from .sdk_diagnostics import sample_stats
@@ -147,6 +155,8 @@ class LiveKitVideoPublication:
         )
 
     def feedback(self):
+        if not hasattr(self.source, "feedback"):
+            return EncoderFeedback()
         value = self.source.feedback()
         rate = value.rate_control if value.HasField("rate_control") else None
         return EncoderFeedback(

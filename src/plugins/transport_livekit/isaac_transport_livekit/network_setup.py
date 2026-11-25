@@ -3,6 +3,8 @@
 """Generate separate credentials and configs for a TLS-protected IPv4 LAN/VPN test."""
 
 import copy
+import fcntl
+import stat
 import ipaddress
 import os
 from pathlib import Path
@@ -20,7 +22,27 @@ def write_private(path, text):
         handle.write(text)
 
 
-def _generate_bundle(
+def _generate_bundle(output, host_ip, session_template, camera_template, **kwargs):
+    output = Path(output).absolute()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(output) + ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+        ):
+            raise PermissionError("Invalid bundle generation lock")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return _generate_bundle_locked(
+            output, host_ip, session_template, camera_template, **kwargs
+        )
+    finally:
+        os.close(fd)
+
+
+def _generate_bundle_locked(
     output, host_ip, session_template, camera_template, *, replace=True, **kwargs
 ):
     output = Path(output).absolute()

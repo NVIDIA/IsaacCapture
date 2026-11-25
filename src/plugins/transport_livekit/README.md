@@ -24,6 +24,17 @@ allocations. `decoded_memory: cuda` instead selects a patched encoded-receive
 interface followed by NVDEC and an owned CUDA RGBA allocation. CUDA IPC can then
 hand those frames to a separate local process.
 
+For CUDA reception, install the GPU packages into the receiver's interpreter
+(replace the example path if your environment differs):
+
+```bash
+export RECEIVER_PYTHON="$HOME/IsaacCapture/examples/remote_assistance/.venv/bin/python"
+uv pip install --python "$RECEIVER_PYTHON" PyNvVideoCodec==2.0.2 cupy-cuda13x
+```
+
+Use `cupy-cuda12x` instead for a CUDA 12 installation; install only one CuPy variant.
+CPU reception does not require these packages.
+
 The native receive extension is built from the public `livekit/rust-sdks` revision
 pinned by `build_livekit_cuda.py`. Its patches are checked in alongside the helper.
 Build it on the **host** architecture, outside the installed Python SDK:
@@ -53,7 +64,9 @@ The CUDA path is currently H.264, complete pictures, no B-frames.
 
 The example provisioner creates a LiveKit server configuration, verified TLS,
 participant tokens and separate host/client bundles. The server uses the public
-LiveKit image. Tokens expire; regenerated bundles require server/client restarts.
+LiveKit image. Tokens expire. After regeneration, deploy the matching host and
+client bundles, reload each site's credentials and CA configuration, then restart
+the server and clients. An old bundle or shell environment will fail authentication.
 Camera presets are supplied by the application, not this package.
 
 The generated network is direct LAN/VPN connectivity. No TURN service is
