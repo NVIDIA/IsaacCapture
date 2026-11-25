@@ -20,7 +20,7 @@ stream through an interchangeable pose estimation engine.
 | `camera_input/` | `pose_provider::pose_camera_input` | Header-only camera input interface: `ICameraInput`, its events and `StereoFrame`, for one stereo camera source read without blocking |
 | `undistort/` | `pose_provider::pose_undistort` | Undistortion of one camera image to a distortion-free pinhole of the same size and optical frame: the widest valid output calibration, its map and bilinear `Gray8` resampling |
 | `engines/stub/` | `pose_provider::pose_engine_stub` | Adapter of the full contract with no engine library behind it |
-| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, status and failure handling around one engine adapter; links no adapter |
+| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, camera input, setup resolution, status and failure handling around one engine adapter; links no adapter |
 | `app/` | `pose_provider_plugin` | The plugin executable; links the adapter that `POSE_ENGINE_TARGET` names. Its manifest is [`plugin.yaml`](plugin.yaml) |
 
 ## Build
@@ -39,11 +39,11 @@ To use an engine adapter instead of the stub, also pass
 `POSE_ENGINE_TARGET` names the adapter that `pose_provider_plugin` links: the one enabled
 adapter, or the stub. `pose_provider_tests` checks the stub against the engine contract, a
 scripted camera input against the camera input contract and the undistortion on synthetic
-lenses, and runs `PoseProvider` on the stub and on a scripted engine; the `pose_engine_*`
-tests check adapter registration. The build places `pose_provider_plugin` beside a copy of
-`plugin.yaml` in `build/src/plugins/pose_provider/`, so `build/src/plugins` works as a
-`PluginManager` search path. No target here has install rules, and a pip build with
-`BUILD_PLUGIN_POSE_PROVIDER` on stops at configuration.
+lenses, and runs `PoseProvider` on a scripted camera input with the stub and with a scripted
+engine; the `pose_engine_*` tests check adapter registration. The build places
+`pose_provider_plugin` beside a copy of `plugin.yaml` in `build/src/plugins/pose_provider/`,
+so `build/src/plugins` works as a `PluginManager` search path. No target here has install
+rules, and a pip build with `BUILD_PLUGIN_POSE_PROVIDER` on stops at configuration.
 
 ## Run
 
@@ -53,7 +53,7 @@ as soon as the engine is ready; an application cannot start it separately.
 
 | Option | Meaning |
 | --- | --- |
-| `--startup-timeout=<seconds>` | Time allowed from launch for the setup to arrive and the run to start; engine initialization is not interrupted |
+| `--startup-timeout=<seconds>` | Time allowed from launch for the camera input to become ready and the run to start; engine initialization is not interrupted |
 | `--drain-timeout=<seconds>` | Time allowed from a finish request until the engine has processed its accepted input |
 | `--plugin-root-id=<id>` | Set by the plugin launcher |
 
@@ -63,13 +63,13 @@ when it failed (the log gives the reason) and 2 for a usage error.
 
 After its SIGINT, `PluginManager` waits `shutdown_timeout_seconds` from
 [`plugin.yaml`](plugin.yaml) and then sends SIGKILL. Keep that value above the longest
-finish: `--drain-timeout` plus the engine's stop time, plus the rest of engine initialization
-and start if a stop can arrive while the engine initializes. When `PluginManager` stops the
-plugin itself, it reports the plugin as stopped and drops its exit status; the plugin's last
-log line still gives the outcome.
+finish: `--drain-timeout` plus the engine's stop time and the camera input's release, plus
+the rest of engine initialization and start if a stop can arrive while the engine
+initializes. When `PluginManager` stops the plugin itself, it reports the plugin as stopped
+and drops its exit status; the plugin's last log line still gives the outcome.
 
-Camera input is not implemented: no setup arrives, so the plugin waits in Preparing until
-it is stopped or the startup timeout fails it.
+The plugin executable creates no camera input, so it waits in Preparing until it is stopped
+or the startup timeout fails it.
 
 ## Write an adapter
 
