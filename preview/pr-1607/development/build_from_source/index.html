@@ -516,6 +516,11 @@ sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w
 <span class="w">    </span>libxinerama-dev<span class="w"> </span>libxkbcommon-dev<span class="w"> </span>libxrandr-dev
 </pre></div>
 </div>
+<p>On Ubuntu aarch64, SOMA examples also need BLAS and LAPACK development libraries to build
+<code class="docutils literal notranslate"><span class="pre">cholespy</span></code> from source:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>libopenblas-dev
+</pre></div>
+</div>
 <p>Runtime-only dependencies (needed to actually run teleop, not to build):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># adb — required for OOB teleop (``--setup-oob``) to talk to the headset over USB.</span>
 <span class="c1"># coturn — required for USB-local mode (``--usb-local``); runs a local TURN server</span>
@@ -818,12 +823,11 @@ pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaa
 uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"isaaccapture[retargeters,cloudxr,ui]==X.Y+local"</span><span class="w"> </span>--find-links<span class="o">=</span>./install/wheels/<span class="w"> </span>--reinstall-package<span class="w"> </span>isaaccapture
 </pre></div>
 </div>
-<p id="build-from-source-editable-examples">Install an example into this venv with <code class="docutils literal notranslate"><span class="pre">--no-sources</span></code>:</p>
+<p id="build-from-source-editable-examples">Install an example into this venv with <code class="docutils literal notranslate"><span class="pre">--no-sources</span></code>. For SOMA examples on aarch64, first
+install the dependency in <a class="reference internal" href="#one-time-setup"><span class="std std-ref">One time setup</span></a>:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/&lt;name&gt;<span class="w"> </span>--no-sources
 </pre></div>
 </div>
-<p>On aarch64, SOMA-X requires building <code class="docutils literal notranslate"><span class="pre">cholespy</span></code> from source. See the prerequisites in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a>.</p>
 <p>Without <code class="docutils literal notranslate"><span class="pre">--no-sources</span></code>, an example whose <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> points <code class="docutils literal notranslate"><span class="pre">[tool.uv.sources]</span></code> at this checkout
 replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
 an example that starts CloudXR stops with <code class="docutils literal notranslate"><span class="pre">The</span> <span class="pre">CloudXR</span> <span class="pre">service</span> <span class="pre">exited</span> <span class="pre">during</span> <span class="pre">startup</span></code> and the

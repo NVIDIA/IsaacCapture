@@ -64,6 +64,13 @@ the list of dependencies. On **Ubuntu**, install build tools and clang-format:
        libegl-dev libwayland-dev libx11-dev libxcursor-dev libxext-dev libxi-dev \
        libxinerama-dev libxkbcommon-dev libxrandr-dev
 
+On Ubuntu aarch64, SOMA examples also need BLAS and LAPACK development libraries to build
+``cholespy`` from source:
+
+.. code-block:: bash
+
+   sudo apt-get install -y libopenblas-dev
+
 Runtime-only dependencies (needed to actually run teleop, not to build):
 
 .. code-block:: bash
@@ -373,14 +380,12 @@ differently:
 
 .. _build-from-source-editable-examples:
 
-Install an example into this venv with ``--no-sources``:
+Install an example into this venv with ``--no-sources``. For SOMA examples on aarch64, first
+install the dependency in :ref:`one-time-setup`:
 
 .. code-block:: bash
 
    uv pip install -e ./examples/<name> --no-sources
-
-On aarch64, SOMA-X requires building ``cholespy`` from source. See the prerequisites in
-:code-file:`examples/deviceio_live_view/README.md`.
 
 Without ``--no-sources``, an example whose ``pyproject.toml`` points ``[tool.uv.sources]`` at this checkout
 replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
