@@ -10,8 +10,8 @@ rooms, scoped participant credentials, data channels, and video tracks. It is an
 optional standalone package under `src/plugins`; it is not a tracked-device plugin
 and does not launch through the XR plugin manager.
 
-Install the core and this package together with
-`uv pip install src/core/media_transport src/plugins/transport_livekit`.
+Install the core and this package together, or use the
+[example installer](../../../examples/remote_assistance/README.md).
 Dependencies are pinned in `pyproject.toml`. The pre-encoded sender uses native
 FFI definitions from LiveKit 1.1.20; these are internal SDK APIs and must be checked
 when upgrading. No private SDK download is required.

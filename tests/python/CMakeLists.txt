@@ -35,3 +35,7 @@ if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS)
 endif()
 
 add_subdirectory(plugins)
+
+if(BUILD_EXAMPLES)
+    add_subdirectory(examples/remote_assistance)
+endif()
