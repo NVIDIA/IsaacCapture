@@ -22,5 +22,9 @@ only-include = ["python/isaaccapture_examples/soma_body_publisher"]
 [tool.hatch.build.targets.wheel]
 sources = ["python"]
 
+[tool.uv.extra-build-dependencies]
+# cholespy 2.2.0 uses a nanobind internal API removed in version 3.
+cholespy = ["nanobind>=2,<3"]
+
 [tool.uv.sources]
 isaaccapture = { path = "../..", editable = true }
