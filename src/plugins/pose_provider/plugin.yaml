@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: pose_provider_plugin
+description: "Pose Provider: 6-DoF poses from camera input through the linked engine adapter"
+command: "./pose_provider_plugin"
+version: "0.1.0"
+# Must exceed the longest finish after SIGINT; see "Run" in README.md.
+shutdown_timeout_seconds: 10
