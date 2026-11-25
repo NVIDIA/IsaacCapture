@@ -1,8 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# The Pose Provider runtime. It links no engine adapter; each executable links one.
+# The Pose Provider runtime. It links no engine adapter; each executable links one. mcap_writer.cpp defines MCAP's
+# writer for the run log; a program that also reads MCAP defines the reader and writer in one object of its own, as the
+# tests' mcap_impl.cpp does, and the linker then leaves this copy out.
 add_library(pose_provider_core STATIC
+    mcap_writer.cpp
     pose_provider.cpp
     inc/pose_provider/pose_provider.hpp
 )
@@ -24,6 +27,7 @@ target_link_libraries(pose_provider_core
         deviceio::deviceio_trackers
         isaacteleop_schema
         log_bridge::log_bridge_core
+        mcap::mcap
         oxr::oxr_core
         oxr::oxr_utils
         pose_provider::pose_undistort

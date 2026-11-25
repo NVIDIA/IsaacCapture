@@ -6,6 +6,7 @@
 #include <deviceio_trackers/se3_tracker.hpp>
 #include <flatbuffers/flatbuffers.h>
 #include <log_bridge/logger.hpp>
+#include <mcap/writer.hpp>
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <plugin_utils/plugin_device_status_publisher.hpp>
@@ -16,15 +17,24 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
+#include <charconv>
 #include <cmath>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <numbers>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
+#include <unistd.h>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -76,6 +86,8 @@ const char* component_name(ProviderComponent component)
         return "InputPreparation";
     case ProviderComponent::Output:
         return "Output";
+    case ProviderComponent::RunLog:
+        return "RunLog";
     }
     return "unknown";
 }
@@ -240,6 +252,19 @@ double field_of_view_deg(double principal_point, double focal_length, uint32_t s
     return (std::atan((principal_point + 0.5) / focal_length) +
             std::atan((static_cast<double>(size) - 0.5 - principal_point) / focal_length)) *
            180.0 / std::numbers::pi;
+}
+
+// The applied focal length over the delivered one.
+double undistortion_factor(const StreamDescription& delivered, const StreamSetup& applied)
+{
+    return applied.calibration.fx / delivered.intrinsics->fx;
+}
+
+// The applied field of view in degrees, horizontal then vertical.
+std::array<double, 2> field_of_view(const StreamSetup& applied)
+{
+    const CameraCalibration& c = applied.calibration;
+    return { field_of_view_deg(c.cx, c.fx, applied.layout.width), field_of_view_deg(c.cy, c.fy, applied.layout.height) };
 }
 
 // One stream's preparation: the setup its frames must match and the map that undistorts them.
@@ -407,6 +432,385 @@ std::unique_ptr<core::IPluginSession> open_plugin_session(const core::PluginSess
     }
     return session;
 }
+
+// The run log's channels, one JSON document per message.
+constexpr const char* kSetupTopic = "setup";
+constexpr const char* kFrameTopic = "frame";
+constexpr const char* kAdmissionTopic = "admission";
+constexpr const char* kLossTopic = "loss";
+constexpr const char* kEstimateTopic = "estimate";
+constexpr const char* kSummaryTopic = "summary";
+
+const char* name(InputMode mode)
+{
+    switch (mode)
+    {
+    case InputMode::Stereo:
+        return "Stereo";
+    case InputMode::StereoImu:
+        return "StereoImu";
+    }
+    return "unknown";
+}
+
+const char* name(MemoryKind kind)
+{
+    switch (kind)
+    {
+    case MemoryKind::Host:
+        return "Host";
+    }
+    return "unknown";
+}
+
+const char* name(PixelFormat format)
+{
+    switch (format)
+    {
+    case PixelFormat::Gray8:
+        return "Gray8";
+    case PixelFormat::BGR888:
+        return "BGR888";
+    case PixelFormat::RGBA8:
+        return "RGBA8";
+    case PixelFormat::NV12:
+        return "NV12";
+    }
+    return "unknown";
+}
+
+const char* name(DistortionModel model)
+{
+    switch (model)
+    {
+    case DistortionModel::None:
+        return "None";
+    case DistortionModel::RadTan5:
+        return "RadTan5";
+    case DistortionModel::Rational8:
+        return "Rational8";
+    case DistortionModel::ThinPrism12:
+        return "ThinPrism12";
+    case DistortionModel::Tilted14:
+        return "Tilted14";
+    }
+    return "unknown";
+}
+
+const char* name(Shutter shutter)
+{
+    switch (shutter)
+    {
+    case Shutter::Unknown:
+        return "Unknown";
+    case Shutter::Global:
+        return "Global";
+    case Shutter::Rolling:
+        return "Rolling";
+    }
+    return "unknown";
+}
+
+const char* name(TimedEvent event)
+{
+    switch (event)
+    {
+    case TimedEvent::Unknown:
+        return "Unknown";
+    case TimedEvent::ExposureStart:
+        return "ExposureStart";
+    case TimedEvent::ExposureMidpoint:
+        return "ExposureMidpoint";
+    case TimedEvent::FrameEnd:
+        return "FrameEnd";
+    }
+    return "unknown";
+}
+
+const char* name(TrackingState state)
+{
+    switch (state)
+    {
+    case TrackingState::Initializing:
+        return "Initializing";
+    case TrackingState::Tracking:
+        return "Tracking";
+    case TrackingState::Lost:
+        return "Lost";
+    case TrackingState::Relocalizing:
+        return "Relocalizing";
+    }
+    return "unknown";
+}
+
+const char* name(EnqueueResult result)
+{
+    switch (result)
+    {
+    case EnqueueResult::Accepted:
+        return "Accepted";
+    case EnqueueResult::DroppedBackpressure:
+        return "DroppedBackpressure";
+    case EnqueueResult::RejectedInvalidInput:
+        return "RejectedInvalidInput";
+    case EnqueueResult::RejectedNotRunning:
+        return "RejectedNotRunning";
+    }
+    return "unknown";
+}
+
+// JSON is built by appending to one string. separate() puts the comma before every member or element but the first.
+void separate(std::string& out)
+{
+    if (!out.empty() && out.back() != '{' && out.back() != '[' && out.back() != ':')
+    {
+        out += ',';
+    }
+}
+
+void append(std::string& out, std::string_view text)
+{
+    out += '"';
+    for (const char c : text)
+    {
+        if (c == '"' || c == '\\')
+        {
+            out += '\\';
+            out += c;
+        }
+        else if (static_cast<unsigned char>(c) < 0x20)
+        {
+            std::array<char, 7> escaped{};
+            std::snprintf(escaped.data(), escaped.size(), "\\u%04x", static_cast<unsigned>(c));
+            out += escaped.data();
+        }
+        else
+        {
+            out += c;
+        }
+    }
+    out += '"';
+}
+
+// Without it, a string literal would convert to bool.
+void append(std::string& out, const char* text)
+{
+    append(out, std::string_view(text));
+}
+
+void append(std::string& out, bool value)
+{
+    out += value ? "true" : "false";
+}
+
+void append(std::string& out, std::nullopt_t)
+{
+    out += "null";
+}
+
+template <typename Number>
+requires std::integral<Number> || std::floating_point<Number>
+void append(std::string& out, Number value)
+{
+    if constexpr (std::floating_point<Number>)
+    {
+        if (!std::isfinite(value))
+        {
+            out += "null";
+            return;
+        }
+    }
+    std::array<char, 32> text{};
+    char* end = std::to_chars(text.data(), text.data() + text.size(), value).ptr;
+    out.append(text.data(), end);
+}
+
+template <typename Enum>
+requires std::is_enum_v<Enum>
+void append(std::string& out, Enum value)
+{
+    append(out, name(value));
+}
+
+template <typename T>
+void append(std::string& out, const std::optional<T>& value)
+{
+    if (value)
+    {
+        append(out, *value);
+        return;
+    }
+    out += "null";
+}
+
+template <typename T>
+void field(std::string& out, std::string_view key, const T& value)
+{
+    separate(out);
+    append(out, key);
+    out += ':';
+    append(out, value);
+}
+
+template <typename Values>
+void field_array(std::string& out, std::string_view key, const Values& values)
+{
+    separate(out);
+    append(out, key);
+    out += ":[";
+    for (const auto& value : values)
+    {
+        separate(out);
+        append(out, value);
+    }
+    out += ']';
+}
+
+// Opens a member named @p key, or an array element when @p key is empty, with @p bracket.
+void open_value(std::string& out, std::string_view key, char bracket)
+{
+    separate(out);
+    if (!key.empty())
+    {
+        append(out, key);
+        out += ':';
+    }
+    out += bracket;
+}
+
+void transform_field(std::string& out, std::string_view key, const Transform& transform)
+{
+    open_value(out, key, '{');
+    field_array(out, "translation_m", transform.translation_m);
+    field_array(out, "rotation_xyzw", transform.rotation_xyzw);
+    out += '}';
+}
+
+// A pinhole lens: focal lengths, principal point and distortion.
+void lens_fields(std::string& out,
+                 double fx,
+                 double fy,
+                 double cx,
+                 double cy,
+                 DistortionModel model,
+                 const std::vector<double>& coefficients)
+{
+    field(out, "fx", fx);
+    field(out, "fy", fy);
+    field(out, "cx", cx);
+    field(out, "cy", cy);
+    field(out, "distortion", model);
+    field_array(out, "coefficients", coefficients);
+}
+
+// A stream image's two sample times, each null when absent.
+void times_field(std::string& out, std::string_view key, const StreamImage& image)
+{
+    open_value(out, key, '{');
+    field(out, "local_common_clock_ns", image.local_common_clock_ns);
+    field(out, "raw_device_clock_ns", image.raw_device_clock_ns);
+    out += '}';
+}
+
+mcap::ChannelId add_channel(mcap::McapWriter& writer, const char* topic)
+{
+    mcap::Channel channel(topic, "json", 0);
+    writer.addChannel(channel);
+    return channel.id;
+}
+
+// The run log's file, which must not exist yet. The MCAP writer does not check its output, so each write is checked
+// here and the first failure is kept; nothing is written after it. The MCAP writer writes small pieces, which stdio
+// buffers.
+class RunLogFile final : public mcap::IWritable
+{
+public:
+    // Throws std::runtime_error naming @p path when it cannot be created.
+    explicit RunLogFile(std::filesystem::path path) : path_(std::move(path)), file_(std::fopen(path_.c_str(), "wbx"))
+    {
+        if (file_ == nullptr)
+        {
+            throw std::runtime_error(reason("created", errno));
+        }
+    }
+
+    ~RunLogFile() override
+    {
+        if (file_ != nullptr)
+        {
+            std::fclose(file_);
+        }
+    }
+
+    RunLogFile(const RunLogFile&) = delete;
+    RunLogFile& operator=(const RunLogFile&) = delete;
+
+    void handleWrite(const std::byte* data, uint64_t size) override
+    {
+        size_ += size;
+        if (error_.empty() && std::fwrite(data, 1, size, file_) != size)
+        {
+            fail(reason("written", errno));
+        }
+    }
+
+    // After each full chunk.
+    void flush() override
+    {
+        if (error_.empty() && std::fflush(file_) != 0)
+        {
+            fail(reason("written", errno));
+        }
+    }
+
+    // Syncs and closes the file, so that a write the disk did not take is reported. The MCAP writer's close() calls it.
+    void end() override
+    {
+        if (file_ == nullptr)
+        {
+            return;
+        }
+        if (error_.empty() && (std::fflush(file_) != 0 || ::fsync(::fileno(file_)) != 0))
+        {
+            fail(reason("written", errno));
+        }
+        if (std::fclose(std::exchange(file_, nullptr)) != 0)
+        {
+            fail(reason("closed", errno));
+        }
+    }
+
+    uint64_t size() const override
+    {
+        return size_;
+    }
+
+    // Keeps @p reason unless a failure is already kept.
+    void fail(std::string reason)
+    {
+        if (error_.empty())
+        {
+            error_ = std::move(reason);
+        }
+    }
+
+    // The first failure; empty while there is none.
+    const std::string& error() const
+    {
+        return error_;
+    }
+
+private:
+    std::string reason(const char* what, int error) const
+    {
+        return "run log '" + path_.string() + "' could not be " + what + ": " + std::generic_category().message(error);
+    }
+
+    std::filesystem::path path_;
+    std::FILE* file_;
+    uint64_t size_ = 0;
+    std::string error_;
+};
 
 } // namespace
 
@@ -610,6 +1014,270 @@ void PoseOutput::publish(const EnginePose& pose, ProviderStatus& status)
     status.last_publication_time_ns = core::os_monotonic_now_ns();
 }
 
+// The run log: the run's setup, input decisions, published estimates and summary, one JSON document per MCAP
+// message. Records collect in the MCAP writer's chunk, which is written to the file when it fills and at the close.
+// The control thread makes every call.
+class RunLog
+{
+public:
+    // Creates @p path, which must not exist yet. Throws std::runtime_error naming it when it cannot.
+    explicit RunLog(std::filesystem::path path);
+
+    void setup(const ProviderConfig& config,
+               const SourceDescription& source,
+               const ResolvedPoseSetup& setup,
+               const EngineCapabilities& capabilities);
+
+    // A frame taken while Running, after preparation released it: its capture number and both streams' times, the
+    // captures counted lost just before it, and its prepared group, absent when the engine held all prepared storage.
+    void frame(const StereoFrame& frame, uint64_t lost_before, const std::optional<EngineImageGroup>& group);
+
+    void admission(uint64_t group_id, EnqueueResult result);
+
+    // A loss report taken while Running, with the captures it added to the lost count.
+    void loss(const FrameLoss& loss, uint64_t counted);
+
+    void estimate(const EnginePose& pose, int64_t publication_time_ns);
+
+    // Writes the summary and closes the file. Returns a failure take_error() has not returned yet.
+    std::optional<std::string> finish(const ProviderStatus& status,
+                                      bool finish_requested,
+                                      std::optional<uint64_t> next_sequence,
+                                      uint64_t frames_after_cutoff);
+
+    // The first failure to write or close the file, the first time it is asked for.
+    std::optional<std::string> take_error();
+
+private:
+    void write(mcap::ChannelId channel); // json_ as the next message.
+
+    RunLogFile file_;
+    mcap::McapWriter writer_; // After file_, which it writes to until it is destroyed.
+    mcap::ChannelId setup_channel_ = 0;
+    mcap::ChannelId frame_channel_ = 0;
+    mcap::ChannelId admission_channel_ = 0;
+    mcap::ChannelId loss_channel_ = 0;
+    mcap::ChannelId estimate_channel_ = 0;
+    mcap::ChannelId summary_channel_ = 0;
+    uint32_t sequence_ = 0; // Across channels, so it gives the order of every record.
+    std::string json_; // Reused for each record.
+    uint64_t published_ = 0;
+    std::optional<EnginePose> last_published_;
+    bool error_taken_ = false;
+};
+
+RunLog::RunLog(std::filesystem::path path) : file_(std::move(path))
+{
+    mcap::McapWriterOptions options("pose_provider");
+    options.compression = mcap::Compression::None;
+    writer_.open(file_, options);
+    file_.flush(); // So that a full disk fails here, not at the first chunk.
+    if (!file_.error().empty())
+    {
+        throw std::runtime_error(file_.error());
+    }
+    setup_channel_ = add_channel(writer_, kSetupTopic);
+    frame_channel_ = add_channel(writer_, kFrameTopic);
+    admission_channel_ = add_channel(writer_, kAdmissionTopic);
+    loss_channel_ = add_channel(writer_, kLossTopic);
+    estimate_channel_ = add_channel(writer_, kEstimateTopic);
+    summary_channel_ = add_channel(writer_, kSummaryTopic);
+}
+
+void RunLog::setup(const ProviderConfig& config,
+                   const SourceDescription& source,
+                   const ResolvedPoseSetup& setup,
+                   const EngineCapabilities& capabilities)
+{
+    const std::array<const StreamDescription*, 2> delivered{ &source.left, &source.right };
+    json_ = "{";
+    open_value(json_, "source", '{');
+    field(json_, "backend", source.backend);
+    field(json_, "device_id", source.device_id);
+    field(json_, "session_id", source.session_id);
+    open_value(json_, "streams", '[');
+    for (const StreamDescription* stream : delivered)
+    {
+        open_value(json_, "", '{');
+        field(json_, "stream_id", stream->stream_id);
+        field(json_, "width", stream->width);
+        field(json_, "height", stream->height);
+        field(json_, "format", stream->format);
+        field(json_, "rate_hz", stream->rate_hz);
+        field(json_, "shutter", stream->shutter);
+        field(json_, "timed_event", stream->timed_event);
+        const Intrinsics& lens = *stream->intrinsics;
+        open_value(json_, "intrinsics", '{');
+        lens_fields(json_, lens.fx, lens.fy, lens.cx, lens.cy, lens.distortion, lens.coefficients);
+        json_ += '}';
+        transform_field(json_, "T_rig_camera", *stream->T_rig_camera);
+        json_ += '}';
+    }
+    json_ += "]}";
+
+    open_value(json_, "setup", '{');
+    field(json_, "input_mode", setup.input_mode);
+    field(json_, "memory_kind", setup.memory_kind);
+    field(json_, "body_frame", setup.body_frame);
+    field(json_, "engine_settings", setup.engine_settings);
+    open_value(json_, "streams", '[');
+    for (std::size_t i = 0; i < setup.streams.size(); ++i)
+    {
+        const StreamSetup& stream = setup.streams[i];
+        const CameraCalibration& calibration = stream.calibration;
+        open_value(json_, "", '{');
+        field(json_, "id", stream.id.value);
+        field(json_, "width", stream.layout.width);
+        field(json_, "height", stream.layout.height);
+        field(json_, "format", stream.layout.format);
+        field(json_, "stride_bytes", stream.layout.stride_bytes);
+        field(json_, "rate_hz", stream.rate_hz);
+        open_value(json_, "calibration", '{');
+        lens_fields(json_, calibration.fx, calibration.fy, calibration.cx, calibration.cy, calibration.distortion,
+                    calibration.coefficients);
+        transform_field(json_, "T_body_camera", calibration.T_body_camera);
+        json_ += '}';
+        field(json_, "undistortion_factor", undistortion_factor(*delivered.at(i), stream));
+        field_array(json_, "field_of_view_deg", field_of_view(stream));
+        json_ += '}';
+    }
+    json_ += "]}";
+
+    open_value(json_, "engine", '{');
+    field(json_, "adapter", setup.engine_identity.adapter);
+    field(json_, "adapter_version", setup.engine_identity.adapter_version);
+    field(json_, "engine_library", setup.engine_identity.engine_library);
+    field(json_, "engine_library_version", setup.engine_identity.engine_library_version);
+    field_array(json_, "input_modes", capabilities.input_modes);
+    field_array(json_, "memory_kinds", capabilities.memory_kinds);
+    field_array(json_, "pixel_formats", capabilities.pixel_formats);
+    field_array(json_, "distortion_models", capabilities.distortion_models);
+    json_ += '}';
+
+    field(json_, "prepared_image_groups", kPreparedGroups);
+    field(json_, "output_collection", config.output_collection);
+    field(json_, "startup_timeout_ms", config.startup_timeout.count());
+    field(json_, "drain_timeout_ms", config.drain_timeout.count());
+    json_ += '}';
+    write(setup_channel_);
+}
+
+void RunLog::frame(const StereoFrame& frame, uint64_t lost_before, const std::optional<EngineImageGroup>& group)
+{
+    json_ = "{";
+    field(json_, "sequence", frame.sequence());
+    times_field(json_, "left", frame.left());
+    times_field(json_, "right", frame.right());
+    field(json_, "lost_before", lost_before);
+    field(json_, "group_id", group ? std::optional(group->group_id) : std::nullopt);
+    field(json_, "fusion_time_ns", group ? std::optional(group->fusion_time_ns) : std::nullopt);
+    json_ += '}';
+    write(frame_channel_);
+}
+
+void RunLog::admission(uint64_t group_id, EnqueueResult result)
+{
+    json_ = "{";
+    field(json_, "group_id", group_id);
+    field(json_, "result", result);
+    json_ += '}';
+    write(admission_channel_);
+}
+
+void RunLog::loss(const FrameLoss& loss, uint64_t counted)
+{
+    json_ = "{";
+    field(json_, "first_sequence", loss.first_sequence);
+    field(json_, "count", loss.count);
+    field(json_, "counted", counted);
+    json_ += '}';
+    write(loss_channel_);
+}
+
+void RunLog::estimate(const EnginePose& pose, int64_t publication_time_ns)
+{
+    json_ = "{";
+    field(json_, "group_id", pose.group_id);
+    field(json_, "tracking_state", pose.tracking_state);
+    field(json_, "local_common_clock_ns", pose.anchor.local_common_clock_ns);
+    field(json_, "raw_device_clock_ns", pose.anchor.raw_device_clock_ns);
+    field(json_, "publication_time_ns", publication_time_ns);
+    json_ += '}';
+    write(estimate_channel_);
+    ++published_;
+    last_published_ = pose;
+}
+
+std::optional<std::string> RunLog::finish(const ProviderStatus& status,
+                                          bool finish_requested,
+                                          std::optional<uint64_t> next_sequence,
+                                          uint64_t frames_after_cutoff)
+{
+    json_ = "{";
+    field(json_, "outcome", status.failed ? "failed" : "finished");
+    field(json_, "finish_requested", finish_requested);
+    field(json_, "failed_component",
+          status.failed_component ? std::optional(component_name(*status.failed_component)) : std::nullopt);
+    field(json_, "failure_reason", status.failed ? std::optional(status.failure_reason) : std::nullopt);
+    field(json_, "published_estimates", published_);
+    if (last_published_)
+    {
+        open_value(json_, "last_published", '{');
+        field(json_, "group_id", last_published_->group_id);
+        field(json_, "local_common_clock_ns", last_published_->anchor.local_common_clock_ns);
+        field(json_, "raw_device_clock_ns", last_published_->anchor.raw_device_clock_ns);
+        json_ += '}';
+    }
+    else
+    {
+        field(json_, "last_published", std::nullopt);
+    }
+    field(json_, "frames_lost", status.frames_lost);
+    field(json_, "frames_dropped", status.frames_dropped);
+    field(json_, "next_sequence", next_sequence);
+    field(json_, "frames_after_cutoff", frames_after_cutoff);
+    const EngineHealth& health = status.engine_health;
+    open_value(json_, "engine_health", '{');
+    field(json_, "dropped_image_groups", health.dropped_image_groups);
+    field(json_, "dropped_imu_samples", health.dropped_imu_samples);
+    field(json_, "imu_gaps", health.imu_gaps);
+    field(json_, "invalid_input_rejections", health.invalid_input_rejections);
+    field(json_, "not_running_rejections", health.not_running_rejections);
+    field(json_, "output_stalls", health.output_stalls);
+    field(json_, "fatal_error", health.fatal_error);
+    field(json_, "fatal_reason", health.fatal_reason);
+    json_ += "}}";
+    write(summary_channel_);
+    writer_.close();
+    return take_error();
+}
+
+std::optional<std::string> RunLog::take_error()
+{
+    if (error_taken_ || file_.error().empty())
+    {
+        return std::nullopt;
+    }
+    error_taken_ = true;
+    return file_.error();
+}
+
+void RunLog::write(mcap::ChannelId channel)
+{
+    mcap::Message message;
+    message.channelId = channel;
+    message.sequence = sequence_++;
+    message.logTime = static_cast<mcap::Timestamp>(core::os_monotonic_now_ns());
+    message.publishTime = message.logTime;
+    message.data = reinterpret_cast<const std::byte*>(json_.data());
+    message.dataSize = json_.size();
+    const mcap::Status status = writer_.write(message);
+    if (!status.ok())
+    {
+        file_.fail("run log message not written: " + status.message);
+    }
+}
+
 template <typename Work>
 bool PoseProvider::call_engine(const char* call, Work&& work)
 {
@@ -679,6 +1347,11 @@ void PoseProvider::update()
                 break;
             }
             before = status_.state;
+        }
+        // A run log that failed while the run went on.
+        if (std::optional<std::string> error = run_log_ ? run_log_->take_error() : std::nullopt)
+        {
+            fail(ProviderComponent::RunLog, std::move(*error));
         }
         if (session_)
         {
@@ -826,6 +1499,19 @@ void PoseProvider::prepare()
         finish_run();
         return;
     }
+    // Before the session, so that a session failure reaches the summary too.
+    if (!run_log_ && config_.episode_dir)
+    {
+        try
+        {
+            run_log_ = std::make_unique<RunLog>(*config_.episode_dir / kRunLogFileName);
+        }
+        catch (const std::exception& e)
+        {
+            fail(ProviderComponent::RunLog, e.what());
+            return;
+        }
+    }
     // Before the camera wait, so that the device status covers Preparing and a missing runtime fails at once.
     if (!session_ && !config_.output_collection.empty())
     {
@@ -903,6 +1589,10 @@ void PoseProvider::prepare()
                  "output collection '" + config_.output_collection + "' could not open: " + e.what());
             return;
         }
+    }
+    if (run_log_)
+    {
+        run_log_->setup(config_, *source_, *setup_, capabilities);
     }
     enter(ProviderState::Ready);
 }
@@ -1019,22 +1709,17 @@ void PoseProvider::enter(ProviderState state)
     {
     case ProviderState::Ready:
     {
-        // Per eye: the applied focal length over the delivered one, and the applied field of view.
-        const auto factor = [](const StreamDescription& eye, const StreamSetup& stream)
-        { return stream.calibration.fx / eye.intrinsics->fx; };
-        const auto horizontal = [](const StreamSetup& stream)
-        { return field_of_view_deg(stream.calibration.cx, stream.calibration.fx, stream.layout.width); };
-        const auto vertical = [](const StreamSetup& stream)
-        { return field_of_view_deg(stream.calibration.cy, stream.calibration.fy, stream.layout.height); };
         const StreamSetup& left = setup_->streams[0];
         const StreamSetup& right = setup_->streams[1];
+        const std::array<double, 2> left_view = field_of_view(left);
+        const std::array<double, 2> right_view = field_of_view(right);
         logger->info(
             "Ready: {} device '{}', session '{}', Body {}; left eye '{}' as stream {}: undistortion factor {:.3f}, "
             "field of view {:.1f} x {:.1f} deg; right eye '{}' as stream {}: undistortion factor {:.3f}, field of "
             "view {:.1f} x {:.1f} deg",
             source_->backend, source_->device_id, source_->session_id, setup_->body_frame, source_->left.stream_id,
-            left.id.value, factor(source_->left, left), horizontal(left), vertical(left), source_->right.stream_id,
-            right.id.value, factor(source_->right, right), horizontal(right), vertical(right));
+            left.id.value, undistortion_factor(source_->left, left), left_view[0], left_view[1], source_->right.stream_id,
+            right.id.value, undistortion_factor(source_->right, right), right_view[0], right_view[1]);
         break;
     }
     case ProviderState::Running:
@@ -1101,10 +1786,12 @@ bool PoseProvider::take_camera_events()
 
 bool PoseProvider::admit(CameraEvent& event)
 {
+    auto* frame = std::get_if<StereoFrame>(&event);
+    const uint64_t lost_before = status_.frames_lost;
     std::optional<EngineImageGroup> group;
     try
     {
-        if (auto* frame = std::get_if<StereoFrame>(&event))
+        if (frame != nullptr)
         {
             group = input_->prepare(std::move(*frame), status_);
         }
@@ -1118,6 +1805,15 @@ bool PoseProvider::admit(CameraEvent& event)
         fail(ProviderComponent::InputPreparation, e.what());
         return false;
     }
+    // The frame was moved into preparation, which released it; a released frame keeps its capture number and times.
+    if (run_log_ && frame != nullptr)
+    {
+        run_log_->frame(*frame, status_.frames_lost - lost_before, group);
+    }
+    else if (run_log_)
+    {
+        run_log_->loss(std::get<FrameLoss>(event), status_.frames_lost - lost_before);
+    }
     if (!group)
     {
         return true;
@@ -1127,6 +1823,10 @@ bool PoseProvider::admit(CameraEvent& event)
     if (!call_engine("on_image_group", [&] { result = engine_->on_image_group(std::move(*group)); }))
     {
         return false;
+    }
+    if (run_log_)
+    {
+        run_log_->admission(group_id, result);
     }
     if (const char* how = rejection_text(result))
     {
@@ -1176,6 +1876,10 @@ bool PoseProvider::take_estimates()
             fail(ProviderComponent::Output,
                  "estimate for image group " + std::to_string(pose.group_id) + " not published: " + e.what());
             return false;
+        }
+        if (run_log_)
+        {
+            run_log_->estimate(pose, *status_.last_publication_time_ns);
         }
     }
 }
@@ -1269,6 +1973,24 @@ void PoseProvider::finish_run()
         {
             record_failure(ProviderComponent::Engine, "health: unknown exception");
         }
+    }
+    // After every other step, so that the summary has the run's outcome. A write failure before it keeps the summary
+    // out of the file; one at the close comes after it, so finish() returns it for the status.
+    if (run_log_)
+    {
+        try
+        {
+            if (std::optional<std::string> error = run_log_->finish(
+                    status_, finish_requested_, input_ ? input_->next_sequence() : std::nullopt, frames_after_cutoff_))
+            {
+                record_failure(ProviderComponent::RunLog, std::move(*error));
+            }
+        }
+        catch (const std::exception& e)
+        {
+            record_failure(ProviderComponent::RunLog, std::string("run log summary not written: ") + e.what());
+        }
+        run_log_.reset();
     }
 
     status_.state = ProviderState::Finished;

@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,6 +25,9 @@ inline constexpr std::chrono::milliseconds kMaxProviderTimeout{ 3'600'000 };
 /** @brief Longest accepted ProviderConfig::output_collection, in bytes: OpenXR's limit for a collection ID. */
 inline constexpr std::size_t kMaxOutputCollectionBytes = 255;
 
+/** @brief The run log's file name in ProviderConfig::episode_dir. */
+inline constexpr const char* kRunLogFileName = "pose_metadata.mcap";
+
 struct ProviderConfig
 {
     //! From construction until the camera input is ready and the run is started; initialize() is not interrupted.
@@ -35,6 +39,9 @@ struct ProviderConfig
     std::string output_collection;
     //! Set by the plugin launcher. With an output collection, the plugin's device status is published under it.
     std::string plugin_root_id;
+    //! An existing directory in which the run creates its run log, kRunLogFileName, which must not exist yet. Absent:
+    //! the run writes no file.
+    std::optional<std::filesystem::path> episode_dir;
 };
 
 enum class ProviderState
@@ -60,6 +67,7 @@ enum class ProviderComponent
                       //!< increase.
     Output, //!< The plugin session, the device status or the output collection did not open, or an estimate was not
             //!< published.
+    RunLog, //!< The run log could not be created, written or closed.
 };
 
 struct ProviderStatus
@@ -82,13 +90,14 @@ struct ProviderStatus
 class PoseInputAdapter;
 class OutputSession;
 class PoseOutput;
+class RunLog;
 
 /**
  * @brief Runs one engine adapter through one run on one camera input.
  *
  * Not thread-safe: one control thread makes every call, so it is the engine's only producer, consumer and
  * lifecycle caller, and the camera input's only user. Every path to Finished, including destruction, calls the
- * engine's stop() exactly once, then destroys the camera input, then closes the output.
+ * engine's stop() exactly once, then destroys the camera input, then closes the output, then the run log.
  */
 class PoseProvider
 {
@@ -178,6 +187,7 @@ private:
     std::unique_ptr<IPoseEngine> engine_; // After any collaborator whose storage the engine may hold.
     std::unique_ptr<OutputSession> session_; // Closed last.
     std::unique_ptr<PoseOutput> output_; // Opened after initialize(); closed after the camera input's release.
+    std::unique_ptr<RunLog> run_log_; // Opened at the first update, before the session; closed after the output.
     std::vector<uint64_t> accepted_groups_; // Accepted group IDs, oldest first, that may still get an estimate.
     Clock::time_point startup_deadline_;
     Clock::time_point drain_deadline_;

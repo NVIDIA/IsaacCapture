@@ -3,6 +3,7 @@
 
 add_executable(pose_provider_tests
     fake_camera_input.hpp
+    mcap_impl.cpp
     test_camera_input.cpp
     test_pose_provider.cpp
     test_stub_contract.cpp
@@ -13,6 +14,7 @@ target_link_libraries(pose_provider_tests
     PRIVATE
         Catch2::Catch2WithMain
         isaacteleop_schema
+        mcap::mcap
         pose_provider::pose_camera_input
         pose_provider::pose_engine_stub
         pose_provider::pose_provider_core
