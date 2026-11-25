@@ -3,8 +3,15 @@
 
 #include "inc/pose_provider/pose_provider.hpp"
 
+#include <deviceio_trackers/se3_tracker.hpp>
+#include <flatbuffers/flatbuffers.h>
 #include <log_bridge/logger.hpp>
+#include <oxr/oxr_session.hpp>
+#include <oxr_utils/os_time.hpp>
+#include <plugin_utils/plugin_device_status_publisher.hpp>
 #include <pose_undistort/undistort.hpp>
+#include <pusherio/openxr_schema_push_channel.hpp>
+#include <schema/se3_tracker_generated.h>
 
 #include <algorithm>
 #include <array>
@@ -33,6 +40,15 @@ constexpr const char* kLoggerName = "isaaccapture.plugins.pose_provider.PoseProv
 // The engine has no wake handle, so an initialized engine is polled at this period.
 constexpr std::chrono::milliseconds kEnginePollPeriod{ 5 };
 
+// An update() at least this often lets the device status heartbeat keep the report within the reader's stale timeout.
+constexpr auto kStatusHeartbeat = std::chrono::duration_cast<std::chrono::milliseconds>(
+    std::chrono::nanoseconds(plugin_utils::PluginDeviceStatusPublisher::HEARTBEAT_PERIOD_NS));
+
+// The device in plugin.yaml that the device status reports.
+constexpr const char* kDevicePath = "/se3_tracker/pose_provider";
+
+static_assert(kMaxOutputCollectionBytes == XR_MAX_TENSOR_IDENTIFIER_SIZE - 1);
+
 // The one built-in camera profile, for any device of this backend; resolve_pose_setup() applies its rules.
 constexpr const char* kProfileBackend = "oak";
 constexpr const char* kBodyFrame = "left_optical";
@@ -58,6 +74,8 @@ const char* component_name(ProviderComponent component)
         return "CameraInput";
     case ProviderComponent::InputPreparation:
         return "InputPreparation";
+    case ProviderComponent::Output:
+        return "Output";
     }
     return "unknown";
 }
@@ -323,6 +341,73 @@ AnchorTimes check_anchor(const std::string& name, const StreamImage& image, cons
     return times;
 }
 
+// The device status entry for @p status.
+plugin_utils::PluginDeviceStatusEntry device_status(const ProviderStatus& status)
+{
+    plugin_utils::PluginDeviceStatusEntry entry{ .path = kDevicePath };
+    if (status.failed)
+    {
+        entry.state = core::PluginDeviceState_FAILED;
+        entry.reason = core::PluginDeviceReason_DEVICE_ERROR;
+        entry.error = std::string(component_name(*status.failed_component)) + ": " + status.failure_reason;
+    }
+    else if (status.state == ProviderState::Preparing || status.state == ProviderState::Finished)
+    {
+        entry.state = core::PluginDeviceState_UNKNOWN;
+        entry.reason = core::PluginDeviceReason_NO_CURRENT_DATA;
+    }
+    else
+    {
+        entry.state = core::PluginDeviceState_CONNECTED;
+        entry.reason = core::PluginDeviceReason_NONE;
+    }
+    return entry;
+}
+
+// The plugin's own session: schema push only, on an OpenXR session that does not wait for a headset system.
+class OpenXRPoseSession final : public core::IPluginSession
+{
+public:
+    OpenXRPoseSession()
+        : session_("PoseProviderPlugin",
+                   core::OpenXRSchemaPushChannel::get_required_extensions(),
+                   /*wait_for_system=*/false)
+    {
+    }
+
+    core::IPluginPullChannel& pull_channel() override
+    {
+        throw std::logic_error("The Pose Provider session has no pull channel");
+    }
+
+    std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override
+    {
+        return std::make_unique<core::OpenXRSchemaPushChannel>(session_.get_handles(), config);
+    }
+
+    std::unique_ptr<core::IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT) override
+    {
+        throw std::logic_error("The Pose Provider session has no hand tracking push");
+    }
+
+private:
+    core::OpenXRSession session_;
+};
+
+std::unique_ptr<core::IPluginSession> open_plugin_session(const core::PluginSessionFactory& session_factory)
+{
+    if (!session_factory)
+    {
+        return std::make_unique<OpenXRPoseSession>();
+    }
+    auto session = session_factory(core::PluginSessionRequirements{ .schema_push = true }, {});
+    if (!session)
+    {
+        throw std::runtime_error("the plugin session factory returned no session");
+    }
+    return session;
+}
+
 } // namespace
 
 // Prepares camera frames as engine image groups: checks each stream against the setup, undistorts it into
@@ -434,6 +519,97 @@ void PoseInputAdapter::lose(const FrameLoss& loss, ProviderStatus& status)
     next_sequence_ = loss.first_sequence + loss.count;
 }
 
+// The run's plugin session and the plugin's device status in it. The control thread makes every call.
+class OutputSession
+{
+public:
+    // Opens the session and, with @p plugin_root_id, the device status collection. Throws when either cannot open.
+    OutputSession(const core::PluginSessionFactory& session_factory, const std::string& plugin_root_id);
+
+    // Opens an se3_tracker collection. Throws when it cannot open.
+    std::unique_ptr<core::ISchemaPushChannel> open_pose_collection(const std::string& collection_id);
+
+    // Publishes @p status when it changed or a heartbeat is due. A failure is logged and ends status publication, so
+    // that status never changes the run.
+    void publish_status(const ProviderStatus& status);
+
+private:
+    std::unique_ptr<core::IPluginSession> session_;
+    std::unique_ptr<plugin_utils::PluginDeviceStatusPublisher> status_; // Destroyed before the session.
+};
+
+OutputSession::OutputSession(const core::PluginSessionFactory& session_factory, const std::string& plugin_root_id)
+    : session_(open_plugin_session(session_factory))
+{
+    if (!plugin_root_id.empty())
+    {
+        status_ = std::make_unique<plugin_utils::PluginDeviceStatusPublisher>(*session_, plugin_root_id);
+    }
+}
+
+std::unique_ptr<core::ISchemaPushChannel> OutputSession::open_pose_collection(const std::string& collection_id)
+{
+    return session_->create_schema_push_channel(
+        core::SchemaPusherConfig{ .collection_id = collection_id,
+                                  .max_flatbuffer_size = core::Se3Tracker::DEFAULT_MAX_FLATBUFFER_SIZE,
+                                  .tensor_identifier = std::string(core::Se3Tracker::TENSOR_IDENTIFIER),
+                                  .localized_name = "Pose Provider" });
+}
+
+void OutputSession::publish_status(const ProviderStatus& status)
+{
+    if (!status_)
+    {
+        return;
+    }
+    try
+    {
+        status_->publish_if_changed({ device_status(status) }, core::os_monotonic_now_ns());
+    }
+    catch (const std::exception& e)
+    {
+        isaaccapture::Logger::get(kLoggerName)->warn("Device status not published, and no longer published: {}", e.what());
+        status_.reset();
+    }
+}
+
+// Publishes the run's estimates on one se3_tracker collection, in SlamWorld. The control thread makes every call.
+class PoseOutput
+{
+public:
+    explicit PoseOutput(std::unique_ptr<core::ISchemaPushChannel> channel) : channel_(std::move(channel))
+    {
+    }
+
+    // Publishes the estimate with its anchor's times, then records it in @p status. Only a Tracking estimate is valid;
+    // any other carries an identity pose. Throws when the push fails, leaving @p status unchanged.
+    void publish(const EnginePose& pose, ProviderStatus& status);
+
+private:
+    std::unique_ptr<core::ISchemaPushChannel> channel_;
+};
+
+void PoseOutput::publish(const EnginePose& pose, ProviderStatus& status)
+{
+    const bool valid = pose.tracking_state == TrackingState::Tracking;
+    const Transform placed = valid ? pose.T_slamworld_body : Transform{};
+    const std::array<double, 3>& t = placed.translation_m;
+    const std::array<double, 4>& q = placed.rotation_xyzw;
+    const core::Pose sample(core::Point(static_cast<float>(t[0]), static_cast<float>(t[1]), static_cast<float>(t[2])),
+                            core::Quaternion(static_cast<float>(q[0]), static_cast<float>(q[1]),
+                                             static_cast<float>(q[2]), static_cast<float>(q[3])));
+    flatbuffers::FlatBufferBuilder builder(core::Se3Tracker::DEFAULT_MAX_FLATBUFFER_SIZE);
+    builder.Finish(core::CreateSe3TrackerPose(builder, &sample, valid));
+    channel_->push_buffer(builder.GetBufferPointer(), builder.GetSize(), pose.anchor.local_common_clock_ns,
+                          pose.anchor.raw_device_clock_ns);
+    status.latest_tracking_state = pose.tracking_state;
+    if (valid)
+    {
+        status.last_valid_measurement_time_ns = pose.anchor.local_common_clock_ns;
+    }
+    status.last_publication_time_ns = core::os_monotonic_now_ns();
+}
+
 template <typename Work>
 bool PoseProvider::call_engine(const char* call, Work&& work)
 {
@@ -455,8 +631,12 @@ bool PoseProvider::call_engine(const char* call, Work&& work)
 
 PoseProvider::PoseProvider(ProviderConfig config,
                            std::unique_ptr<IPoseEngine> engine,
-                           std::unique_ptr<ICameraInput> camera_input)
-    : config_(config), camera_(std::move(camera_input)), engine_(std::move(engine))
+                           std::unique_ptr<ICameraInput> camera_input,
+                           core::PluginSessionFactory session_factory)
+    : config_(std::move(config)),
+      session_factory_(std::move(session_factory)),
+      camera_(std::move(camera_input)),
+      engine_(std::move(engine))
 {
     if (!engine_)
     {
@@ -464,6 +644,11 @@ PoseProvider::PoseProvider(ProviderConfig config,
     }
     check_timeout("startup_timeout", config_.startup_timeout);
     check_timeout("drain_timeout", config_.drain_timeout);
+    if (config_.output_collection.size() > kMaxOutputCollectionBytes)
+    {
+        throw std::invalid_argument("output_collection must be at most " + std::to_string(kMaxOutputCollectionBytes) +
+                                    " bytes, not " + std::to_string(config_.output_collection.size()));
+    }
     startup_deadline_ = Clock::now() + config_.startup_timeout;
     status_.startup_timeout = config_.startup_timeout;
     status_.drain_timeout = config_.drain_timeout;
@@ -494,6 +679,10 @@ void PoseProvider::update()
                 break;
             }
             before = status_.state;
+        }
+        if (session_)
+        {
+            session_->publish_status(status_);
         }
     }
     catch (const std::exception& e)
@@ -544,9 +733,14 @@ std::chrono::milliseconds PoseProvider::wait_timeout() const
     switch (status_.state)
     {
     case ProviderState::Preparing:
+    {
         // Nothing to poll before the engine is initialized. Rounded up, so a wake before the deadline cannot spin.
-        return std::max(std::chrono::milliseconds::zero(),
-                        std::chrono::ceil<std::chrono::milliseconds>(startup_deadline_ - Clock::now()));
+        const auto until_deadline =
+            std::max(std::chrono::milliseconds::zero(),
+                     std::chrono::ceil<std::chrono::milliseconds>(startup_deadline_ - Clock::now()));
+        const bool reports_status = session_ && !config_.plugin_root_id.empty();
+        return reports_status ? std::min(until_deadline, kStatusHeartbeat) : until_deadline;
+    }
     case ProviderState::Ready:
     case ProviderState::Running:
     case ProviderState::Draining:
@@ -632,6 +826,20 @@ void PoseProvider::prepare()
         finish_run();
         return;
     }
+    // Before the camera wait, so that the device status covers Preparing and a missing runtime fails at once.
+    if (!session_ && !config_.output_collection.empty())
+    {
+        try
+        {
+            session_ = std::make_unique<OutputSession>(session_factory_, config_.plugin_root_id);
+        }
+        catch (const std::exception& e)
+        {
+            fail(ProviderComponent::Output,
+                 std::string("the plugin session or the device status could not open: ") + e.what());
+            return;
+        }
+    }
     if (!take_camera_events())
     {
         return;
@@ -683,6 +891,19 @@ void PoseProvider::prepare()
     }
     setup_ = std::move(setup);
     input_ = std::make_unique<PoseInputAdapter>(*source_, *setup_);
+    if (session_)
+    {
+        try
+        {
+            output_ = std::make_unique<PoseOutput>(session_->open_pose_collection(config_.output_collection));
+        }
+        catch (const std::exception& e)
+        {
+            fail(ProviderComponent::Output,
+                 "output collection '" + config_.output_collection + "' could not open: " + e.what());
+            return;
+        }
+    }
     enter(ProviderState::Ready);
 }
 
@@ -942,6 +1163,20 @@ bool PoseProvider::take_estimates()
             return false;
         }
         accepted_groups_.erase(accepted_groups_.begin(), next + 1);
+        if (!output_)
+        {
+            continue;
+        }
+        try
+        {
+            output_->publish(pose, status_);
+        }
+        catch (const std::exception& e)
+        {
+            fail(ProviderComponent::Output,
+                 "estimate for image group " + std::to_string(pose.group_id) + " not published: " + e.what());
+            return false;
+        }
     }
 }
 
@@ -1012,6 +1247,8 @@ void PoseProvider::finish_run()
     stop_engine();
     // Bounded blocking, like stop(): the input's destructor may wait briefly for its own thread.
     camera_.reset();
+    // No estimate is taken after stop().
+    output_.reset();
     // The contract does not promise health() before initialize(), and an engine that was never initialized has no
     // run to report on.
     if (setup_)
@@ -1035,6 +1272,12 @@ void PoseProvider::finish_run()
     }
 
     status_.state = ProviderState::Finished;
+    if (session_)
+    {
+        // The final report, then the session closes, before the last log line.
+        session_->publish_status(status_);
+        session_.reset();
+    }
     auto logger = isaaccapture::Logger::get(kLoggerName);
     if (status_.failed)
     {

@@ -2,16 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // PoseProvider tests on a scripted camera input: the stub adapter for a live run, and a scripted engine for call
-// order, setup resolution and failures.
+// order, setup resolution, failures and the output, with a recording plugin session in place of OpenXR.
 
 #include "fake_camera_input.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <flatbuffers/flatbuffers.h>
 #include <pose_camera_input/camera_input.hpp>
 #include <pose_engine_api/pose_engine.hpp>
 #include <pose_provider/pose_provider.hpp>
 #include <pose_undistort/undistort.hpp>
+#include <pusherio/plugin_session.hpp>
+#include <pusherio/schema_push_channel.hpp>
+#include <schema/plugin_device_status_generated.h>
+#include <schema/se3_tracker_generated.h>
 
 #include <algorithm>
 #include <array>
@@ -20,7 +25,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <set>
@@ -52,6 +59,9 @@ struct Script
     std::string fatal_reason;
     bool drains = true;
     std::deque<uint64_t> estimates; // Group IDs of the estimates try_get_next_pose() returns, in order.
+    // Each estimate carries this state and pose, and its group's anchor.
+    TrackingState tracking_state = TrackingState::Initializing;
+    Transform pose;
     std::optional<uint64_t> estimate_when_drained; // Queued as input_drained() first returns true.
     int estimates_taken = 0;
     EnqueueResult admission = EnqueueResult::Accepted; // What on_image_group() returns.
@@ -145,8 +155,14 @@ public:
         {
             return false;
         }
-        out = EnginePose{};
-        out.group_id = script_->estimates.front();
+        out = EnginePose{ script_->estimates.front(), {}, script_->pose, script_->tracking_state };
+        for (const EngineImageGroup& group : script_->offered)
+        {
+            if (group.group_id == out.group_id)
+            {
+                out.anchor = group.anchor;
+            }
+        }
         script_->estimates.pop_front();
         ++script_->estimates_taken;
         return true;
@@ -192,6 +208,219 @@ private:
 std::unique_ptr<IPoseEngine> fake_engine(const std::shared_ptr<Script>& script)
 {
     return std::make_unique<FakeEngine>(script);
+}
+
+constexpr const char* kPoseCollection = "pose/run";
+constexpr const char* kStatusCollection = "pose_root/device_status";
+
+ProviderConfig output_config()
+{
+    ProviderConfig config;
+    config.output_collection = kPoseCollection;
+    config.plugin_root_id = "pose_root";
+    return config;
+}
+
+struct PublishedPose
+{
+    std::array<float, 3> position{};
+    std::array<float, 4> orientation{}; // x, y, z, w
+    bool valid = false;
+    AnchorTimes times;
+};
+
+struct PublishedStatus
+{
+    std::string path;
+    core::PluginDeviceState state = core::PluginDeviceState_UNKNOWN;
+    core::PluginDeviceReason reason = core::PluginDeviceReason_NONE;
+    std::string error;
+};
+
+// Stands in for OpenXR. Records each collection's opening and closing in the script's calls, marking a closing before
+// the camera input's release or after its session's, and decodes exactly the bytes pushed. With failing_session,
+// opening the session throws, and with null_session the factory returns none; opening a collection in failing_open, or
+// pushing to one in failing_push, throws.
+struct FakeOutput
+{
+    std::shared_ptr<Script> script;
+    std::shared_ptr<FakeCameraSource> camera;
+    std::vector<PublishedPose> poses;
+    std::vector<PublishedStatus> statuses;
+    bool failing_session = false;
+    bool null_session = false;
+    bool session_open = false;
+    std::set<std::string> failing_open;
+    std::set<std::string> failing_push;
+
+    std::unique_ptr<core::ISchemaPushChannel> open(const core::SchemaPusherConfig& config);
+
+    void push(const std::string& collection_id, const uint8_t* pushed, std::size_t size, AnchorTimes times)
+    {
+        if (failing_push.contains(collection_id))
+        {
+            throw std::runtime_error("cannot push to " + collection_id);
+        }
+        const std::vector<uint8_t> buffer(pushed, pushed + size);
+        const uint8_t* data = buffer.data();
+        flatbuffers::Verifier verifier(data, size);
+        if (collection_id == kPoseCollection)
+        {
+            REQUIRE(verifier.VerifyBuffer<core::Se3TrackerPose>(nullptr));
+            const auto* sample = flatbuffers::GetRoot<core::Se3TrackerPose>(data);
+            const core::Point& p = sample->pose()->position();
+            const core::Quaternion& q = sample->pose()->orientation();
+            poses.push_back({ { p.x(), p.y(), p.z() }, { q.x(), q.y(), q.z(), q.w() }, sample->is_valid(), times });
+            return;
+        }
+        if (collection_id != kStatusCollection)
+        {
+            FAIL_CHECK("push to an unexpected collection '" << collection_id << "'");
+            return;
+        }
+        REQUIRE(verifier.VerifyBuffer<core::PluginDeviceStatusSnapshot>(nullptr));
+        const auto* snapshot = flatbuffers::GetRoot<core::PluginDeviceStatusSnapshot>(data);
+        CHECK(snapshot->devices()->size() == 1);
+        const core::PluginDeviceStatus* device = snapshot->devices()->Get(0);
+        statuses.push_back({ device->path()->str(), device->state(), device->reason(),
+                             device->error() != nullptr ? device->error()->str() : std::string() });
+    }
+
+    void close(const std::string& collection_id)
+    {
+        script->calls.push_back("close " + collection_id +
+                                (camera->input_destroyed() ? "" : " before the camera input's release") +
+                                (session_open ? "" : " after its session's close"));
+    }
+};
+
+// One collection of a FakeOutput, closed when the provider destroys it.
+class FakeChannel final : public core::ISchemaPushChannel
+{
+public:
+    FakeChannel(FakeOutput& output, std::string collection_id)
+        : output_(output), collection_id_(std::move(collection_id))
+    {
+    }
+    ~FakeChannel() override
+    {
+        output_.close(collection_id_);
+    }
+
+    void push_buffer(const uint8_t* data, std::size_t size, int64_t common, int64_t device) override
+    {
+        output_.push(collection_id_, data, size, AnchorTimes{ common, device });
+    }
+
+private:
+    FakeOutput& output_;
+    std::string collection_id_;
+};
+
+// A FakeOutput as the provider's plugin session.
+class FakeSession final : public core::IPluginSession
+{
+public:
+    explicit FakeSession(std::shared_ptr<FakeOutput> output) : output_(std::move(output))
+    {
+        output_->session_open = true;
+    }
+    ~FakeSession() override
+    {
+        output_->session_open = false;
+    }
+
+    core::IPluginPullChannel& pull_channel() override
+    {
+        throw std::logic_error("FakeSession has no pull channel");
+    }
+
+    std::unique_ptr<core::ISchemaPushChannel> create_schema_push_channel(const core::SchemaPusherConfig& config) override
+    {
+        return output_->open(config);
+    }
+
+    std::unique_ptr<core::IHandTrackingPushChannel> create_hand_tracking_push_channel(XrHandEXT) override
+    {
+        throw std::logic_error("FakeSession has no hand tracking push");
+    }
+
+private:
+    std::shared_ptr<FakeOutput> output_;
+};
+
+std::unique_ptr<core::ISchemaPushChannel> FakeOutput::open(const core::SchemaPusherConfig& config)
+{
+    if (failing_open.contains(config.collection_id))
+    {
+        throw std::runtime_error("cannot open " + config.collection_id);
+    }
+    if (config.collection_id == kPoseCollection)
+    {
+        // What an Se3Tracker reader on the collection expects.
+        CHECK(config.tensor_identifier == "se3_tracker");
+        CHECK(config.max_flatbuffer_size == 256);
+    }
+    script->calls.push_back("open " + config.collection_id);
+    return std::make_unique<FakeChannel>(*this, config.collection_id);
+}
+
+std::shared_ptr<FakeOutput> fake_output(const std::shared_ptr<Script>& script,
+                                        const std::shared_ptr<FakeCameraSource>& camera)
+{
+    auto output = std::make_shared<FakeOutput>();
+    output->script = script;
+    output->camera = camera;
+    return output;
+}
+
+std::unique_ptr<core::IPluginSession> open_fake_session(const std::shared_ptr<FakeOutput>& output,
+                                                        const core::PluginSessionRequirements& requirements,
+                                                        const std::vector<std::shared_ptr<core::ITracker>>& trackers)
+{
+    CHECK(requirements.schema_push);
+    CHECK_FALSE(requirements.hand_tracking_push);
+    CHECK_FALSE(requirements.wrist_tracking_pull.has_value());
+    CHECK(trackers.empty());
+    if (output->failing_session)
+    {
+        throw std::runtime_error("cannot open the plugin session");
+    }
+    if (output->null_session)
+    {
+        return nullptr;
+    }
+    return std::make_unique<FakeSession>(output);
+}
+
+core::PluginSessionFactory open_on(const std::shared_ptr<FakeOutput>& output)
+{
+    return [output](const core::PluginSessionRequirements& requirements,
+                    std::vector<std::shared_ptr<core::ITracker>> trackers)
+    { return open_fake_session(output, requirements, trackers); };
+}
+
+// The common clock, CLOCK_MONOTONIC, which steady_clock reads on Linux.
+int64_t now_ns()
+{
+    return std::chrono::nanoseconds(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+std::string read_file(const char* path)
+{
+    std::ifstream file(path);
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+void check_status(const PublishedStatus& status,
+                  core::PluginDeviceState state,
+                  core::PluginDeviceReason reason,
+                  const std::string& error = "")
+{
+    CHECK(status.path == "/se3_tracker/pose_provider");
+    CHECK(status.state == state);
+    CHECK(status.reason == reason);
+    CHECK(status.error == error);
 }
 
 // An input whose source description is already waiting.
@@ -977,7 +1206,8 @@ TEST_CASE("Draining takes an estimate queued as the engine reports drained", "[u
     auto script = std::make_shared<Script>();
     script->estimate_when_drained = 1;
     auto camera = std::make_shared<FakeCameraSource>();
-    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+    auto output = fake_output(script, camera);
+    PoseProvider provider(output_config(), fake_engine(script), ready_input(camera), open_on(output));
     provider.request_start();
     provider.update();
     camera->push(fake_frame(1));
@@ -989,6 +1219,7 @@ TEST_CASE("Draining takes an estimate queued as the engine reports drained", "[u
     CHECK(provider.finished());
     // A provider that polled before reading input_drained() would finish with the estimate still queued.
     CHECK(script->estimates_taken == 1);
+    CHECK(output->poses.size() == 1);
     CHECK_FALSE(provider.status().failed);
 }
 
@@ -1004,6 +1235,12 @@ TEST_CASE("The constructor rejects a null engine and timeouts out of range", "[u
     config = ProviderConfig{};
     config.drain_timeout = -1ms;
     CHECK_THROWS_AS(PoseProvider(config, fake_engine(script)), std::invalid_argument);
+
+    config = ProviderConfig{};
+    config.output_collection = std::string(kMaxOutputCollectionBytes + 1, 'c');
+    CHECK_THROWS_AS(PoseProvider(config, fake_engine(script)), std::invalid_argument);
+    config.output_collection.pop_back();
+    CHECK_NOTHROW(PoseProvider(config, fake_engine(script)));
 
     config = ProviderConfig{};
     config.startup_timeout = kMaxProviderTimeout + 1ms;
@@ -1274,7 +1511,8 @@ TEST_CASE("Estimates follow accepted-group order, at most one per accepted group
 {
     auto script = std::make_shared<Script>();
     auto camera = std::make_shared<FakeCameraSource>();
-    PoseProvider provider(ProviderConfig{}, fake_engine(script), ready_input(camera));
+    auto output = fake_output(script, camera);
+    PoseProvider provider(output_config(), fake_engine(script), ready_input(camera), open_on(output));
     provider.request_start();
     provider.update();
     // The first and last groups are accepted; the engine drops the middle one.
@@ -1290,10 +1528,12 @@ TEST_CASE("Estimates follow accepted-group order, at most one per accepted group
     const uint64_t dropped = script->offered[1].group_id;
     const uint64_t last = script->offered[2].group_id;
     std::optional<uint64_t> breaks; // The group whose estimate breaks the order.
+    std::size_t published = 1; // Estimates published before any break.
 
     SECTION("an estimate for each accepted group")
     {
         script->estimates = { first, last };
+        published = 2;
     }
     SECTION("an accepted group without an estimate")
     {
@@ -1303,6 +1543,7 @@ TEST_CASE("Estimates follow accepted-group order, at most one per accepted group
     {
         script->estimates = { dropped };
         breaks = dropped;
+        published = 0;
     }
     SECTION("a repeated group")
     {
@@ -1318,6 +1559,7 @@ TEST_CASE("Estimates follow accepted-group order, at most one per accepted group
 
     const ProviderStatus status = provider.status();
     CHECK(script->estimates.empty());
+    CHECK(output->poses.size() == published);
     CHECK(status.failed == breaks.has_value());
     if (breaks)
     {
@@ -1379,4 +1621,299 @@ TEST_CASE("A camera input that does not end within the drain timeout fails the r
     CHECK(status.failed_component == ProviderComponent::CameraInput);
     CHECK(status.failure_reason == "the camera input did not end within the drain timeout (50 ms)");
     CHECK(script->calls == Calls{ "validate_configuration", "initialize", "start", "stop" });
+}
+
+TEST_CASE("Each estimate is published with its anchor's times, valid only while tracking", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    auto output = fake_output(script, camera);
+    PoseProvider provider(output_config(), fake_engine(script), ready_input(camera), open_on(output));
+    provider.request_start();
+    provider.update();
+    for (uint64_t sequence = 1; sequence <= 3; ++sequence)
+    {
+        camera->push(fake_frame(sequence));
+        provider.update();
+    }
+    REQUIRE(script->offered.size() == 3);
+    CHECK_FALSE(provider.status().latest_tracking_state.has_value());
+
+    // A rotation whose components all differ, so that any reordering of x, y, z, w shows.
+    script->pose = Transform{ { 1.5, -2.0, 0.25 }, { 0.1, 0.3, 0.5, std::sqrt(1.0 - 0.35) } };
+    const std::array<TrackingState, 3> states{ TrackingState::Initializing, TrackingState::Tracking, TrackingState::Lost };
+    int64_t before_last = 0;
+    for (std::size_t i = 0; i < states.size(); ++i)
+    {
+        script->tracking_state = states[i];
+        script->estimates = { script->offered[i].group_id };
+        before_last = now_ns();
+        provider.update();
+    }
+    const int64_t after_last = now_ns();
+
+    REQUIRE(output->poses.size() == 3);
+    for (std::size_t i = 0; i < states.size(); ++i)
+    {
+        const PublishedPose& sample = output->poses[i];
+        const bool tracking = states[i] == TrackingState::Tracking;
+        CHECK(sample.valid == tracking);
+        CHECK(sample.times.local_common_clock_ns == script->offered[i].anchor.local_common_clock_ns);
+        CHECK(sample.times.raw_device_clock_ns == script->offered[i].anchor.raw_device_clock_ns);
+        const Transform expected = tracking ? script->pose : Transform{};
+        for (std::size_t k = 0; k < 3; ++k)
+        {
+            CHECK(sample.position[k] == static_cast<float>(expected.translation_m[k]));
+        }
+        for (std::size_t k = 0; k < 4; ++k)
+        {
+            CHECK(sample.orientation[k] == static_cast<float>(expected.rotation_xyzw[k]));
+        }
+    }
+    const ProviderStatus status = provider.status();
+    CHECK_FALSE(status.failed);
+    CHECK(status.latest_tracking_state == TrackingState::Lost);
+    CHECK(status.last_valid_measurement_time_ns == script->offered[1].anchor.local_common_clock_ns);
+    REQUIRE(status.last_publication_time_ns.has_value());
+    CHECK(*status.last_publication_time_ns >= before_last);
+    CHECK(*status.last_publication_time_ns <= after_last);
+}
+
+TEST_CASE("The output opens around the engine's initialization and closes after the camera input's release",
+          "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    auto output = fake_output(script, camera);
+    ProviderConfig config = output_config();
+    Calls calls{ "open pose_root/device_status",
+                 "validate_configuration",
+                 "initialize",
+                 "open pose/run",
+                 "start",
+                 "finish_input",
+                 "stop",
+                 "close pose/run",
+                 "close pose_root/device_status" };
+    bool aborts = false;
+
+    SECTION("with a plugin root ID, the device status opens first and closes last")
+    {
+    }
+    SECTION("an abort closes both")
+    {
+        aborts = true;
+        calls = { "open pose_root/device_status",
+                  "validate_configuration",
+                  "initialize",
+                  "open pose/run",
+                  "start",
+                  "stop",
+                  "close pose/run",
+                  "close pose_root/device_status" };
+    }
+    SECTION("without a plugin root ID, no device status")
+    {
+        config.plugin_root_id.clear();
+        calls = { "validate_configuration", "initialize", "open pose/run", "start",
+                  "finish_input",           "stop",       "close pose/run" };
+    }
+    SECTION("without an output collection, nothing opens")
+    {
+        config.output_collection.clear();
+        calls = { "validate_configuration", "initialize", "start", "finish_input", "stop" };
+    }
+    PoseProvider provider(config, fake_engine(script), ready_input(camera), open_on(output));
+    provider.request_start();
+    provider.update();
+    camera->push(fake_frame(1));
+    provider.update();
+    script->tracking_state = TrackingState::Tracking;
+    script->estimates = { script->offered.at(0).group_id };
+    provider.update();
+    if (aborts)
+    {
+        provider.abort();
+    }
+    else
+    {
+        provider.request_finish();
+        CHECK(update_until_finished(provider));
+    }
+
+    const bool publishes = !config.output_collection.empty();
+    CHECK(provider.finished());
+    CHECK(provider.status().failed == aborts);
+    CHECK(script->calls == calls);
+    CHECK(output->poses.size() == (publishes ? 1u : 0u));
+    CHECK(provider.status().latest_tracking_state.has_value() == publishes);
+}
+
+TEST_CASE("An output that cannot open or publish fails the run with Output; the device status never does",
+          "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    auto output = fake_output(script, camera);
+    std::string reason;
+    Calls calls{ "open pose_root/device_status",
+                 "validate_configuration",
+                 "initialize",
+                 "open pose/run",
+                 "start",
+                 "finish_input",
+                 "stop",
+                 "close pose/run",
+                 "close pose_root/device_status" };
+    int taken = 2; // Estimates taken from the engine.
+    bool reports_failure = true; // The final device status names the failure.
+
+    SECTION("the plugin session cannot open")
+    {
+        output->failing_session = true;
+        reason = "the plugin session or the device status could not open: cannot open the plugin session";
+        calls = { "stop" };
+        taken = 0;
+        reports_failure = false;
+    }
+    SECTION("the plugin session factory returns no session")
+    {
+        output->null_session = true;
+        reason = "the plugin session or the device status could not open: the plugin session factory returned no session";
+        calls = { "stop" };
+        taken = 0;
+        reports_failure = false;
+    }
+    SECTION("the device status cannot open")
+    {
+        output->failing_open = { kStatusCollection };
+        reason = "the plugin session or the device status could not open: cannot open pose_root/device_status";
+        calls = { "stop" };
+        taken = 0;
+        reports_failure = false;
+    }
+    SECTION("the pose collection cannot open")
+    {
+        output->failing_open = { kPoseCollection };
+        reason = "output collection 'pose/run' could not open: cannot open pose/run";
+        calls = { "open pose_root/device_status", "validate_configuration", "initialize", "stop",
+                  "close pose_root/device_status" };
+        taken = 0;
+    }
+    SECTION("an estimate cannot be published")
+    {
+        output->failing_push = { kPoseCollection };
+        reason = "estimate for image group 1 not published: cannot push to pose/run";
+        calls = { "open pose_root/device_status",
+                  "validate_configuration",
+                  "initialize",
+                  "open pose/run",
+                  "start",
+                  "stop",
+                  "close pose/run",
+                  "close pose_root/device_status" };
+        taken = 1;
+    }
+    SECTION("the device status cannot be published")
+    {
+        output->failing_push = { kStatusCollection };
+        // Dropping the status publisher closes its collection at once.
+        calls = { "open pose_root/device_status",
+                  "validate_configuration",
+                  "initialize",
+                  "open pose/run",
+                  "start",
+                  "close pose_root/device_status before the camera input's release",
+                  "finish_input",
+                  "stop",
+                  "close pose/run" };
+    }
+    PoseProvider provider(output_config(), fake_engine(script), ready_input(camera), open_on(output));
+    provider.request_start();
+    provider.update();
+    camera->push(fake_frame(1));
+    camera->push(fake_frame(2));
+    provider.update();
+    script->tracking_state = TrackingState::Tracking;
+    script->estimates = { 1, 2 };
+    provider.update();
+    provider.request_finish();
+    CHECK(update_until_finished(provider));
+
+    const ProviderStatus status = provider.status();
+    CHECK(status.failed == !reason.empty());
+    CHECK(script->calls == calls);
+    CHECK(script->estimates_taken == taken);
+    CHECK(camera->input_destroyed());
+    if (status.failed)
+    {
+        CHECK(status.failed_component == ProviderComponent::Output);
+        CHECK(status.failure_reason == reason);
+        // Nothing is recorded for an estimate that was not published.
+        CHECK(output->poses.empty());
+        CHECK_FALSE(status.latest_tracking_state.has_value());
+        CHECK_FALSE(status.last_publication_time_ns.has_value());
+        if (reports_failure)
+        {
+            REQUIRE_FALSE(output->statuses.empty());
+            check_status(output->statuses.back(), core::PluginDeviceState_FAILED, core::PluginDeviceReason_DEVICE_ERROR,
+                         "Output: " + reason);
+        }
+        else
+        {
+            CHECK(output->statuses.empty());
+        }
+    }
+    else
+    {
+        CHECK(output->poses.size() == 2);
+        CHECK(output->statuses.empty());
+    }
+}
+
+TEST_CASE("The device status follows the run under the manifest's device path", "[unit][pose_provider]")
+{
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<FakeCameraSource>();
+    auto output = fake_output(script, camera);
+    PoseProvider provider(
+        output_config(), fake_engine(script), std::make_unique<FakeCameraInput>(camera), open_on(output));
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Preparing);
+    REQUIRE(output->statuses.size() == 1);
+    check_status(output->statuses[0], core::PluginDeviceState_UNKNOWN, core::PluginDeviceReason_NO_CURRENT_DATA);
+    // The status reader rejects a report whose path the manifest does not declare.
+    CHECK(read_file(POSE_PROVIDER_MANIFEST).find("path: \"/se3_tracker/pose_provider\"") != std::string::npos);
+    // While the run waits for the camera input, an update() at least every heartbeat period keeps the report current.
+    CHECK(provider.wait_timeout() > 0ms);
+    CHECK(provider.wait_timeout() <= 1s);
+
+    camera->push(fake_stereo_description());
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Ready);
+    check_status(output->statuses.back(), core::PluginDeviceState_CONNECTED, core::PluginDeviceReason_NONE);
+    provider.request_start();
+    provider.update();
+    REQUIRE(provider.status().state == ProviderState::Running);
+    check_status(output->statuses.back(), core::PluginDeviceState_CONNECTED, core::PluginDeviceReason_NONE);
+
+    SECTION("a finished run")
+    {
+        script->drains = false;
+        provider.request_finish();
+        provider.update();
+        REQUIRE(provider.status().state == ProviderState::Draining);
+        check_status(output->statuses.back(), core::PluginDeviceState_CONNECTED, core::PluginDeviceReason_NONE);
+        script->drains = true;
+        CHECK(update_until_finished(provider));
+        check_status(output->statuses.back(), core::PluginDeviceState_UNKNOWN, core::PluginDeviceReason_NO_CURRENT_DATA);
+    }
+    SECTION("a failed run")
+    {
+        script->fatal_reason = "tracker diverged";
+        provider.update();
+        REQUIRE(provider.finished());
+        check_status(output->statuses.back(), core::PluginDeviceState_FAILED, core::PluginDeviceReason_DEVICE_ERROR,
+                     "Engine: engine fatal error: tracker diverged");
+    }
 }

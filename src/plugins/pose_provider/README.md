@@ -20,7 +20,7 @@ stream through an interchangeable pose estimation engine.
 | `camera_input/` | `pose_provider::pose_camera_input` | Header-only camera input interface: `ICameraInput`, its events and `StereoFrame`, for one stereo camera source read without blocking |
 | `undistort/` | `pose_provider::pose_undistort` | Undistortion of one camera image to a distortion-free pinhole of the same size and optical frame: the widest valid output calibration, its map and bilinear `Gray8` resampling |
 | `engines/stub/` | `pose_provider::pose_engine_stub` | Adapter of the full contract with no engine library behind it |
-| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, camera input, setup resolution, input preparation, status and failure handling around one engine adapter; links no adapter |
+| `core/` | `pose_provider::pose_provider_core` | `PoseProvider`: one run's lifecycle, camera input, setup resolution, input preparation, pose output, status and failure handling around one engine adapter; links no adapter |
 | `app/` | `pose_provider_plugin` | The plugin executable; links the adapter that `POSE_ENGINE_TARGET` names. Its manifest is [`plugin.yaml`](plugin.yaml) |
 
 ## Build
@@ -40,10 +40,11 @@ To use an engine adapter instead of the stub, also pass
 adapter, or the stub. `pose_provider_tests` checks the stub against the engine contract, a
 scripted camera input against the camera input contract and the undistortion on synthetic
 lenses, and runs `PoseProvider` on a scripted camera input with the stub and with a scripted
-engine; the `pose_engine_*` tests check adapter registration. The build places
-`pose_provider_plugin` beside a copy of `plugin.yaml` in `build/src/plugins/pose_provider/`,
-so `build/src/plugins` works as a `PluginManager` search path. No target here has install
-rules, and a pip build with `BUILD_PLUGIN_POSE_PROVIDER` on stops at configuration.
+engine, with an output that records what it would publish; the `pose_engine_*` tests check
+adapter registration. The build places `pose_provider_plugin` beside a copy of `plugin.yaml`
+in `build/src/plugins/pose_provider/`, so `build/src/plugins` works as a `PluginManager`
+search path. No target here has install rules, and a pip build with
+`BUILD_PLUGIN_POSE_PROVIDER` on stops at configuration.
 
 ## Run
 
@@ -53,9 +54,10 @@ as soon as the engine is ready; an application cannot start it separately.
 
 | Option | Meaning |
 | --- | --- |
+| `--output-collection=<id>` | Required. The `se3_tracker` collection that receives the poses, 1 to 255 bytes; use a new one for each run. See [Output](#output) |
 | `--startup-timeout=<seconds>` | Time allowed from launch for the camera input to become ready and the run to start; engine initialization is not interrupted |
 | `--drain-timeout=<seconds>` | Time allowed from a finish request until the camera input has ended and the engine has processed its accepted input |
-| `--plugin-root-id=<id>` | Set by the plugin launcher |
+| `--plugin-root-id=<id>` | Set by the plugin launcher; the plugin's device status is published under it |
 
 `--help` prints the defaults. SIGINT or SIGTERM finishes the run: a running engine drains,
 and a run that has not started ends at once. The exit status is 0 when the run finished, 1
@@ -63,13 +65,37 @@ when it failed (the log gives the reason) and 2 for a usage error.
 
 After its SIGINT, `PluginManager` waits `shutdown_timeout_seconds` from
 [`plugin.yaml`](plugin.yaml) and then sends SIGKILL. Keep that value above the longest
-finish: `--drain-timeout` plus the engine's stop time and the camera input's release, plus
-the rest of engine initialization and start if a stop can arrive while the engine
-initializes. When `PluginManager` stops the plugin itself, it reports the plugin as stopped
-and drops its exit status; the plugin's last log line still gives the outcome.
+finish: `--drain-timeout` plus the engine's stop time, the camera input's release and the
+output's close, plus the rest of engine initialization and start if a stop can arrive while
+the engine initializes. When `PluginManager` stops the plugin itself, it reports the plugin
+as stopped and drops its exit status; the plugin's last log line still gives the outcome.
 
 The plugin executable creates no camera input, so it waits in Preparing until it is stopped
 or the startup timeout fails it.
+
+## Output
+
+The plugin opens an OpenXR session at launch, so the runtime must already have a headset
+system (see below). Once the engine is initialized, it publishes each estimate as an
+`se3_tracker` sample on the `--output-collection` collection; read it with an `Se3Tracker`
+on the same collection ID. A sample is valid only while the engine is tracking; any other
+sample carries an identity pose. The pose is the camera's `Body` frame, its left optical
+frame (+X right, +Y down, +Z forward), in the run's map frame, whose origin and axes the
+engine adapter documents; it is not the OpenXR session space. Sample times are the left
+image's capture times.
+
+With `--plugin-root-id`, the plugin also reports its device, `/se3_tracker/pose_provider` in
+[`plugin.yaml`](plugin.yaml), in the plugin device status: `UNKNOWN` (`NO_CURRENT_DATA`)
+while it prepares and once it has finished, `CONNECTED` from Ready until the run ends, and
+`FAILED` (`DEVICE_ERROR`) with the failing component and reason. Over OpenXR, an application
+receives only the poses and this device status. The process exits right after its last
+report, so a reader may see the exit first; the log and the exit status keep the outcome.
+
+Configure the OpenXR runtime as for the other OpenXR plugins, and start the plugin once the
+runtime has a headset system, as `TeleopSession` does by creating its own session first. If
+the session or a collection cannot open, which includes a missing runtime or one without a
+system, or if a pose cannot be published, the run fails with `Output`. A device status that
+cannot be published is logged once and no longer sent, without failing the run.
 
 ## Write an adapter
 

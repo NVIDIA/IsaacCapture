@@ -7,3 +7,7 @@ command: "./pose_provider_plugin"
 version: "0.1.0"
 # Must exceed the longest finish after SIGINT; see "Run" in README.md.
 shutdown_timeout_seconds: 10
+devices:
+  - path: "/se3_tracker/pose_provider"
+    type: "se3_tracker"
+    description: "SE3 (6-DoF) pose of the camera's left optical frame in the run's map frame, on the --output-collection collection"
