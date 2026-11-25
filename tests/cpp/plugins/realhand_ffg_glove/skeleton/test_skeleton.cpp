@@ -66,7 +66,7 @@ TEST_CASE("Human skeleton geometry, calibration, and wrist continuity", "[realha
         const auto& left = config.wrist.left_aim_to_wrist;
         const auto& right = config.wrist.right_aim_to_wrist;
         check(config.wrist.mode == plugin_utils::WristSourceMode::Auto, "mount defaults preserve wrist source selection");
-        check(distance(left.position, { 0.020534770647f, -0.047368722071f, 0.192378854628f }) < 1e-7f,
+        check(distance(left.position, { 0.020880028333f, -0.051219932099f, 0.196966771197f }) < 1e-7f,
               "default PICO bracket translation");
         check(distance(right.position, { -left.position.x, left.position.y, left.position.z }) < 1e-7f,
               "default bracket positions are mirrored");

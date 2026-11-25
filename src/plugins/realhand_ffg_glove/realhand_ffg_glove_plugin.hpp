@@ -39,9 +39,9 @@ struct RealHandFFGGloveConfig
     // Mount defaults are hardware configuration, separate from per-user finger calibration.
     plugin_utils::WristSourceConfig wrist{
         .left_aim_to_wrist = { { -0.422424918198f, 0.014580024139f, 0.024960358040f, 0.905936858676f },
-                               { 0.020534770647f, -0.047368722071f, 0.192378854628f } },
+                               { 0.020880028333f, -0.051219932099f, 0.196966771197f } },
         .right_aim_to_wrist = { { -0.422424918198f, -0.014580024139f, -0.024960358040f, 0.905936858676f },
-                                { -0.020534770647f, -0.047368722071f, 0.192378854628f } }
+                                { -0.020880028333f, -0.051219932099f, 0.196966771197f } }
     };
 };
 
