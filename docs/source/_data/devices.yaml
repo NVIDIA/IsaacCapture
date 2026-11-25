@@ -46,6 +46,8 @@
 #            set up / requirements / acquire. A column with nothing to say renders an em
 #            dash so the three stay aligned across devices. Omit `details` entirely and
 #            the row gets no button.
+#            When listing vendor SDK platforms, retain the plugin's host platform and
+#            device-access requirements as separate entries.
 #
 # A details entry is a bare string, a link, or a way to reach someone:
 #   - PICO OS 15.4.4U or newer
@@ -290,8 +292,10 @@ devices:
         - label: AGILINK Omniglove Plugin
           url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/omniglove
       requirements:
+        - Linux plugin host, x86_64 or aarch64
         - AGILINK OmniGlove SDK (Linux x86_64 or aarch64, Windows x86_64, Android, macOS arm64)
         - USB connection to the workstation
+        - Plugin udev rule installed on the host
       acquire:
         - label: agilink-ai.com
           url: https://www.agilink-ai.com/
