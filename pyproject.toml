@@ -121,6 +121,10 @@ result = "{major}.{minor}+local"
 [tool.uv]
 package = false
 
+[tool.uv.extra-build-dependencies]
+# cholespy 2.2.0 uses a nanobind internal API removed in version 3.
+cholespy = ["nanobind>=2,<3"]
+
 [tool.uv.sources]
 isaacteleop = { path = "src/compat" }
 

@@ -21,15 +21,6 @@ interface, so another machine on the network can reach it at
 `http://<this-host>:8080`; pass `--host 127.0.0.1` to keep it local, `--port` to
 move it. Ctrl+C stops it.
 
-On aarch64 (Jetson, DGX Spark) that install fails building `cholespy`, which
-SOMA-X (`py-soma-x`) pulls in and which has no aarch64 wheel. Skip the
-example's dependencies and install the rest of what the viewer imports:
-
-```bash
-uv pip install -e ./examples/deviceio_live_view --no-sources --no-deps
-uv pip install numpy viser
-```
-
 Without SOMA-X the default body and hand schemas run, and so do the SOMA
 schemas with `--soma-body-representation joint-poses` or
 `--soma-hand-representation joint-poses`. The SOMA default, joint rotations,
