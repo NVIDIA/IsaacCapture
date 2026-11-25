@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isaac-transport-livekit"
+version = "0.1.0"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE.md"]
+dependencies = ['isaac-media-transport==0.1.0', 'livekit==1.1.20', 'livekit-api==1.2.1', 'pyyaml>=6']
+
+[project.entry-points."isaac_media_bridge.transports.v1"]
+livekit = "isaac_transport_livekit.plugin:PLUGIN"
+
+[tool.setuptools.packages.find]
+include = ["isaac_transport_livekit*"]

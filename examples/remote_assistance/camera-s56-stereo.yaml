@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+livekit:
+  transport: livekit
+  publisher: client-camera
+  viewer_identity: host-video
+  probe_identity: host-probe
+  codec: h264
+  bitrate_mbps: 15
+  video_encoder: gstreamer
+  video_decoder: hardware
+  decoded_memory: cuda
+  decoded_socket: ~/remote-assistance-gpu.sock
+  livekit_playout_mode: immediate
+  livekit_cuda_library: ~/.local/lib/liblivekit_ffi.so
+cameras:
+  - name: cam
+    type: argus
+    width: 2560
+    height: 1984
+    fps: 30
+    stereo: true
+    left: {sensor_id: 1, sensor_mode: 1}
+    right: {sensor_id: 0, sensor_mode: 1}
+    stereo_pairing: {max_wait_ms: 25, max_skew_ms: 8, queue_size: 4}
+    controls:
+      exposure_time_us: [9000, 9000]
+      gain_range: [1.3, 1.3]
+      isp_digital_gain_range: [1.0, 1.0]
+      ae_lock: true

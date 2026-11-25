@@ -1,0 +1,145 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+diff --git a/libwebrtc/src/native/video_frame.rs b/libwebrtc/src/native/video_frame.rs
+index e1ad2cc..31dbf50 100644
+--- a/libwebrtc/src/native/video_frame.rs
++++ b/libwebrtc/src/native/video_frame.rs
+@@ -150,0 +151,3 @@ impl NativeBuffer {
++    pub fn encoded_payload(&self) -> Vec<u8> { self.sys_handle.encoded_payload() }
++    pub fn encoded_keyframe(&self) -> bool { self.sys_handle.encoded_keyframe() }
++
+diff --git a/libwebrtc/src/video_frame.rs b/libwebrtc/src/video_frame.rs
+index 0ed8bb5..dc78298 100644
+--- a/libwebrtc/src/video_frame.rs
++++ b/libwebrtc/src/video_frame.rs
+@@ -593,0 +594,5 @@ pub mod native {
++        /// Returns an owned encoded access unit, or empty for ordinary native images.
++        pub fn encoded_payload(&self) -> Vec<u8> { self.handle.encoded_payload() }
++        /// Whether the encoded access unit is independently decodable.
++        pub fn encoded_keyframe(&self) -> bool { self.handle.encoded_keyframe() }
++
+diff --git a/livekit-ffi/protocol/video_frame.proto b/livekit-ffi/protocol/video_frame.proto
+index 57ed268..ddc721a 100644
+--- a/livekit-ffi/protocol/video_frame.proto
++++ b/livekit-ffi/protocol/video_frame.proto
+@@ -228,0 +229 @@ message VideoStreamEvent {
++    EncodedVideoFrameReceived encoded_frame_received = 4;
+@@ -238,0 +240,5 @@ message VideoFrameReceived {
++message EncodedVideoFrameReceived {
++  required bytes payload = 1;
++  required bool keyframe = 2;
++  optional FrameMetadata metadata = 3;
++}
+diff --git a/livekit-ffi/src/lib.rs b/livekit-ffi/src/lib.rs
+index 67f8ef3..f4797a7 100644
+--- a/livekit-ffi/src/lib.rs
++++ b/livekit-ffi/src/lib.rs
+@@ -73,0 +74,4 @@ uniffi::setup_scaffolding!("livekit_ffi");
++
++/// Identifies the optional UMB complete-access-unit receive extension.
++#[unsafe(no_mangle)]
++pub extern "C" fn livekit_umb_encoded_receive_abi() -> u32 { 1 }
+diff --git a/livekit-ffi/src/room_apis/server/video_stream.rs b/livekit-ffi/src/room_apis/server/video_stream.rs
+index 2cc69ae..49366dd 100644
+--- a/livekit-ffi/src/room_apis/server/video_stream.rs
++++ b/livekit-ffi/src/room_apis/server/video_stream.rs
+@@ -156,0 +157,17 @@ impl FfiVideoStream {
++                    if let Some(native) = frame.buffer.as_native() {
++                        let payload = native.encoded_payload();
++                        if !payload.is_empty() {
++                            let event = proto::VideoStreamEvent {
++                                stream_handle,
++                                message: Some(proto::video_stream_event::Message::EncodedFrameReceived(
++                                    proto::EncodedVideoFrameReceived {
++                                        payload, keyframe: native.encoded_keyframe(), metadata,
++                                    }
++                                )),
++                            };
++                            if let Err(err) = server.send_event(event.into()) {
++                                log::warn!("failed to send encoded video frame: {}", err);
++                            }
++                            continue;
++                        }
++                    }
+diff --git a/webrtc-sys/include/livekit/video_frame_buffer.h b/webrtc-sys/include/livekit/video_frame_buffer.h
+index 760bfc1..d6132d5 100644
+--- a/webrtc-sys/include/livekit/video_frame_buffer.h
++++ b/webrtc-sys/include/livekit/video_frame_buffer.h
+@@ -64,0 +65,2 @@ class VideoFrameBuffer {
++  rust::Vec<uint8_t> encoded_payload() const;
++  bool encoded_keyframe() const;
+diff --git a/webrtc-sys/src/video_decoder_factory.cpp b/webrtc-sys/src/video_decoder_factory.cpp
+index d22ae70..2716424 100644
+--- a/webrtc-sys/src/video_decoder_factory.cpp
++++ b/webrtc-sys/src/video_decoder_factory.cpp
+@@ -17,0 +18,5 @@
++#include "livekit/encoded_video_frame_buffer.h"
++#include "api/video/video_frame.h"
++#include "api/make_ref_counted.h"
++#include "modules/video_coding/include/video_error_codes.h"
++#include <cstdlib>
+@@ -44,0 +50,31 @@ namespace {
++// Opt-in complete-access-unit handoff; ordinary viewers retain the stock decoder.
++class EncodedH264Receiver final : public webrtc::VideoDecoder {
++ public:
++  bool Configure(const Settings&) override { return true; }
++  int32_t RegisterDecodeCompleteCallback(webrtc::DecodedImageCallback* callback) override {
++    callback_ = callback;
++    return WEBRTC_VIDEO_CODEC_OK;
++  }
++  int32_t Release() override { callback_ = nullptr; return WEBRTC_VIDEO_CODEC_OK; }
++  DecoderInfo GetDecoderInfo() const override {
++    DecoderInfo info;
++    info.implementation_name = "UMB encoded H264 handoff v1";
++    info.is_hardware_accelerated = false;
++    return info;
++  }
++  int32_t Decode(const webrtc::EncodedImage& image, bool, int64_t) override {
++    if (!callback_ || !image.data() || !image.size()) return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
++    auto payload = webrtc::EncodedImageBuffer::Create(image.data(), image.size());
++    auto buffer = webrtc::make_ref_counted<livekit::EncodedVideoFrameBuffer>(
++        image._encodedWidth, image._encodedHeight, livekit::EncodedVideoCodec::kH264,
++        image._frameType == webrtc::VideoFrameType::kVideoFrameKey
++          ? livekit::EncodedFrameType::kKey : livekit::EncodedFrameType::kDelta, payload);
++    auto frame = webrtc::VideoFrame::Builder().set_video_frame_buffer(buffer)
++        .set_timestamp_rtp(image.RtpTimestamp()).build();
++    callback_->Decoded(frame, std::nullopt, std::nullopt);
++    return WEBRTC_VIDEO_CODEC_OK;
++  }
++ private:
++  webrtc::DecodedImageCallback* callback_ = nullptr;
++};
++
+@@ -138,0 +175,3 @@ std::unique_ptr<webrtc::VideoDecoder> VideoDecoderFactory::Create(
++  if (std::getenv("UMB_LIVEKIT_ENCODED_RECEIVE") && format.name == "H264") {
++    return std::make_unique<EncodedH264Receiver>();
++  }
+diff --git a/webrtc-sys/src/video_frame_buffer.cpp b/webrtc-sys/src/video_frame_buffer.cpp
+index a432da9..8495256 100644
+--- a/webrtc-sys/src/video_frame_buffer.cpp
++++ b/webrtc-sys/src/video_frame_buffer.cpp
+@@ -17,0 +18 @@
++#include "livekit/encoded_video_frame_buffer.h"
+@@ -31,0 +33,14 @@ VideoFrameBufferType VideoFrameBuffer::buffer_type() const {
++rust::Vec<uint8_t> VideoFrameBuffer::encoded_payload() const {
++  rust::Vec<uint8_t> data;
++  auto* encoded = livekit::EncodedVideoFrameBuffer::FromNative(buffer_.get());
++  if (encoded) {
++    auto payload = encoded->encoded_data();
++    data.reserve(payload->size());
++    for (size_t i = 0; i < payload->size(); ++i) data.push_back(payload->data()[i]);
++  }
++  return data;
++}
++bool VideoFrameBuffer::encoded_keyframe() const {
++  auto* encoded = livekit::EncodedVideoFrameBuffer::FromNative(buffer_.get());
++  return encoded && encoded->frame_type() == livekit::EncodedFrameType::kKey;
++}
+diff --git a/webrtc-sys/src/video_frame_buffer.rs b/webrtc-sys/src/video_frame_buffer.rs
+index 94a80b1..2377958 100644
+--- a/webrtc-sys/src/video_frame_buffer.rs
++++ b/webrtc-sys/src/video_frame_buffer.rs
+@@ -48,0 +49,2 @@ pub mod ffi {
++        fn encoded_payload(self: &VideoFrameBuffer) -> Vec<u8>;
++        fn encoded_keyframe(self: &VideoFrameBuffer) -> bool;
