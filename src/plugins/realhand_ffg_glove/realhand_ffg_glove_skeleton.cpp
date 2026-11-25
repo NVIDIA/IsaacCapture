@@ -388,6 +388,17 @@ std::optional<HandJoints> HumanHandSkeleton::reconstruct(const std::array<float,
     set_joint(joints, XR_HAND_JOINT_THUMB_DISTAL_EXT, thumb, 0.009f * scale);
     thumb = advance(thumb, thumb_lengths[2] * scale);
     set_joint(joints, XR_HAND_JOINT_THUMB_TIP_EXT, thumb, 0.007f * scale);
+
+    // The solver's X is the hinge axis, not OpenXR's X. In neutral the left hinge X is dorsal;
+    // roll its frame about bone Z so +Y (nail normal) points dorsally and radially.
+    // This is a neutral nail-roll estimate, not a measured angle. Never feed it back into FK.
+    constexpr float neutral_nail_roll = 50.0f * kPi / 180.0f;
+    const auto hinge_to_nail = rotate(-mirror * (kPi / 2.0f + neutral_nail_roll), 2);
+    for (int i = XR_HAND_JOINT_THUMB_METACARPAL_EXT; i <= XR_HAND_JOINT_THUMB_TIP_EXT; ++i)
+    {
+        auto& pose = joints[i].pose;
+        pose.orientation = oxr_utils::multiply_poses(pose, hinge_to_nail).orientation;
+    }
     return joints;
 }
 

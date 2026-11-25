@@ -377,6 +377,20 @@ TEST_CASE("Geometric thumb chain preserves endpoints and rigid bone frames", "[r
                         sensors[4] = ip / 10.0f;
                         const float c = sensors[2] * 1.1f, d = sensors[4] * 1.2f;
                         const auto hand = *model.reconstruct(sensors, side);
+                        if (opposition == 0 && mcp == 0 && ip == 0)
+                        {
+                            for (std::size_t j = 2; j <= 5; ++j)
+                            {
+                                const XrPosef rotation{ hand[j].pose.orientation, {} };
+                                const auto nail = oxr_utils::multiply_poses(rotation, { { 0, 0, 0, 1 }, { 0, 1, 0 } });
+                                const auto red = oxr_utils::multiply_poses(rotation, { { 0, 0, 0, 1 }, { 1, 0, 0 } });
+                                check(nail.position.y > 0.42f && nail.position.y < 0.82f &&
+                                          mirror * nail.position.x > 0 && nail.position.z > 0,
+                                      "open thumb nail normal is oblique, dorsal and radial");
+                                check(red.position.x > 0 && mirror * red.position.z > 0 && mirror * red.position.y < 0,
+                                      "open thumb +X projects right and wristward on the left, tipward on the right");
+                            }
+                        }
                         // Endpoint reference independent of the opposed-flexion construction.
                         const float y = -lengths[1] * std::sin(c) - lengths[2] * std::sin(c + d);
                         const float z = -lengths[0] - lengths[1] * std::cos(c) - lengths[2] * std::cos(c + d);
@@ -400,13 +414,11 @@ TEST_CASE("Geometric thumb chain preserves endpoints and rigid bone frames", "[r
                                 const auto relative = oxr_utils::multiply_poses(
                                     { { -parent.x, -parent.y, -parent.z, parent.w }, { 0, 0, 0 } },
                                     { root.orientation, { 0, 0, 0 } });
-                                const float angle = 2.0f * std::atan2(relative.orientation.x, relative.orientation.w);
-                                check(angle >= -1e-6f && angle <= 1.8f + 1e-6f &&
-                                          std::abs(relative.orientation.y) < 1e-6f &&
-                                          std::abs(relative.orientation.z) < 1e-6f &&
-                                          std::abs(relative.orientation.x * relative.orientation.x +
-                                                   relative.orientation.w * relative.orientation.w - 1.0f) < 1e-6f,
-                                      "thumb flexion is positive local X on either hand");
+                                const auto& q = relative.orientation;
+                                const float angle = 2.0f * std::atan2(std::hypot(q.x, q.y), q.w);
+                                check(angle <= 1.8f + 1e-6f && q.x <= 1e-6f && mirror * q.y >= -1e-6f &&
+                                          std::abs(q.z) < 1e-6f,
+                                      "thumb flexes around the mirrored hinge in the published nail frame without twist");
                                 check(bone == 1 ? angle <= c + 1e-6f : angle >= d - 1e-6f,
                                       "posture prior moves curvature from MCP toward IP without changing reach");
                                 if (d == 0.0f && c >= 1.0f)
