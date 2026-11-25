@@ -36,3 +36,9 @@ SPDX-License-Identifier: Apache-2.0
   implementation module without an entrypoint can exit successfully doing nothing.
 - Make new-terminal process examples self-contained: set their paths, change
   directory, source credentials, and clearly identify the physical site.
+- Keep instrumentation policy in a shared sidecar YAML, independent of camera and
+  transport; preserve clock-qualified cross-site totals and invalidate stale results.
+- Use the GPU IPC viewer for latency comparisons; label OpenCV readback as a
+  diagnostic path so changing the viewer does not masquerade as a transport regression.
+- Validate the GPU IPC viewer adapter in the camera_viz environment containing
+  the native Isaac Capture runtime; the standalone Python test environment lacks it.

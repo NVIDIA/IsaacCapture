@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 
 
 @dataclass(frozen=True)
@@ -45,6 +45,7 @@ class Frame:
     source_id: str
     stream: int = 0
     image_right: Optional[Any] = None
+    on_submit: Optional[Callable[[int, int], None]] = None
 
 
 class FrameSource(ABC):

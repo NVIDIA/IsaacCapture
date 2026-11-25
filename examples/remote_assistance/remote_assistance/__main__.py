@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path
 import yaml
-from isaac_media_transport.latency import for_process, get_recorder
+from isaac_media_transport.latency import for_process, get_recorder, ViewerTiming
 from isaac_media_transport.stereo import stereo_tracks
 from isaac_media_transport.transport import create_receiver, get_transport, ReceivedPair
 
@@ -22,6 +22,11 @@ def load_config(path):
     cfg = yaml.safe_load(path.read_text())
     if not isinstance(cfg, dict) or not isinstance(cfg.get("livekit"), dict):
         raise ValueError("Config requires a livekit settings mapping")
+    if cfg.get("latency_config"):
+        policy = yaml.safe_load((path.parent / cfg["latency_config"]).read_text())
+        if not isinstance(policy, dict):
+            raise ValueError("Latency config must be a YAML mapping")
+        cfg["livekit"]["latency"] = policy
     return cfg
 
 
@@ -58,9 +63,12 @@ async def sender(settings, cam, seconds):
             image = np.zeros((cam["height"], cam["width"], 4), np.uint8)
             image[..., 3] = 255
             index = 0
+            timing = get_recorder(settings)
             while not stop.is_set():
                 image[..., 0] = 220 if (index // round(cam["fps"])) % 2 else 30
-                publication.capture_rgba(image, time.monotonic_ns(), index)
+                stamp = time.monotonic_ns()
+                timing.record("capture_available", cam["name"], stamp, at_ns=stamp)
+                publication.capture_rgba(image, stamp, index)
                 index += 1
                 await asyncio.sleep(1 / cam["fps"])
         finally:
@@ -87,6 +95,7 @@ def receive(settings, cam, args):
         settings = {**settings, "decoded_handoff": "inprocess"}
     elif args.ipc:
         settings = {**settings, "decoded_handoff": "ipc"}
+    live_timing = ViewerTiming(settings if args.command == "viewer" else {})
     receiver = create_receiver(
         settings,
         identity=f"{settings.get('viewer_identity', 'host-video')}-{cam['name']}",
@@ -128,6 +137,11 @@ def receive(settings, cam, args):
                         if isinstance(sample, ReceivedPair)
                         else (sample,)
                     )
+                    for track, frame in zip(tracks, frames, strict=True):
+                        if frame.metadata:
+                            timing.record(
+                                "viewer_take", track, frame.metadata.user_timestamp
+                            )
                     images = []
                     for frame in frames:
                         f = frame.frame
@@ -136,17 +150,28 @@ def receive(settings, cam, args):
                         )
                         images.append(cv2.cvtColor(pixels, cv2.COLOR_RGBA2BGR))
                     joined = np.concatenate(images, axis=1)
+                    display = cv2.resize(joined, None, fx=args.scale, fy=args.scale)
+                    for track, frame in zip(tracks, frames, strict=True):
+                        if frame.metadata:
+                            timing.record(
+                                "viewer_ready",
+                                track,
+                                frame.metadata.user_timestamp,
+                            )
+                    submit_begin_ns = time.monotonic_ns()
                     for track, frame in zip(tracks, frames, strict=True):
                         if frame.metadata:
                             timing.record(
                                 "viewer_submit_begin",
                                 track,
                                 frame.metadata.user_timestamp,
+                                at_ns=submit_begin_ns,
                             )
-                    cv2.imshow(
-                        "Media bridge",
-                        cv2.resize(joined, None, fx=args.scale, fy=args.scale),
-                    )
+                    cv2.imshow("Media bridge", display)
+                    if live_timing.enabled:
+                        live_timing.observe(
+                            sample.received_ns, submit_begin_ns, time.monotonic_ns()
+                        )
                     for track, frame in zip(tracks, frames, strict=True):
                         if frame.metadata:
                             timing.record(
@@ -166,6 +191,7 @@ def receive(settings, cam, args):
                     flush=True,
                 )
                 count, report = 0, now
+            live_timing.report()
             stop.wait(0.001)
     finally:
         if timer:
@@ -173,6 +199,7 @@ def receive(settings, cam, args):
         receiver.stop()
         if cv2:
             cv2.destroyAllWindows()
+        live_timing.close()
         gc.collect()
 
 
@@ -255,9 +282,9 @@ def main():
                 receive(settings, cam, args)
     except (ValueError, OSError) as exc:
         parser.exit(1, f"Media bridge: {exc}\n")
-
     finally:
-        # Release cyclic Room handles before the SDK atexit registry teardown.
+        # Room callbacks form cycles. Release their native handles before the
+        # LiveKit atexit hook destroys the FFI handle registry.
         gc.collect()
 
 

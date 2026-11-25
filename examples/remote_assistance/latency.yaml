@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Shared instrumentation policy for both sites, independent of camera and transport.
+enabled: true
+file_enabled: false
+terminal_enabled: true
+hud_enabled: false
+report_interval_s: 5
+# Empty selects a new run ID when generating the bundle.
+run_id: ""
+log_dir: /tmp
+clock:
+  client: "${CLIENT_USER}@${CLIENT_IP}"
+  client_python: python3
+  max_age_s: 2
+  max_uncertainty_ms: 5
+  drift_ppm: 1000

@@ -106,3 +106,119 @@ available_transports()
         ],
         check=True,
     )
+
+
+def test_latency_output_switches_and_local_measurements(tmp_path):
+    from isaac_media_transport.latency import ViewerTiming, get_recorder, DISABLED
+
+    settings = {
+        "latency": {
+            "enabled": False,
+            "file_enabled": True,
+            "terminal_enabled": True,
+            "hud_enabled": True,
+            "log_dir": str(tmp_path),
+        }
+    }
+    assert get_recorder(settings) is DISABLED
+    reporter = ViewerTiming(settings)
+    assert not reporter.enabled
+    reporter.observe(10, 20, 30)
+    assert "waiting" in reporter.lines()[0]
+    assert not list(tmp_path.iterdir())
+    settings["latency"].update(enabled=True, file_enabled=False)
+    assert get_recorder(settings) is DISABLED
+    reporter = ViewerTiming(settings)
+    reporter.observe(10_000_000, 15_000_000, 17_000_000)
+    assert "5.0 ms" in reporter.lines()[0]
+    assert "2.0 ms" in reporter.lines()[0]
+    assert "end-to-end unavailable" in reporter.lines()[1]
+    assert not list(tmp_path.iterdir())
+    for i in range(1000):
+        reporter.observe(i, i + 1, i + 2)
+    assert len(reporter._samples) == 600
+
+
+def test_latency_terminal_and_hud_are_independent(monkeypatch):
+    import itertools
+    from isaac_media_transport import latency
+
+    now = [10.0]
+    monkeypatch.setattr(latency.time, "monotonic", lambda: now[0])
+    for terminal, hud in itertools.product((False, True), repeat=2):
+        reporter = latency.ViewerTiming(
+            {
+                "latency": {
+                    "enabled": True,
+                    "terminal_enabled": terminal,
+                    "hud_enabled": hud,
+                    "report_interval_s": 2,
+                }
+            }
+        )
+        assert reporter.terminal_enabled == terminal
+        assert reporter.hud_enabled == hud
+        output = []
+        reporter.report(output.append)
+        assert not output
+        now[0] += 2
+        reporter.report(output.append)
+        assert len(output) == int(terminal)
+    with pytest.raises(ValueError, match="report_interval_s"):
+        latency.ViewerTiming({"latency": {"report_interval_s": 0}})
+
+
+@pytest.mark.parametrize("file_enabled", [False, True])
+@pytest.mark.parametrize("terminal_enabled", [False, True])
+@pytest.mark.parametrize("hud_enabled", [False, True])
+def test_all_latency_output_combinations(
+    tmp_path, file_enabled, terminal_enabled, hud_enabled
+):
+    from isaac_media_transport.latency import get_recorder, ViewerTiming
+
+    settings = {
+        "latency": {
+            "enabled": True,
+            "file_enabled": file_enabled,
+            "terminal_enabled": terminal_enabled,
+            "hud_enabled": hud_enabled,
+            "run_id": "test",
+            "_process_role": "viewer",
+            "log_dir": str(tmp_path),
+        }
+    }
+    recorder = get_recorder(settings)
+    recorder.record("viewer_submit_begin", "cam", 1)
+    assert recorder.close()
+    assert bool(list(tmp_path.glob("*.jsonl"))) == file_enabled
+    reporter = ViewerTiming(settings)
+    assert reporter.terminal_enabled == terminal_enabled
+    assert reporter.hud_enabled == hud_enabled
+
+
+def test_memory_telemetry_has_no_file_and_detects_restarts(tmp_path):
+    from isaac_media_transport.latency_bus import EventBuffer, SocketTail
+
+    path = tmp_path / "events.sock"
+    buffer = EventBuffer(path, capacity=2)
+    try:
+        reader = SocketTail(path)
+        reader.follow()
+        buffer.append({"record_type": "stage", "run_id": "r", "monotonic_ns": 1})
+        assert reader.read()[0]["run_id"] == "r"
+        buffer.append({"record_type": "stage"})
+        buffer.append({"record_type": "stage"})
+        buffer.append({"record_type": "stage"})
+        with pytest.raises(ValueError, match="overrun"):
+            reader.read()
+        with pytest.raises(ValueError, match="Another process"):
+            EventBuffer(path)
+        assert not list(tmp_path.glob("*.jsonl"))
+    finally:
+        buffer.close()
+    replacement = EventBuffer(path)
+    try:
+        with pytest.raises(ValueError, match="restarted"):
+            reader.read()
+    finally:
+        replacement.close()

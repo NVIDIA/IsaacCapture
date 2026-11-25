@@ -87,3 +87,84 @@ def test_external_plugin_is_discovered_without_importing_its_sdk(tmp_path):
         "livekit": repo_root() / "src/plugins/transport_livekit",
         "sample": external,
     }
+
+
+def test_ipc_display_preserves_eye_order_and_rejects_wrong_dimensions(monkeypatch):
+    monkeypatch.syspath_prepend(str(repo_root() / "examples/camera_viz/python"))
+    from isaaccapture_examples.camera_viz.sources.media_ipc import MediaIpcSource
+    from isaac_media_transport.transport import VideoFrame, ReceivedFrame, ReceivedPair
+
+    source = MediaIpcSource(
+        {}, {"name": "cam", "width": 8, "height": 4, "stereo": True}
+    )
+    left, right = object(), object()
+    pair = ReceivedPair(
+        ReceivedFrame(VideoFrame(8, 4, left, "cuda"), 10, None),
+        ReceivedFrame(VideoFrame(8, 4, right, "cuda"), 11, None),
+        12,
+    )
+    monkeypatch.setattr(source._receiver, "latest", lambda: pair)
+    frame = source.latest()
+    assert frame.image is left and frame.image_right is right
+    assert frame.timestamp_ns == 12
+    pair.right.frame = VideoFrame(9, 4, right, "cuda")
+    with pytest.raises(ValueError, match="dimensions"):
+        source.latest()
+    monkeypatch.setattr(source._receiver, "latest", lambda: pair.left)
+    with pytest.raises(ValueError, match="stereo layout"):
+        source.latest()
+    monkeypatch.setattr(source._receiver, "latest", lambda: None)
+    assert source.latest() is None
+
+
+def test_bundle_uses_one_shared_latency_policy(monkeypatch, tmp_path):
+    import sys
+    import yaml
+    from remote_assistance import network_setup
+
+    output = tmp_path / "bundle"
+    policy = tmp_path / "latency.yaml"
+    policy.write_text(
+        'enabled: true\nfile_enabled: false\nterminal_enabled: true\nclock:\n  client: "${CLIENT_USER}@${CLIENT_IP}"\n'
+    )
+    monkeypatch.setenv("CLIENT_USER", "operator")
+    monkeypatch.setenv("CLIENT_IP", "192.0.2.2")
+
+    class Provisioner:
+        def generate(self, output, *_args, **_kwargs):
+            for role in ("host", "client"):
+                site = output / role
+                site.mkdir(parents=True)
+                for name in ("camera.yaml", "session.yaml"):
+                    (site / name).write_text("livekit: {}\n")
+            return output
+
+    class Transport:
+        def provisioner(self):
+            return Provisioner()
+
+    monkeypatch.setattr(network_setup, "get_transport", lambda _: Transport())
+    monkeypatch.setattr(network_setup, "available_transports", lambda: ["livekit"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "setup",
+            "--host-ip",
+            "192.0.2.1",
+            "--output",
+            str(output),
+            "--camera-config",
+            str(EXAMPLE / "camera-s56-stereo.yaml"),
+            "--session-config",
+            str(EXAMPLE / "session.yaml"),
+            "--latency-config",
+            str(policy),
+        ],
+    )
+    network_setup.main()
+    host = yaml.safe_load((output / "host/latency.yaml").read_text())
+    assert host == yaml.safe_load((output / "client/latency.yaml").read_text())
+    assert host["clock"]["client"] == "operator@192.0.2.2"
+    assert host["run_id"]
+    assert load_config(output / "host/camera.yaml")["livekit"]["latency"] == host
