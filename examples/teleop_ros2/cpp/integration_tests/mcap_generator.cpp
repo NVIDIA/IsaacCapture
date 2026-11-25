@@ -34,6 +34,8 @@ using FullBodyChannels = core::McapTrackerChannels<core::FullBodyPoseRecord>;
 constexpr int kDefaultFrameCount = 1800;
 constexpr int64_t kFramePeriodNs = 16'666'667;
 constexpr int kFingerCurlPeriodFrames = 120;
+constexpr int kPedalPhaseFrames = 60;
+constexpr std::array<float, 3> kPedalRudderValues = { 0.0f, 0.5f, -0.5f };
 
 // Per-frame position drift (meters) applied to every sample source so replayed
 // poses vary over time instead of staying static; the fixture only needs
@@ -224,6 +226,7 @@ std::shared_ptr<core::HeadPoseT> make_head_sample(int frame)
     auto sample = std::make_shared<core::HeadPoseT>();
     sample->pose = std::make_shared<core::Pose>(core::Point(0.0f, kHeadHeightM, -0.10f - delta), identity_quaternion());
     sample->is_valid = true;
+    sample->is_tracked = true;
     return sample;
 }
 
@@ -232,7 +235,8 @@ std::shared_ptr<core::Generic3AxisPedalOutputT> make_pedal_sample(int frame)
     auto sample = std::make_shared<core::Generic3AxisPedalOutputT>();
     sample->left_pedal = 0.20f;
     sample->right_pedal = 0.80f;
-    sample->rudder = (frame % 2 == 0) ? 0.15f : -0.15f;
+    const auto phase = static_cast<std::size_t>(frame / kPedalPhaseFrames) % kPedalRudderValues.size();
+    sample->rudder = kPedalRudderValues[phase];
     return sample;
 }
 

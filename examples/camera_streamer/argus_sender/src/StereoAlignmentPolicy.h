@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -7,8 +7,9 @@
 #ifndef ARGUS_SENDER_STEREO_ALIGNMENT_POLICY_H
 #define ARGUS_SENDER_STEREO_ALIGNMENT_POLICY_H
 
-#include "StereoTiming.h"
+#include "FrameTiming.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace argus_sender

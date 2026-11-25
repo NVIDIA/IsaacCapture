@@ -105,6 +105,9 @@ export interface RecordingSnapshot {
    * (no episode already active and a task is set) -- not a real observed
    * device/capture-source readiness signal. */
   readyToRecord: boolean;
+  /** Why the backend would refuse a take right now, when station setup or a capture source is the cause;
+   * null when ready, and null when only the task is missing. */
+  notReadyReason: string | null;
   /** The backend's count of accepted commands. Compared only within one
    * socket, so a snapshot older than one already applied can be dropped;
    * it restarts from 0 with the backend process. */

@@ -2,8 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/** Thin client for the standalone recordings.py backend module's two
- * endpoints -- nothing shared with the main frontend's API surface. */
+/** Thin client for the standalone recordings.py backend module's
+ * endpoints -- nothing shared with the main frontend's API surface. The
+ * listing and every file need the run's control token; `signIn` exchanges
+ * it once for a same-site cookie, which the listing calls and the plain
+ * download links then carry by themselves. */
 
 export interface RecordingEntry {
   name: string;
@@ -55,7 +58,25 @@ export async function fetchRecordingListing(path: string): Promise<RecordingList
   return (await response.json()) as RecordingListing;
 }
 
-/** Public download/view URL for a recorded file, given its full path
+/** HTTP status the backend answers with until the page has signed in. */
+export const SIGN_IN_REQUIRED = 401;
+
+/** Exchanges the control token for the session cookie. Throws with the
+ * backend's status when the token is refused, so the form can say so. */
+export async function signIn(controlToken: string): Promise<void> {
+  const url = "/recordings/api/session";
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "POST", headers: { "X-Control-Token": controlToken }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  } catch (error) {
+    throw new RecordingsApiError(`network error signing in: ${String(error)}`);
+  }
+  if (!response.ok) {
+    throw new RecordingsApiError(response.status === SIGN_IN_REQUIRED ? "That control token was not accepted." : `${url} returned ${response.status}`, response.status);
+  }
+}
+
+/** Download/view URL for a recorded file, given its full path
  * (as joined from listing entries, e.g. "sess1/episode_0/head_camera.mp4"). */
 export function recordingFileUrl(path: string): string {
   return `/recordings/files/${encodePath(path)}`;

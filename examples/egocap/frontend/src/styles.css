@@ -260,21 +260,6 @@ body {
   gap: var(--space-2);
 }
 
-.settings-choice {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-chip);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.settings-choice--on {
-  border-color: var(--accent);
-}
-
 .settings-actions {
   display: flex;
   align-items: center;
@@ -369,6 +354,56 @@ body {
   border-color: var(--accent);
 }
 
+/* A station row: the name line on top, what fills its roles and any problem beneath it. */
+.settings-station-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* The row wraps so that its editor opens beneath it, across the full width. The text column starts from no
+width, so a long line wraps inside it instead of pushing the row's buttons onto a line of their own. */
+.settings-list--stations > li {
+  flex-wrap: wrap;
+}
+
+.settings-list--stations .settings-list-main {
+  flex-basis: 0;
+}
+
+.station-editor {
+  flex: 1 0 100%;
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+/* A destructive confirmation: only ever shown after the operator asked to delete. */
+.settings-danger {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--critical);
+  background: transparent;
+  color: var(--critical);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-danger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-danger:focus-visible {
+  outline: 2px solid var(--critical);
+  outline-offset: 1px;
+}
+
 .settings-list-main {
   display: flex;
   align-items: center;
@@ -409,36 +444,25 @@ body {
   color: var(--accent);
 }
 
-.settings-roles {
+/* A compact form: each label beside its control. */
+.settings-fields {
   display: grid;
   grid-template-columns: minmax(120px, max-content) 1fr;
   gap: var(--space-2) var(--space-3);
   align-items: center;
 }
 
-.settings-roles label {
+.settings-fields label {
   font-size: 13px;
   color: var(--text-secondary);
 }
 
-.settings-ready {
+/* A single on/off setting: the box beside its own words. */
+.settings-check {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
-  margin: 0 0 var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--canvas);
+  align-items: center;
+  gap: var(--space-2);
   font-size: 13px;
-}
-
-.settings-ready-item--ok {
-  color: var(--text-main);
-}
-
-.settings-ready-item--todo {
-  color: var(--text-secondary);
 }
 
 /* The role a camera fills, shown in the tile caption beside its name. */
@@ -531,6 +555,469 @@ hero card so the tracking tree below starts near the top of the viewport. */
 
 .status-headline {
   flex: 1 1 auto;
+}
+
+/* --- Start-of-day rail ---------------------------------------------------- */
+
+.step-rail {
+  flex: none;
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border);
+}
+
+.step-rail-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.step-rail-item {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+
+/* The line joining a step to the next one. */
+.step-rail-item + .step-rail-item::before {
+  content: "";
+  flex: none;
+  align-self: center;
+  width: var(--space-4);
+  height: 1px;
+  margin-right: var(--space-2);
+  background: var(--border);
+}
+
+.step {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.step:hover {
+  border-color: var(--border);
+}
+
+/* The step that opens nothing looks like the others and offers no pointer. */
+.step--static {
+  cursor: default;
+}
+
+.step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.step-mark {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.step-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.step-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.step-detail {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step--done .step-mark {
+  border-color: var(--positive);
+  color: var(--positive);
+}
+
+.step--attention .step-mark {
+  border-color: var(--warning);
+  background: var(--warning);
+  color: var(--canvas);
+}
+
+.step--attention .step-detail {
+  color: var(--warning);
+}
+
+.step--skipped .step-mark {
+  border-style: dashed;
+}
+
+.step--skipped .step-label {
+  color: var(--text-secondary);
+}
+
+/* The step to deal with next. */
+.step--current {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+}
+
+.step--current.step--todo .step-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--canvas);
+}
+
+@media (max-width: 900px) {
+  .step-detail {
+    display: none;
+  }
+}
+
+/* --- Devices checklist ---------------------------------------------------- */
+
+.setup-verdict {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.setup-verdict--clear {
+  border-color: var(--positive);
+  color: var(--positive);
+}
+
+.setup-verdict--held {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.check-group {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.check-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  column-gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.check-row:last-child {
+  border-bottom: 0;
+}
+
+.check-mark {
+  font-weight: 700;
+  text-align: center;
+}
+
+.check-label {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.check-detail {
+  grid-column: 2;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.check-row--pass .check-mark {
+  color: var(--positive);
+}
+
+.check-row--fail .check-mark,
+.check-row--fail .check-detail {
+  color: var(--critical);
+}
+
+.check-row--warn .check-mark,
+.check-row--warn .check-detail,
+.check-row--unknown .check-mark,
+.check-row--unknown .check-detail {
+  color: var(--warning);
+}
+
+.check-row--skip {
+  color: var(--text-secondary);
+}
+
+.check-row--skip .check-label {
+  font-weight: 400;
+}
+
+/* --- End-of-day dialog ---------------------------------------------------- */
+
+.wrap-up-modal {
+  width: min(1040px, 96vw);
+  height: min(760px, 94vh);
+}
+
+/* The question that stands in for Close while something typed is unsaved. */
+.wrap-up-discard {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.wrap-up-tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--space-2);
+}
+
+.wrap-up-tile {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  border-left-width: 3px;
+}
+
+.wrap-up-tile-count {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.wrap-up-tile-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.wrap-up-tile-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* One colour per outcome, shared by the tiles and the table. */
+.wrap-up-tile--kept {
+  border-left-color: var(--positive);
+}
+
+.wrap-up-tile--flagged,
+.wrap-up-tile--pending {
+  border-left-color: var(--warning);
+}
+
+.wrap-up-tile--rejected {
+  border-left-color: var(--critical);
+}
+
+.wrap-up-tile--recording {
+  border-left-color: var(--accent);
+}
+
+.wrap-up-outcome {
+  font-weight: 600;
+}
+
+.wrap-up-outcome--kept {
+  color: var(--positive);
+}
+
+.wrap-up-outcome--flagged,
+.wrap-up-outcome--pending {
+  color: var(--warning);
+}
+
+.wrap-up-outcome--rejected {
+  color: var(--critical);
+}
+
+.wrap-up-outcome--discarded {
+  color: var(--text-secondary);
+}
+
+.wrap-up-outcome--recording {
+  color: var(--accent);
+}
+
+.wrap-up-time {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* What blocked the station, one stretch per line. */
+.wrap-up-blockers {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-blockers li {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.wrap-up-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-3);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-notes-text {
+  height: auto;
+  padding: var(--space-2);
+  resize: vertical;
+}
+
+.wrap-up-session {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-chip);
+  padding: var(--space-2) var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.wrap-up-session > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.wrap-up-session > summary .settings-note {
+  margin: 0;
+}
+
+.wrap-up-table {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
+/* Mostly text, unlike the tracking tables this style comes from: read left to right, numbers still right-aligned. */
+.wrap-up-table th,
+.wrap-up-table td {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.wrap-up-table th.num-cell,
+.wrap-up-table td.num-cell {
+  text-align: right;
+}
+
+.wrap-up-correction {
+  margin-top: var(--space-3);
+}
+
+.wrap-up-correction legend {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.wrap-up-range {
+  flex: 0 1 220px;
+}
+
+.wrap-up-task {
+  flex: 1 1 260px;
+}
+
+/* The station's uptime chip, beside its name. Read-only, so it has none of a button's affordances. */
+.station-uptime {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.uptime-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.uptime-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.uptime-chip--ready {
+  border-color: var(--positive);
+}
+
+.uptime-chip--ready .uptime-chip-dot {
+  background: var(--positive);
+}
+
+.uptime-chip--recording {
+  border-color: var(--accent);
+}
+
+.uptime-chip--recording .uptime-chip-dot {
+  background: var(--accent);
+}
+
+.uptime-chip--down {
+  border-color: var(--warning);
+}
+
+.uptime-chip--down .uptime-chip-dot {
+  background: var(--warning);
+}
+
+.station-uptime-summary {
+  color: var(--text-secondary);
 }
 
 .status-strip.tone-positive .status-headline {

@@ -24,6 +24,7 @@ from egocap.recording.episode_layout import (
 )
 from egocap_web import auto_align
 from egocap_web.auto_align import AutoAligner
+from egocap_web.session_locks import ALIGNER, CORRECTION, SessionLocks
 from recording_service import Disposition, EpisodeResult
 from tests.recording.unit.test_align_kept_episode import INDEX, build_raw, make_manifest
 
@@ -395,6 +396,69 @@ async def test_close_kills_an_alignment_still_running_at_the_deadline_and_return
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
     assert not (tmp_path / "hang_aligned").exists()
+
+
+async def _until(condition) -> None:
+    for _ in range(300):
+        if condition():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("the condition never held")
+
+
+async def test_the_worker_holds_the_session_it_is_aligning_and_no_other_and_lets_go_when_it_ends(
+    tmp_path, stub_tool
+):
+    locks = SessionLocks()
+    aligner = AutoAligner(tmp_path, "head", locks)
+    aligner.submit(_result(index=1, final_path=tmp_path / "hang" / "episode_1"))
+    aligner.submit(_result(index=2, final_path=tmp_path / "waiting" / "episode_2"))
+    task = asyncio.create_task(aligner.run())
+    pid_file = Path(str(stub_tool) + ".pid")
+    await _until(lambda: pid_file.exists() and pid_file.read_text())
+    hang, waiting = (tmp_path / "hang").resolve(), (tmp_path / "waiting").resolve()
+    # Held for the whole alignment, so a correction of that session is refused until its copy is published.
+    assert locks.acquire(hang, CORRECTION) == ALIGNER
+    # An episode still waiting holds nothing: a correction of its session may run before its turn comes.
+    assert locks.acquire(waiting, CORRECTION) is None
+    locks.release(waiting)
+    await asyncio.wait_for(aligner.close(task, 0.2), 10)
+    assert locks.acquire(hang, CORRECTION) is None  # a killed alignment lets go as well
+
+
+async def test_a_queued_episode_does_not_start_while_its_session_is_being_corrected(
+    tmp_path, stub_tool, monkeypatch
+):
+    monkeypatch.setattr(auto_align, "_LOCK_RETRY_SECONDS", 0.01)
+    locks = SessionLocks()
+    aligner = AutoAligner(tmp_path, "head", locks)
+    group = tmp_path / "group"
+    group.mkdir()
+    # A correction of the session is being written when the episode's turn comes.
+    assert locks.acquire(group.resolve(), CORRECTION) is None
+    aligner.submit(_result(index=1, final_path=group / "episode_1"))
+    task = asyncio.create_task(aligner.run())
+    await asyncio.sleep(0.3)
+    assert _stub_calls(stub_tool) == []  # no label was copied while the correction held the session
+    locks.release(group.resolve())
+    await _until(lambda: (tmp_path / "group_aligned" / "episode_1").is_dir())
+    assert len(_stub_calls(stub_tool)) == 1
+    await asyncio.wait_for(aligner.close(task, 5), 10)
+    assert locks.acquire(group.resolve(), CORRECTION) is None
+
+
+def test_a_session_lock_has_one_holder_and_keeps_nothing_once_released(tmp_path):
+    locks = SessionLocks()
+    one, other = tmp_path / "one", tmp_path / "other"
+    assert locks.acquire(one, ALIGNER) is None
+    assert locks.acquire(one, CORRECTION) == ALIGNER and locks.acquire(one, ALIGNER) == ALIGNER
+    assert locks.acquire(other, CORRECTION) is None
+    locks.release(one)
+    locks.release(other)
+    locks.release(other)  # releasing what is not held is harmless
+    # Only held sessions are listed, so the registry does not grow with the sessions on disk.
+    assert locks._held == {}
+    assert locks.acquire(one, CORRECTION) is None
 
 
 async def test_a_kept_episode_is_aligned_for_real_through_the_command_line_tool(tmp_path):

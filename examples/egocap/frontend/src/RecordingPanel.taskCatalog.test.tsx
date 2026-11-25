@@ -36,6 +36,7 @@ function snapshot(overrides: Partial<RecordingSnapshot> = {}): RecordingSnapshot
     savedCount: 0,
     lastResult: null,
     readyToRecord: true,
+    notReadyReason: null,
     revision: 0,
     ...overrides,
   };

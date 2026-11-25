@@ -98,6 +98,8 @@ pybind11_add_module(_camera_receiver_codec MODULE
 )
 
 target_include_directories(_camera_receiver_codec PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/inc
   ${_nvc_sdk_dir}
   ${_nvc_sdk_dir}/NvDecoder
 )

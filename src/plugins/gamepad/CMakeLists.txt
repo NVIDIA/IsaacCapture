@@ -20,14 +20,17 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
     GIT_TAG        829a65d769d935c4852f8159e964312c0957260a # release-3.4.18
 )
+# Directory-scoped normal variables, not cache entries: SDL3 honors them (CMP0077), and they do not
+# leak into other SDL builds in the tree, such as the OAK plugin's SDL2 preview, which shares the
+# SDL_* option names and needs video.
 foreach(_sdl_option SDL_SHARED SDL_TEST_LIBRARY SDL_TESTS SDL_EXAMPLES SDL_INSTALL
                     SDL_AUDIO SDL_VIDEO SDL_HAPTIC SDL_POWER SDL_SENSOR SDL_DIALOG SDL_TRAY
                     SDL_DBUS SDL_IBUS SDL_HIDAPI_LIBUSB)
-    set(${_sdl_option} OFF CACHE BOOL "" FORCE)
+    set(${_sdl_option} OFF)
 endforeach()
 # SDL_UNIX_CONSOLE_BUILD: no windows, so no X11 or Wayland development packages are needed.
 foreach(_sdl_option SDL_STATIC SDL_JOYSTICK SDL_HIDAPI SDL_UNIX_CONSOLE_BUILD)
-    set(${_sdl_option} ON CACHE BOOL "" FORCE)
+    set(${_sdl_option} ON)
 endforeach()
 isaac_teleop_third_party_scope_begin()
 FetchContent_MakeAvailable(SDL3)

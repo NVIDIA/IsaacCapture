@@ -60,6 +60,17 @@ Labels are optional. Without them the report carries a note, the window checks a
 `consistency.position_orientation_same_frame` (which reads the roll windows) report that
 they could not be answered, and the rest are judged as usual.
 
+## Package without the viewer
+
+```bash
+.venv/bin/python -m hand_cts.package /path/to/take-hand.mcap --output-dir /path/to/output
+```
+
+This uses the viewer's bundle builder, reruns all checks, verifies the original
+recording and companion files, and prints the archive's verdict and SHA-256.
+It does not require the optional panel dependencies. Existing archives are never
+overwritten.
+
 ## Read the report
 
 ```text

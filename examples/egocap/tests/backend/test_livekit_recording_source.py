@@ -23,7 +23,6 @@ from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import LiveKitRecordingSource, recordable_livekit_streams
 
 CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US
-UNIX_CAPTURE = p.LiveKitTimestampBasis.SENSOR_CAPTURE_UNIX_US
 PROCESSING = p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US
 MONO = p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US
 
@@ -59,14 +58,14 @@ def jpeg_camera(stream_id: int = 1) -> p.CameraStream:
     )
 
 
-def frame(stream_id: int, *, width=6, height=4) -> ReceivedFrame:
+def frame(stream_id: int, *, width=6, height=4, stamped=True) -> ReceivedFrame:
     return ReceivedFrame(
         stream_id=stream_id,
         image=np.zeros((height, width, 3), dtype=np.uint8),
         # Captured just now on this host's clock (the fake mapping is the identity): passes the frame-age check.
         receive_time_ns=time.monotonic_ns(),
         transport_timestamp_us=1,
-        user_timestamp_us=time.monotonic_ns() // 1000,
+        user_timestamp_us=time.monotonic_ns() // 1000 if stamped else None,
         frame_id=None,
         user_data=None,
     )
@@ -86,7 +85,6 @@ def test_only_monotonic_streams_with_full_geometry_are_recordable():
         keep,
         frame_ready,
         livekit_stream(17, basis=PROCESSING),
-        livekit_stream(22, basis=UNIX_CAPTURE),
         livekit_stream(19, width=None),
         livekit_stream(20, height=None),
         livekit_stream(21, fps=None),
@@ -225,6 +223,22 @@ async def test_a_wrong_sized_first_frame_fails_naming_the_stream_and_leaves_the_
     with pytest.raises(RuntimeError, match=r"cam16: frames are 8x2, expected 6x4"):
         await prepare_with_frames(source, streams, width=8, height=2)
     assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_a_first_frame_without_a_capture_time_fails_prepare_and_leaves_the_room():
+    streams = [livekit_stream(16)]
+    source = make_source(streams)
+    with pytest.raises(RuntimeError, match=r"cam16: the first frame carries no capture time"):
+        await prepare_with_frames(source, streams, stamped=False)
+    assert FakeReceiver.instances[0].stops == 1
+
+
+async def test_a_first_frame_with_a_capture_time_prepares():
+    streams = [livekit_stream(16)]
+    source = make_source(streams)
+    await prepare_with_frames(source, streams, stamped=True)
+    assert FakeReceiver.instances[0].stops == 0
+    await source.stop()
 
 
 async def test_a_lost_track_fails_naming_the_stream_and_leaves_the_room():

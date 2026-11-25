@@ -26,6 +26,7 @@ add_subdirectory(rebot_devarm_leader)
 add_subdirectory(manus)
 add_subdirectory(manus_calibration)
 add_subdirectory(haptikos)
+add_subdirectory(jmex)
 
 if(BUILD_PLUGIN_NOITOM_MOCAP)
     add_subdirectory(noitom_mocap)
@@ -39,6 +40,9 @@ endif()
 # Gated: requires the wuji_sdk C library (set WUJI_SDK_INCLUDE_DIR + lib path).
 if(BUILD_PLUGIN_WUJI_GLOVE)
     add_subdirectory(wuji_glove)
+endif()
+if(BUILD_PLUGIN_OMNIGLOVE)
+    add_subdirectory(omniglove)
 endif()
 # Gated: Linux + Avatar SDK under /opt/avatar-sdk. Missing SDK skips the plugin.
 if(BUILD_PLUGIN_SHARPA_AVATAR)

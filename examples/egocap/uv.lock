@@ -156,20 +156,6 @@ wheels = [
 ]
 
 [[package]]
-name = "cupy-cuda12x"
-version = "13.6.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "fastrlock" },
-    { name = "numpy" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/c5/7e7fc4816d0de0154e5d9053242c3a08a0ca8b43ee656a6f7b3b95055a7b/cupy_cuda12x-13.6.0-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:a6970ceefe40f9acbede41d7fe17416bd277b1bd2093adcde457b23b578c5a59", size = 127334633, upload-time = "2025-08-18T08:24:43.065Z" },
-    { url = "https://files.pythonhosted.org/packages/e0/95/d7e1295141e7d530674a3cc567e13ed0eb6b81524cb122d797ed996b5bea/cupy_cuda12x-13.6.0-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:79b0cacb5e8b190ef409f9e03f06ac8de1b021b0c0dda47674d446f5557e0eb1", size = 112886268, upload-time = "2025-08-18T08:24:49.294Z" },
-    { url = "https://files.pythonhosted.org/packages/ae/8c/14555b63fd78cfac7b88af0094cea0a3cb845d243661ec7da69f7b3ea0de/cupy_cuda12x-13.6.0-cp312-cp312-win_amd64.whl", hash = "sha256:ca06fede7b8b83ca9ad80062544ef2e5bb8d4762d1c4fc3ac8349376de9c8a5e", size = 89785108, upload-time = "2025-08-18T08:24:54.527Z" },
-]
-
-[[package]]
 name = "depthai"
 version = "3.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -234,9 +220,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
 ]
-gmsl = [
-    { name = "cupy-cuda12x" },
-]
 livekit = [
     { name = "livekit" },
 ]
@@ -246,7 +229,6 @@ oak = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cupy-cuda12x", marker = "extra == 'gmsl'", specifier = ">=13,<14" },
     { name = "depthai", marker = "extra == 'oak'", specifier = "==3.6.1" },
     { name = "egocap", extras = ["livekit"], marker = "extra == 'dev'" },
     { name = "fastapi", specifier = ">=0.115" },
@@ -269,7 +251,7 @@ requires-dist = [
     { name = "websockets", specifier = ">=17.2" },
     { name = "zarr", specifier = "==3.1.6" },
 ]
-provides-extras = ["dev", "livekit", "oak", "gmsl"]
+provides-extras = ["dev", "livekit", "oak"]
 
 [[package]]
 name = "embreex"
@@ -300,28 +282,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b9/37/6e7ec4dbe12d9721902066ddb83dd9c6e7adb1cee81e094502c43024e4d1/fastapi-0.149.0.tar.gz", hash = "sha256:aba5779358d0c5233759ddcddd84fe7269d71f775fd754b653b608f770558a41", size = 483369, upload-time = "2026-10-19T17:22:29.495Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/20/6c/78c324bd6725f69ebbac46e0d6a9a59744e108cececac4c1c8500c567512/fastapi-0.149.0-py3-none-any.whl", hash = "sha256:fc4a5cf7e14f607a48eb1ab98147e9140943e88ccd0c8791d72c0a89b1159a35", size = 145182, upload-time = "2026-10-19T17:22:27.753Z" },
-]
-
-[[package]]
-name = "fastrlock"
-version = "0.8.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d9/7f/8388a82367d1a1712b856f14bacf2d95e40b334bb8f3a3fe9745db5a6293/fastrlock-0.8.4.tar.gz", hash = "sha256:60273f82753f59440c3ae55bdf89adeee028535cf700183b317feab708b38686", size = 97432, upload-time = "2026-10-16T05:35:45.747Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9a/39/4ecf60da3056db17c1586b67802f1e579f2164d86aad17cbf0aeb8186ca1/fastrlock-0.8.4-cp312-cp312-macosx_11_0_universal2.whl", hash = "sha256:8dc721ec8a4011e0efd99df137cb0857e24307c31ab04cf11737cad7f32e3b5d", size = 63464, upload-time = "2026-10-16T05:35:01.508Z" },
-    { url = "https://files.pythonhosted.org/packages/80/32/c4b8cc145dfe4ad9bc6cc433197d6da78e06e5b0825fd19516698418d820/fastrlock-0.8.4-cp312-cp312-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:858d79547fe7a4248f7bbc38ee5e3e7f369120f2be3e254d52882da6f8625a67", size = 63013, upload-time = "2026-10-16T05:35:02.656Z" },
-    { url = "https://files.pythonhosted.org/packages/e2/d6/1787fe9817df70bba9431f9df087f9bf5e2d07ae90c6b56182f17c60c4a8/fastrlock-0.8.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:914f3ca2904ba7297c70ca0949481c82906ddcef408709445060f62981bd9977", size = 61838, upload-time = "2026-10-16T05:35:03.803Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/6f/667845105b0465de119e34bdf9bd1e276879e11064f594c29634038a4034/fastrlock-0.8.4-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_39_aarch64.whl", hash = "sha256:67f6836f9467209c55d826697024d4c76ca9bc9a88702881a3129275e4456416", size = 62073, upload-time = "2026-10-16T18:31:25.106Z" },
-    { url = "https://files.pythonhosted.org/packages/9c/17/2b9ab546bdbfeaaaf310af87b64532a37b38c6ef0939ab1c83e093356e23/fastrlock-0.8.4-cp312-cp312-manylinux2014_armv7l.manylinux_2_17_armv7l.manylinux_2_35_armv7l.whl", hash = "sha256:a65810f63620e867e0991b11f69666009f4622f0dec785218a940e3fd988e20a", size = 62430, upload-time = "2026-10-16T18:31:26.267Z" },
-    { url = "https://files.pythonhosted.org/packages/10/29/f8ef66dfc29f4a42cb8a2f2f453157464496cd57e85a8a8e1f55f040cef7/fastrlock-0.8.4-cp312-cp312-manylinux_2_31_riscv64.manylinux_2_39_riscv64.whl", hash = "sha256:de125ae84db61db0df7d771df7036e93effd99f774ab008569950ca96233a4e2", size = 62896, upload-time = "2026-10-16T18:31:27.629Z" },
-    { url = "https://files.pythonhosted.org/packages/f9/28/50cf3a4e8997adfee46442b2f4b87330bf84ff3fb32f7de172b72f136b65/fastrlock-0.8.4-cp312-cp312-musllinux_1_1_aarch64.whl", hash = "sha256:56f5f4a95fc0d2353ede73b96792e03ef5f64a016123fd607e05758a36b44f65", size = 62569, upload-time = "2026-10-16T05:35:05.16Z" },
-    { url = "https://files.pythonhosted.org/packages/39/ac/d995b6071e66ba3a5bf718bc907f2e098bb0a449f4d3be588f2109f17f01/fastrlock-0.8.4-cp312-cp312-musllinux_1_1_x86_64.whl", hash = "sha256:68ff57365ff3ca4dd0e05036797bee8fb3532e7cbddfe58c040ec733370c91a6", size = 63576, upload-time = "2026-10-16T05:35:06.251Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/48/67fed6fe0e4509fdb4d47b7d61cc952de102e6f199904e7411c5b18756ea/fastrlock-0.8.4-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:061fa90d6c9b8b97d400182e7e5ea105ed44af88ef44fce887dd601a0fea5658", size = 61445, upload-time = "2026-10-16T05:35:07.626Z" },
-    { url = "https://files.pythonhosted.org/packages/39/71/2e55e6d9feb717d0ab05cb4251808ab8c0f11cdde7803f64f81061b8f65d/fastrlock-0.8.4-cp312-cp312-musllinux_1_2_armv7l.whl", hash = "sha256:9c75926e8919a21c436b9d19c03b8137908193a5788c48954b9d19880597bbaf", size = 60759, upload-time = "2026-10-16T18:31:28.959Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/e9/b29b9df144a56d1be87c97727508ec046181ca45331ee5d39186b3df338a/fastrlock-0.8.4-cp312-cp312-musllinux_1_2_riscv64.whl", hash = "sha256:f5e46acfbeb427aa892f33cce783ad74cfa5c2c4c3533b72804eb8817713a0d1", size = 62709, upload-time = "2026-10-16T18:31:30.331Z" },
-    { url = "https://files.pythonhosted.org/packages/97/16/7bba7addadced4e4a2a1865f080b0b8df3964a18fe3ffb7a5b3f3c4897a5/fastrlock-0.8.4-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:733f76348459ec841c9c5285d882f5f99d857c661a68645691a45367a5ba2611", size = 63404, upload-time = "2026-10-16T18:31:31.44Z" },
-    { url = "https://files.pythonhosted.org/packages/d1/b8/0b24da8520eeea54aa0a8fa6cf93efaee1ad2fdcba8733dbdda43c7ed456/fastrlock-0.8.4-cp312-cp312-win_amd64.whl", hash = "sha256:c9ca7fa617a7df0108753a80fd5b7af9c018b59eb0efb4dfefec4f712e23d660", size = 32794, upload-time = "2026-10-16T05:35:09.099Z" },
-    { url = "https://files.pythonhosted.org/packages/dc/7b/30f8f0a882934100071e28459562b697447ad797b5716d597fd1986e7a1d/fastrlock-0.8.4-cp312-cp312-win_arm64.whl", hash = "sha256:8618ba8c203d2122616b01d3433c39dae40f605be5dd81f95d5933d9d583bfd4", size = 32176, upload-time = "2026-10-16T05:35:10.142Z" },
 ]
 
 [[package]]

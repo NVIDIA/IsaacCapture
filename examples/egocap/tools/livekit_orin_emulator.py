@@ -37,7 +37,7 @@ except ImportError as exc:  # the optional "livekit" extra is not installed
 STATS_INTERVAL_S = 5.0
 #: Bases on the emulated publisher's monotonic clock, and bases that stamp the capture event (not processing time).
 _MONOTONIC_BASES = ("capture_monotonic_us", "monotonic_us")
-_CAPTURE_BASES = ("capture_monotonic_us", "capture_unix_us")
+_CAPTURE_BASES = ("capture_monotonic_us",)
 #: Width of the frame-counter strip, in bits (one coloured block per bit).
 _COUNTER_BITS = 24
 
@@ -87,12 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=float, default=30.0)
     parser.add_argument(
         "--timestamp-basis",
-        choices=("capture_monotonic_us", "capture_unix_us", "processing_unix_us", "monotonic_us"),
+        choices=("capture_monotonic_us", "processing_unix_us", "monotonic_us"),
         default="monotonic_us",
         help="what user_timestamp carries: monotonic_us is the emulated Orin's monotonic time when the frame is "
         "ready (what the native sender stamps by default; recordable, mapped by clock-sync); "
         "capture_monotonic_us is the same clock declared as the sensor capture event (also recordable); "
-        "capture_unix_us and processing_unix_us are Unix-time stamps, which cannot be recorded",
+        "processing_unix_us is a Unix-time stamp, which cannot be recorded",
     )
     parser.add_argument(
         "--clock-offset-ms",

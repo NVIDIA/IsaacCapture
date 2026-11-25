@@ -23,5 +23,5 @@ python -m isaaccapture_examples.teleop_session_manager.teleop_session_example
 
 ## See also
 
-- Module docs: `docs/source/references/teleop_session.rst`
-- Retargeting engine: `src/core/retargeting_engine/`
+- Module docs: `docs/source/teleop/teleop_session.rst`
+- Retargeting engine: `src/python/isaaccapture/retargeting_engine/`

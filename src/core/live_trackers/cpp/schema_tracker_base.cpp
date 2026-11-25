@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 #include "inc/live_trackers/schema_tracker_base.hpp"
@@ -7,6 +7,7 @@
 #include <oxr_utils/oxr_funcs.hpp>
 
 #include <XR_NVX1_tensor_data.h>
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <stdexcept>
@@ -157,8 +158,42 @@ bool SchemaTrackerBase::ensure_collection()
             continue;
         }
 
+        if (coll_props.data.tensorCount == 0)
+        {
+            m_target_collection.reset();
+            throw std::runtime_error("SchemaTracker: collection '" + m_config.collection_id + "' contains no tensors");
+        }
+
+        XrTensorPropertiesNV tensor_props{ XR_TYPE_TENSOR_PROPERTIES_NV };
+        result = m_get_tensor_props_fn(m_tensor_list, i, 0, &tensor_props);
+        if (result != XR_SUCCESS)
+        {
+            m_target_collection.reset();
+            if (is_known_non_fatal_tensor_unavailable(result))
+            {
+                return false;
+            }
+            throw std::runtime_error("Failed to get tensor properties, result=" + std::to_string(result));
+        }
+        if (std::strncmp(
+                tensor_props.data.identifier, m_config.tensor_identifier.c_str(), XR_MAX_TENSOR_IDENTIFIER_SIZE) != 0)
+        {
+            m_target_collection.reset();
+            const auto* identifier = tensor_props.data.identifier;
+            const std::string actual(identifier, std::find(identifier, identifier + XR_MAX_TENSOR_IDENTIFIER_SIZE, '\0'));
+            throw std::runtime_error("SchemaTracker: collection '" + m_config.collection_id + "' has tensor '" +
+                                     actual + "', expected '" + m_config.tensor_identifier + "'");
+        }
+        if (tensor_props.data.offset != 0)
+        {
+            m_target_collection.reset();
+            throw std::runtime_error("SchemaTracker: tensor in collection '" + m_config.collection_id +
+                                     "' must start at offset zero");
+        }
+
         if (coll_props.data.totalSampleSize > m_config.max_flatbuffer_size)
         {
+            m_target_collection.reset();
             throw std::runtime_error(
                 "SchemaTracker: collection '" + m_config.collection_id +
                 "' reports totalSampleSize=" + std::to_string(coll_props.data.totalSampleSize) +
@@ -221,6 +256,8 @@ void SchemaTrackerBase::initialize_tensor_data_functions()
                           reinterpret_cast<PFN_xrVoidFunction*>(&m_get_list_props_fn));
     loadExtensionFunction(m_handles.instance, m_handles.xrGetInstanceProcAddr, "xrGetTensorCollectionPropertiesNV",
                           reinterpret_cast<PFN_xrVoidFunction*>(&m_get_coll_props_fn));
+    loadExtensionFunction(m_handles.instance, m_handles.xrGetInstanceProcAddr, "xrGetTensorPropertiesNV",
+                          reinterpret_cast<PFN_xrVoidFunction*>(&m_get_tensor_props_fn));
     loadExtensionFunction(m_handles.instance, m_handles.xrGetInstanceProcAddr, "xrGetTensorDataNV",
                           reinterpret_cast<PFN_xrVoidFunction*>(&m_get_data_fn));
     loadExtensionFunction(m_handles.instance, m_handles.xrGetInstanceProcAddr, "xrUpdateTensorListNV",

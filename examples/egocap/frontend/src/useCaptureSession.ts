@@ -211,6 +211,8 @@ function parseRecordingSnapshot(raw: unknown): RecordingSnapshot | null {
       savedCount: requireNonNegativeSafeInt(r.saved_count),
       lastResult: parseEpisodeResult(r.last_result),
       readyToRecord: requireBoolean(r.ready_to_record),
+      // Absent from a backend that predates the reason: treat as none rather than dropping the snapshot.
+      notReadyReason: r.not_ready_reason === undefined ? null : requireNullableString(r.not_ready_reason),
       revision: requireNonNegativeSafeInt(r.revision),
     };
   } catch (err) {

@@ -22,6 +22,14 @@ if(TARGET manus_calibration_core)
     add_subdirectory(manus_calibration)
 endif()
 
+if(BUILD_PLUGIN_OMNIGLOVE)
+    add_subdirectory(omniglove)
+endif()
+
+if(TARGET jmex_plugin_core)
+    add_subdirectory(jmex)
+endif()
+
 # Skipped with the plugin: off Linux, or on an arch with no RevoHuman C SDK release.
 if(BUILD_PLUGIN_REVOHUMAN AND TARGET revohuman_plugin::revohuman_core)
     add_subdirectory(revohuman)

@@ -58,9 +58,10 @@ costs one batch of pixels rather than the whole clip. Tracking runs on the
 accumulated detections after decoding finishes, so it sees the full sequence.
 
 Dependencies: detection, the native tracker, the JSON writing, and
---intrinsics_json's pixel-aspect-ratio correction need only this folder plus
-numpy / opencv / pillow / pyyaml / onnxruntime, plus huggingface_hub when
-downloading weights. The folder can be copied out and run on its own --
+--intrinsics_json's pixel-aspect-ratio correction need this folder and the shared
+``inference/media`` package plus numpy / opencv / pillow / pyyaml / onnxruntime,
+plus huggingface_hub when downloading weights. Both folders can be copied with
+their relative layout intact and run without the rest of EgoHand --
 ``pixel_aspect.py`` duplicates the square-pixel
 resize math from ``inference/camera/square_pixel.py`` rather than importing
 it, same reasoning as ``BBOX_FILE_PATTERN`` below.
@@ -78,8 +79,10 @@ if __package__ in (None, ""):
     # Running as a plain script (``python .../scripts/run_hand_detector.py``) leaves no package
     # context for the relative imports below to resolve against. Put the folder's
     # parent on sys.path and set the package context to ``rtdetr``. This also
-    # works from a copy of the folder outside the repo.
+    # works from a copy of the folder outside the repo and in the standalone
+    # detector image.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     __package__ = "rtdetr"
 
 from .detector import (  # noqa: E402
@@ -89,7 +92,11 @@ from .detector import (  # noqa: E402
     boxes_from_tracks,
     hf_download,
 )
-from .video_io import find_videos, get_video_meta, read_video_frames_batched  # noqa: E402
+from inference.media.video_io import (  # noqa: E402
+    find_videos,
+    get_video_meta,
+    read_video_frames_batched,
+)
 
 # Sibling of the rtdetr/ package, not inside it -- top-level import, not
 # relative, since sys.path was pointed at the hand_detector_2d/ folder above (the
