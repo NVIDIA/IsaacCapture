@@ -36,7 +36,7 @@ class CudaDecoder:
         self.context = None
 
     def decode(self, payload, stamp, index):
-        self.timing.record("decode_begin", self.track, stamp * 1000)
+        self.timing.record("decode_begin", self.track, stamp)
         import numpy as np
 
         cp, nvc = self.cp, self.nvc
@@ -54,7 +54,7 @@ class CudaDecoder:
             packet = nvc.PacketData()
             encoded = np.frombuffer(payload, dtype=np.uint8)
             packet.bsl, packet.bsl_data = encoded.size, encoded.ctypes.data
-            packet.pts = packet.dts = stamp
+            packet.pts = packet.dts = stamp // 1000
             packet.decode_flag = 2 | 8  # CUVID_PKT_TIMESTAMP | CUVID_PKT_ENDOFPICTURE
             result = []
             with self.stream:
@@ -79,13 +79,13 @@ class CudaDecoder:
                     self.stream.synchronize()
                     received_ns = time.monotonic_ns()
                     self.timing.record(
-                        "decode_ready", self.track, stamp * 1000, at_ns=received_ns
+                        "decode_ready", self.track, stamp, at_ns=received_ns
                     )
                     result.append(
                         ReceivedFrame(
                             VideoFrame(width, height, rgba, "cuda", self.device),
                             received_ns,
-                            FrameMetadata(index, stamp * 1000),
+                            FrameMetadata(index, stamp),
                         )
                     )
             return result
