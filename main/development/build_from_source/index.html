@@ -568,6 +568,11 @@ sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w
 <span class="w">    </span>libxinerama-dev<span class="w"> </span>libxkbcommon-dev<span class="w"> </span>libxrandr-dev
 </pre></div>
 </div>
+<p>On Ubuntu aarch64, SOMA examples also need BLAS and LAPACK development libraries to build
+<code class="docutils literal notranslate"><span class="pre">cholespy</span></code> from source:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>sudo<span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span>libopenblas-dev
+</pre></div>
+</div>
 <p>Runtime-only dependencies (needed to actually run teleop, not to build):</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># adb — required for OOB teleop (``--setup-oob``) to talk to the headset over USB.</span>
 <span class="c1"># coturn — required for USB-local mode (``--usb-local``); runs a local TURN server</span>
@@ -874,9 +879,6 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/&lt;name&gt;<span class="w"> </span>--no-sources
 </pre></div>
 </div>
-<p>On aarch64 this command fails for <code class="docutils literal notranslate"><span class="pre">deviceio_live_view</span></code>, because SOMA-X pulls in <code class="docutils literal notranslate"><span class="pre">cholespy</span></code>,
-which has no aarch64 wheel. Use the aarch64 install in
-<a class="reference external" href="https://github.com/NVIDIA/IsaacCapture/blob/main/examples/deviceio_live_view/README.md" rel="noopener noreferrer" target="_blank">examples/deviceio_live_view/README.md</a> instead.</p>
 <p>Without <code class="docutils literal notranslate"><span class="pre">--no-sources</span></code>, an example whose <code class="docutils literal notranslate"><span class="pre">pyproject.toml</span></code> points <code class="docutils literal notranslate"><span class="pre">[tool.uv.sources]</span></code> at this checkout
 replaces the wheel with an editable build of the checkout. That build has no CloudXR runtime, so
 an example that starts CloudXR stops with <code class="docutils literal notranslate"><span class="pre">The</span> <span class="pre">CloudXR</span> <span class="pre">service</span> <span class="pre">exited</span> <span class="pre">during</span> <span class="pre">startup</span></code> and the
