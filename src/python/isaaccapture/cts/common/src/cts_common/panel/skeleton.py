@@ -18,10 +18,11 @@ BONE_COLOUR = (150, 158, 172)
 
 
 class Skeleton:
-    """Joint cloud, bones, and a name beside every held joint.
+    """Joint cloud, bones, a name beside every held joint, and optional joint axes.
 
     ``root`` is the scene path. ``joint_colours`` replaces the live colour per joint, and
     a bone takes its child's; a held joint is always drawn in ``HELD_JOINT_COLOUR``.
+    Axes are X red, Y green, Z blue, from the recorded orientation read as x,y,z,w.
     """
 
     def __init__(
@@ -31,6 +32,7 @@ class Skeleton:
         root: str = "/body",
         point_size: float = 0.022,
         joint_colours: Sequence[tuple[int, int, int]] | None = None,
+        axes_length: float = 0.06,
     ) -> None:
         self._names = profile.joint_names
         self._live = (
@@ -58,13 +60,20 @@ class Skeleton:
             thickness=2.5,
             thickness_units="screen",
         )
+        self._axes = server.scene.add_batched_axes(
+            f"{root}/axes",
+            batched_wxyzs=np.zeros((0, 4), np.float32),
+            batched_positions=np.zeros((0, 3), np.float32),
+            axes_length=axes_length,
+            axes_radius=axes_length * 0.06,
+        )
         self._labels = [
             server.scene.add_label(f"{root}/name/{name}", name, visible=False)
             for name in self._names
         ]
         self._named: set[int] = set()
 
-    def draw(self, sample: Sample, name_held: bool) -> None:
+    def draw(self, sample: Sample, name_held: bool, show_axes: bool = False) -> None:
         points: list[tuple[float, float, float]] = []
         colours: list[tuple[int, int, int]] = []
         for index, position in enumerate(sample.positions):
@@ -89,6 +98,22 @@ class Skeleton:
             segment_colours.append((colour, colour))
         self._lines.points = np.asarray(segments, np.float32).reshape(-1, 2, 3)
         self._lines.colors = np.asarray(segment_colours, np.uint8).reshape(-1, 2, 3)
+
+        frames = (
+            [
+                ((q[3], q[0], q[1], q[2]), position)
+                for position, q in zip(sample.positions, sample.orientations)
+                if position is not None and q is not None
+            ]
+            if show_axes
+            else []
+        )
+        self._axes.batched_wxyzs = np.asarray(
+            [wxyz for wxyz, _ in frames], np.float32
+        ).reshape(-1, 4)
+        self._axes.batched_positions = np.asarray(
+            [position for _, position in frames], np.float32
+        ).reshape(-1, 3)
 
         wanted = (
             {

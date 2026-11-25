@@ -65,6 +65,14 @@ def wxyz(sample: HandSample) -> None:
         j.orientation = (w, x, y, z)
 
 
+def distal_turned_over(sample: HandSample) -> None:
+    """DISTAL and TIP turned half a turn about their own bone; -Z and positions unchanged."""
+    half_turn = hm.quat_axis_angle((0.0, 0.0, 1.0), math.pi)
+    for chain in hm.FINGER_JOINTS.values():
+        for j in (sample.joints[chain[3]], sample.joints[chain[4]]):
+            j.orientation = hm.quat_mul(j.orientation, half_turn)
+
+
 def at_origin(sample: HandSample) -> None:
     """No wrist source: the hand is placed by the identity transform."""
     wrist = sample.joints[hm.WRIST]
@@ -291,6 +299,15 @@ FIXTURE_SET: tuple[Fixture, ...] = (
         "fail",
         transforms=(wxyz,),
         expected_failing_check="quaternion.component_order",
+    ),
+    Fixture(
+        "defect_distal_turned_over",
+        "defect",
+        "Every finger's DISTAL and TIP orientation turned half a turn about the bone, "
+        "+Y palmar: -Z still runs down the bones, so only the roll is wrong.",
+        "fail",
+        transforms=(distal_turned_over,),
+        expected_failing_check="quaternion.finger_roll",
     ),
     Fixture(
         "defect_source_switch",

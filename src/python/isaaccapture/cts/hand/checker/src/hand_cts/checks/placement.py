@@ -10,12 +10,12 @@ import statistics
 from typing import Any
 
 from cts_common.checks.base import Outcome, Severity, Status
-from cts_common.vectors import as_wxyz, dot, norm, normalised, rotate, sub
+from cts_common.vectors import as_wxyz, dot, norm, normalised, relative, rotate, sub
 from cts_common.vectors import rotate_by_inverse
 
 from ..frames import Frame, Vec3
 from ..labels import ROLLS, StepTimeline
-from ..profile import CHAINS, FINGERS, TIP, WRIST
+from ..profile import CHAINS, FINGERS, JOINT_NAMES, TIP, WRIST, phalanges
 from .base import HandCheck, angle_deg, hand_axes, per_hand, percentile
 
 GROUP = "placement"
@@ -181,6 +181,90 @@ class _ComponentOrder(HandCheck):
         )
 
 
+def _roll_pairs() -> tuple[tuple[int, int], ...]:
+    """Wrist to knuckle, then each joint on its parent to the tip; the thumb rolls by nature."""
+    pairs = []
+    for finger in FINGERS:
+        pairs.append((WRIST, CHAINS[finger][0]))
+        pairs.extend(phalanges(finger))
+    return tuple(pairs)
+
+
+def _roll_deg(parent: tuple, child: tuple) -> float:
+    """Turn of ``child`` about its own Z, its bone, relative to ``parent``: 0 to 180."""
+    r = relative(parent, child)
+    return math.degrees(2.0 * math.atan2(abs(r[2]), abs(r[3])))
+
+
+class _FingerRoll(HandCheck):
+    name = "quaternion.finger_roll"
+    severity = Severity.HARD
+    summary = (
+        "No finger joint is turned over about its bone against the joint before it"
+    )
+
+    # Past 90 deg a joint's +Y faces its parent's palm side: turned over, not bent.
+    FLIP_DEG = 90.0
+    MAX_RATE = 0.2
+
+    depends_on = ("quaternion.component_order",)
+
+    def __init__(self, side: str) -> None:
+        super().__init__(side)
+        self.rolls: dict[tuple[int, int], list[float]] = {}
+
+    def _update(self, frame: Frame) -> None:
+        if frame.joints is None:
+            return
+        for pair in _roll_pairs():
+            a, b = frame.joints[pair[0]], frame.joints[pair[1]]
+            if not (a.is_valid and b.is_valid):
+                continue
+            roll = _roll_deg(a.orientation, b.orientation)
+            self.rolls.setdefault(pair, []).append(roll)
+
+    def _result(self) -> Outcome:
+        if not self.rolls:
+            return Outcome(
+                Status.INSUFFICIENT_DATA, "no finger joint valid with its parent"
+            )
+        rates = {
+            pair: sum(r > self.FLIP_DEG for r in rolls) / len(rolls)
+            for pair, rolls in self.rolls.items()
+        }
+        p99 = {pair: percentile(rolls, 0.99) for pair, rolls in self.rolls.items()}
+        worst = max(rates, key=lambda pair: (rates[pair], p99[pair]))
+        over = sorted(
+            (p for p, r in rates.items() if r > self.MAX_RATE),
+            key=rates.get,
+            reverse=True,
+        )
+        measurements = {
+            "worst_rate": rates[worst],
+            "worst_joint": JOINT_NAMES[worst[1]],
+            "worst_roll_p99_deg": p99[worst],
+            "turned_over_joints": len(over),
+        }
+        if not over:
+            return Outcome(
+                Status.PASS,
+                f"most rolled {JOINT_NAMES[worst[1]]} on {JOINT_NAMES[worst[0]]}, "
+                f"p99 {p99[worst]:.0f} deg, turned over in {rates[worst]:.0%}",
+                measurements,
+            )
+        shown = ", ".join(
+            f"{JOINT_NAMES[c]} on {JOINT_NAMES[p]} {rates[(p, c)]:.0%}"
+            for p, c in over[:4]
+        )
+        more = f" and {len(over) - 4} more" if len(over) > 4 else ""
+        return Outcome(
+            Status.FAIL,
+            f"turned over about the bone, +Y toward the parent's palm side, share of "
+            f"frames: {shown}{more}",
+            measurements,
+        )
+
+
 class _PositionOrientationSameFrame(HandCheck):
     name = "consistency.position_orientation_same_frame"
     severity = Severity.HARD
@@ -259,6 +343,13 @@ class _PositionOrientationSameFrame(HandCheck):
 NotAtOrigin = per_hand(_NotAtOrigin, GROUP)
 WristNotFrozen = per_hand(_WristNotFrozen, GROUP)
 ComponentOrder = per_hand(_ComponentOrder, GROUP)
+FingerRoll = per_hand(_FingerRoll, GROUP)
 PositionOrientationSameFrame = per_hand(_PositionOrientationSameFrame, GROUP)
 
-CHECKS = (NotAtOrigin, WristNotFrozen, ComponentOrder, PositionOrientationSameFrame)
+CHECKS = (
+    NotAtOrigin,
+    WristNotFrozen,
+    ComponentOrder,
+    FingerRoll,
+    PositionOrientationSameFrame,
+)

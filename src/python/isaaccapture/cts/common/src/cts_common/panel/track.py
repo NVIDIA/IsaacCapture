@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from ..frames import Frame
 from ..labels import StepTimeline
-from .sample import Sample, Topology, Vec3
+from .sample import Quaternion, Sample, Topology, Vec3
 
 SAMPLE_CLOCK = "sample_time_local_common_clock"
 LOG_CLOCK = "log_time"
@@ -92,6 +92,7 @@ class TrackBuilder:
         self._count = len(profile.joint_names)
         self._samples: list[Sample] = []
         self._held: list[Vec3 | None] = [None] * self._count
+        self._held_orientations: list[Quaternion | None] = [None] * self._count
         self._origin_ns = origin_ns
         self._previous_ns: int | None = None
         self._clocks: set[str] = set()
@@ -112,6 +113,7 @@ class TrackBuilder:
                 if joint.is_valid:
                     valid[index] = True
                     self._held[index] = joint.position
+                    self._held_orientations[index] = joint.orientation
 
         self._samples.append(
             Sample(
@@ -121,6 +123,7 @@ class TrackBuilder:
                 valid=tuple(valid),
                 interval_ms=interval_ms,
                 step=self._step(frame),
+                orientations=tuple(self._held_orientations),
             )
         )
 

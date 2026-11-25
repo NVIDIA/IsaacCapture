@@ -203,6 +203,16 @@
    "expected_failing_check": "quaternion.component_order"
   },
   {
+   "filename": "fixtures/defect_distal_turned_over.mcap",
+   "labels": "fixtures/defect_distal_turned_over.labels.json",
+   "category": "defect",
+   "description": "Every finger's DISTAL and TIP orientation turned half a turn about the bone, +Y palmar: -Z still runs down the bones, so only the roll is wrong.",
+   "expected_verdict": "fail",
+   "records": 8100,
+   "size_bytes": 8489989,
+   "expected_failing_check": "quaternion.finger_roll"
+  },
+  {
    "filename": "fixtures/defect_source_switch.mcap",
    "labels": "fixtures/defect_source_switch.labels.json",
    "category": "defect",

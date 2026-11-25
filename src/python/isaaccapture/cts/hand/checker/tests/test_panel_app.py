@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
-from synth import StubSource, both_hands
+from synth import StubSource, both_hands, take
 
 from hand_cts.panel.track import HandTee
 from hand_cts.report import run
@@ -100,3 +100,118 @@ def test_a_panel_with_no_recording_has_no_package_button(server):
     panel = panel_over(both_hands(30), server)
     assert not hasattr(panel, "_package_button")
     panel.package(FakeClient())  # and asking anyway is a no-op
+
+
+def test_separate_hands_moves_left_and_right_apart_and_back(server):
+    panel = panel_over(both_hands(30), server)
+    panel._separate.value = True
+    panel._place_hands()
+    left = tuple(panel._roots["left"].position)
+    right = tuple(panel._roots["right"].position)
+    assert left[0] < 0.0 < right[0]
+    assert left[1:] == right[1:] == (0.0, 0.0)
+
+    panel._separate.value = False
+    panel._place_hands()
+    assert tuple(panel._roots["left"].position) == (0.0, 0.0, 0.0)
+    assert tuple(panel._roots["right"].position) == (0.0, 0.0, 0.0)
+
+
+def drawn_joint_count(panel: Panel, side: str) -> int:
+    return len(panel._skeletons[side]._points.points)
+
+
+def test_a_hidden_digit_drops_its_joints_and_bones_on_both_hands(server):
+    panel = panel_over(both_hands(30), server)
+    full = {side: drawn_joint_count(panel, side) for side in ("left", "right")}
+    bones = len(panel._skeletons["left"]._lines.points)
+
+    panel._show_digit["thumb"].value = False
+    panel._show_digit["index"].value = False
+    panel._draw()
+
+    gone = len(panel_app.DIGIT_JOINTS["thumb"]) + len(panel_app.DIGIT_JOINTS["index"])
+    for side in ("left", "right"):
+        assert drawn_joint_count(panel, side) == full[side] - gone
+    assert len(panel._skeletons["left"]._lines.points) < bones
+
+    panel._show_digit["thumb"].value = True
+    panel._show_digit["index"].value = True
+    panel._draw()
+    assert drawn_joint_count(panel, "left") == full["left"]
+
+
+def test_a_hidden_hand_stays_hidden_when_digits_are_shown(server):
+    panel = panel_over(both_hands(30), server)
+    panel._show_hand["left"].value = False
+    panel._show_hands("left")
+    panel._show_digit["ring"].value = False
+    panel._draw()
+    panel._show_digit["ring"].value = True
+    panel._draw()
+
+    assert panel._roots["left"].visible is False
+    assert panel._roots["right"].visible is True
+
+    panel._show_hand["left"].value = True
+    panel._show_hands("left")
+    assert panel._roots["left"].visible is True
+
+
+def test_filled_joints_estimate_only_what_was_never_reported():
+    from hand_cts.profile import METACARPALS, PALM, PROXIMAL, WRIST
+
+    positions = [None] * panel_app.NUM_JOINTS
+    positions[WRIST] = (0.0, 0.0, 0.0)
+    for digit in METACARPALS:
+        positions[PROXIMAL[digit]] = (0.0, 0.0, -0.1)
+    positions[METACARPALS["index"]] = (0.0, 0.0, -0.05)  # reported, so kept as is
+
+    joints, bones = panel_app.filled_joints(tuple(positions))
+
+    assert set(joints) == {PALM, *METACARPALS.values()} - {METACARPALS["index"]}
+    assert joints[PALM] == (0.0, 0.0, -0.05)
+    # Wrist to metacarpal and metacarpal to knuckle for each filled finger.
+    assert len(bones) == 2 * 3
+
+    joints, bones = panel_app.filled_joints(
+        tuple(positions), frozenset({METACARPALS["ring"], PROXIMAL["ring"]})
+    )
+    assert METACARPALS["ring"] not in joints
+    assert len(bones) == 2 * 2
+
+
+def test_fill_missing_joints_draws_a_separate_layer_only_when_ticked(server):
+    from hand_cts.profile import OPTIONAL, REQUIRED
+
+    left = take(30, "left", valid=REQUIRED)
+    right = take(30, "right", valid=REQUIRED)
+    panel = panel_over([f for pair in zip(left, right) for f in pair], server)
+    reported = drawn_joint_count(panel, "left")
+    filled, bones = panel._filled["left"]
+    assert len(filled.points) == 0
+
+    panel._fill.value = True
+    panel._draw()
+    assert drawn_joint_count(panel, "left") == reported
+    assert len(filled.points) == len(OPTIONAL)
+    assert len(bones.points) == 2 * (len(OPTIONAL) - 1)  # PALM has no bone
+
+    panel._fill.value = False
+    panel._draw()
+    assert len(filled.points) == 0
+
+
+def test_joint_axes_skip_hidden_digits_and_hands_keep_their_own_layer(server):
+    panel = panel_over(both_hands(30), server)
+    axes = panel._skeletons["left"]._axes
+    assert len(axes.batched_positions) == 0
+
+    panel._axes.value = True
+    panel._draw()
+    assert len(axes.batched_positions) == drawn_joint_count(panel, "left")
+
+    panel._show_digit["thumb"].value = False
+    panel._draw()
+    assert len(axes.batched_positions) == drawn_joint_count(panel, "left")
+    assert axes.name.startswith("/hands/left/")
