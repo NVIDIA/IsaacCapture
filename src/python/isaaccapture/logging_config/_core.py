@@ -144,8 +144,8 @@ def _private_dir(directory: Path, *, create_missing: bool) -> Path:
     if not parts or ".." in parts:
         raise PermissionError(f"refusing ambiguous directory path: {directory}")
 
-    # Pin parents against pathname swaps; O_PATH needs search permission, not read.
-    flags = getattr(os, "O_PATH", os.O_RDONLY)
+    # Pin parents with traversal-only descriptors where the platform exposes them.
+    flags = getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
     flags |= os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     parent = os.open("/", flags)
     try:

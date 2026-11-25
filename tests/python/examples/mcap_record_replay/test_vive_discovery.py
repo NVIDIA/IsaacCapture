@@ -49,7 +49,7 @@ def test_untrusted_xdg_is_not_created_and_falls_back(tmp_path, monkeypatch, kind
         xdg.mkdir()
         xdg.chmod(0o777)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
-    fallback = Path("/tmp") / f"vive_se3_tracker-{os.geteuid()}"
+    fallback = Path("/tmp").resolve() / f"vive_se3_tracker-{os.geteuid()}"
     validate = _core.is_private_dir
     checked = []
 
@@ -87,11 +87,9 @@ def test_fallback_name_uses_effective_uid(monkeypatch):
     monkeypatch.setattr(
         _core, "is_private_dir", lambda path: checked.append(path) or True
     )
-    assert (
-        recorder._collections_file()
-        == "/tmp/vive_se3_tracker-12346/vive_se3_collections.txt"
-    )
-    assert checked == [Path("/tmp/vive_se3_tracker-12346")]
+    fallback = Path("/tmp").resolve() / "vive_se3_tracker-12346"
+    assert recorder._collections_file() == str(fallback / "vive_se3_collections.txt")
+    assert checked == [fallback]
 
 
 @pytest.mark.parametrize(

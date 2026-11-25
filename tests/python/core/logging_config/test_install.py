@@ -130,7 +130,8 @@ def test_a_runtime_directory_it_cannot_create_costs_forwarding_and_nothing_else(
     locked.chmod(0o500)
     log_dir = usable_log_dir(tmp_path)
     try:
-        result, report = probe(tmp_path, log_dir, XDG_RUNTIME_DIR=str(locked / "inner"))
+        # Missing XDG roots are ignored; use an existing root that cannot create children.
+        result, report = probe(tmp_path, log_dir, XDG_RUNTIME_DIR=str(locked))
     finally:
         locked.chmod(0o700)
 

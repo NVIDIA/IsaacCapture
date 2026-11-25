@@ -251,11 +251,22 @@ class TestEnsurePrivateDir:
         assert not (ancestor / "not-created").exists()
 
     @not_root
-    @pytest.mark.skipif(not hasattr(os, "O_PATH"), reason="Linux traversal descriptors")
+    @pytest.mark.skipif(
+        not any(hasattr(os, flag) for flag in ("O_PATH", "O_SEARCH")),
+        reason="requires traversal-only descriptors",
+    )
     @pytest.mark.parametrize("existing", [False, True])
+    @pytest.mark.parametrize("search_only_api", [False, True])
     def test_searchable_ancestor_does_not_need_read_permission(
-        self, tmp_path, existing
+        self, tmp_path, monkeypatch, existing, search_only_api
     ):
+        if search_only_api:
+            # Exercise O_SEARCH-only platforms using the host traversal flag.
+            attributes = dict(vars(os))
+            attributes["O_SEARCH"] = attributes.pop(
+                "O_PATH", attributes.get("O_SEARCH")
+            )
+            monkeypatch.setattr(_core, "os", SimpleNamespace(**attributes))
         ancestor = tmp_path / "searchable"
         ancestor.mkdir()
         leaf = ancestor / "logs"

@@ -7,6 +7,7 @@
 #include <test_support/temporary_directory.hpp>
 
 #include <cstdlib>
+#include <fcntl.h>
 #include <filesystem>
 #include <string>
 #include <unistd.h>
@@ -87,10 +88,10 @@ TEST_CASE("secure directory creation accepts trailing separators and preserves e
     REQUIRE((info.st_mode & 0777) == 0755);
 }
 
-#ifdef __linux__
+#if defined(O_PATH) || defined(O_SEARCH)
 TEST_CASE("secure directory traversal does not require ancestor read permission", "[unit]")
 {
-    if (::getuid() == 0)
+    if (::geteuid() == 0)
     {
         SKIP("root bypasses directory permissions");
     }

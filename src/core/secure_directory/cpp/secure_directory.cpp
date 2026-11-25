@@ -91,6 +91,8 @@ bool check_directory(const std::filesystem::path& directory, bool create_missing
     // Search permission suffices for traversal; no ancestor read permission is needed.
 #    ifdef O_PATH
     constexpr int access_mode = O_PATH;
+#    elif defined(O_SEARCH)
+    constexpr int access_mode = O_SEARCH;
 #    else
     constexpr int access_mode = O_RDONLY;
 #    endif
