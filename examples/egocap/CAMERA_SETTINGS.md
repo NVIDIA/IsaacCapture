@@ -31,8 +31,10 @@ camera on the SIPL backend: HEVC at 30 fps and 4 Mbit/s.
 The file is specific to that rig. A different SIPL platform or camera changes the `sipl` block (platform file, config
 name, link masks, tuning directory) and possibly the stream id and size. The Argus backend has no `sipl` block: it
 selects a sensor mode with `cameras[].mode`, can set `capture.mode` and `alignment`, enforces `output.fps` with a rate
-limiter and can set output dimensions. Keep one file per rig and pass the right one with `--sender-config`. The launcher itself supports one stream per
-file and requires an explicit `output.fps`.
+limiter and can set output dimensions. Keep one file per rig and pass the right one with `--sender-config`. The launcher itself supports
+mono streams only: each becomes one receiver stream and one LiveKit track named `sensing-<id>`. The streams share one
+explicit `output.fps`; a stream whose sensor size differs from `--width`/`--height` sets its own `output.width` and
+`output.height`. `--fps` and `--bitrate-mbps` apply to every stream.
 
 `tools/start_system.py` loads this file by default. Command-line overrides (`--fps`, `--bitrate-mbps`,
 `--sender-port`) are applied to the loaded mapping, and the result is what is uploaded. The same

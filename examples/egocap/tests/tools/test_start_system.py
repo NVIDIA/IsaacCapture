@@ -53,11 +53,11 @@ def test_publisher_token_is_a_verifiable_hs256_jwt():
 
 
 def test_generated_configs_parse_and_carry_parameters():
-    streams = yaml.safe_load(ss.streams_yaml("ws://h:1", "r", "p", "trk", 640, 480, 30, "b", "head"))
+    streams = yaml.safe_load(ss.streams_yaml("ws://h:1", "r", "p", [("head", 640, 480)], 30, "b"))
     stream = streams["livekit"]["streams"][0]
-    assert (stream["track"], stream["width"], stream["height"]) == ("trk", 640, 480)
+    assert (stream["track"], stream["width"], stream["height"]) == ("sensing-head", 640, 480)
 
-    receiver = yaml.safe_load(ss.receiver_yaml("h", 5555, "/tmp/s.sock", 640, 480, "head"))
+    receiver = yaml.safe_load(ss.receiver_yaml("h", 5555, "/tmp/s.sock", [("head", 640, 480)]))
     assert receiver["receiver"]["port"] == 5555
     assert (receiver["streams"][0]["width"], receiver["streams"][0]["height"]) == (640, 480)
 
@@ -172,7 +172,7 @@ def test_descriptor_declares_the_bridge_downscaled_size_and_the_receiver_the_sen
 def test_default_profile_gives_the_head_camera_settings():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG)
     assert ss.sender_settings(config) == ss.SenderSettings(
-        port=5000, fps=30, bitrate_mbps=4, stream_id="head", full_range=True, sipl=True
+        port=5000, fps=30, bitrate_mbps=4, stream_ids=("head",), full_range=True, sipl=True, sizes=((None, None),)
     )
 
 
@@ -185,7 +185,7 @@ def test_argus_backend_is_not_full_range():
 def test_overrides_replace_only_their_values():
     config = ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, 60, 9, 5100)
     assert ss.sender_settings(config) == ss.SenderSettings(
-        port=5100, fps=60, bitrate_mbps=9, stream_id="head", full_range=True, sipl=True
+        port=5100, fps=60, bitrate_mbps=9, stream_ids=("head",), full_range=True, sipl=True, sizes=((None, None),)
     )
     partial = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG, fps=15))
     assert (partial.fps, partial.bitrate_mbps, partial.port) == (15, 4, 5000)
@@ -209,13 +209,13 @@ def test_sender_settings_rejects_an_incomplete_profile(mutate):
         ss.sender_settings(config)
 
 
-def test_load_sender_config_rejects_missing_file_and_two_streams(tmp_path: Path):
+def test_load_sender_config_rejects_missing_file_and_no_streams(tmp_path: Path):
     with pytest.raises(ss.StartupError):
         ss.load_sender_config(tmp_path / "absent.yaml")
-    two = tmp_path / "two.yaml"
-    two.write_text("streams:\n  - {id: a}\n  - {id: b}\n")
+    empty = tmp_path / "empty.yaml"
+    empty.write_text("streams: []\n")
     with pytest.raises(ss.StartupError):
-        ss.load_sender_config(two)
+        ss.load_sender_config(empty)
 
 
 def _profile_with(tmp_path: Path, mutate) -> Path:
@@ -441,7 +441,7 @@ def test_second_ctrl_c_kills_the_child_and_the_rest_at_once(stack, tmp_path: Pat
 
 def test_mock_sender_command_follows_the_profile():
     settings = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
-    command = ss.mock_sender_command("python", Path("mock.py"), settings, 2560, 1984)
+    command = ss.mock_sender_command("python", Path("mock.py"), settings, [("head", 2560, 1984)])
     assert command == ["python", "mock.py", "--port", "5000", "--stream", "head:2560x1984@30"]
 
 
@@ -1046,29 +1046,64 @@ def test_load_sender_config_refuses_a_stream_that_is_not_mono(tmp_path: Path):
         ss.load_sender_config(_profile_with(tmp_path, _stereo_profile))
 
 
+def _head_and_wrist(config: dict) -> None:
+    head = config["streams"][0]
+    wrist = {**head, "id": "wrist", "output": {**head["output"], "width": 1920, "height": 1536}}
+    config["streams"] = [head, wrist]
+
+
+def test_streams_keep_their_own_sizes_and_must_share_the_rate(tmp_path: Path):
+    config = ss.load_sender_config(_profile_with(tmp_path, _head_and_wrist), bitrate_mbps=6)
+    settings = ss.sender_settings(config)
+    assert (settings.stream_ids, settings.bitrate_mbps) == (("head", "wrist"), 12)
+    assert settings.sizes == ((None, None), (1920, 1536))
+    config["streams"][1]["output"]["fps"] = 60
+    with pytest.raises(ss.StartupError, match="share"):
+        ss.sender_settings(config)
+
+
+def test_main_carries_every_stream_at_its_own_size(recorded_main, tmp_path: Path):
+    mock_sender = tmp_path / "mock_sender.py"
+    mock_sender.write_text("")
+    argv = ["--mock", "--bridge", "b", "--livekit-server", "l", "--mock-sender", str(mock_sender)]
+    assert ss.main([*argv, "--sender-config", str(_profile_with(tmp_path, _head_and_wrist))]) == 0
+    assert "--stream head:2560x1984@30 --stream wrist:1920x1536@30" in _command(recorded_main, "mock-sender")
+    assert "--stream head=sensing-head:2 --stream wrist=sensing-wrist:2" in _command(recorded_main, "bridge")
+    received = yaml.safe_load((recorded_main.workdir / "receiver.yaml").read_text())["streams"]
+    assert [(r["index"], r["name"], r["width"], r["height"]) for r in received] == [
+        (0, "head", 2560, 1984),
+        (1, "wrist", 1920, 1536),
+    ]
+    declared = yaml.safe_load((recorded_main.workdir / "streams.yaml").read_text())["livekit"]["streams"]
+    assert [(d["name"], d["track"], d["width"], d["height"]) for d in declared] == [
+        ("head", "sensing-head", 1280, 992),
+        ("wrist", "sensing-wrist", 960, 768),
+    ]
+
+
 def test_frame_size_defaults_to_the_sensor_size_and_follows_the_flags():
     settings = ss.sender_settings(ss.load_sender_config(ss.DEFAULT_SENDER_CONFIG))
-    assert ss.frame_size(settings, None, None) == (2560, 1984)
-    assert ss.frame_size(settings, 640, 480) == (640, 480)
+    assert ss.frame_size(settings.sizes[0], None, None) == (2560, 1984)
+    assert ss.frame_size(settings.sizes[0], 640, 480) == (640, 480)
     with pytest.raises(ss.StartupError, match="divide"):
-        ss.frame_size(settings, 641, 480)
+        ss.frame_size(settings.sizes[0], 641, 480)
 
 
 def test_frame_size_follows_the_profile_and_refuses_contradicting_flags(tmp_path: Path):
     config = yaml.safe_load(_profile_with(tmp_path, _sized(1280, 960)).read_text())
     settings = ss.sender_settings(config)
-    assert ss.frame_size(settings, None, None) == (1280, 960)
-    assert ss.frame_size(settings, 1280, 960) == (1280, 960)
+    assert ss.frame_size(settings.sizes[0], None, None) == (1280, 960)
+    assert ss.frame_size(settings.sizes[0], 1280, 960) == (1280, 960)
     with pytest.raises(ss.StartupError, match="--width 2560 contradicts"):
-        ss.frame_size(settings, 2560, None)
+        ss.frame_size(settings.sizes[0], 2560, None)
     with pytest.raises(ss.StartupError, match="--height"):
-        ss.frame_size(settings, None, 1984)
+        ss.frame_size(settings.sizes[0], None, 1984)
 
 
 def test_frame_size_refuses_a_profile_that_sets_only_one_dimension(tmp_path: Path):
     config = ss.load_sender_config(_profile_with(tmp_path, _sized(1280, None)))
     with pytest.raises(ss.StartupError, match="both"):
-        ss.frame_size(ss.sender_settings(config), None, None)
+        ss.frame_size(ss.sender_settings(config).sizes[0], None, None)
 
 
 def test_main_writes_the_profile_output_size_into_the_receiver_and_the_descriptor(recorded_main, tmp_path: Path):

@@ -116,10 +116,15 @@ def publisher_token(key: str, secret: str, room: str, identity: str, hours: int 
     return f"{header}.{body}.{signature}"
 
 
+def stream_track(name: str) -> str:
+    """The LiveKit track the bridge publishes the sender stream ``name`` on."""
+    return f"sensing-{name}"
+
+
 def streams_yaml(
-    url: str, room: str, publisher: str, track: str, width: int, height: int, fps: int, basis: str, name: str
+    url: str, room: str, publisher: str, streams: Sequence[tuple[str, int, int]], fps: int, basis: str
 ) -> str:
-    """The CaptureServer ``--livekit-streams`` file for one camera published by the bridge."""
+    """The CaptureServer ``--livekit-streams`` file: one (name, width, height) per stream the bridge publishes."""
     # Dumped from a mapping because the stream name comes from a user-edited profile.
     descriptor = {
         "livekit": {
@@ -127,14 +132,17 @@ def streams_yaml(
             "room": room,
             "publisher": publisher,
             "timestamp_basis": basis,
-            "streams": [{"name": name, "track": track, "width": width, "height": height, "fps": fps}],
+            "streams": [
+                {"name": name, "track": stream_track(name), "width": width, "height": height, "fps": fps}
+                for name, width, height in streams
+            ],
         }
     }
     return yaml.safe_dump(descriptor, sort_keys=False)
 
 
-def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: int, name: str) -> str:
-    """The camera receiver's config: connect to the sender and expose one mono stream over CUDA IPC."""
+def receiver_yaml(host: str, port: int, socket_path: str, streams: Sequence[tuple[str, int, int]]) -> str:
+    """The camera receiver's config: connect to the sender and expose each (name, width, height) mono stream."""
     config = {
         "version": 1,
         "receiver": {
@@ -147,7 +155,7 @@ def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: in
         "ipc": {"socket_path": socket_path, "owner_name": "egocap_start_system", "queue_size": 1024},
         "streams": [
             {
-                "index": 0,
+                "index": index,
                 "name": name,
                 "type": "mono",
                 "width": width,
@@ -156,6 +164,7 @@ def receiver_yaml(host: str, port: int, socket_path: str, width: int, height: in
                 "ring_depth": 6,
                 "ipc": {"mono": name},
             }
+            for index, (name, width, height) in enumerate(streams)
         ],
     }
     return yaml.safe_dump(config, sort_keys=False)
@@ -168,12 +177,11 @@ class SenderSettings:
     port: int
     fps: int
     bitrate_mbps: int
-    stream_id: str
+    stream_ids: tuple[str, ...]
     full_range: bool
     sipl: bool
-    # The profile's output size; None leaves the sensor mode's native size, which --width and --height describe.
-    width: int | None = None
-    height: int | None = None
+    # Each stream's output size; None leaves the sensor mode's native size, which --width and --height describe.
+    sizes: tuple[tuple[int | None, int | None], ...]
 
 
 def _section(parent: dict, key: str, path: Path) -> dict:
@@ -201,21 +209,21 @@ def load_sender_config(
         config = yaml.safe_load(path.read_text())
     except (OSError, yaml.YAMLError) as error:
         raise StartupError(f"cannot read the sender config {path}: {error}; pass --sender-config") from error
-    if not isinstance(config, dict) or not isinstance(config.get("streams"), list) or len(config["streams"]) != 1:
-        raise StartupError(f"{path}: the launcher supports exactly one stream in the sender config")
-    stream = config["streams"][0]
-    if not isinstance(stream, dict):
-        raise StartupError(f"{path}: streams[0] must be a mapping")
-    # The receiver stream the launcher writes is mono, so another type would deploy a sender it cannot receive.
-    if stream.get("type") != "mono":
-        raise StartupError(f"{path}: the launcher supports only a mono stream, got type {stream.get('type')!r}")
+    if not isinstance(config, dict) or not isinstance(config.get("streams"), list) or not config["streams"]:
+        raise StartupError(f"{path}: the sender config needs at least one stream")
     network = _section(config, "network", path)
-    output = _section(stream, "output", path)
-    # An override replaces the profile's value; the profile stays the source of everything else.
-    if fps is not None:
-        output["fps"] = fps
-    if bitrate_mbps is not None:
-        output["bitrate_mbps"] = bitrate_mbps
+    for index, stream in enumerate(config["streams"]):
+        if not isinstance(stream, dict):
+            raise StartupError(f"{path}: streams[{index}] must be a mapping")
+        # The receiver stream the launcher writes is mono, so another type would deploy a sender it cannot receive.
+        if stream.get("type") != "mono":
+            raise StartupError(f"{path}: the launcher supports only mono streams, got {stream.get('type')!r}")
+        output = _section(stream, "output", path)
+        # An override replaces the profile's value; the profile stays the source of everything else.
+        if fps is not None:
+            output["fps"] = fps
+        if bitrate_mbps is not None:
+            output["bitrate_mbps"] = bitrate_mbps
     if sender_port is not None:
         network["port"] = sender_port
     return config
@@ -224,29 +232,32 @@ def load_sender_config(
 def sender_settings(config: dict) -> SenderSettings:
     """The values other components need from a loaded sender config, refusing one that cannot give a latency."""
     network = config.get("network", {})
-    stream = config["streams"][0]
-    output = stream.get("output", {})
+    streams = config["streams"]
+    outputs = [stream.get("output", {}) for stream in streams]
     # The deploy builds the SIPL backend only for a SIPL profile, and the bridge's range flag follows the backend,
     # so neither may be guessed from an `auto` or missing value.
     if config.get("capture_backend") not in ("sipl", "argus"):
         raise StartupError("the sender config must set capture_backend to sipl or argus")
-    if not stream.get("id"):
-        raise StartupError("the sender config must set streams[0].id")
-    # The bridge and the descriptor need a number, and a native-rate profile (fps 0) has none until runtime.
-    if not output.get("fps"):
-        raise StartupError(
-            "the sender config must set streams[0].output.fps; the bridge and descriptor need a rate"
-        )
+    for index, stream in enumerate(streams):
+        if not stream.get("id"):
+            raise StartupError(f"the sender config must set streams[{index}].id")
+        # The bridge and the descriptor need a number, and a native-rate profile (fps 0) has none until runtime.
+        if not outputs[index].get("fps"):
+            raise StartupError(
+                f"the sender config must set streams[{index}].output.fps; the bridge and descriptor need a rate"
+            )
+    # The bridge takes one rate for every stream.
+    if len({output["fps"] for output in outputs}) != 1:
+        raise StartupError("every stream in the sender config must share one output.fps")
     return SenderSettings(
         port=int(network.get("port", 5000)),
-        fps=int(output["fps"]),
-        bitrate_mbps=int(output.get("bitrate_mbps", 0)),
-        stream_id=str(stream["id"]),
+        fps=int(outputs[0]["fps"]),
+        bitrate_mbps=sum(int(output.get("bitrate_mbps", 0)) for output in outputs),
+        stream_ids=tuple(str(stream["id"]) for stream in streams),
         # SIPL produces full-range pictures; the bridge must say so or the encoded stream signals limited range.
         full_range=config["capture_backend"] == "sipl",
         sipl=config["capture_backend"] == "sipl",
-        width=_output_dimension(output, "width"),
-        height=_output_dimension(output, "height"),
+        sizes=tuple((_output_dimension(o, "width"), _output_dimension(o, "height")) for o in outputs),
     )
 
 
@@ -256,13 +267,13 @@ def _output_dimension(output: dict, key: str) -> int | None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise StartupError(
-            f"the sender config's streams[0].output.{key} must be a positive integer, got {value!r}"
+            f"the sender config's streams[*].output.{key} must be a positive integer, got {value!r}"
         )
     return value
 
 
-def frame_size(settings: SenderSettings, width: int | None, height: int | None) -> tuple[int, int]:
-    """The picture size the sender delivers: the profile's output size when it sets one, else the sensor's.
+def frame_size(profile: tuple[int | None, int | None], width: int | None, height: int | None) -> tuple[int, int]:
+    """The picture size of one stream: the profile's output size when it sets one, else the sensor's.
 
     The receiver, the bridge and the descriptor all follow this, so a profile that resizes its output cannot
     disagree with them. A --width or --height that contradicts the profile is refused.
@@ -270,13 +281,13 @@ def frame_size(settings: SenderSettings, width: int | None, height: int | None) 
     for name, flag in (("--width", width), ("--height", height)):
         if flag is not None and flag <= 0:
             raise StartupError(f"{name} must be positive, got {flag}")
-    if (settings.width is None) != (settings.height is None):
-        raise StartupError("the sender config must set both streams[0].output.width and height, or neither")
-    if settings.width is not None:
-        for name, flag, value in (("--width", width, settings.width), ("--height", height, settings.height)):
+    if (profile[0] is None) != (profile[1] is None):
+        raise StartupError("the sender config must set both streams[*].output.width and height, or neither")
+    if profile[0] is not None:
+        for name, flag, value in (("--width", width, profile[0]), ("--height", height, profile[1])):
             if flag is not None and flag != value:
                 raise StartupError(f"{name} {flag} contradicts the sender config's output size {value}")
-        size = (settings.width, settings.height)
+        size = profile
     else:
         size = (width or DEFAULT_SENSOR_WIDTH, height or DEFAULT_SENSOR_HEIGHT)
     if size[0] % (2 * BRIDGE_DOWNSCALE) or size[1] % (2 * BRIDGE_DOWNSCALE):
@@ -284,15 +295,20 @@ def frame_size(settings: SenderSettings, width: int | None, height: int | None) 
     return size
 
 
-def mock_sender_command(python: str, script: Path, settings: SenderSettings, width: int, height: int) -> list[str]:
-    """The local mock sender that stands in for the Orin: one HEVC stream shaped like the real one."""
+def mock_sender_command(
+    python: str, script: Path, settings: SenderSettings, streams: Sequence[tuple[str, int, int]]
+) -> list[str]:
+    """The local mock sender that stands in for the Orin: HEVC streams shaped like the real ones."""
     return [
         python,
         str(script),
         "--port",
         str(settings.port),
-        "--stream",
-        f"{settings.stream_id}:{width}x{height}@{settings.fps}",
+        *(
+            arg
+            for name, width, height in streams
+            for arg in ("--stream", f"{name}:{width}x{height}@{settings.fps}")
+        ),
     ]
 
 
@@ -706,7 +722,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Bring the stack up in dependency order, print how to use it, then wait until interrupted."""
     args = parse_args(argv)
     orin_host = args.orin.rsplit("@", 1)[-1] if args.orin else None
-    room, publisher, track = "egocap-room", "egocap-bridge", "sensing-head"
+    room, publisher = "egocap-room", "egocap-bridge"
     livekit_url = "ws://127.0.0.1:7880"
     workdir = Path(tempfile.mkdtemp(prefix="egocap-start-"))
     ipc_socket = str(workdir / "camera_receiver.sock")
@@ -739,7 +755,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # One loaded profile is the source for the sender, the receiver, the bridge and the descriptor.
         sender_config = load_sender_config(args.sender_config, args.fps, args.bitrate_mbps, args.sender_port)
         sender = sender_settings(sender_config)
-        width, height = frame_size(sender, args.width, args.height)
+        streams = [
+            (name, *frame_size(size, args.width, args.height))
+            for name, size in zip(sender.stream_ids, sender.sizes, strict=True)
+        ]
         # The bridge identifies the Orin's chrony by the reference id of its IPv4 address.
         if args.orin:
             try:
@@ -752,19 +771,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 livekit_url,
                 room,
                 publisher,
-                track,
-                width // BRIDGE_DOWNSCALE,
-                height // BRIDGE_DOWNSCALE,
+                [(name, width // BRIDGE_DOWNSCALE, height // BRIDGE_DOWNSCALE) for name, width, height in streams],
                 sender.fps,
                 basis,
-                sender.stream_id,
             )
         )
         (workdir / "receiver.yaml").write_text(
-            receiver_yaml(orin_host or "127.0.0.1", sender.port, ipc_socket, width, height, sender.stream_id)
+            receiver_yaml(orin_host or "127.0.0.1", sender.port, ipc_socket, streams)
         )
         if args.mock:
-            print(f"mock sender: {sender.fps} fps stream {sender.stream_id!r}, timestamps are frame-ready time")
+            print(f"mock sender: {sender.fps} fps streams {sender.stream_ids}, timestamps are frame-ready time")
         else:
             print(
                 f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s, "
@@ -831,7 +847,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         mock_sender = None
         if chain and args.mock:
             mock_sender = stack.start(
-                "mock-sender", mock_sender_command(python, args.mock_sender, sender, width, height)
+                "mock-sender", mock_sender_command(python, args.mock_sender, sender, streams)
             )
         # 2. LiveKit carries the video from the bridge to the browser and the recorder.
         if args.livekit_server:
@@ -900,8 +916,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     str(token_file),
                     "--socket",
                     ipc_socket,
-                    "--stream",
-                    f"{sender.stream_id}={track}:{BRIDGE_DOWNSCALE}",
+                    *(
+                        arg
+                        for name in sender.stream_ids
+                        for arg in ("--stream", f"{name}={stream_track(name)}:{BRIDGE_DOWNSCALE}")
+                    ),
                     "--fps",
                     str(sender.fps),
                     *bridge_timing_arguments(
