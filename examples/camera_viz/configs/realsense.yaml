@@ -6,14 +6,16 @@
 # Flip top-level ``source: local|rtp`` to control what camera_viz opens;
 # camera_streamer always reads cameras + rtp ports + streaming.host.
 #
-# RealSense 435i V4L2 node layout:
+# Example RealSense 435i V4L2 node layout (device numbers vary by system):
 #   /dev/video0, /dev/video2  — depth (capture)
 #   /dev/video1, /dev/video3  — depth metadata (no capture)
 #   /dev/video4               — RGB color (capture)  ← used here
 #   /dev/video5               — RGB metadata (no capture)
 #
-# To inspect available resolutions and formats on the color node:
+# To inspect available resolutions and formats on the color node (replace
+# /dev/video4 if needed):
 #   sudo apt install v4l-utils
+#   v4l2-ctl --list-devices
 #   v4l2-ctl --device=/dev/video4 --list-formats-ext
 
 source: local                   # local | rtp
