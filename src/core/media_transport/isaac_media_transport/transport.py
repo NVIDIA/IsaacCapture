@@ -92,12 +92,17 @@ class MessageSession(Protocol):
     stats: dict
 
     @property
-    def ready(self) -> bool: ...
-    async def start(self) -> None: ...
-    async def send(
-        self, topic: str, payload: bytes, *, reliable: bool = False
-    ) -> bool: ...
-    async def stop(self) -> None: ...
+    def ready(self) -> bool:
+        """Whether the session is ready to accept outgoing messages."""
+
+    async def start(self) -> None:
+        """Connect the session and begin receiving subscribed messages."""
+
+    async def send(self, topic: str, payload: bytes, *, reliable: bool = False) -> bool:
+        """Return whether the message was accepted, not acknowledged by its peer."""
+
+    async def stop(self) -> None:
+        """Close the session and release its transport resources."""
 
 
 class VideoPublication(Protocol):

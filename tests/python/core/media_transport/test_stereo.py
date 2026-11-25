@@ -20,11 +20,14 @@ def test_pair_waits_only_for_missing_eye_and_reports_latency(caplog):
     pairer = StereoPairer(clock=lambda: now[0])
     left = frame(10_000_000_000, now[0], "left")
     pairer.push(0, left)
-    assert pairer.pop() is None
+    # Pop mutates queues/counters; execute it independently of assertion evaluation.
+    result = pairer.pop()
+    assert result is None
     now[0] += 5_000_000
     right = frame(10_002_000_000, now[0], "right")
     pairer.push(1, right)
-    assert pairer.pop() == (left, right, now[0])
+    result = pairer.pop()
+    assert result == (left, right, now[0])
     assert pairer.counters["waited_left"] == pairer.counters["wait_gt_1ms"] == 1
     assert list(pairer.samples[0]) == [5]
     assert list(pairer.samples[1]) == [0]
@@ -34,7 +37,8 @@ def test_pair_waits_only_for_missing_eye_and_reports_latency(caplog):
     assert "wait_gt_1ms=100.0%" in caplog.text
     assert "5.00/5.00/5.00" in caplog.text
     assert "coordination adds latency" in caplog.text
-    assert pairer.pop() is None
+    result = pairer.pop()
+    assert result is None
 
 
 def test_expired_eye_is_not_released_when_partner_arrives_late():
@@ -43,7 +47,8 @@ def test_expired_eye_is_not_released_when_partner_arrives_late():
     pairer.push(0, frame(10_000_000_000, now[0]))
     now[0] += 9_000_000
     pairer.push(1, frame(10_000_000_000, now[0]))
-    assert pairer.pop() is None
+    result = pairer.pop()
+    assert result is None
     assert pairer.counters["drop_left_timeout"] == 1
     assert list(pairer.dropped_holds[0]) == [9]
 
@@ -53,7 +58,8 @@ def test_skew_drop_and_recovery_do_not_depend_on_frame_sequence():
     pairer = StereoPairer(clock=lambda: now[0])
     pairer.push(0, frame(10_000_000_000, now[0], "old left"))
     pairer.push(1, frame(10_033_000_000, now[0], "right"))
-    assert pairer.pop() is None
+    result = pairer.pop()
+    assert result is None
     pairer.push(0, frame(10_034_000_000, now[0], "new left"))
     left, right, _ = pairer.pop()
     assert (left.frame, right.frame) == ("new left", "right")
@@ -67,7 +73,8 @@ def test_queue_is_bounded_and_restart_flushes_both_eyes():
     assert pairer.counters["drop_left_overflow"] == 1
     pairer.reset()
     pairer.push(1, frame(2, 1_000_000_000))
-    assert pairer.pop() is None
+    result = pairer.pop()
+    assert result is None
     assert pairer.counters["drop_left_reset"] == 1
 
 

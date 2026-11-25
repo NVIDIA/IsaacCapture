@@ -20,8 +20,8 @@ cameras:
     height: 1984
     fps: 30
     stereo: true
-    left: {sensor_id: 1, sensor_mode: 1}
-    right: {sensor_id: 0, sensor_mode: 1}
+    left: {sensor_id: 0, sensor_mode: 1}
+    right: {sensor_id: 1, sensor_mode: 1}
     stereo_pairing: {max_wait_ms: 25, max_skew_ms: 8, queue_size: 4}
     controls:
       exposure_time_us: [9000, 9000]

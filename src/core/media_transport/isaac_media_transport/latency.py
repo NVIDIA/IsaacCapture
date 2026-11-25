@@ -187,7 +187,16 @@ _registry_lock = threading.Lock()
 class Recorder:
     enabled = True
 
-    def __init__(self, log_path, run_id, *, queue_capacity=4096, summary_interval_s=5):
+    def __init__(
+        self,
+        log_path,
+        run_id,
+        *,
+        queue_capacity=4096,
+        summary_interval_s=5,
+        file_enabled=True,
+        event_endpoint=None,
+    ):
         if not isinstance(run_id, str) or not run_id.strip():
             raise ValueError("Latency telemetry requires a nonempty run_id")
         if (
@@ -200,8 +209,20 @@ class Recorder:
                 "Latency queue capacity and summary interval must be positive"
             )
         self.path = Path(log_path).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._stream = self.path.open("a", encoding="utf-8")
+        self._stream = None
+        if file_enabled:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._stream = self.path.open("a", encoding="utf-8")
+        self.events = None
+        if event_endpoint is not None:
+            from .latency_bus import EventBuffer
+
+            try:
+                self.events = EventBuffer(event_endpoint)
+            except (OSError, ValueError):
+                if self._stream is not None:
+                    self._stream.close()
+                raise
         self.base = dict(
             schema=SCHEMA, run_id=run_id, pid=os.getpid(), **clock_identity()
         )
@@ -259,7 +280,11 @@ class Recorder:
         return True
 
     def _write(self, event):
-        self._stream.write(json.dumps({**self.base, **event}, allow_nan=False) + "\n")
+        event = {**self.base, **event}
+        if self.events is not None:
+            self.events.append(event)
+        if self._stream is not None:
+            self._stream.write(json.dumps(event, allow_nan=False) + "\n")
 
     def _status(self):
         self._write(
@@ -273,8 +298,9 @@ class Recorder:
                 closed=self.closed,
             )
         )
-        self._stream.flush()
-        logger.info(
+        if self._stream is not None:
+            self._stream.flush()
+        logger.debug(
             "Latency telemetry run=%s stages=%d dropped=%d invalid=%d path=%s",
             self.base["run_id"],
             self.written,
@@ -308,7 +334,8 @@ class Recorder:
                     report_at = now + self.summary_interval_s
                 if now >= flush_at:
                     # Live joins cannot wait for the slower human-readable summaries.
-                    self._stream.flush()
+                    if self._stream is not None:
+                        self._stream.flush()
                     flush_at = now + 0.1
                 if event is None:
                     self._ready.wait(min(0.1, self.summary_interval_s))
@@ -317,7 +344,10 @@ class Recorder:
             self.error = str(exc)
             logger.exception("Latency telemetry writer failed: %s", self.path)
         finally:
-            self._stream.close()
+            if self._stream is not None:
+                self._stream.close()
+            if self.events is not None:
+                self.events.close()
 
     def close(self, timeout=5):
         """Drain off the media path; return false if the writer exceeds the deadline."""
@@ -376,6 +406,9 @@ def get_recorder(settings):
     config = (settings or {}).get("latency") or {}
     if not config.get("enabled", False):
         return DISABLED
+    online = bool(config.get("clock", {}).get("client"))
+    if not online and not config.get("file_enabled", True):
+        return DISABLED
     path = config.get("log_path") or trace_log_path(
         config.get("run_id"), config.get("_process_role"), config.get("log_dir", "/tmp")
     )
@@ -387,14 +420,25 @@ def get_recorder(settings):
             if recorder.base["run_id"] != config.get("run_id"):
                 raise ValueError("A latency log_path cannot mix active run IDs")
             return recorder
+        if online:
+            from .latency_bus import endpoint
+
         recorder = Recorder(
             path,
             config.get("run_id"),
             queue_capacity=config.get("queue_capacity", 4096),
             summary_interval_s=config.get("summary_interval_s", 5),
+            file_enabled=config.get("file_enabled", True),
+            event_endpoint=endpoint(
+                config.get("run_id"),
+                config.get("_process_role"),
+                config.get("runtime_dir"),
+            )
+            if online
+            else None,
         )
         _recorders[key] = recorder
-        logger.info(
+        logger.debug(
             "Latency trace: run_id=%s role=%s file=%s",
             config.get("run_id"),
             config.get("_process_role", "explicit"),
@@ -410,3 +454,81 @@ def close_recorders():
 
 
 atexit.register(close_recorders)
+
+
+class ViewerTiming:
+    """Bounded host-local measurements; never subtract a sender clock."""
+
+    def __init__(self, settings):
+        config = (settings or {}).get("latency") or {}
+        enabled = bool(config.get("enabled", False))
+        self.terminal_enabled = enabled and bool(config.get("terminal_enabled", False))
+        self.hud_enabled = enabled and bool(config.get("hud_enabled", False))
+        self.enabled = self.terminal_enabled or self.hud_enabled
+        self.interval = float(config.get("report_interval_s", 5))
+        if not math.isfinite(self.interval) or self.interval <= 0:
+            raise ValueError("latency.report_interval_s must be finite and positive")
+        self._samples = deque(maxlen=600)
+        self._lock = threading.Lock()
+        self._last_report = time.monotonic()
+        self._last_sample = None
+        self.online = None
+        if enabled and config.get("clock", {}).get("client"):
+            from .latency_online import OnlineLatency
+
+            self.online = OnlineLatency(
+                config, ipc=settings.get("decoded_handoff") == "ipc"
+            )
+
+    def observe(self, received_ns, begin_ns, end_ns):
+        if (
+            self.online is not None
+            or not self.enabled
+            or not 0 <= received_ns <= begin_ns <= end_ns
+        ):
+            return
+        # Render-side reads never make the media thread wait for telemetry.
+        if not self._lock.acquire(blocking=False):
+            return
+        try:
+            self._samples.append(
+                ((begin_ns - received_ns) / 1e6, (end_ns - begin_ns) / 1e6)
+            )
+            self._last_sample = time.monotonic()
+        finally:
+            self._lock.release()
+
+    def lines(self):
+        if self.online is not None:
+            return self.online.lines()
+        now = time.monotonic()
+        with self._lock:
+            samples = list(self._samples)
+            last = self._last_sample
+        if last is None or now - last > max(2, self.interval):
+            return (
+                "Host-local latency: waiting for frames",
+                "End-to-end: unavailable (no clock mapping)",
+            )
+        age = sum(s[0] for s in samples) / len(samples)
+        submit = sum(s[1] for s in samples) / len(samples)
+        return (
+            f"Host decode-to-submit: {age:.1f} ms | submit: {submit:.1f} ms",
+            "Rolling means | end-to-end unavailable",
+        )
+
+    def report(self, emit=print):
+        if (
+            self.terminal_enabled
+            and time.monotonic() - self._last_report >= self.interval
+        ):
+            self._last_report = time.monotonic()
+            emit(
+                self.online.report_text()
+                if self.online is not None
+                else "Latency: " + " — ".join(self.lines())
+            )
+
+    def close(self):
+        if self.online is not None:
+            self.online.close()
