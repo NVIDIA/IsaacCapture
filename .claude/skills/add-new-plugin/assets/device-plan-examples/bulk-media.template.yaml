@@ -1,0 +1,135 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+status: draft
+full_plan_template: ../device-plan.template.yaml
+copy_into_plan: "Populate all seven nodes; use a typed route for correlation metadata only when required."
+
+device: {name: example_camera, direction: input}
+stream:
+  name: video_frames
+  contract:
+    semantics: "Encoded video frames"
+    units: bytes
+    frame: camera_optical
+    timestamp: {source: device, clock: capture, units: nanoseconds}
+    freshness: "Bounded queue with explicit drop/discontinuity behavior"
+    consumer: "External recorder or media transport"
+  decision:
+    route: bulk_media
+    plugin_required: true
+    schema: {action: none, table: not_applicable, record: not_applicable}
+    tracker: {mechanism: none, collection_id: not_applicable}
+    rationale: "Bulk payload bytes stay outside the retargeting graph."
+    correlation_metadata: "Use existing_schema_push or new_schema_push only when a named consumer requires it."
+
+plugins:
+  - required: true
+    name: example_camera
+    root_id: example_camera
+    args: []
+    search_paths: [install/plugins, plugins]
+    folder: src/plugins/example_camera
+    target: example_camera_plugin
+    manifest_file: src/plugins/example_camera/plugin.yaml
+    manifest_command: ./example_camera_plugin
+    install_path: plugins/example_camera
+    collection_ids: []
+
+pipeline:
+  node0_acquire:
+    action: create
+    reason: "The external media route needs device-specific acquisition, framing, and queue behavior."
+    reference_file: "src/plugins/oak/core/oak_camera.cpp"
+    files:
+      - CMakeLists.txt
+      - src/plugins/example_camera/CMakeLists.txt
+      - src/plugins/example_camera/core/example_camera.cpp
+      - src/plugins/example_camera/core/media_sink.cpp
+      - src/plugins/example_camera/plugin.yaml
+    verify:
+      action: create
+      reference_file: null
+      files:
+        - tests/cpp/plugins/CMakeLists.txt
+        - tests/cpp/plugins/example_camera/CMakeLists.txt
+        - tests/cpp/plugins/example_camera/test_frame_routing.cpp
+      run: >-
+        cmake -S . -B <build-dir> <current-options> &&
+        cmake --build <build-dir> --target test_example_camera_frame_routing &&
+        ctest --test-dir <build-dir> --output-on-failure --no-tests=error
+        -R '^example_camera_frame_routing$'
+      expected:
+        - "Device-specific cases derived from cited evidence prove the approved external-media acquisition contract"
+
+  node1_schema:
+    action: not_applicable
+    reason: "Encoded media bytes stay outside the typed schema path."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Schema verification is bypassed because this route publishes no typed payload."]
+
+  node2_tracker:
+    action: not_applicable
+    reason: "The external media consumer does not use a DeviceIO tracker."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Tracker verification is bypassed because the stream leaves through the media sink."]
+
+  node3_bindings:
+    action: not_applicable
+    reason: "No typed payload is exposed to Python."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Bindings verification is bypassed because this route defines no schema API."]
+
+  node4_source:
+    action: not_applicable
+    reason: "The approved consumer is external to the retargeting graph."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Source-node verification is bypassed because no graph source consumes the stream."]
+
+  node5_boundary:
+    action: not_applicable
+    reason: "The stream never crosses a retargeting tensor boundary."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Boundary verification is bypassed because no tensor representation is created."]
+
+  node6_robot_step:
+    action: not_applicable
+    reason: "The external recorder or transport does not issue a robot command."
+    reference_file: null
+    files: []
+    verify:
+      action: not_applicable
+      reference_file: null
+      files: []
+      run: null
+      expected: ["Robot-step verification is bypassed because the route has no robot consumer."]
