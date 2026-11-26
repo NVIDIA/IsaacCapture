@@ -209,7 +209,7 @@ the shell that launches them:
 
 .. code-block:: bash
 
-   python -m isaaccapture.cloudxr.service start   # runs in the background
+   python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
    source ~/.cloudxr/run/cloudxr.env
    ./install/examples/schemaio/full_body_printer
 
@@ -227,11 +227,15 @@ Troubleshooting
   enterprise features (see above). Verify all PICO motion trackers are
   paired, powered on, and calibrated. Confirm the PICO browser is up to
   date.
-- **The printer prints** ``[body tracking inactive]``. The headset is
-  connected but body tracking is unavailable: check that the Motion Trackers
-  are paired and calibrated and that the headset has enterprise body-tracking
-  support. A printer that never reaches ``[Step 4] Reading samples...`` is
-  still waiting for the runtime / headset instead.
+- **The printer prints** ``valid=0/24 pelvis=[not tracked] head=[not tracked]``
+  **on every sample.** The runtime supports body tracking but no joint is
+  tracked. This is also the output before a headset connects. With the headset
+  connected, check that body tracking is enabled, the Motion Trackers are paired
+  and calibrated, and the headset has enterprise body-tracking support.
+- **The printer prints** ``[body tracking inactive]``. The OpenXR runtime
+  reports that the system does not support body tracking, so the tracker
+  returns no data. A printer that never reaches ``[Step 4] Reading samples...``
+  is still waiting for the runtime / headset instead.
 - **Some joints report** ``is_valid: false``. The PICO runtime may
   temporarily lose tracking for individual joints during fast movement or
   partial occlusion. These joints will recover automatically once tracking is
@@ -250,10 +254,17 @@ Recording is also available directly from C++: pass a ``McapRecordingConfig``
 to ``DeviceIOSession::run()`` with the tracker mapped to the ``full_body``
 channel base name. ``examples/mcap_record_replay/cpp/record_full_body.cpp``
 demonstrates this — a file recorded there replays unchanged with
-``replay_full_body.py``. Give it an output directory
-(``record_full_body 5 recordings/``) and each run writes a fresh timestamped
-take into it; ``replay_full_body.py`` run from the same directory picks the
-newest one from ``./recordings/`` by default.
+``replay_full_body.py``. Give it an output directory and each run writes a
+fresh timestamped take into it. With the runtime started and its environment
+sourced as above, and the example package installed as in
+:doc:`../../references/mcap_record_replay`, run from the repo root:
+
+.. code-block:: bash
+
+   ./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
+   python -m isaaccapture_examples.mcap_record_replay.replay_full_body
+
+The replay picks the newest ``full_body_*.mcap`` under ``./recordings/``.
 
 .. figure:: ../../_static/full-body-replay.gif
    :alt: Full body skeleton replayed from an MCAP recording in viser
