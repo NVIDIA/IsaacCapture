@@ -1048,7 +1048,13 @@ def test_load_sender_config_refuses_a_stream_that_is_not_mono(tmp_path: Path):
 
 def _head_and_wrist(config: dict) -> None:
     head = config["streams"][0]
-    wrist = {**head, "id": "wrist", "output": {**head["output"], "width": 1920, "height": 1536}}
+    head["output"].update(width=2560, height=1984)
+    wrist = {
+        **head,
+        "id": "wrist",
+        "cameras": [{"device": 1, "mode": 0}],
+        "output": {**head["output"], "width": 1920, "height": 1536},
+    }
     config["streams"] = [head, wrist]
 
 
@@ -1056,9 +1062,23 @@ def test_streams_keep_their_own_sizes_and_must_share_the_rate(tmp_path: Path):
     config = ss.load_sender_config(_profile_with(tmp_path, _head_and_wrist), bitrate_mbps=6)
     settings = ss.sender_settings(config)
     assert (settings.stream_ids, settings.bitrate_mbps) == (("head", "wrist"), 12)
-    assert settings.sizes == ((None, None), (1920, 1536))
+    assert settings.sizes == ((2560, 1984), (1920, 1536))
     config["streams"][1]["output"]["fps"] = 60
     with pytest.raises(ss.StartupError, match="share"):
+        ss.sender_settings(config)
+
+
+def test_several_streams_need_their_own_ids_and_sizes(tmp_path: Path):
+    config = ss.load_sender_config(_profile_with(tmp_path, _head_and_wrist))
+    del config["streams"][1]["output"]["width"]
+    with pytest.raises(ss.StartupError, match="every stream's output.width"):
+        ss.sender_settings(config)
+    config["streams"][1]["output"]["width"] = 0
+    with pytest.raises(ss.StartupError, match=r"streams\[1\].output.width"):
+        ss.sender_settings(config)
+    config["streams"][1]["output"]["width"] = 1920
+    config["streams"][1]["id"] = "head"
+    with pytest.raises(ss.StartupError, match="its own id"):
         ss.sender_settings(config)
 
 

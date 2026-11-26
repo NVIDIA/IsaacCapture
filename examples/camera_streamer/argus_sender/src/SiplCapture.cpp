@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <nvbufsurface.h>
 #include <nvbufsurface_nvscibuf.h>
@@ -215,7 +216,7 @@ std::vector<CameraDescriptor> flatten(const nvsipl::sensorconfig::SensorSystemCo
     return out;
 }
 
-// Calls fn(sensor) for every sensor of the configuration; the nesting is the one `flatten` walks.
+// Calls fn(module, sensor) for every sensor of the configuration; the nesting is the one `flatten` walks.
 template <typename Config, typename Fn>
 void forEachSensor(Config& config, Fn fn)
 {
@@ -225,45 +226,68 @@ void forEachSensor(Config& config, Fn fn)
             [&](auto& moduleType)
             {
                 for (auto& sensorVariant : moduleType.sensorConfigs)
-                    std::visit(fn, sensorVariant);
+                    std::visit([&](auto& sensor) { fn(module, sensor); }, sensorVariant);
             },
             module.moduleType);
     }
 }
 
-// Sensors that share a sensor group (a stereo pair) run as one SIPL pipeline group: the sensor with device index 0
-// is the primary, and the others take its ISP program and auto control. Returns the ids of those others.
-std::set<uint32_t> groupSecondaries(const nvsipl::sensorconfig::SensorSystemConfig& config)
+// Sensors of one module that share a sensor group (a stereo pair) run as one SIPL pipeline group: the one with the
+// lowest device index is the primary, and the others take its ISP program and auto control. Group numbers repeat
+// across modules, and independent cameras all leave theirs at 0. Returns each grouped sensor's id and whether it is
+// the primary.
+std::map<uint32_t, bool> groupedSensors(const nvsipl::sensorconfig::SensorSystemConfig& config)
 {
-    std::set<uint32_t> out;
+    // (module, sensor group) -> device index -> sensor id
+    std::map<std::pair<const void*, uint32_t>, std::map<uint32_t, uint32_t>> groups;
     forEachSensor(config,
-                  [&](const auto& sensor)
-                  {
-                      if (sensor.sensorGroup > 0 && sensor.deviceIndex > 0)
-                          out.insert(sensor.id);
+                  [&](const auto& module, const auto& sensor) {
+                      groups[{ &module, sensor.sensorGroup }][sensor.deviceIndex] = sensor.id;
                   });
+    std::map<uint32_t, bool> out;
+    for (const auto& group : groups)
+    {
+        if (group.second.size() < 2)
+            continue;
+        for (const auto& member : group.second)
+            out[member.second] = member.first == group.second.begin()->first;
+    }
     return out;
 }
 
-// A virtual channel with no Bayer order (cfa 0, which no NVSIPL_PIXEL_ORDER_* value is) belongs to a YUV camera with
-// its own ISP. The query library leaves such a channel at its RAW12 default, which SIPL rejects at
-// GetImageAttributes, so it is declared YUV422/UYVY before SetPlatformCfg. Returns the ids of the sensors corrected.
-std::set<uint32_t> declareYuv422Sensors(nvsipl::sensorconfig::SensorSystemConfig& config)
+// Checks the cameras the sender config lists as YUV (sipl.yuv_cameras) against the platform configuration. The query
+// library leaves a YUV camera's virtual channel without a pixel order (cfa 0, which no NVSIPL_PIXEL_ORDER_* value is)
+// and at its RAW12 default, which SIPL rejects at GetImageAttributes, so a listed camera's channel is declared
+// YUV422/UYVY before SetPlatformCfg. An unlisted camera in that state is refused, not silently reconfigured.
+void declareYuv422Sensors(nvsipl::sensorconfig::SensorSystemConfig& config, const std::set<uint32_t>& yuvCameras)
 {
-    std::set<uint32_t> out;
+    std::set<uint32_t> found;
     forEachSensor(config,
-                  [&](auto& sensor)
+                  [&](const auto& module, auto& sensor)
                   {
+                      const bool listed = yuvCameras.count(sensor.id) != 0;
+                      const std::string name = std::to_string(sensor.id) + " (" + module.name + ")";
                       for (auto& vc : sensor.vcInfoList)
                       {
-                          if (vc.cfa != 0)
-                              continue;
-                          vc.inputFormat = NVSIPL_CAP_INPUT_FORMAT_TYPE_YUV422;
-                          vc.cfa = NVSIPL_PIXEL_ORDER_UYVY;
-                          out.insert(sensor.id);
+                          if (vc.cfa == 0 && !listed)
+                              throw std::runtime_error("SIPL sensor " + name +
+                                                       " has no pixel order, which is a YUV camera: list it in "
+                                                       "sipl.yuv_cameras");
+                          if (vc.cfa == 0)
+                          {
+                              vc.inputFormat = NVSIPL_CAP_INPUT_FORMAT_TYPE_YUV422;
+                              vc.cfa = NVSIPL_PIXEL_ORDER_UYVY;
+                          }
+                          if (listed && (vc.inputFormat != NVSIPL_CAP_INPUT_FORMAT_TYPE_YUV422 ||
+                                         vc.cfa != NVSIPL_PIXEL_ORDER_UYVY))
+                              throw std::runtime_error("SIPL sensor " + name +
+                                                       " is in sipl.yuv_cameras but is not a YUV422/UYVY camera");
                       }
+                      if (listed)
+                          found.insert(sensor.id);
                   });
-    return out;
+    if (found != yuvCameras)
+        throw std::runtime_error("sipl.yuv_cameras names a sensor the platform configuration does not have");
 }
 
 // One value of a reconciled buffer attribute list.
@@ -295,7 +319,8 @@ std::vector<CameraDescriptor> querySiplCameras(const std::string& platformConfig
 
 struct SiplCapture::Impl
 {
-    // One ISP0 buffer. SIPL owns it between registration and Stop; the NvBufSurface view is created once.
+    // One ISP0 buffer, or one capture buffer of a YUV camera. SIPL owns it between registration and Stop; the
+    // NvBufSurface view is created once.
     struct Slot
     {
         NvSciBufObj buf = nullptr;
@@ -330,10 +355,11 @@ struct SiplCapture::Impl
     struct Sensor
     {
         CameraDescriptor info;
-        // In a sensor group without being its primary; see groupSecondaries.
+        // In a sensor group, as its primary or not; see groupedSensors.
+        bool groupPrimary = false;
         bool groupSecondary = false;
-        // A YUV camera: pictures come from the capture output (ICP) as UYVY and are converted to NV12 by the VIC;
-        // the ISP is not used and there is no NITO. See declareYuv422Sensors.
+        // A YUV camera (sipl.yuv_cameras): pictures come from the capture output (ICP) as UYVY and are converted to
+        // NV12 by the VIC; the ISP is not used and there is no NITO.
         bool yuvPassthrough = false;
         nvsipl::NvSIPLPipelineConfiguration pipelineConfig{};
         nvsipl::NvSIPLPipelineQueues queues{};
@@ -464,9 +490,8 @@ void SiplCapture::Impl::configure()
         throw std::runtime_error("no modules left in '" + config.platformConfigName +
                                  "' after applying the link masks; check the masks against the configuration");
 
-    const std::set<uint32_t> yuvSensors = declareYuv422Sensors(*systemConfig);
-    for (uint32_t id : yuvSensors)
-        std::fprintf(stderr, "[sipl] sensor %u: YUV422/UYVY camera, capture output converted to NV12 by the VIC\n", id);
+    const std::set<uint32_t> yuvSensors(config.yuvCameras.begin(), config.yuvCameras.end());
+    declareYuv422Sensors(*systemConfig, yuvSensors);
 
     descriptors = flatten(*systemConfig);
     if (descriptors.empty())
@@ -477,13 +502,20 @@ void SiplCapture::Impl::configure()
         throw std::runtime_error("INvSIPLCamera::GetInstance returned null");
     checkSipl(camera->SetPlatformCfg(*systemConfig), "SetPlatformCfg");
 
-    const std::set<uint32_t> secondaries = groupSecondaries(*systemConfig);
+    const std::map<uint32_t, bool> grouped = groupedSensors(*systemConfig);
     for (const auto& info : descriptors)
     {
         std::unique_ptr<Sensor> sensor(new Sensor());
         sensor->info = info;
-        sensor->groupSecondary = secondaries.count(info.id) != 0;
+        const auto group = grouped.find(info.id);
+        sensor->groupPrimary = group != grouped.end() && group->second;
+        sensor->groupSecondary = group != grouped.end() && !group->second;
         sensor->yuvPassthrough = yuvSensors.count(info.id) != 0;
+        std::fprintf(stderr, "[sipl] sensor %u (%s): %s%s\n", info.id, info.name.c_str(),
+                     sensor->yuvPassthrough ? "YUV passthrough, UYVY converted to NV12 by the VIC" : "ISP0",
+                     sensor->groupPrimary   ? ", group primary" :
+                     sensor->groupSecondary ? ", group secondary" :
+                                              "");
         checkSci(NvSciSyncCpuWaitContextAlloc(syncModule, &sensor->cpuWaitContext), "NvSciSyncCpuWaitContextAlloc");
         SensorClockMap::Config clockConfig;
         sensor->clockMap.reset(new SensorTimeMapper(counterHz, clockConfig, readCounterPair));
@@ -519,12 +551,16 @@ void SiplCapture::Impl::configure()
     }
     checkSipl(camera->Init(), "INvSIPLCamera::Init");
     for (auto& sensor : sensors)
+    {
         registerBuffers(*sensor);
-    // Auto control comes after every sensor's images: a group primary is refused with NVSIPL_STATUS_INVALID_STATE
-    // while its secondary has none registered.
+        if (!sensor->groupPrimary && !sensor->groupSecondary && !sensor->yuvPassthrough)
+            registerNito(*sensor);
+    }
+    // A group's auto control comes after every sensor's images: the primary is refused with
+    // NVSIPL_STATUS_INVALID_STATE while its secondary has none registered.
     for (auto& sensor : sensors)
     {
-        if (!sensor->groupSecondary && !sensor->yuvPassthrough)
+        if (sensor->groupPrimary && !sensor->yuvPassthrough)
             registerNito(*sensor);
     }
 }
@@ -625,7 +661,8 @@ void SiplCapture::Impl::allocateYuvBuffers(Sensor& sensor)
     map.gpuId = static_cast<uint32_t>(config.gpuId);
     map.memType = NVBUF_MEM_SURFACE_ARRAY;
     map.scanformat = NVBUF_DISPLAYSCANFORMAT_PROGRESSIVE;
-    map.colorFormat = NVBUF_COLOR_FORMAT_UYVY;
+    // BT.709 limited range: the SHF3L's vendor states BT.709, and its black measures 16.
+    map.colorFormat = NVBUF_COLOR_FORMAT_UYVY_709;
     map.planes[0].width = attrValue<uint32_t>(geometry[1]);
     map.planes[0].height = attrValue<uint32_t>(geometry[2]);
     map.planes[0].pitch = attrValue<uint32_t>(geometry[3]);
@@ -644,14 +681,15 @@ void SiplCapture::Impl::allocateYuvBuffers(Sensor& sensor)
         sensor.bufObjects.push_back(slot.buf);
         int fd = -1;
         checkSci(NvSciBufObjGetDmaBufFd(slot.buf, &fd), "NvSciBufObjGetDmaBufFd");
+        // The surface takes the descriptor over, and NvBufSurfaceDestroy closes it.
         map.fd = static_cast<uint64_t>(fd);
         if (NvBufSurfaceImport(&slot.surface, &map) != 0 || slot.surface == nullptr)
             throw std::runtime_error("NvBufSurfaceImport failed for a UYVY capture buffer");
         slot.surface->numFilled = 1;
     }
 
-    // Block-linear NV12 like the ISP0 path. The _709_ER tag asks the VIC to expand the camera's limited range, so
-    // every stream of a SIPL profile is full range as the consumers are told.
+    // Block-linear NV12 like the ISP0 path. The _709_ER tag has the VIC expand the camera's limited range, so every
+    // stream of a SIPL profile is BT.709 full range as the consumers are told.
     sensor.nv12Pool.resize(config.isp0Buffers);
     for (Nv12Out& out : sensor.nv12Pool)
     {
@@ -754,7 +792,7 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
                 continue;
             if (status == nvsipl::NVSIPL_STATUS_EOF)
                 break;
-            checkSipl(status, "isp0CompletionQueue->Get");
+            checkSipl(status, "completion queue Get");
             if (!buffer)
                 continue;
 
@@ -762,9 +800,9 @@ void SiplCapture::Impl::frameLoop(Sensor& sensor)
             ScopedRelease<INvSIPLClient::INvSIPLBuffer> owned(buffer);
             INvSIPLClient::INvSIPLNvMBuffer* nvm = dynamic_cast<INvSIPLClient::INvSIPLNvMBuffer*>(buffer);
             if (!nvm)
-                throw std::runtime_error("ISP0 buffer is not an INvSIPLNvMBuffer");
+                throw std::runtime_error("SIPL buffer is not an INvSIPLNvMBuffer");
 
-            // The ISP is still writing until this fence clears.
+            // SIPL is still writing until this fence clears.
             NvSciSyncFence fence = NvSciSyncFenceInitializer;
             checkSipl(nvm->GetEOFNvSciSyncFence(&fence), "GetEOFNvSciSyncFence");
             const NvSciError wait = NvSciSyncFenceWait(&fence, sensor.cpuWaitContext, config.frameTimeoutMs * 1000UL);

@@ -180,7 +180,8 @@ class SenderSettings:
     stream_ids: tuple[str, ...]
     full_range: bool
     sipl: bool
-    # Each stream's output size; None leaves the sensor mode's native size, which --width and --height describe.
+    # Each stream's output size; None, for a lone stream only, leaves the sensor mode's native size, which --width
+    # and --height describe.
     sizes: tuple[tuple[int | None, int | None], ...]
 
 
@@ -249,25 +250,36 @@ def sender_settings(config: dict) -> SenderSettings:
     # The bridge takes one rate for every stream.
     if len({output["fps"] for output in outputs}) != 1:
         raise StartupError("every stream in the sender config must share one output.fps")
+    # The id names the stream's track and its IPC stream, so two streams cannot share one.
+    stream_ids = tuple(str(stream["id"]) for stream in streams)
+    if len(set(stream_ids)) != len(stream_ids):
+        raise StartupError("every stream in the sender config must have its own id")
+    sizes = tuple(
+        (_output_dimension(output, "width", index), _output_dimension(output, "height", index))
+        for index, output in enumerate(outputs)
+    )
+    # --width and --height describe one sensor, so they cannot stand in for several streams' sizes.
+    if len(streams) > 1 and any(None in size for size in sizes):
+        raise StartupError("a sender config with several streams must set every stream's output.width and height")
     return SenderSettings(
         port=int(network.get("port", 5000)),
         fps=int(outputs[0]["fps"]),
         bitrate_mbps=sum(int(output.get("bitrate_mbps", 0)) for output in outputs),
-        stream_ids=tuple(str(stream["id"]) for stream in streams),
+        stream_ids=stream_ids,
         # SIPL produces full-range pictures; the bridge must say so or the encoded stream signals limited range.
         full_range=config["capture_backend"] == "sipl",
         sipl=config["capture_backend"] == "sipl",
-        sizes=tuple((_output_dimension(o, "width"), _output_dimension(o, "height")) for o in outputs),
+        sizes=sizes,
     )
 
 
-def _output_dimension(output: dict, key: str) -> int | None:
+def _output_dimension(output: dict, key: str, index: int) -> int | None:
     value = output.get(key)
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise StartupError(
-            f"the sender config's streams[*].output.{key} must be a positive integer, got {value!r}"
+            f"the sender config's streams[{index}].output.{key} must be a positive integer, got {value!r}"
         )
     return value
 
@@ -669,7 +681,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "descriptor declares it divided by the bridge shrink",
     )
     parser.add_argument("--fps", type=int, help="override the profile's output.fps")
-    parser.add_argument("--bitrate-mbps", type=int, help="override the profile's HEVC bitrate")
+    parser.add_argument("--bitrate-mbps", type=int, help="override every stream's HEVC bitrate")
     parser.add_argument("--sender-port", type=int, help="override the profile's TCP video port")
     parser.add_argument(
         "--timesync-tool",
@@ -783,7 +795,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"mock sender: {sender.fps} fps streams {sender.stream_ids}, timestamps are frame-ready time")
         else:
             print(
-                f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s, "
+                f"sender config {args.sender_config}: {sender.fps} fps, {sender.bitrate_mbps} Mbit/s total, "
                 f"release {args.release}"
             )
             if args.orin:

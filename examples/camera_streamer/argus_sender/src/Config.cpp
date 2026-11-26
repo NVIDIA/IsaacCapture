@@ -320,14 +320,16 @@ bool loadConfigFile(const std::string& path, AppConfig* config, std::string* err
         if (root["sipl"])
         {
             const YAML::Node sipl = root["sipl"];
-            const std::set<std::string> allowed = { "platform_config_json", "platform_config_name", "link_masks",
-                                                    "nito_dir", "isp0_buffers" };
+            const std::set<std::string> allowed = { "platform_config_json", "platform_config_name",
+                                                    "link_masks",           "nito_dir",
+                                                    "isp0_buffers",         "yuv_cameras" };
             if (!rejectUnknown(sipl, allowed, "sipl", error) ||
                 !readOptional(sipl, "platform_config_json", "sipl", &config->sipl.platformConfigJson, error) ||
                 !readOptional(sipl, "platform_config_name", "sipl", &config->sipl.platformConfigName, error) ||
                 !readOptional(sipl, "link_masks", "sipl", &config->sipl.linkMasks, error) ||
                 !readOptional(sipl, "nito_dir", "sipl", &config->sipl.nitoDir, error) ||
-                !readUint32(sipl, "isp0_buffers", "sipl", &config->sipl.isp0Buffers, error))
+                !readUint32(sipl, "isp0_buffers", "sipl", &config->sipl.isp0Buffers, error) ||
+                !readOptional(sipl, "yuv_cameras", "sipl", &config->sipl.yuvCameras, error))
             {
                 return false;
             }
