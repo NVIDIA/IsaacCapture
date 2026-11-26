@@ -99,6 +99,10 @@ def default_tracking_values() -> dict[str, object]:
     values.update(_controller_defaults("controller_right"))
     values.update(_hand_defaults("hand_left"))
     values.update(_hand_defaults("hand_right"))
+    for prefix in ("manus_left", "manus_right"):
+        values[f"{prefix}.sensor_present"] = 1
+        values[f"{prefix}.sensor_positions"] = (np.arange(15, dtype=np.float32).reshape(5, 3) + 1.0) * 0.01
+        values[f"{prefix}.sensor_orientations"] = np.tile(np.array(IDENTITY_QUAT, dtype=np.float32), (5, 1))
     return values
 
 

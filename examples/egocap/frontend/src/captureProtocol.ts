@@ -128,6 +128,11 @@ const KNOWN_TRACKING_FIELDS: Record<string, { dtype: WireDTypeValue; shape: numb
     fields[`${prefix}.joint_radii`] = { dtype: WireDType.FLOAT32_LE, shape: [26] };
     fields[`${prefix}.joint_valid`] = { dtype: WireDType.UINT8, shape: [26] };
   }
+  for (const prefix of ["manus_left", "manus_right"]) {
+    fields[`${prefix}.sensor_present`] = { dtype: WireDType.UINT8, shape: [] };
+    fields[`${prefix}.sensor_positions`] = { dtype: WireDType.FLOAT32_LE, shape: [5, 3] };
+    fields[`${prefix}.sensor_orientations`] = { dtype: WireDType.FLOAT32_LE, shape: [5, 4] };
+  }
   return fields;
 })();
 

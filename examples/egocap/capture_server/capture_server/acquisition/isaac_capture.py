@@ -47,6 +47,12 @@ __all__ = ["MANUS_PLUGIN_NAME", "IsaacCaptureAdapter"]
 #: silently, when the plugin is optional. The mock mirrors this constant and a test keeps the two equal.
 MANUS_PLUGIN_NAME = "manus_hand_plugin"
 
+#: The tensor collection the Manus plugin pushes each glove's raw fingertip sensors on, by the prefix of the
+#: wire fields it fills (src/plugins/manus/core/inc/manus/manus_glove_collection.hpp).
+_MANUS_SENSOR_COLLECTIONS = {"manus_left": "manus_sensors_left", "manus_right": "manus_sensors_right"}
+#: The plugin's raw-sensor order, thumb to little finger, as the ``JointName.HAND_RAW_*_TIP`` suffixes.
+_SENSOR_TIPS = ("THUMB", "INDEX", "MIDDLE", "RING", "LITTLE")
+
 
 def _zero_controller_fields(prefix: str) -> dict[str, Any]:
     import numpy as np
@@ -132,6 +138,32 @@ def _hand_fields(prefix: str, group: Any, index: type) -> dict[str, Any]:
     }
 
 
+def _zero_sensor_fields(prefix: str) -> dict[str, Any]:
+    """The placeholder values for a glove whose raw sensors are not reported."""
+    import numpy as np
+
+    return {
+        f"{prefix}.sensor_present": np.uint8(0),
+        f"{prefix}.sensor_positions": np.zeros((5, 3), dtype=np.float32),
+        f"{prefix}.sensor_orientations": np.tile(np.array([0, 0, 0, 1], dtype=np.float32), (5, 1)),
+    }
+
+
+def _sensor_fields(prefix: str, data: Any, joint_name: type) -> dict[str, Any]:
+    """*data* is the Manus plugin's ``JointSe3PoseOutput``, which always carries all five
+    fingertip sensors, keyed by the SDK's ``JointName``."""
+    import numpy as np
+
+    poses = [data.lookup(getattr(joint_name, f"HAND_RAW_{tip}_TIP")).pose for tip in _SENSOR_TIPS]
+    return {
+        f"{prefix}.sensor_present": np.uint8(1),
+        f"{prefix}.sensor_positions": [(pose.position.x, pose.position.y, pose.position.z) for pose in poses],
+        f"{prefix}.sensor_orientations": [
+            (pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w) for pose in poses
+        ],
+    }
+
+
 @dataclass(frozen=True)
 class TrackingSelection:
     """Which ic_tracking_v1 groups this session requested -- independent
@@ -192,6 +224,8 @@ class IsaacCaptureAdapter:
         self._clock = clock or MonotonicClock()
         self._runner = ThreadRunner()
         self._session: Any = None
+        # One tracker per Manus raw-sensor collection, by wire prefix; empty unless the plugin is requested.
+        self._sensor_trackers: dict[str, Any] = {}
         self._launcher: Any = None
         # Tracks whether each object's own __enter__() actually returned,
         # separately from whether the field itself is set -- close() must
@@ -241,7 +275,18 @@ class IsaacCaptureAdapter:
             if self._selection.manus_enabled
             else []
         )
-        return self._sdk.TeleopSessionConfig(app_name="capture_server", pipeline=pipeline, plugins=plugins)
+        if self._selection.manus_enabled:
+            # Registered with the session like any tracker, so step() refreshes them with the sources.
+            self._sensor_trackers = {
+                prefix: self._sdk.JointSe3PoseTracker(collection)
+                for prefix, collection in _MANUS_SENSOR_COLLECTIONS.items()
+            }
+        return self._sdk.TeleopSessionConfig(
+            app_name="capture_server",
+            pipeline=pipeline,
+            plugins=plugins,
+            trackers=list(self._sensor_trackers.values()),
+        )
 
     def _manus_args(self) -> list[str]:
         """The Manus plugin's calibration arguments for the files this session selected."""
@@ -394,6 +439,14 @@ class IsaacCaptureAdapter:
                 fields.update(_hand_fields(prefix, group, HandInputIndex))
             else:
                 fields.update(_zero_hand_fields(prefix))
+        for prefix in _MANUS_SENSOR_COLLECTIONS:
+            tracker = self._sensor_trackers.get(prefix)
+            # No tracker without the plugin, and no data until the plugin pushes its first frame.
+            data = tracker.get_data(self._session.deviceio_session) if tracker is not None else None
+            if data is not None:
+                fields.update(_sensor_fields(prefix, data, self._sdk.JointName))
+            else:
+                fields.update(_zero_sensor_fields(prefix))
         return fields
 
     async def status(self, updated_at_ns: int) -> p.StatusSnapshot:

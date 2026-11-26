@@ -87,8 +87,8 @@ def _zero_tracking_values() -> dict:
     return values
 
 
-def test_ic_tracking_v1_payload_size_is_1995():
-    assert p.IC_TRACKING_V1_PAYLOAD_SIZE == 1995
+def test_ic_tracking_v1_payload_size_is_2277():
+    assert p.IC_TRACKING_V1_PAYLOAD_SIZE == 2277
 
 
 def test_ic_tracking_v1_fields_have_no_gaps_or_overlaps():
@@ -108,7 +108,7 @@ def test_encode_tracking_frame_round_trips_exact_bytes():
     values["controller_left.trigger_value"] = np.float64(0.75)
 
     payload = p.encode_tracking_frame(values)
-    assert len(payload) == 1995
+    assert len(payload) == 2277
 
     decoded = p.decode_tracking_frame(payload)
     np.testing.assert_array_equal(decoded["head.position"], values["head.position"])
@@ -129,7 +129,7 @@ def test_encode_tracking_frame_rejects_missing_field():
 
 
 def test_decode_tracking_frame_rejects_wrong_size():
-    with pytest.raises(p.TrackingPayloadError, match="expected 1995"):
+    with pytest.raises(p.TrackingPayloadError, match="expected 2277"):
         p.decode_tracking_frame(b"\x00" * 10)
 
 
@@ -137,7 +137,7 @@ def test_tracking_payload_error_is_a_protocol_error():
     """Same rationale as HeaderError -- a malformed tracking payload IS a
     protocol violation, not just a bare ValueError."""
     assert issubclass(p.TrackingPayloadError, p.ProtocolError)
-    with pytest.raises(p.ProtocolError, match="expected 1995"):
+    with pytest.raises(p.ProtocolError, match="expected 2277"):
         p.decode_tracking_frame(b"\x00" * 10)
 
 
@@ -170,7 +170,7 @@ def test_tracking_stream_descriptor_matches_sessioninit_example():
     assert descriptor["quaternion_order"] == int(p.QuaternionOrder.XYZW)
     assert descriptor["hand_joint_order"] == int(p.HandJointOrder.OPENXR_26)
     assert descriptor["reference_space"] == "session_floor"
-    assert descriptor["layout"]["payload_size"] == 1995
+    assert descriptor["layout"]["payload_size"] == 2277
     assert len(descriptor["layout"]["fields"]) == len(p.IC_TRACKING_V1_FIELDS)
 
     first_field = descriptor["layout"]["fields"][0]

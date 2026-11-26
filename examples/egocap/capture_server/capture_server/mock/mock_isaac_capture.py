@@ -88,6 +88,7 @@ __all__ = [
     "HandsSource",
     "HeadInputIndex",
     "HeadSource",
+    "JointSe3PoseTracker",
     "KNOWN_FAULTS",
     "NoopContext",
     "OptionalTensorGroup",
@@ -366,13 +367,26 @@ class PluginConfig:
 @dataclass(frozen=True)
 class TeleopSessionConfig:
     """Reproduces the real ``TeleopSessionConfig``'s public construction
-    shape (``app_name``/``pipeline``/``plugins``) -- not a graph engine:
+    shape (``app_name``/``pipeline``/``plugins``/``trackers``) -- not a graph engine:
     this mock only inspects ``pipeline.outputs`` to know which leaf keys
     and source-node types to synthesize samples for."""
 
     app_name: str
     pipeline: OutputCombiner
     plugins: list[PluginConfig] = field(default_factory=list)
+    trackers: list[Any] = field(default_factory=list)
+
+
+class JointSe3PoseTracker:
+    """Reproduces the real tracker's construction and read shape for a tensor collection this mock never
+    fills: ``get_data`` is always None, as the real one is until a plugin pushes a frame."""
+
+    def __init__(self, collection_id: str) -> None:
+        self.collection_id = collection_id
+
+    def get_data(self, session: Any) -> None:
+        """No sample: nothing pushes to this collection."""
+        return None
 
 
 # --------------------------------------------------------------------------- CloudXRLauncher
@@ -689,6 +703,8 @@ class TeleopSession:
     ) -> None:
         self.config = config
         self.frame_count = 0
+        # The real session's DeviceIO handle, which trackers are read against; there is none to open here.
+        self.deviceio_session = None
         # Synthetic device-to-host delay: a source's content is what the operator was doing this long before the
         # poll, plus seeded bounded jitter, so a configured latency can be checked against a known truth.
         self._delays = {"controller": controller_delay_s, "glove": glove_delay_s}

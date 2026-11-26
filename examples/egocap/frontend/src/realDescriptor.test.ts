@@ -43,7 +43,7 @@ const REAL_TRACKING_STREAM_JSON = {
   reference_space: "session_floor",
   hand_joint_order: 1,
   layout: {
-    payload_size: 1995,
+    payload_size: 2277,
     fields: [
       { name: "head.present", dtype: 1, shape: [], offset: 0 },
       { name: "head.position", dtype: 2, shape: [3], offset: 1 },
@@ -90,6 +90,12 @@ const REAL_TRACKING_STREAM_JSON = {
       { name: "hand_right.joint_orientations", dtype: 2, shape: [26, 4], offset: 1449 },
       { name: "hand_right.joint_radii", dtype: 2, shape: [26], offset: 1865 },
       { name: "hand_right.joint_valid", dtype: 1, shape: [26], offset: 1969 },
+      { name: "manus_left.sensor_present", dtype: 1, shape: [], offset: 1995 },
+      { name: "manus_left.sensor_positions", dtype: 2, shape: [5, 3], offset: 1996 },
+      { name: "manus_left.sensor_orientations", dtype: 2, shape: [5, 4], offset: 2056 },
+      { name: "manus_right.sensor_present", dtype: 1, shape: [], offset: 2136 },
+      { name: "manus_right.sensor_positions", dtype: 2, shape: [5, 3], offset: 2137 },
+      { name: "manus_right.sensor_orientations", dtype: 2, shape: [5, 4], offset: 2197 },
     ],
   },
 };
@@ -120,20 +126,21 @@ function snapshotBodyWithRealDescriptor(): Record<string, unknown> {
 }
 
 describe("the real, complete ic_tracking_v1 descriptor CaptureServer publishes", () => {
-  it("parses successfully -- 45 fields, 1995-byte payload, all head/controller/hand fields present", () => {
+  it("parses successfully -- 51 fields, 2277-byte payload, all head/controller/hand/sensor fields present", () => {
     const parsed = parseSnapshot(snapshotBodyWithRealDescriptor());
     const stream = parsed.started?.streams[0];
     expect(stream?.kind).toBe("tracking");
     const tracking = stream as TrackingStreamDescriptor;
-    expect(tracking.payload_size).toBe(1995);
-    expect(tracking.fields).toHaveLength(45);
+    expect(tracking.payload_size).toBe(2277);
+    expect(tracking.fields).toHaveLength(51);
     expect(tracking.fields.map((f) => f.name)).toContain("hand_left.joint_valid");
     expect(tracking.fields.map((f) => f.name)).toContain("hand_right.joint_valid");
+    expect(tracking.fields.map((f) => f.name)).toContain("manus_right.sensor_orientations");
     // parseSnapshot succeeding above already proves the real layout passes
     // the one authoritative extent/overlap boundary check.
   });
 
-  it("decodes a real 1995-byte frame built against the actual complete layout", () => {
+  it("decodes a real 2277-byte frame built against the actual complete layout", () => {
     const parsed = parseSnapshot(snapshotBodyWithRealDescriptor());
     const tracking = parsed.started?.streams[0] as TrackingStreamDescriptor;
 

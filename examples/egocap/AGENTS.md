@@ -86,3 +86,11 @@ before any file is written. An existing derived episode is refused, never replac
   rewriting `config.yaml`, and never record into a session that has none.
 - Work that must survive a cancelled caller (notifying the aligner of a kept episode, for one) runs inside the
   owned operation task, not after the awaited result.
+
+## The wire tracking layout has hand-kept mirrors
+
+- A change to `IC_TRACKING_V1_FIELDS` is also a change to the frontend's `KNOWN_TRACKING_FIELDS`, the
+  `realDescriptor.test.ts` fixture (regenerate it, then compare it with the server's own descriptor) and the
+  CaptureServer README's offset table and descriptor example. Check each against the code's output, not by eye.
+- The acquisition adapter runs one code path for the real, mock and replay SDKs. Give a new SDK capability to
+  all three; never probe the SDK for it, which turns a missing export into silently absent data.

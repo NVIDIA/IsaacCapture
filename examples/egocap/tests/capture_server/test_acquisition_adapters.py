@@ -11,8 +11,10 @@ depthai.py's `close()` for the guard these tests cover."""
 from __future__ import annotations
 
 from functools import partial
+from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
 from capture_server import protocol as p
@@ -80,3 +82,60 @@ async def test_depthai_skips_pipeline_exit_when_pipeline_enter_raised():
         await adapter.close()
 
         pipeline_exit.assert_not_called()
+
+
+def _raw_tip(index: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        pose=SimpleNamespace(
+            position=SimpleNamespace(x=index, y=index + 0.25, z=index + 0.5),
+            orientation=SimpleNamespace(x=0.0, y=0.5, z=0.0, w=1.0),
+        )
+    )
+
+
+async def test_isaac_capture_reads_the_manus_raw_sensors_of_each_glove():
+    frames = {
+        "manus_sensors_left": SimpleNamespace(lookup={i: _raw_tip(i) for i in range(5)}.get),
+        "manus_sensors_right": None,
+    }
+
+    class FakeTracker:
+        def __init__(self, collection_id: str) -> None:
+            self.collection_id = collection_id
+
+        def get_data(self, _session: object) -> SimpleNamespace | None:
+            return frames[self.collection_id]
+
+    sdk = SimpleNamespace(**{name: getattr(mock_isaac_capture, name) for name in mock_isaac_capture.__all__})
+    sdk.JointSe3PoseTracker = FakeTracker
+    sdk.JointName = SimpleNamespace(
+        HAND_RAW_THUMB_TIP=0,
+        HAND_RAW_INDEX_TIP=1,
+        HAND_RAW_MIDDLE_TIP=2,
+        HAND_RAW_RING_TIP=3,
+        HAND_RAW_LITTLE_TIP=4,
+    )
+    selection = TrackingSelection(
+        head=True,
+        controller_left=False,
+        controller_right=False,
+        hand_left=False,
+        hand_right=False,
+        manus_enabled=True,
+    )
+    adapter = IsaacCaptureAdapter(
+        sdk=sdk,
+        session_factory=partial(mock_isaac_capture.TeleopSession, scenario="demo", seed=1),
+        selection=selection,
+        rate_hz=120,
+    )
+    await adapter.enter()
+    try:
+        _, fields = await adapter.next_tracking_sample()
+    finally:
+        await adapter.close()
+
+    assert fields["manus_left.sensor_present"] == 1
+    np.testing.assert_allclose(fields["manus_left.sensor_positions"][4], [4.0, 4.25, 4.5])
+    np.testing.assert_allclose(fields["manus_left.sensor_orientations"][4], [0.0, 0.5, 0.0, 1.0])
+    assert fields["manus_right.sensor_present"] == 0

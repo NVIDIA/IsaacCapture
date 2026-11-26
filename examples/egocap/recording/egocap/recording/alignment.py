@@ -219,7 +219,7 @@ class AlignedEpisode:
 
 
 #: How each field of a frame type is resampled when an episode is time aligned. A session's config.yaml names the
-#: frame type of each source. Head and controller poses are rigid transforms (slerp); the glove's joint transforms
+#: frame type of each source. Head and controller poses are rigid transforms (slerp); the glove's transform stacks
 #: are interpolated element-wise, so their shape never selects slerp; triggers and sensor values are continuous;
 #: a count is the nearest sample's; buttons and flags are not resampled, so they are absent here (raw).
 FRAME_FIELD_RULES: dict[str, dict[str, FieldRule]] = {
@@ -233,7 +233,7 @@ FRAME_FIELD_RULES: dict[str, dict[str, FieldRule]] = {
         "right_trigger": "linear",
     },
     "ManusFrame": {
-        **{f"{side}_hand_pose": "linear" for side in ("left", "right")},
+        **{f"{side}_{part}_pose": "linear" for side in ("left", "right") for part in ("hand", "sensor")},
         **{
             f"{side}_sensor_{kind}": "linear"
             for side in ("left", "right")

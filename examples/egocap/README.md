@@ -102,7 +102,7 @@ It is not in this tree (it is added by the camera_streamer mock-sender change, P
 mock sender the mock video goes through the same receiver, bridge and page, with the frame-ready time as its
 timestamp because the mock sender has no clock to measure. A recording made in this mode is synthetic data.
 
-Without `--orin` or `--mock` only the PC side starts. `--skip-deploy` reuses the previous release. The sender runs
+CaptureServer listens on loopback port 8082 by default; `--capture-server-port N` moves it, and the backend is pointed at the new port, when something else on the PC already holds 8082. Without `--orin` or `--mock` only the PC side starts. `--skip-deploy` reuses the previous release. The sender runs
 for `--seconds` (default one hour) and the launcher stops the whole stack when it ends, so a take in progress is
 cut off; the launcher prints the stop time at startup. The sender release the profile describes, its deploy tool, the
 timesync tool, the LiveKit server and the bridge are not in this tree's base, so pass their paths (or set

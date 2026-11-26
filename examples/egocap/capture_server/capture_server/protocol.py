@@ -408,6 +408,17 @@ def _hand_fields(prefix: str, start_offset: int) -> list[Field]:
     return fields
 
 
+def _sensor_fields(prefix: str, start_offset: int) -> list[Field]:
+    """One glove's raw fingertip sensors, thumb to little finger."""
+    offset = start_offset
+    fields = [Field(f"{prefix}.sensor_present", "u1", (), offset)]
+    offset += fields[-1].nbytes
+    fields.append(Field(f"{prefix}.sensor_positions", "f4", (5, 3), offset))
+    offset += fields[-1].nbytes
+    fields.append(Field(f"{prefix}.sensor_orientations", "f4", (5, 4), offset))
+    return fields
+
+
 def _controller_fields(prefix: str, start_offset: int) -> list[Field]:
     offset = start_offset
     names_dtypes_shapes = [
@@ -465,15 +476,23 @@ def _build_ic_tracking_v1_fields() -> tuple[Field, ...]:
 
     right_hand = _hand_fields("hand_right", offset)
     fields.extend(right_hand)
+    offset = right_hand[-1].offset + right_hand[-1].nbytes
+
+    left_sensors = _sensor_fields("manus_left", offset)
+    fields.extend(left_sensors)
+    offset = left_sensors[-1].offset + left_sensors[-1].nbytes
+
+    right_sensors = _sensor_fields("manus_right", offset)
+    fields.extend(right_sensors)
 
     return tuple(fields)
 
 
 IC_TRACKING_V1_FIELDS: tuple[Field, ...] = _build_ic_tracking_v1_fields()
 IC_TRACKING_V1_PAYLOAD_SIZE = IC_TRACKING_V1_FIELDS[-1].offset + IC_TRACKING_V1_FIELDS[-1].nbytes
-assert IC_TRACKING_V1_PAYLOAD_SIZE == 1995, (
+assert IC_TRACKING_V1_PAYLOAD_SIZE == 2277, (
     f"ic_tracking_v1 payload size drifted: {IC_TRACKING_V1_PAYLOAD_SIZE}, "
-    "expected the fixed 1995-byte tracking payload"
+    "expected the fixed 2277-byte tracking payload"
 )
 
 # 26-joint OpenXR hand order: palm, wrist, four thumb joints, then five each
