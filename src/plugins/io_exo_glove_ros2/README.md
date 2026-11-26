@@ -244,7 +244,7 @@ own closed angle every joint reads exactly its human maximum. The four fingers c
 DIP (the PIP is a coupling link that barely articulates in this mechanism's fist), so the whole
 finger follows the hinges that carry its curl.
 
-r35 adds an **open deadband** at the open end, stored per hand in the reference:
+The reference carries an **open deadband**, one number per hand:
 
 ```
 d     = deadband / 85 deg                 # hand-level, model degrees
@@ -256,13 +256,13 @@ f     = clamp((f_raw - d) / (1 - d), 0, 1)
 So the deadband is one hand-level number, but it is applied as a fraction of each hinge's own
 travel (the equivalent per-joint angle `D` in the formula). Everything within `d` of the session's
 open pose reads exactly 0; `theta = theta_closed` still reads exactly 1 because both ends are
-shifted by the same fraction, so the fist is **not** compressed. An r31 four-section block has no
-deadband (`d = 0`) and runs the old map bit for bit. The value is the measured relaxed-vs-stiff
+shifted by the same fraction, so the fist is **not** compressed. A block without the deadband section has no
+deadband (`d = 0`) and maps directly. The value is the measured relaxed-vs-stiff
 offset per hand, plus 2 deg, capped at **25 deg**; it is printed by `--print-config` and carried by
 `format -> parse -> format`.
 
 The **closed table** (`kAngleClosed`) is the current mounting's fist (live_20261112_095821, frame
-6968). The r31 table was the 09:18 mounting's deeper fist and left the 09:58 fist at 80-84 deg; the
+6968). The table is measured from the same session as the reference, so the fist reaches its
 09:58 fist now reads exactly 85/95/70, and the deeper 09:18 fist still clamps to the maxima.
 
 The **tip-frame orientation is not a rig constant** -- the same finger has been measured 147 deg from
@@ -274,9 +274,9 @@ are what a reference written by an earlier round (or a failed capture) falls bac
 Those measurements are a **session reference**. It is captured automatically from the first frames,
 but it can also be written to the config: then every later start loads it and the capture window is
 skipped entirely. The operator calibrates once and never repeats the start-up ritual. A **loaded
-five-section (r35)** reference is authoritative: r35 no longer widens it to the take's most-extended
+reference** is authoritative: a loaded reference is not widened to the take's most-extended
 frame, because that is exactly what turned a relaxed or stiff straight hand into curl. A **captured**
-reference, and a four-section r31 block without the deadband, still widen as in r31; the open
+reference, and a block without the deadband still widens; the open
 deadband absorbs the session-to-session variation instead.
 
 #### The block format
@@ -300,7 +300,7 @@ the window. A missing or malformed block falls back to the auto-capture, with a 
 rejected (and the window captures instead) when:
 
 - a chord is outside **20-160 mm**, or a finger's open chord is not above its baked closed chord
-  (the legacy chord map would have no travel);
+  (a chord map would have no travel);
 - an offset quaternion's norm is not 1 within `1e-3` (it is normalised after the check);
 - a gap is negative, or its tightest value exceeds its open value;
 - an angle is outside **-720..720 deg**;
@@ -314,8 +314,8 @@ warning:
 session reference: left: loaded from config (no angle section: using the CHORD driver; re-export the reference to drive from the mechanism's joint angles)
 ```
 
-A **four-section block** (chord, offset, gap, angle; an r31 block) still loads with the
-**joint-angle driver** but no deadband: `d = 0`, the r31 map bit for bit, and a warning asks for a
+A **block without the deadband section** (chord, offset, gap, angle) still loads with the
+**joint-angle driver** but no deadband: `d = 0`, and a warning asks for a
 re-export.
 
 A **five-section block** loads with the **joint-angle driver and the open deadband**:
@@ -325,8 +325,8 @@ session reference: left: loaded from config (joint-angle driver, open deadband 2
 ```
 
 `--print-config` prints both blocks and their driver (`<valid, joint-angle driver, open deadband
-25.000 deg>`, `<valid, joint-angle driver, no open deadband (r31 map)>` or `<valid, chord driver
-(legacy block)>`), so a typo is visible before the plugin runs. The captured reference is
+25.000 deg>`, `<valid, joint-angle driver, no open deadband>` or `<valid, chord driver
+(block without the deadband)>`), so a typo is visible before the plugin runs. The captured reference is
 **quantized to the same 3/6-decimal spelling at the close of the window**, so the values a run uses
 are exactly the values the config will carry: capture -> export -> reload reproduces the same
 mapping bit for bit. A deadband above 25 deg is rejected; the cap is enforced by the parser too.
@@ -378,7 +378,7 @@ capture window; a hand that loads a reference from the config starts mapped, exa
 reference says. A hand whose frames stop arriving is still dropped by the plugin after 200 ms, as
 before.
 
-#### Capture window (the fallback)
+#### Capture window
 
 The window is 40 valid frames or 2 s (from 20 frames on), and never later than 4 s. Until it closes
 every digit is held open, because the open reference is what makes an angle (or a chord) meaningful.
@@ -396,9 +396,9 @@ session open reference not captured: left: only 3 valid frame(s) in 4.00 s; usin
 After the window a **captured** reference only **widens**: a pose more open than the stored one
 replaces the open angles of the whole hand, and a longer chord or a wider gap replaces the stored
 one. It can never collapse, so a window that caught the hand part-way bent repairs itself the next
-time the operator opens the hand. A **loaded five-section (r35)** reference does not widen; the
+time the operator opens the hand. A **loaded reference** does not widen; the
 stored calibration is authoritative and the open deadband absorbs the session variation. A loaded
-four-section r31 block keeps the old widen-on-a-more-open-pose behaviour.
+a block without the deadband keeps the widen-on-a-more-open-pose behaviour.
 
 The angle fraction maps **linearly** to the bend above the deadband: each joint moves from 0 at the
 session's open angle (and stays 0 for the first `deadband` of model bend) to its own limit at the
