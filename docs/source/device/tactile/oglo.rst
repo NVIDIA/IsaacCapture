@@ -63,9 +63,14 @@ Usage
 -----
 
 The plugin streams one glove (``--side``) and pushes it via OpenXR for a host
-``OgloTactileTracker`` to record:
+``OgloTactileTracker`` to record. It opens its OpenXR session once the glove
+connects, so start the CloudXR runtime and source its environment in the shell
+that launches it (see :ref:`load-cloudxr-environment-variables`):
 
 .. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service start --accept-eula   # runs in the background
+   source ~/.cloudxr/run/cloudxr.env
 
    # Push for a host OgloTactileTracker into a shared session MCAP
    ./build/src/plugins/oglo_tactile/oglo_tactile_plugin --side right --collection-prefix=oglo
