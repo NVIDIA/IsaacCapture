@@ -46,6 +46,8 @@
 #            set up / requirements / acquire. A column with nothing to say renders an em
 #            dash so the three stay aligned across devices. Omit `details` entirely and
 #            the row gets no button.
+#            When listing vendor SDK platforms, retain the plugin's host platform and
+#            device-access requirements as separate entries.
 #
 # A details entry is a bare string, a link, or a way to reach someone:
 #   - PICO OS 15.4.4U or newer
@@ -274,24 +276,30 @@ devices:
         - email: sales@wuji.tech
 
   - id: agilink-omniglove
-    name: AgiLink OmniGlove
-    url: https://www.agilink-ai.com
+    name: AGILINK OmniGlove
+    url: https://www.agilink-ai.com/omni-gloveuzj.html
     group: peripheral
-    modes: High-fidelity hand tracking
+    modes: High-fidelity finger tracking
     since: main
+    company:
+      name: AGILINK
+      logo: agilink.svg
+      logo_dark: agilink-dark.svg
     details:
       setup:
-        - label: OmniGlove docs
-          doc: /device/hand_tracking/omniglove
-        - label: OmniGlove Plugin
+        - label: AGILINK Omniglove docs
+          url: https://www.agilink-ai.com/omni-glovernr/25.html
+        - label: AGILINK Omniglove Plugin
           url: https://github.com/NVIDIA/IsaacCapture/tree/main/src/plugins/omniglove
       requirements:
-        - Linux, x86_64 or aarch64
-        - AgiLink OmniGlove SDK
-        - USB glove connection and host udev rule
+        - Linux plugin host, x86_64 or aarch64
+        - AGILINK OmniGlove SDK (Linux x86_64 or aarch64, Windows x86_64, Android, macOS arm64)
+        - USB connection to the workstation
+        - Plugin udev rule installed on the host
       acquire:
-        - label: AgiLink OmniGlove SDK
-          url: https://github.com/AgibotTech/agilink_omniglove_sdk
+        - label: agilink-ai.com
+          url: https://www.agilink-ai.com/
+        - email: business@agilink-ai.com
 
   - id: noitom
     name: Noitom Robotics Motion Capture
