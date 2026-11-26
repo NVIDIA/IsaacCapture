@@ -150,6 +150,12 @@ def verify(entry: dict, labels: dict) -> None:
         minus_z = hm.quat_rotate(first[9][1], (0.0, 0.0, -1.0))
         expect(hm.dot(*dorsal) < -0.5, f"{name}: INDEX_DISTAL +Y not turned over")
         expect(hm.dot(minus_z, bone) > 0.99, f"{name}: INDEX_DISTAL -Z left its bone")
+    elif name == "defect_thumb_stretched_in_pinch":
+        pinch = in_window(right, windows["pinch_index"])[0]
+        ratio = hm.length(hm.sub(pinch[3][0], pinch[2][0])) / hm.length(
+            hm.sub(first[3][0], first[2][0])
+        )
+        expect(1.15 < ratio < 1.25, f"{name}: thumb metacarpal {ratio:.2f}x at rest")
     elif name == "defect_source_switch":
         early = sum(v for *_, v in right[60][1])
         late = sum(v for *_, v in right[-60][1])

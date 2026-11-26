@@ -73,6 +73,16 @@ def distal_turned_over(sample: HandSample) -> None:
             j.orientation = hm.quat_mul(j.orientation, half_turn)
 
 
+def thumb_stretched_in_pinch(sample: HandSample) -> None:
+    """THUMB_METACARPAL->THUMB_PROXIMAL 20% long while pinching; orientations unchanged."""
+    if not (sample.label or "").startswith("pinch_"):
+        return
+    js = sample.joints
+    shift = hm.scale(hm.sub(js[3].position, js[2].position), 0.2)
+    for i in hm.THUMB[1:]:
+        js[i].position = hm.add(js[i].position, shift)
+
+
 def at_origin(sample: HandSample) -> None:
     """No wrist source: the hand is placed by the identity transform."""
     wrist = sample.joints[hm.WRIST]
@@ -308,6 +318,15 @@ FIXTURE_SET: tuple[Fixture, ...] = (
         "fail",
         transforms=(distal_turned_over,),
         expected_failing_check="quaternion.finger_roll",
+    ),
+    Fixture(
+        "defect_thumb_stretched_in_pinch",
+        "defect",
+        "THUMB_METACARPAL->THUMB_PROXIMAL 20% long in every pinch window: a thumb "
+        "solved by moving its joints instead of turning a rigid bone.",
+        "fail",
+        transforms=(thumb_stretched_in_pinch,),
+        expected_failing_check="skeleton.bone_length_constancy",
     ),
     Fixture(
         "defect_source_switch",

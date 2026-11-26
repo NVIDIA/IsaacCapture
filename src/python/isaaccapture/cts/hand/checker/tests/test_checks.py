@@ -319,6 +319,42 @@ def test_bone_length_constancy_tolerates_two_millimetres_of_noise():
     assert _run(name, both(transform=_noisy(0.008))).status is Status.FAIL
 
 
+def _slid(local, root: int, moved: tuple[int, ...], fraction: float):
+    """Slide ``moved`` along the bone ending at ``moved[0]``, changing it by ``fraction``."""
+    shift = [fraction * (c - r) for c, r in zip(local[moved[0]][0], local[root][0])]
+    return [
+        (tuple(c + d for c, d in zip(p, shift)), q) if i in moved else (p, q)
+        for i, (p, q) in enumerate(local)
+    ]
+
+
+def _last_block_slid(root: int, moved: tuple[int, ...], fraction: float):
+    frames = []
+    for tick in range(120):
+        local = synth.right_local(0.0)
+        if tick >= 80:
+            local = _slid(local, root, moved, fraction)
+        frames += [
+            synth.frame(tick, "left", local=local),
+            synth.frame(tick, "right", local=local),
+        ]
+    return frames
+
+
+def test_bone_length_constancy_fails_a_digit_bone_held_stretched():
+    outcome = _run(
+        "skeleton.bone_length_constancy", _last_block_slid(2, (3, 4, 5), 0.2)
+    )
+    assert outcome.status is Status.FAIL, outcome.detail
+    assert "THUMB_METACARPAL->THUMB_PROXIMAL holds a length 20%" in outcome.detail
+
+
+def test_bone_length_constancy_leaves_a_shifting_knuckle_to_the_cv():
+    frames = _last_block_slid(1, (22, 23, 24, 25), -0.12)
+    outcome = _run("skeleton.bone_length_constancy", frames)
+    assert outcome.status is Status.PASS, outcome.detail
+
+
 def test_a_slow_stream_fails_the_minimum_rate(monkeypatch):
     name = "rate.minimum_rate"
     assert _run(name, both(60)).status is Status.PASS

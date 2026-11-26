@@ -213,6 +213,16 @@
    "expected_failing_check": "quaternion.finger_roll"
   },
   {
+   "filename": "fixtures/defect_thumb_stretched_in_pinch.mcap",
+   "labels": "fixtures/defect_thumb_stretched_in_pinch.labels.json",
+   "category": "defect",
+   "description": "THUMB_METACARPAL->THUMB_PROXIMAL 20% long in every pinch window: a thumb solved by moving its joints instead of turning a rigid bone.",
+   "expected_verdict": "fail",
+   "records": 8100,
+   "size_bytes": 8489989,
+   "expected_failing_check": "skeleton.bone_length_constancy"
+  },
+  {
    "filename": "fixtures/defect_source_switch.mcap",
    "labels": "fixtures/defect_source_switch.labels.json",
    "category": "defect",

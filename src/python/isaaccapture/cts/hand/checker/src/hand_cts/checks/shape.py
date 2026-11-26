@@ -29,6 +29,7 @@ from ..profile import (
     TIP,
     WRIST,
     judged_bones,
+    phalanges,
 )
 from .base import HandCheck, bone_length, hand_straightness, median, per_hand
 
@@ -298,6 +299,11 @@ class _BoneLengthConstancy(HandCheck):
 
     # Provisional.
     MAX_CV = 0.20
+    # Digit bones are rigid, so a pose-driven stretch fails even when brief enough to
+    # pass the CV. Glove takes hold within 3.2%; a stretched thumb metacarpal reads 17%.
+    MAX_STRETCH = 0.10
+    # About half a second at glove rates; block medians absorb per-frame noise.
+    STRETCH_BLOCK = 40
 
     def __init__(self, side: str) -> None:
         super().__init__(side)
@@ -312,6 +318,17 @@ class _BoneLengthConstancy(HandCheck):
             if length is not None and math.isfinite(length):
                 self.lengths.setdefault(bone, []).append(length)
 
+    def _stretch(self, values: list[float]) -> float | None:
+        """Largest departure of a block median from the take median, as a fraction."""
+        block = self.STRETCH_BLOCK
+        if len(values) < block:
+            return None
+        whole = statistics.median(values)
+        return max(
+            abs(statistics.median(values[i : i + block]) / whole - 1.0)
+            for i in range(0, len(values) - block + 1, block)
+        )
+
     def _result(self) -> Outcome:
         cvs = {
             bone: statistics.pstdev(values) / statistics.mean(values)
@@ -320,23 +337,46 @@ class _BoneLengthConstancy(HandCheck):
         }
         if not cvs:
             return Outcome(Status.INSUFFICIENT_DATA, "no bone seen twice")
+        stretches = {
+            bone: stretch
+            for digit in CHAINS
+            for bone in phalanges(digit)
+            if bone in cvs
+            and (stretch := self._stretch(self.lengths[bone])) is not None
+        }
         worst_bone, worst = max(cvs.items(), key=lambda kv: kv[1])
-        label = f"{JOINT_NAMES[worst_bone[0]]}->{JOINT_NAMES[worst_bone[1]]}"
-        measurements = {
+        label = _bone_label(worst_bone)
+        measurements: dict[str, object] = {
             "max_cv": worst,
             "worst_bone": label,
-            "per_bone_cv": {
-                f"{JOINT_NAMES[a]}->{JOINT_NAMES[b]}": cv for (a, b), cv in cvs.items()
-            },
+            "per_bone_cv": {_bone_label(bone): cv for bone, cv in cvs.items()},
+            "per_bone_stretch": {_bone_label(bone): s for bone, s in stretches.items()},
         }
-        if worst <= self.MAX_CV:
-            return Outcome(Status.PASS, f"worst CV {worst:.3f} ({label})", measurements)
-        return Outcome(
-            Status.FAIL,
-            f"{label} varies by CV {worst:.2f} (limit {self.MAX_CV}); the skeleton "
-            f"is not rigid",
-            measurements,
-        )
+        if worst > self.MAX_CV:
+            return Outcome(
+                Status.FAIL,
+                f"{label} varies by CV {worst:.2f} (limit {self.MAX_CV}); the skeleton "
+                f"is not rigid",
+                measurements,
+            )
+        detail = f"worst CV {worst:.3f} ({label})"
+        if stretches:
+            stretch_bone, stretch = max(stretches.items(), key=lambda kv: kv[1])
+            measurements["max_stretch"] = stretch
+            if stretch > self.MAX_STRETCH:
+                return Outcome(
+                    Status.FAIL,
+                    f"{_bone_label(stretch_bone)} holds a length {stretch:.0%} off its "
+                    f"median (limit {self.MAX_STRETCH:.0%}); a digit bone changes length "
+                    f"with the pose",
+                    measurements,
+                )
+            detail += f", digit bones within {stretch:.1%}"
+        return Outcome(Status.PASS, detail, measurements)
+
+
+def _bone_label(bone: tuple[int, int]) -> str:
+    return f"{JOINT_NAMES[bone[0]]}->{JOINT_NAMES[bone[1]]}"
 
 
 def _digit_length(frame: Frame, digit: str) -> float | None:
