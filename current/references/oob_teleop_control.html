@@ -35,8 +35,8 @@
     <link rel="stylesheet" type="text/css" href="../_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
     <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
     <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=215b52d1" />
-    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=aad37187" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/custom.css?v=36007acf" />
+    <link rel="stylesheet" type="text/css" href="../_static/css/ecosystem.css?v=9c450ab6" />
   
   <!-- So that users can add custom icons -->
   <script defer src="../_static/scripts/fontawesome.js?digest=a95f357e85573c9b56d5"></script>
@@ -46,7 +46,7 @@
 
 
 
-    <script src="../_static/documentation_options.js?v=e7766bc0"></script>
+    <script src="../_static/documentation_options.js?v=5165c444"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
@@ -65,7 +65,7 @@
 
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1.7.x" />
+  <meta name="docsearch:version" content="1.8.x" />
   
     
     <script src="../_static/searchtools.js"></script>
@@ -315,7 +315,7 @@
           
           
           
-          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6.3.0-green.svg" class="icon-link-image" alt="CloudXR"/></a>
+          <a href="https://docs.nvidia.com/cloudxr-sdk" title="CloudXR" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><img src="https://img.shields.io/badge/CloudXR-6-green.svg" class="icon-link-image" alt="CloudXR"/></a>
         </li>
         <li class="nav-item">
           
@@ -345,6 +345,7 @@
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Isaac Teleop</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../teleop/quick_start.html">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../teleop/synthetic_xr.html">Synthetic XR Teleoperation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../getting_started/ovxr.html">OVXR installation</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/teleop_session.html">Teleop Session</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../teleop/control_state_machine.html">Teleop Control State Machine</a></li>
@@ -474,6 +475,15 @@ on first run):</p>
 <li><p>Accept the self-signed certificate and click CONNECT automatically
 via Chrome DevTools Protocol (CDP)</p></li>
 </ol>
+<p>When the OpenXR application starts after the service, add
+<code class="docutils literal notranslate"><span class="pre">--defer-oob-connect</span></code>: steps 2-4 wait for <code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/connect</span></code>, so
+the headset connects once there is a stream instead of retrying until one
+appears.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>run<span class="w"> </span>--accept-eula<span class="w"> </span>--setup-oob<span class="w"> </span>--defer-oob-connect
+<span class="c1"># once the application has its OpenXR session:</span>
+curl<span class="w"> </span>-k<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Control-Token: &lt;CONTROL_TOKEN&gt;"</span><span class="w"> </span>https://localhost:48322/api/oob/v1/connect
+</pre></div>
+</div>
 <p>Ordinary headset absence, an <code class="docutils literal notranslate"><span class="pre">offline</span></code> or <code class="docutils literal notranslate"><span class="pre">unauthorized</span></code> transport, and
 browser recovery failures leave the host running with a degraded OOB status.
 The lifecycle retries for 60 seconds at a 5-second cadence, then keeps
@@ -511,6 +521,33 @@ page access and CloudXR streaming)</p></li>
 <p>Streaming and web page access use WiFi, not USB tethering.
 <code class="docutils literal notranslate"><span class="pre">adb</span> <span class="pre">forward</span></code> is used only temporarily for CDP automation.</p>
 </div>
+<p><strong>Automatic presence recovery</strong></p>
+<p>While <code class="docutils literal notranslate"><span class="pre">--setup-oob</span></code> owns the selected headset, automatic power recovery runs
+in both Wi-Fi and USB-local streaming, with normal menus or headless clients.
+It stops with the OOB service. It requires authorized ADB access to that pinned
+device; a network-only connection does not provide automatic wake.</p>
+<p>On supported PICO hardware, the live <code class="docutils literal notranslate"><span class="pre">stk_stk3x1x</span></code> wakeup proximity sensor
+must report NEAR and Android must report Asleep before a wake request is sent.
+FAR, missing sensor data, or sensor privacy leave PICO wake to the operator.
+Quest presence probing is currently unsupported; positively identified Meta/Oculus
+headsets retain the existing one-shot wake request before browser automation,
+which still waits for confirmed Awake. Unknown devices require manual wake. The worker
+rechecks presence before each attempt, confirms Awake afterward, and allows
+at most three attempts five seconds apart. A brief Awake bounce does not reset
+that budget. Remove and put on the headset again, or press its power button,
+after a failed recovery. No headset settings are changed.</p>
+<p>Power recovery preserves the browser page and XR session. Awake does not prove
+that tracking resumed: the client reports paused/waking/recovery-failed status,
+and confirms restored head tracking only after fresh visible XR frames and head
+poses. Controller pose ages remain separate; absent controllers do not imply
+that head-only or hand-tracking modes failed.
+The hub’s <code class="docutils literal notranslate"><span class="pre">xrPresence</span></code> reports these independently of cached SDK metrics.
+The <code class="docutils literal notranslate"><span class="pre">xr</span></code> cadence contains <code class="docutils literal notranslate"><span class="pre">sessionActive</span></code>, <code class="docutils literal notranslate"><span class="pre">generation</span></code>, <code class="docutils literal notranslate"><span class="pre">visibility</span></code>
+(2 visible, 1 blurred, 0 hidden, -1 unknown), <code class="docutils literal notranslate"><span class="pre">frameAgeMs</span></code>, <code class="docutils literal notranslate"><span class="pre">headAgeMs</span></code>,
+<code class="docutils literal notranslate"><span class="pre">leftAgeMs</span></code>, <code class="docutils literal notranslate"><span class="pre">rightAgeMs</span></code>, and controller configuration flags. Client ages
+use a monotonic clock and -1 for unknown; the hub exposes unknown ages as null
+and adds monotonic receipt age. Session and visibility changes reset freshness.
+This heartbeat does not refresh stream-metric timestamps.</p>
 <p><strong>Step 2 — (Manual fallback) Open the web client on the headset</strong></p>
 <p>If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with <strong>all three</strong> required query
@@ -669,6 +706,7 @@ Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 <span class="w">  </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"clientMetrics"</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">"payload"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">    </span><span class="nt">"t"</span><span class="p">:</span><span class="w"> </span><span class="mi">1712800000000</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"sampleAgeMs"</span><span class="p">:</span><span class="w"> </span><span class="mi">125</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"cadence"</span><span class="p">:</span><span class="w"> </span><span class="s2">"frame"</span><span class="p">,</span>
 <span class="w">    </span><span class="nt">"metrics"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">      </span><span class="nt">"streaming.framerate"</span><span class="p">:</span><span class="w"> </span><span class="mf">72.0</span><span class="p">,</span>
@@ -681,7 +719,12 @@ Opens the teleop page and clicks CONNECT via USB adb + CDP.</p></td>
 <p>One message is sent per cadence per tick, carrying the last known value of every metric
 reported so far in that cadence. Metric names are the CloudXR.js <code class="docutils literal notranslate"><span class="pre">MetricsName</span></code> values,
 so they match the SDK documentation. The hub stores them as an arbitrary
-<code class="docutils literal notranslate"><span class="pre">{name:</span> <span class="pre">value}</span></code> map per cadence, so metrics added by a future SDK need no hub change.</p>
+<code class="docutils literal notranslate"><span class="pre">{name:</span> <span class="pre">value}</span></code> map per cadence, so metrics added by a future SDK need no hub change.
+<code class="docutils literal notranslate"><span class="pre">sampleAgeMs</span></code> is the elapsed client monotonic time since the last SDK observation
+in that cadence. Repeating cached metrics increases their age rather than renewing
+freshness. The hub subtracts this age from receipt time, independently of the device’s
+wall clock. Older clients that omit the field retain receipt-time freshness; they
+must be updated to distinguish cached samples from new observations.</p>
 </section>
 <section id="browser-health-exchange">
 <h3>Browser health exchange<a class="headerlink" href="#browser-health-exchange" title="Link to this heading">#</a></h3>
@@ -738,8 +781,9 @@ and, in USB-local mode, TURN and reverse rules have been verified;
 matching browser health report was received; <code class="docutils literal notranslate"><span class="pre">connectDispatched</span></code> records a
 host CONNECT click; and <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code> requires a streaming report with
 fresh metrics. <code class="docutils literal notranslate"><span class="pre">readinessStage</span></code> and <code class="docutils literal notranslate"><span class="pre">readinessSince</span></code> show the latest
-milestone and when it was entered. <code class="docutils literal notranslate"><span class="pre">lastMetricsAt</span></code> is the host-received
-metrics time in epoch milliseconds; the launcher accepts <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code>
+milestone and when it was entered. <code class="docutils literal notranslate"><span class="pre">lastMetricsAt</span></code> is the latest metric observation
+time in host epoch milliseconds, derived from receipt time minus sample age;
+<code class="docutils literal notranslate"><span class="pre">lastSeenAt</span></code> remains the browser message receipt time. The launcher accepts <code class="docutils literal notranslate"><span class="pre">streamConfirmed</span></code>
 only while those metrics and the lifecycle status are less than five seconds
 old. Recovery can move the stage backward, and a surviving browser can resume
 a stream without another host CONNECT click.</p>
@@ -921,6 +965,13 @@ version.</p>
 Optional <code class="docutils literal notranslate"><span class="pre">targetClientId</span></code> restricts the push to a single headset (returns 404
 if not connected).</p>
 </section>
+<section id="get-api-oob-v1-connect">
+<h3><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/connect</span></code><a class="headerlink" href="#get-api-oob-v1-connect" title="Link to this heading">#</a></h3>
+<p>Releases headset setup on a service started with <code class="docutils literal notranslate"><span class="pre">--defer-oob-connect</span></code>.
+Returns <code class="docutils literal notranslate"><span class="pre">{&quot;connectRequested&quot;:</span> <span class="pre">true,</span> <span class="pre">&quot;alreadyRequested&quot;:</span> <span class="pre">false}</span></code>; repeating
+it is harmless (<code class="docutils literal notranslate"><span class="pre">&quot;alreadyRequested&quot;:</span> <span class="pre">true</span></code>). A service that was not started
+deferred answers 409.</p>
+</section>
 </section>
 <section id="authentication">
 <h2>Authentication<a class="headerlink" href="#authentication" title="Link to this heading">#</a></h2>
@@ -1004,6 +1055,20 @@ and signaling share this socket. In <code class="docutils literal notranslate"><
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">PANEL_</span><wbr><span class="pre">HIDDEN_</span><wbr><span class="pre">AT_</span><wbr><span class="pre">START</span></code></p></td>
 <td><p>Hide control panel on load (<code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code>)</p></td>
 </tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">IMMERSIVE_</span><wbr><span class="pre">MODE</span></code></p></td>
+<td><p>WebXR session mode: <code class="docutils literal notranslate"><span class="pre">vr</span></code> or <code class="docutils literal notranslate"><span class="pre">ar</span></code>. PICO 4 Ultra needs <code class="docutils literal notranslate"><span class="pre">vr</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">REFERENCE_</span><wbr><span class="pre">SPACE</span></code></p></td>
+<td><p>XR reference space: <code class="docutils literal notranslate"><span class="pre">auto</span></code>, <code class="docutils literal notranslate"><span class="pre">local-floor</span></code>, <code class="docutils literal notranslate"><span class="pre">local</span></code>, <code class="docutils literal notranslate"><span class="pre">viewer</span></code> or
+<code class="docutils literal notranslate"><span class="pre">unbounded</span></code>. Pin it to compare replays across runs.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">REPLAY_</span><wbr><span class="pre">PACING</span></code></p></td>
+<td><p>Replay pacing: <code class="docutils literal notranslate"><span class="pre">frame</span></code> (one recorded frame per XR frame, independent
+of server speed) or <code class="docutils literal notranslate"><span class="pre">time</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">CLIENT_</span><wbr><span class="pre">SHOW_</span><wbr><span class="pre">RECORDING_</span><wbr><span class="pre">CONTROLS</span></code></p></td>
+<td><p>Enable the recording and replay controls (<code class="docutils literal notranslate"><span class="pre">true</span></code> / <code class="docutils literal notranslate"><span class="pre">false</span></code>).</p></td>
+</tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_CLIENT_ROUTE</span></code></p></td>
 <td><p>HashRouter fragment appended to the bookmark URL. Default empty
 (no fragment — the web client picks its own landing route). Set
@@ -1040,6 +1105,18 @@ HMD and set <code class="docutils literal notranslate"><span class="pre">ANDROID
 Before each new browser launch, ADB must confirm
 <code class="docutils literal notranslate"><span class="pre">mWakefulness=Awake</span></code>; wear or unlock the headset (or cover its
 proximity sensor) when the service reports that it is asleep.</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_OOB_RECORDING</span></code></p></td>
+<td><p>Recording to select in the client before CONNECT: a host path, pushed to
+the headset, or <code class="docutils literal notranslate"><span class="pre">latest</span></code>, the newest
+<code class="docutils literal notranslate"><span class="pre">isaacteleop-input-recording*.json</span></code> (the client’s Save name) in its
+Download folder.
+Starting the replay is left to the operator. Unset by default.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">HEADSET_</span><wbr><span class="pre">BROWSER_</span><wbr><span class="pre">PACKAGE</span></code></p></td>
+<td><p>Headset browser package. Unset, the vendor’s browser is used. On PICO,
+set <code class="docutils literal notranslate"><span class="pre">com.pico.browser</span></code>: in hand-tracking mode the OS holds VR from
+non-system browsers behind a “requires controllers” dialog.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TELEOP_</span><wbr><span class="pre">OOB_</span><wbr><span class="pre">RECOVERY_</span><wbr><span class="pre">TIMEOUT_</span><wbr><span class="pre">SEC</span></code></p></td>
 <td><p>Positive finite recovery-episode duration in seconds (default <code class="docutils literal notranslate"><span class="pre">60</span></code>).
@@ -1267,6 +1344,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#http-api">HTTP API</a><ul class="nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-api-oob-v1-state"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/state</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-api-oob-v1-config"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/config</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#get-api-oob-v1-connect"><code class="docutils literal notranslate"><span class="pre">GET</span> <span class="pre">/api/oob/v1/connect</span></code></a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#authentication">Authentication</a></li>
@@ -1367,7 +1445,7 @@ or stage <code class="docutils literal notranslate"><span class="pre">nvidia-clo
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 25, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 26, 2026.
       <br/>
     
   </p>
