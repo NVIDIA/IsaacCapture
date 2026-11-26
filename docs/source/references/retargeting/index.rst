@@ -68,6 +68,14 @@ Available Retargeters
    ``SO101GripperRetargeter`` maps the trigger to a proportional jaw closedness in ``[0, 1]``.
    See :doc:`so101` for the full setup.
 
+.. dropdown:: DVRKPSMClutchRetargeter / DVRKPSMGripperRetargeter
+
+   Simulated dVRK Patient Side Manipulator teleoperation primitives. The clutch
+   maps controller grip pose to a squeeze-deadman, re-clutched 7-D tool target;
+   the trigger maps to two mirrored PSM jaw targets. The simulator integration
+   owns the per-arm IK solve. See :doc:`dvrk` for the controller, frame, and
+   safety contracts.
+
 .. dropdown:: JointStateRetargeter
 
    Maps a name-keyed joint-state input (from ``JointStateSource``) to an action for a generic
@@ -379,5 +387,6 @@ See the :doc:`Contributing Guide <../../development/contributing>` for details.
 
    sharpa
    so101
+   dvrk
    joint_space
    wuji
