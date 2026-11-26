@@ -40,7 +40,8 @@ def load_isaac_capture() -> SimpleNamespace:
 
     Cached after the first success. The returned namespace has the adapter's ``sdk`` surface
     (``HeadSource``, ``ControllersSource``, ``HandsSource``, ``OutputCombiner``, ``PluginConfig``,
-    ``TeleopSessionConfig``, ``CloudXRLauncher``) plus ``TeleopSession``, ``version`` and ``package_dir``.
+    ``TeleopSessionConfig``, ``CloudXRLauncher``) plus ``TeleopSession``, ``JointSe3PoseTracker``, ``JointName``,
+    ``version`` and ``package_dir``.
     """
     global _loaded
     if _loaded is not None:
@@ -78,6 +79,8 @@ def load_isaac_capture() -> SimpleNamespace:
         indices = importlib.import_module("isaaccapture.retargeting_engine.tensor_types.indices")
         launcher = importlib.import_module("isaaccapture.cloudxr.launcher")
         runtime = importlib.import_module("isaaccapture.cloudxr.runtime")
+        trackers = importlib.import_module("isaaccapture.deviceio_trackers")
+        schema = importlib.import_module("isaaccapture.schema")
     except ImportError as exc:  # missing/unloadable native library or module
         raise IsaacCaptureUnavailable(f"cannot import isaaccapture from {package_dir}: {exc}") from exc
 
@@ -139,6 +142,8 @@ def load_isaac_capture() -> SimpleNamespace:
         TeleopSessionConfig=session_config,
         CloudXRLauncher=AttachOnlyCloudXR,
         TeleopSession=teleop.TeleopSession,
+        JointSe3PoseTracker=trackers.JointSe3PoseTracker,
+        JointName=schema.JointName,
         version=package.__version__,
         package_dir=package_dir,
     )

@@ -383,7 +383,7 @@ An immutable description of the tracking frame format. CaptureStarted.streams su
 | `stream_id` | `int`, 0. | Associates tracking frames with this descriptor. |
 | `kind` | `StreamKind`: `TRACKING=1`. | Descriptor kind. |
 | `name` | `str`, tracking. | Logical stream name. |
-| `schema` | `TrackingSchema`: `IC_TRACKING_V1=1`. | Fixed head/controller/hand schema. |
+| `schema` | `TrackingSchema`: `IC_TRACKING_V1=1`. | Fixed head/controller/hand/Manus raw-sensor schema. |
 | `sources` | `tuple[SourceType, ...]`: `HEAD=1`, `CONTROLLERS=2`, `HANDS=3`. | Outputs selected for this stream. |
 | `rate_hz` | Positive finite `float`, at most 120. | Requested polling cadence. |
 | `pose_representation` | `PoseRepresentation`: `POSITION_QUATERNION=1`. | Poses contain a translation vector and rotation quaternion. |
@@ -392,7 +392,7 @@ An immutable description of the tracking frame format. CaptureStarted.streams su
 | `axes` | `Axes`: `RIGHT_HANDED_Y_UP_MINUS_Z_FORWARD=1`. | Right-handed coordinates, +Y up and −Z forward. |
 | `reference_space` | Nonempty `str`, such as session\_floor. | Identifies the shared session coordinate space for these poses. |
 | `hand_joint_order` | `HandJointOrder`: `OPENXR_26=1`. | Joint indexing of the hand arrays in the binary payload. |
-| `payload_size` | `int`, 1995. | Exact tracking payload size, excluding the transport header. |
+| `payload_size` | `int`, 2277. | Exact tracking payload size, excluding the transport header. |
 | `fields` | `tuple[FieldDescriptor, ...]` | Complete binary field descriptions, including presence and validity flags, with offsets measured within CaptureFrame.payload. |
 
 #### FieldDescriptor
@@ -527,7 +527,7 @@ An immutable Python dataclass containing ordinary metadata fields and a binary p
 | `sequence` | Nonnegative `int`. | Per-stream sample counter starting at zero. Gaps identify samples not delivered to the application. |
 | `capture_time_ns` | Nonnegative `int`. | Station monotonic host sampling time, interpreted using CaptureClock. |
 | `receive_time_ns` | Nonnegative `int`. | Station-side time the server assembled this sample for transport, not the adapter's own sampling time (that is `capture_time_ns`) and not the time the remote client received the frame. |
-| `payload` | Immutable `bytes`, exactly 1995 bytes for IC_TRACKING_V1. | Original packed tracking payload, without the 32-byte transport header. Retaining the frame after callback return is safe. |
+| `payload` | Immutable `bytes`, exactly 2277 bytes for IC_TRACKING_V1. | Original packed tracking payload, without the 32-byte transport header. Retaining the frame after callback return is safe. |
 
 CaptureFrame.description is a shared reference, not a per-frame copy or another wire message. Access changing metadata directly, such as frame.sequence; there is no nested metadata/header object or separate FrameMetadata type. The callback identifies tracking versus image data, so no redundant kind field is needed in Python. The transport kind is still validated internally.
 
@@ -655,7 +655,7 @@ JSON object keys, session IDs, provider/device IDs, device paths, stream names, 
 
 The [Python enum reference](#python-enums) lists every enum member and numeric wire value. Each message-field table also names its enum and accepted values.
 
-BinaryKind is the compact binary-header discriminator; MessageType discriminates JSON messages. They are separate enum types. Version remains integer 1. The 32-byte framing and 1995-byte tracking payload below remain fixed; controller scalars remain float64.
+BinaryKind is the compact binary-header discriminator; MessageType discriminates JSON messages. They are separate enum types. Version remains integer 1. The 32-byte framing and 2277-byte tracking payload below remain fixed; controller scalars remain float64.
 
 #### How IC selects and observes devices
 
@@ -766,7 +766,7 @@ later session's first device can be different.
 
 `plugins` defaults to an empty array. Each entry selects a defined PluginType and supported output settings. A plugin kind occurs at most once. The server assigns IC's internal instance namespace and returns observed provider IDs as opaque identifiers; clients do not choose or construct those IDs. `enabled` and `required` retain the native PluginConfig semantics. The station owns plugin installation, execution and calibration defaults. The plugin list is independent of the tracking source list: enabling an injector does not subscribe its data automatically.
 
-A plugin is a supporting program started by IC, rather than a physical device. Manus's plugin receives glove data and injects hand skeletons into OpenXR, where HandsSource can read them. An instance is one configured launch of that program; its ID gives its status records a namespace so records from different providers do not collide.
+A plugin is a supporting program started by IC, rather than a physical device. Manus's plugin receives glove data and injects hand skeletons into OpenXR, where HandsSource can read them. It also pushes each glove's raw fingertip-sensor poses, which the server reads whenever the plugin is enabled and sends in the `manus_left`/`manus_right` tracking fields. An instance is one configured launch of that program; its ID gives its status records a namespace so records from different providers do not collide.
 
 | Plugin request field | Allowed contents/default | Meaning and effect |
 |---|---|---|
@@ -867,7 +867,7 @@ This is a complete SessionInit for head, controllers and hands:
       "reference_space": "session_floor",
       "hand_joint_order": 1,
       "layout": {
-        "payload_size": 1995,
+        "payload_size": 2277,
         "fields": [
           {"name":"head.present","dtype":1,"shape":[],"offset":0},
           {"name":"head.position","dtype":2,"shape":[3],"offset":1},
@@ -913,7 +913,13 @@ This is a complete SessionInit for head, controllers and hands:
           {"name":"hand_right.joint_positions","dtype":2,"shape":[26,3],"offset":1137},
           {"name":"hand_right.joint_orientations","dtype":2,"shape":[26,4],"offset":1449},
           {"name":"hand_right.joint_radii","dtype":2,"shape":[26],"offset":1865},
-          {"name":"hand_right.joint_valid","dtype":1,"shape":[26],"offset":1969}
+          {"name":"hand_right.joint_valid","dtype":1,"shape":[26],"offset":1969},
+          {"name":"manus_left.sensor_present","dtype":1,"shape":[],"offset":1995},
+          {"name":"manus_left.sensor_positions","dtype":2,"shape":[5,3],"offset":1996},
+          {"name":"manus_left.sensor_orientations","dtype":2,"shape":[5,4],"offset":2056},
+          {"name":"manus_right.sensor_present","dtype":1,"shape":[],"offset":2136},
+          {"name":"manus_right.sensor_positions","dtype":2,"shape":[5,3],"offset":2137},
+          {"name":"manus_right.sensor_orientations","dtype":2,"shape":[5,4],"offset":2197}
         ]
       }
     }
@@ -1084,7 +1090,7 @@ Dotted field names preserve the public IC group/field identity. Dtype codes are 
 | `stream_id` | Not an enum: integer 0 for tracking. | Associates a binary message's header with this descriptor. |
 | `kind` | `StreamKind`: `TRACKING=1` for this descriptor; `IMAGE=2` for camera descriptors; `LIVEKIT_IMAGE=3` for LiveKit camera descriptors. | Selects the kind of decoder to use for the stream. |
 | `name` | String, `tracking` for this stream; no enum. | Provides a readable stream label. Routing uses stream\_id, not this label. |
-| `schema` | `TrackingSchema`: `IC_TRACKING_V1=1`. | Identifies the complete field contract, including presence/validity meanings and the 1995-byte layout. A client rejects an unsupported schema rather than interpreting a similar-looking blob. |
+| `schema` | `TrackingSchema`: `IC_TRACKING_V1=1`. | Identifies the complete field contract, including presence/validity meanings and the 2277-byte layout. A client rejects an unsupported schema rather than interpreting a similar-looking blob. |
 | `sources` | `SourceType`: unique array drawn from `HEAD=1`, `CONTROLLERS=2`, `HANDS=3`. | Records the source channels selected for this tracking stream. Unselected channels retain inert slots in the fixed binary layout. |
 | `rate_hz` | Not an enum: finite number greater than 0 and at most 120. | Advertises the accepted polling rate. It does not certify that every device generated a new sample at that rate. |
 | `pose_representation` | `PoseRepresentation`: `POSITION_QUATERNION=1`. | Each pose uses a 3-number position and a 4-number orientation, rather than a 4×4 matrix or three rotation angles. |
@@ -1093,14 +1099,14 @@ Dotted field names preserve the public IC group/field identity. Dtype codes are 
 | `axes` | `Axes`: `RIGHT_HANDED_Y_UP_MINUS_Z_FORWARD=1`. | Defines coordinate directions: positive Y is up and negative Z is forward, using a right-handed coordinate system. This tells the client how to interpret motion and avoid swapping or reflecting axes accidentally. |
 | `reference_space` | Nonempty string identifying the session coordinate frame; no enum. | Identifies the common origin/frame in which the positions and orientations are expressed. For example, session\_floor denotes a floor-based session space. It does not locate the origin in a surveyed building coordinate system or guarantee the same origin after reconnect. |
 | `hand_joint_order` | `HandJointOrder`: `OPENXR_26=1`. | Defines which anatomical joint each array index means. Both hands use the same 26-index order described below. |
-| `layout.payload_size` | Not an enum: integer 1995 for this schema. | Gives the exact binary sample size excluding the 32-byte header. The decoder rejects a different size. |
+| `layout.payload_size` | Not an enum: integer 2277 for this schema. | Gives the exact binary sample size excluding the 32-byte header. The decoder rejects a different size. |
 | `layout.fields` | Array of field records. | Gives the byte-level recipe for extracting every named value from the blob. Field records contain the next four fields. |
 | Field `name` | String identifying a declared schema field, such as head.position; no enum. | Names the extracted value using IC's output group and field identity. This is not an extra string stored inside each binary sample. |
 | Field `dtype` | `WireDType`: `UINT8=1`, `FLOAT32_LE=2`, `FLOAT64_LE=3`. | Selects an unsigned 1-byte integer, a 4-byte floating-point value, or an 8-byte floating-point value. LE means least-significant byte first. Presence/validity use UINT8; positions/quaternions/radii use FLOAT32\_LE; controller input scalars use FLOAT64\_LE. |
 | Field `shape` | Not an enum: array of positive integer dimensions, or `[]` for one scalar. | `[]` means one value, `[3]` means three values, and `[26,3]` means 26 rows of 3 values. C order means each row's values are adjacent before the next row begins. |
-| Field `offset` | Not an enum: nonnegative integer byte offset within the 1995-byte payload. | Gives where the field starts, counted from the first sample byte after the header. It is not counted from the start of the whole WebSocket message. |
+| Field `offset` | Not an enum: nonnegative integer byte offset within the 2277-byte payload. | Gives where the field starts, counted from the first sample byte after the header. It is not counted from the start of the whole WebSocket message. |
 
-For example, head.position has dtype FLOAT32\_LE=2, shape \[3\] and offset 1. The client skips the 32-byte header, skips one payload byte, then reads three little-endian float32 values from payload bytes 1–12. The next field, head.orientation, starts at payload offset 13. In general, a field occupies the product of its dimensions times its dtype size; a scalar occupies one dtype-sized value. The descriptor must have no overlaps, out-of-bounds fields or missing required schema fields. Clients validate it once before accepting frames; they do not infer correctness merely because its declared total size is 1995.
+For example, head.position has dtype FLOAT32\_LE=2, shape \[3\] and offset 1. The client skips the 32-byte header, skips one payload byte, then reads three little-endian float32 values from payload bytes 1–12. The next field, head.orientation, starts at payload offset 13. In general, a field occupies the product of its dimensions times its dtype size; a scalar occupies one dtype-sized value. The descriptor must have no overlaps, out-of-bounds fields or missing required schema fields. Clients validate it once before accepting frames; they do not infer correctness merely because its declared total size is 2277.
 
 Head, each controller and each hand has independent presence. For a selected source, absent OptionalTensorGroup maps to present=0; an existing group maps to present=1 and retains its native flags. For absent/unselected groups, zero numeric values and validity flags and use identity xyzw quaternions as inert placeholders. Presence, not placeholder content, determines absence.
 
@@ -1129,12 +1135,16 @@ The following table explains the values packed into the binary fields. These are
 | Hand `joint_orientations` | Float32 array \[26,4\], xyzw quaternions. | Session-space orientation of each joint, in the same index order as positions. |
 | Hand `joint_radii` | Float32 array \[26\], meters. | Runtime-estimated radius associated with each joint, useful for visualizing or modeling its spatial extent. It is not a confidence score. |
 | Hand `joint_valid` | UINT8 array \[26\], each value 0 or 1. | Whether each joint has a valid position and orientation according to IC. Some joints can be invalid while the hand group remains present. This is not a separate per-joint actively-tracked flag. |
+| `manus_left.sensor_present`, `manus_right.sensor_present` | Independent scalar 0 or 1 per side. | Whether the Manus plugin has pushed a complete five-fingertip raw-sensor set for that glove. It stays 1, on the last set, after a glove stops reporting while the plugin keeps running. |
+| Manus `sensor_positions` | Float32 array \[5,3\], meters. | Raw fingertip-sensor positions, thumb to little finger, in the Manus SDK frame the plugin configures. These are not session-space positions. |
+| Manus `sensor_orientations` | Float32 array \[5,4\], xyzw quaternions. | Raw fingertip-sensor orientations, in the same order and frame as the positions. |
+
 
 Preserve session-space positions/quaternions. Do not select grip over aim, rename buttons, remove the palm, make hands wrist-relative, generate recorder matrices, or apply an application-specific alignment. The client performs any desired downstream conversion. Hand presence/validity does not provide provider identity, and joint validity is not a separate active-tracking flag.
 
 ##### Tracking field offsets
 
-Each row is one field inside the 1995-byte tracking payload. Offset 0 starts immediately after the 32-byte binary header. Dtype is Python `WireDType`: `UINT8=1` (1 byte), `FLOAT32_LE=2` (4 bytes), or `FLOAT64_LE=3` (8 bytes). Empty shape `[]` means one scalar; all arrays use C order.
+Each row is one field inside the 2277-byte tracking payload. Offset 0 starts immediately after the 32-byte binary header. Dtype is Python `WireDType`: `UINT8=1` (1 byte), `FLOAT32_LE=2` (4 bytes), or `FLOAT64_LE=3` (8 bytes). Empty shape `[]` means one scalar; all arrays use C order.
 
 | Field name | Python enum member / wire dtype | Shape | Byte offset | Bytes |
 |---|---|---|---|---|
@@ -1183,6 +1193,12 @@ Each row is one field inside the 1995-byte tracking payload. Offset 0 starts imm
 | `hand_right.joint_orientations` | `WireDType.FLOAT32_LE=2` | `[26,4]` | 1449 | 416 |
 | `hand_right.joint_radii` | `WireDType.FLOAT32_LE=2` | `[26]` | 1865 | 104 |
 | `hand_right.joint_valid` | `WireDType.UINT8=1` | `[26]` | 1969 | 26 |
+| `manus_left.sensor_present` | `WireDType.UINT8=1` | `[]` | 1995 | 1 |
+| `manus_left.sensor_positions` | `WireDType.FLOAT32_LE=2` | `[5,3]` | 1996 | 60 |
+| `manus_left.sensor_orientations` | `WireDType.FLOAT32_LE=2` | `[5,4]` | 2056 | 80 |
+| `manus_right.sensor_present` | `WireDType.UINT8=1` | `[]` | 2136 | 1 |
+| `manus_right.sensor_positions` | `WireDType.FLOAT32_LE=2` | `[5,3]` | 2137 | 60 |
+| `manus_right.sensor_orientations` | `WireDType.FLOAT32_LE=2` | `[5,4]` | 2197 | 80 |
 
 #### Camera descriptor and binary transport
 
@@ -1265,13 +1281,13 @@ Both binary families use `struct.Struct("<4sBBHQQQ")`:
 | 8 | uint64 LE | Per-stream generated sequence, starting at 0. |
 | 16 | uint64 LE | Sample/capture-host monotonic timestamp, ns. |
 | 24 | uint64 LE | Capture-host receive/assembly timestamp, ns. |
-| 32 | bytes | Exactly 1995 tracking bytes or one complete JPEG. |
+| 32 | bytes | Exactly 2277 tracking bytes or one complete JPEG. |
 
 Tracking messages are 2027 bytes. The session ID is supplied by the active SessionBegun association; do not repeat it per sample. No binary data precedes SessionBegun or follows its matching SessionStopped. A rejection for another ID does not disturb the active stream.
 
 ##### CaptureFrame
 
-CaptureFrame uses BinaryKind.CAPTURE\_FRAME=1, stream\_id=0, and exactly 1995 payload bytes after the 32-byte header. The payload contains all fields in the tracking-offset table. Source presence and validity determine which values are usable; absent groups do not shorten the message. Every frame is a complete snapshot rather than a delta against a previous frame.
+CaptureFrame uses BinaryKind.CAPTURE\_FRAME=1, stream\_id=0, and exactly 2277 payload bytes after the 32-byte header. The payload contains all fields in the tracking-offset table. Source presence and validity determine which values are usable; absent groups do not shorten the message. Every frame is a complete snapshot rather than a delta against a previous frame.
 
 ##### CaptureImage
 

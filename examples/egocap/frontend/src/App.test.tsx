@@ -89,7 +89,7 @@ function makeTrackingSample(decoded: DecodedTracking, overrides: Partial<Accepte
     descriptor: {
       kind: "tracking",
       stream_id: 0,
-      payload_size: 1995,
+      payload_size: 2277,
       fields: [],
       positionUnit: PositionUnit.METERS,
       quaternionOrder: QuaternionOrder.XYZW,

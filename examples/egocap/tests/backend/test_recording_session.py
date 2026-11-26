@@ -141,6 +141,10 @@ def _fake_tracking_frame(*, head_x: float = 0.0, capture_time_ns: int = 1_000_00
     values.update(_controller_values("controller_right"))
     values.update(_hand_values("hand_left"))
     values.update(_hand_values("hand_right"))
+    for prefix in ("manus_left", "manus_right"):
+        values[f"{prefix}.sensor_present"] = 1
+        values[f"{prefix}.sensor_positions"] = np.zeros((5, 3), dtype=np.float32)
+        values[f"{prefix}.sensor_orientations"] = np.tile(np.array(IDENTITY_QUAT, dtype=np.float32), (5, 1))
     payload = capture_protocol.encode_tracking_frame(values)
     return CaptureFrame(
         session_id="s1",

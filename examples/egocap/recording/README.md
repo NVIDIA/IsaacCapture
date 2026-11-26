@@ -169,6 +169,7 @@ Recorded numeric sources, exactly as written by `backend/egocap_web/recording_ad
 | `pico_controller` | `left_trigger`, `right_trigger` | scalar | `float64` | Analog trigger values. |
 | `pico_controller` | `a_button`, `b_button`, `x_button`, `y_button` | scalar | `bool` | Controller buttons. |
 | `manus_glove` | `left_hand_pose`, `right_hand_pose` | `(25, 4, 4)` | `float64` | Root-relative transform stacks, one per hand joint. |
+| `manus_glove` | `left_sensor_pose`, `right_sensor_pose` | `(5, 4, 4)` | `float64` | Raw fingertip-sensor transforms in the Manus SDK frame, thumb to little finger; all zero when none were reported. |
 
 Both groups carry `capture_time`/`receive_time` as seconds (converted from CaptureServer's
 nanosecond timestamps). Camera groups each have a matching `.mp4`, plus capture time, receive

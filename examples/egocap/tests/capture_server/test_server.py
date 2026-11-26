@@ -57,7 +57,7 @@ async def test_full_lifecycle_real_client_against_real_server(unused_tcp_port):
         assert events[0] == ("started", False, 2)
         assert ("status", "BEGUN", True) in events
         assert len(frames) > 0
-        assert all(len(f.payload) == 1995 for f in frames)
+        assert all(len(f.payload) == 2277 for f in frames)
         # The actual object-identity check: every frame's description is
         # the SAME object CaptureStarted.streams carried for stream_id 0,
         # not a rebuilt copy per frame.

@@ -78,6 +78,8 @@ MANUS_GLOVE_SPEC = NumericSourceSpec(
     (
         FieldSpec("left_hand_pose", "float64", (25, 4, 4)),
         FieldSpec("right_hand_pose", "float64", (25, 4, 4)),
+        FieldSpec("left_sensor_pose", "float64", (5, 4, 4)),
+        FieldSpec("right_sensor_pose", "float64", (5, 4, 4)),
     ),
     "ManusFrame",
 )
@@ -294,6 +296,23 @@ def convert_hand_pose(tracking: dict[str, np.ndarray], side: Side) -> np.ndarray
     return oxr_fingertips_to_manus_skeleton(matrices_26[1:], valid_26[1:], side)
 
 
+def convert_sensor_pose(tracking: dict[str, np.ndarray], side: Side) -> np.ndarray:
+    """One hand's (5,4,4) raw fingertip-sensor transforms in the Manus SDK frame, thumb to little finger; all
+    zero, like an invalid hand joint, when the glove reported none this tick.
+
+    Recorded as transforms, not quaternions: the SDK flips a quaternion's sign between samples, which the
+    element-wise interpolation of time alignment cannot cross. A rotation matrix has no second form."""
+    prefix = f"manus_{side}"
+    pose = np.zeros((5, 4, 4), dtype=np.float64)
+    # Only a reported set is converted: placeholder quaternions are not data.
+    if bool(tracking[f"{prefix}.sensor_present"]):
+        quats = np.asarray(tracking[f"{prefix}.sensor_orientations"], dtype=np.float64)
+        pose[:, :3, :3] = Rotation.from_quat(quats).as_matrix()
+        pose[:, :3, 3] = tracking[f"{prefix}.sensor_positions"]
+        pose[:, 3, 3] = 1.0
+    return pose
+
+
 def build_manus_glove_fields(tracking: dict[str, np.ndarray]) -> dict[str, np.ndarray] | None:
     """One ``manus_glove`` row, or ``None`` if either hand's wrist is
     invalid this tick. Whole-row validity policy, matching
@@ -306,7 +325,12 @@ def build_manus_glove_fields(tracking: dict[str, np.ndarray]) -> dict[str, np.nd
     right = convert_hand_pose(tracking, "right")
     if left is None or right is None:
         return None
-    return {"left_hand_pose": left, "right_hand_pose": right}
+    return {
+        "left_hand_pose": left,
+        "right_hand_pose": right,
+        "left_sensor_pose": convert_sensor_pose(tracking, "left"),
+        "right_sensor_pose": convert_sensor_pose(tracking, "right"),
+    }
 
 
 # --- camera conversion --------------------------------------------------------

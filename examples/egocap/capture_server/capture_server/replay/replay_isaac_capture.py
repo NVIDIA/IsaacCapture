@@ -35,6 +35,7 @@ from capture_server.mock.mock_isaac_capture import (
     DeviceStatus,
     HandsSource,
     HeadSource,
+    JointSe3PoseTracker,
     NoopContext,
     OptionalTensorGroup,
     OutputCombiner,
@@ -56,6 +57,7 @@ __all__ = [
     "ControllersSource",
     "HandsSource",
     "HeadSource",
+    "JointSe3PoseTracker",
     "NoopContext",
     "OutputCombiner",
     "PluginConfig",
@@ -88,6 +90,8 @@ class TeleopSession:
     ) -> None:
         self.config = config
         self.frame_count = 0
+        # The real session's DeviceIO handle, which trackers are read against; a recording has none.
+        self.deviceio_session = None
         self._episode = episode
         self._playback = playback
         self._clock = clock or MonotonicClock()

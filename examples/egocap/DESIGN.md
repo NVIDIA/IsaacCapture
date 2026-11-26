@@ -103,7 +103,8 @@ orientation for the head and both controllers, plus each controller's button and
 sampled together so the three poses stay consistent with each other within one tick.
 
 Hand tracking comes from the hand-tracking gloves, reported as a full per-joint hand skeleton for
-each hand when it is being tracked. The recorded hand-tracking row for a tick is dropped entirely
+each hand when it is being tracked, with the gloves' raw fingertip-sensor poses recorded on the
+same row. The recorded hand-tracking row for a tick is dropped entirely
 if either hand's wrist goes untracked — both hands together, not just the affected one — rather
 than filled with a stale or fabricated pose; a live view can still show whichever hand remains
 tracked, and the headset and controller rows for that tick are still recorded as usual.
@@ -118,7 +119,8 @@ values.
 ### Saved data
 
 A kept episode is written to the station's local storage as one MP4 video file per recorded
-camera, numeric tracking data — headset and controller pose, hand skeleton — stored in Zarr, and
+camera, numeric tracking data — headset and controller pose, hand skeleton, raw glove fingertip
+sensors — stored in Zarr, and
 metadata: the task description and the operator who recorded it.
 
 An automatic check runs once a take finishes recording and marks it kept, flagged, or rejected,
