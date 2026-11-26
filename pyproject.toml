@@ -93,7 +93,7 @@ wuji = [
     "cmeel-tinyxml2>=11,<12",
 ]
 cloudxr = [
-    "cryptography>=3.0",
+    "cryptography>=46.0.6",
     "websockets>=17.3",
     "Pillow>=10.0; sys_platform == 'linux'",
     "cupy-cuda12x>=13.0; sys_platform == 'linux'",

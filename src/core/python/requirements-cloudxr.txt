@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-cryptography>=3.0
+# Use a patched minimum for security fixes and validate it alongside the current release.
+cryptography>=46.0.6
 # Handles aborted handshakes quietly and supports HTTP OPTIONS natively.
 websockets>=17.3
 
