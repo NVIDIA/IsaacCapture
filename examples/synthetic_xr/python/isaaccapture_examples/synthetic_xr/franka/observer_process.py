@@ -59,14 +59,13 @@ def supervise(root, arguments, timeout):
     process = subprocess.Popen(command, start_new_session=True)
     interrupted = False
 
-    def forward(signum, frame):
+    def request_stop(signum, frame):
         nonlocal interrupted
+        # Only the main loop may reap the child and release its process-group identity.
         interrupted = True
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGINT)
 
     previous = {
-        sig: signal.signal(sig, forward) for sig in (signal.SIGINT, signal.SIGTERM)
+        sig: signal.signal(sig, request_stop) for sig in (signal.SIGINT, signal.SIGTERM)
     }
     forced = []
     try:
@@ -83,7 +82,11 @@ def supervise(root, arguments, timeout):
                 (signal.SIGKILL, 5),
             ):
                 forced.append(signal.Signals(sig).name)
-                os.killpg(process.pid, sig)
+                try:
+                    # This session leader has not been reaped, so its PID cannot be reused.
+                    os.killpg(process.pid, sig)
+                except ProcessLookupError:
+                    break  # Still wait below and retain the worker's exit record.
                 try:
                     process.wait(timeout=grace)
                     break
