@@ -6,8 +6,8 @@
 // 0.01 mm over DIP-local Z = 20..25 mm, and the thumb's is the measured PTV1 fingertip sleeve centre. The pads are
 // fitted separately.
 constexpr std::array<const char*, 2> kFittedModelHashes = {
-    "63960181839d5486cc0952bf7a4a5c09b6e9eca78fa4035294a74e13cef32805",
-    "ea8e2e3a05091ba9fb229b1d932c612e2740004cfc4262a20471afebf1610d55",
+    "fbc9630578e58ae4d99e5d0cb9eba273920e7d5fdd92d3e968b30354f570848f",
+    "21deef1bfb92be178f692df1e652c5097cb0f0e009289d5531cbc3c473767ae9",
 };
 constexpr M kPalmBasis = { -4.3368086899420177e-19, -0.99951526706354676,  0.031132473510575541,
                            -0.99592691449259607,    0.0028070342275837352, 0.090120483510145774,
@@ -28,5 +28,5 @@ constexpr std::array<FingerFit, 5> kFingerFits = { {
     { { -0.0027006949801747799, -0.011697995150430627, 0.0026745384806665844 },
       { 0.015979669062478725, -0.0036891972912384647, 0 },
       { 0.016417065890189413, -0.0037901783056560599, 0 } },
-    { { 0.006935, 0.01201177235048925, 0 }, { 0.010, 0, 0 }, {} },
+    { { 0.00646, 0.011189048216894946, 0 }, { 0.010, 0, 0 }, {} },
 } };

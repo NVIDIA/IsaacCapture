@@ -243,3 +243,14 @@ TEST_CASE("hand fit: proximal remains MCP-carried and thumb height follows CMR",
     CHECK(thumb_after[1] - thumb_before[1] == Approx(.010).margin(2e-8));
     CHECK(thumb_after[2] == Approx(thumb_before[2]).margin(2e-8));
 }
+
+TEST_CASE("hand fit: the thumb's distal joints sit on the measured sleeve centre", "[unit]")
+{
+    const auto out = map_hand_points(Hand::Left, neutral_points());
+    for (core::HandJoint joint : { core::HandJoint_THUMB_PROXIMAL, core::HandJoint_THUMB_DISTAL })
+    {
+        const auto p = position(out.joints[joint]);
+        CHECK(p[0] == Approx(.060193974524736404).margin(2e-8));
+        CHECK(p[1] == Approx(-.032925181090831757).margin(2e-8));
+    }
+}

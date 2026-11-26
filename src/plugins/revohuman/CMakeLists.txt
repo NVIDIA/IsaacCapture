@@ -11,8 +11,8 @@ endif()
 # The pinned RevoHuman C SDK release. The hand fits in core/hand_fit.inc are for the hand models of this
 # release, so the version, the hashes and the fits change together.
 set(_revohuman_sdk_version "0.1.3")
-set(_revohuman_sdk_sha256_x86_64 "c2ed6ead4bb105e1c0c0e637452e1c53b27ce977c21179bb3f655b8824e8e9c5")
-set(_revohuman_sdk_sha256_aarch64 "5912011644542b34b62224440ace74b5626010d38a6956af545dc144d7511a08")
+set(_revohuman_sdk_sha256_x86_64 "63fea7abb7e046dc3aa8ce7e8033e53605c22f00e1aaded0ecf3650cdc62d29a")
+set(_revohuman_sdk_sha256_aarch64 "af828815a89431c09b6cfd5fff137d52df25709f7f1f64b419e9f387d73588ba")
 
 set(REVOHUMAN_SDK_ROOT "" CACHE PATH
     "Optional RevoHuman C SDK root (include/, lib/, LICENSE); if empty, CMake downloads the pinned release")

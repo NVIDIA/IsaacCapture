@@ -30,7 +30,7 @@ namespace
 
 // A new point set or taxel layout version may reorder points or change their rules: refit the mapping first.
 static_assert(RH_HAND_POINT_COUNT == 27 && RH_HAND_POINTS_VERSION == 1);
-static_assert(RH_TAXEL_LAYOUT_VERSION == 1);
+static_assert(RH_TAXEL_LAYOUT_VERSION == 2);
 
 using V = std::array<double, 3>;
 using M = std::array<double, 9>; // Row-major, as the SDK writes rotations.
