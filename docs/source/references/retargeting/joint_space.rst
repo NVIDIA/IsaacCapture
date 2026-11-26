@@ -108,7 +108,12 @@ The repo ships ``examples/teleop/python/isaaccapture_examples/teleop/joint_space
 
    $ uv pip install -e ./examples/teleop
 
-   # Consumes the so101_leader plugin over OpenXR (source cloudxr.env first):
+   # --launch-plugin starts so101_leader_plugin before the example connects to
+   # CloudXR, so start the service and load its environment first:
+   $ python -m isaaccapture.cloudxr.service start --accept-eula
+   $ source ~/.cloudxr/run/cloudxr.env
+
+   # Consumes the so101_leader plugin over OpenXR:
    $ python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plugin --mode joint --frames 8
    $ python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
 

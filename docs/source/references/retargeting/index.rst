@@ -90,8 +90,7 @@ Available Retargeters
 
    **Requirements:**
 
-   * ``dex-retargeting``: ``pip install dex-retargeting``
-   * ``scipy``: ``pip install scipy``
+   * The ``retargeters`` extra: ``pip install 'isaaccapture[retargeters]'``
    * Robot hand URDF file
    * dex_retargeting YAML configuration file
 
@@ -153,17 +152,30 @@ Available Retargeters
         urdf_path: /path/to/robot_hand.urdf
         wrist_link_name: hand_base_link
 
-   **DexBiManualRetargeter:** Bimanual wrapper around two ``DexHandRetargeter`` instances. Create
-   ``DexHandRetargeterConfig`` for left and right hands, then instantiate with
-   ``left_config``, ``right_config``, and ``target_joint_names`` (combined left + right joint
-   names):
+   **DexBiManualRetargeter:** Combines the ``hand_joints`` outputs of a left and a right
+   ``DexHandRetargeter`` into one ``hand_joints`` vector ordered by ``target_joint_names``.
+   Create one ``DexHandRetargeter`` per hand, pass each hand's joint names to
+   ``DexBiManualRetargeter``, and connect its ``left_hand_joints`` and ``right_hand_joints``
+   inputs:
 
    .. code-block:: python
 
+      from isaaccapture.retargeting_engine.deviceio_source_nodes import HandsSource
       from isaaccapture.retargeters import (
           DexBiManualRetargeter,
+          DexHandRetargeter,
           DexHandRetargeterConfig,
       )
+
+      left_hand_joints = [
+          "L_thumb_proximal_yaw_joint",
+          "L_thumb_proximal_pitch_joint",
+          "L_index_proximal_joint",
+          "L_middle_proximal_joint",
+          "L_ring_proximal_joint",
+          "L_pinky_proximal_joint",
+      ]
+      right_hand_joints = [name.replace("L_", "R_", 1) for name in left_hand_joints]
 
       left_config = DexHandRetargeterConfig(
           hand_joint_names=left_hand_joints,
@@ -179,12 +191,24 @@ Available Retargeters
           hand_side="right",
       )
 
+      hands = HandsSource(name="hands")
+      left = DexHandRetargeter(left_config, name="dex_hand_left").connect(
+          {HandsSource.LEFT: hands.output(HandsSource.LEFT)}
+      )
+      right = DexHandRetargeter(right_config, name="dex_hand_right").connect(
+          {HandsSource.RIGHT: hands.output(HandsSource.RIGHT)}
+      )
+
       bimanual_retargeter = DexBiManualRetargeter(
-          left_config=left_config,
-          right_config=right_config,
+          left_joint_names=left_hand_joints,
+          right_joint_names=right_hand_joints,
           target_joint_names=left_hand_joints + right_hand_joints,
           name="dex_bimanual",
       )
+      bimanual = bimanual_retargeter.connect({
+          "left_hand_joints": left.output("hand_joints"),
+          "right_hand_joints": right.output("hand_joints"),
+      })
 
    **Coordinate frame:** The ``handtracking_to_baselink_frame_transform`` parameter is a 3x3
    rotation matrix flattened to 9 elements. Applied as
@@ -248,7 +272,20 @@ Available Retargeters
       For a complete hand retargeting example (e.g. ``HandsSource`` + ``DexHandRetargeter`` or
       ``TriHandMotionControllerRetargeter``, connect and compute), see
       ``g1_trihand_retargeting_example.py`` and ``dex_bimanual_example.py`` in the
-      :code-dir:`examples/teleop/python/isaaccapture_examples/teleop` directory.
+      :code-dir:`examples/teleop/python/isaaccapture_examples/teleop` directory. With
+      ``isaaccapture`` installed as in :code-file:`examples/teleop/README.md`, run them from the
+      repository root; each starts CloudXR if none is serving, and ``--help`` lists its options:
+
+      .. code-block:: console
+
+         $ uv pip install -e ./examples/teleop
+         $ python -m isaaccapture_examples.teleop.g1_trihand_retargeting_example --accept-eula
+         $ python -m isaaccapture_examples.teleop.dex_bimanual_example --accept-eula
+
+      ``dex_bimanual_example`` defaults to the placeholder hand files in
+      :code-dir:`config/dex_retargeting <examples/teleop/python/isaaccapture_examples/teleop/config/dex_retargeting>`,
+      whose joint values do not follow the hand. Pass your robot hand's files with
+      ``--left-urdf``, ``--right-urdf``, ``--left-config``, and ``--right-config``.
 
 .. dropdown:: LocomotionRootCmdRetargeter
 
