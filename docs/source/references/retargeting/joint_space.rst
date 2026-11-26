@@ -5,7 +5,7 @@ Retargeter: Joint-Space Device
 ==============================
 
 ``JointStateRetargeter`` maps a name-keyed joint-state input (from
-:doc:`/device/joint_space`'s ``JointStateSource``) onto an Isaac Lab action, in one of two modes.
+:doc:`/device/joint_space/index`'s ``JointStateSource``) onto an Isaac Lab action, in one of two modes.
 It is the generic retargeter for leader arms, exoskeletons, and other joint-encoder devices; the
 SO-101 leader arm is the reference instance.
 
@@ -102,17 +102,19 @@ and flatten ``ee_pose`` + ``gripper_command`` into the env's task-space action l
 Run the example
 ---------------
 
-The repo ships ``examples/teleop/python/joint_space_device_example.py``:
+The repo ships ``examples/teleop/python/isaaccapture_examples/teleop/joint_space_device_example.py``:
 
 .. code-block:: console
 
+   $ uv pip install -e ./examples/teleop
+
    # Consumes the so101_leader plugin over OpenXR (source cloudxr.env first):
-   $ python joint_space_device_example.py --launch-plugin --mode joint --frames 8
-   $ python joint_space_device_example.py --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
+   $ python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plugin --mode joint --frames 8
+   $ python -m isaaccapture_examples.teleop.joint_space_device_example --launch-plugin --mode ee --urdf /path/to/so101_new_calib.urdf
 
 ``so101_new_calib.urdf`` is not shipped in this repo. It is ``Simulation/SO101/so101_new_calib.urdf``
 in `TheRobotStudio/SO-ARM100 <https://github.com/TheRobotStudio/SO-ARM100>`_; pass its path to
-``--urdf``. Run the commands from ``examples/teleop/python/``.
+``--urdf``. Run the commands from the repository root.
 
 Validate
 --------
@@ -126,7 +128,7 @@ rebasing, and the flattened action width/order):
 
 .. seealso::
 
-   :doc:`/device/joint_space` -- the schema, ``JointStateTracker``, ``JointStateSource``, the
+   :doc:`/device/joint_space/index` -- the schema, ``JointStateTracker``, ``JointStateSource``, the
    SO-101 plugin, and MCAP record/replay.
 
    :doc:`index` -- the broader retargeting interface and pipeline-builder pattern.

@@ -97,6 +97,8 @@ export const COUNTDOWN_STORAGE_KEY = 'cxr.react.countdownSeconds';
 export class CloudXR2DUI {
   /** Button to initiate XR streaming session */
   private startButton!: HTMLButtonElement;
+  /** Form edits and XR-store notifications must not bypass startup capability checks. */
+  private capabilitiesReady = false;
   /** Input field for the CloudXR server IP address */
   private serverIpInput!: HTMLInputElement;
   /** Button to clear the prefilled server IP (re-enables the browser autocomplete dropdown) */
@@ -170,6 +172,7 @@ export class CloudXR2DUI {
   private errorMessageBox!: HTMLElement;
   /** Error message text element */
   private errorMessageText!: HTMLElement;
+  private sessionError = '';
   /** Certificate acceptance link container */
   private certAcceptanceLink!: HTMLElement;
   /** Certificate acceptance link anchor */
@@ -424,7 +427,9 @@ export class CloudXR2DUI {
       const raw = seeds.get(field.key);
       if (raw === undefined) continue;
       const el = document.getElementById(field.elementId) as
-        HTMLInputElement | HTMLSelectElement | null;
+        | HTMLInputElement
+        | HTMLSelectElement
+        | null;
       if (!el) continue;
       if (field.kind === 'checked') {
         (el as HTMLInputElement).checked = raw === 'true';
@@ -591,7 +596,7 @@ export class CloudXR2DUI {
       streamTestMode: 'off',
       streamTestDurationSeconds: 5,
       headless: false,
-      autoRefreshMode: 'clean',
+      autoRefreshMode: 'never',
       reconnectEnabled: true,
       reconnectMaxAttempts: 3,
       reconnectDelayMs: 3000,
@@ -916,7 +921,7 @@ export class CloudXR2DUI {
       this.applyHeadlessImmersiveDropdown();
       this.updateConfiguration();
     });
-    addListener(this.autoRefreshModeSelect, 'change', updateConfig);
+    addListener(this.autoRefreshModeSelect, 'change', onProfileLinkedChange);
 
     addListener(this.resetSettingsButton, 'click', () => {
       if (window.confirm('Reset all settings to their defaults? This reloads the page.')) {
@@ -1008,7 +1013,14 @@ export class CloudXR2DUI {
     this.updateConnectButtonState();
   }
 
-  /** Disable Connect button and show validation error when resolution invalid; enable when valid. */
+  /** Gate Connect on completed startup checks, preserving form validation. */
+  public setCapabilitiesReady(ready: boolean): void {
+    this.capabilitiesReady = ready;
+    if (!ready && this.startButton) this.startButton.disabled = true;
+    this.updateConnectButtonState();
+  }
+
+  /** Update Connect availability from capability readiness and form validation. */
   public updateConnectButtonState(): void {
     const { w, h } = getResolutionFromInputs(this.perEyeWidthInput, this.perEyeHeightInput);
     const { reprojectionGridCols, reprojectionGridRows } = getGridFromInputs(
@@ -1031,8 +1043,8 @@ export class CloudXR2DUI {
       this.validationMessageBox.className = 'validation-message-box';
     }
     // Only update button when idle (don't override "CONNECT (starting...)" or "CONNECT (XR session active)")
-    if (this.startButton && this.startButton.innerHTML === 'CONNECT') {
-      const shouldEnable = !resolutionError && !gridError;
+    if (this.startButton && this.startButton.textContent?.trim() === 'CONNECT') {
+      const shouldEnable = this.capabilitiesReady && !resolutionError && !gridError;
       this.setStartButtonState(!shouldEnable, 'CONNECT');
     }
   }
@@ -1150,7 +1162,7 @@ export class CloudXR2DUI {
       headless: this.headlessInput.checked,
       autoRefreshMode: parseAutoRefreshMode(
         this.autoRefreshModeSelect.value,
-        this.getDefaultConfiguration().autoRefreshMode ?? 'clean'
+        this.getDefaultConfiguration().autoRefreshMode ?? 'never'
       ),
       reconnectEnabled: this.reconnectEnabledInput.checked,
       reconnectMaxAttempts: (() => {
@@ -1200,6 +1212,8 @@ export class CloudXR2DUI {
       return;
     }
 
+    this.autoRefreshModeSelect.value = profile.autoRefreshMode ?? 'never';
+
     if (cloudxr.perEyeWidth !== undefined) {
       this.perEyeWidthInput.value = String(cloudxr.perEyeWidth);
     }
@@ -1248,6 +1262,7 @@ export class CloudXR2DUI {
   /** Persist profile-driven form fields to localStorage so they are restored on load. */
   private persistProfileFieldsToLocalStorage(): void {
     try {
+      localStorage.setItem('autoRefreshMode', this.autoRefreshModeSelect.value);
       localStorage.setItem('perEyeWidth', this.perEyeWidthInput.value);
       localStorage.setItem('perEyeHeight', this.perEyeHeightInput.value);
       localStorage.setItem('reprojectionGridCols', this.reprojectionGridColsInput.value);
@@ -1294,7 +1309,7 @@ export class CloudXR2DUI {
    */
   public setStartButtonState(disabled: boolean, text: string): void {
     if (this.startButton) {
-      this.startButton.disabled = disabled;
+      this.startButton.disabled = disabled || !this.capabilitiesReady;
       this.startButton.innerHTML = text;
     }
   }
@@ -1353,11 +1368,22 @@ export class CloudXR2DUI {
    * @param type - Message type: 'success', 'error', or 'info'
    */
   public showStatus(message: string, type: 'success' | 'error' | 'info'): void {
-    if (this.errorMessageText && this.errorMessageBox) {
+    if (!this.sessionError && this.errorMessageText && this.errorMessageBox) {
       this.errorMessageText.textContent = message;
       this.errorMessageBox.className = `error-message-box show ${type}`;
     }
     console[type === 'error' ? 'error' : 'info'](message);
+  }
+
+  /** Keep the session failure above transient notices until streaming succeeds. */
+  public setSessionError(message: string): void {
+    this.sessionError = message;
+    if (message && this.errorMessageText && this.errorMessageBox) {
+      this.errorMessageText.textContent = message;
+      this.errorMessageBox.className = 'error-message-box show error';
+    } else if (!message) {
+      this.hideError();
+    }
   }
 
   /**
@@ -1372,7 +1398,7 @@ export class CloudXR2DUI {
    * Hides the error message
    */
   public hideError(): void {
-    if (this.errorMessageBox) {
+    if (!this.sessionError && this.errorMessageBox) {
       this.errorMessageBox.classList.remove('show');
     }
   }
@@ -1381,10 +1407,8 @@ export class CloudXR2DUI {
    * Hides the status box only if it still shows `message`.
    *
    * The box is a single shared slot: capability results, CloudXR errors, and
-   * host workstation notices all write to it, and each overwrites the last. A
-   * caller retracting its own message must not blank whatever replaced it --
-   * for example a CloudXR error raised moments earlier, which is reported
-   * imperatively and has no React state to re-render it afterwards.
+   * host workstation notices share it. Session errors stay pinned until cleared;
+   * otherwise, a caller retracting its own message must not blank its replacement.
    *
    * @param message - The exact text the caller previously displayed
    */

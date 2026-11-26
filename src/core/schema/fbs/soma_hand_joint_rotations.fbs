@@ -65,7 +65,7 @@ table SomaHandJointRotations {
     // when global_translation_is_valid is false.
     global_translation: Point (id: 1);
     global_translation_is_valid: bool (id: 2);
-    handedness: SomaHandedness = UNSPECIFIED (id: 3);
+    hand_side: SomaHandSide = UNSPECIFIED (id: 3);
 }
 
 table SomaHandJointRotationsRecord {

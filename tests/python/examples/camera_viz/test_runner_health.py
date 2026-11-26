@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from pipeline import VizRunner
+from isaaccapture_examples.camera_viz.pipeline import VizRunner
 
 
 class _AliveThread:

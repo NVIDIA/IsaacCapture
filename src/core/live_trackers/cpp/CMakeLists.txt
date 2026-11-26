@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.20)
 
 add_library(live_trackers STATIC
     schema_tracker_base.cpp
+    schema_metadata_tracker.cpp
     live_deviceio_factory.cpp
     live_head_tracker_impl.cpp
     live_hand_tracker_impl.cpp
@@ -13,12 +14,14 @@ add_library(live_trackers STATIC
     live_full_body_tracker_pico_impl.cpp
     live_full_body_tracker_noitom_impl.cpp
     live_full_body_tracker_xsens_impl.cpp
+    live_full_body_tracker_jmex_impl.cpp
     live_tensor_push_tracker_impl.cpp
     live_haptic_command_reader_tracker_impl.cpp
     live_keyboard_tracker_impl.cpp
     ${GENERATED_TRACKER_LIVE_SOURCES}
     inc/live_trackers/schema_tracker_base.hpp
     inc/live_trackers/schema_tracker.hpp
+    inc/live_trackers/schema_metadata_tracker.hpp
     inc/live_trackers/live_deviceio_factory.hpp
     live_head_tracker_impl.hpp
     live_hand_tracker_impl.hpp
@@ -27,6 +30,7 @@ add_library(live_trackers STATIC
     live_full_body_tracker_pico_impl.hpp
     live_full_body_tracker_noitom_impl.hpp
     live_full_body_tracker_xsens_impl.hpp
+    live_full_body_tracker_jmex_impl.hpp
     live_tensor_push_tracker_impl.hpp
     live_haptic_command_reader_tracker_impl.hpp
     live_keyboard_tracker_impl.hpp

@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: LicenseRef-OpenMDW-1.1
+
+# DINOv3 is installed separately with --no-deps from requirements-dinov3.txt.
+-r requirements/inference.txt
+-r requirements/rendering.txt

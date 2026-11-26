@@ -1,0 +1,636 @@
+// SPDX-FileCopyrightText: 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import { useCallback, useEffect, useId, useReducer, useRef, useState, type CSSProperties } from "react";
+import { useCaptureSession, type ConnectionPhase } from "./useCaptureSession";
+import type { PreviewSnapshot } from "./captureProtocol";
+import {
+  CaptureMode,
+  CaptureStatusType,
+  ProviderState,
+  deviceStateLabel,
+  providerStateLabel,
+  startupStageLabel,
+  statusReasonLabel,
+  stopReasonLabel,
+  type CaptureStatusResponse,
+  type CameraStatus,
+  type DeviceStatus,
+  type ProviderStatus,
+} from "./captureStatus";
+import { CaptureTree } from "./CaptureTree";
+import { CameraGrid } from "./CameraGrid";
+import { OperatorBar } from "./OperatorBar";
+import { SidebarResizer } from "./SidebarResizer";
+import {
+  SIDEBAR_DEFAULT_PX,
+  SIDEBAR_MIN_PX,
+  clampSidebarWidth,
+  loadSidebarWidth,
+  maxSidebarWidth,
+  saveSidebarWidth,
+} from "./sidebarWidth";
+import { deviceTone, retainedTone, type Tone } from "./deviceHealth";
+import { PoseViserPanel } from "./PoseViserPanel";
+import { RecordingPanel } from "./RecordingPanel";
+import { SettingsPanel, type SettingsTab } from "./SettingsPanel";
+import { StepRail, type OpenableStep } from "./StepRail";
+import { UptimeChip } from "./UptimeChip";
+import { useSetup } from "./useSetup";
+import { WrapUpDialog } from "./WrapUpDialog";
+import { useOperatorSettings } from "./useOperatorSettings";
+import { buildRecordingActions } from "./recordingActions";
+import type { RecordingPhase } from "./recordingUiReducer";
+
+/** Feed health is derived from ConnectionPhase rather than a separate
+ * polling freshness signal, since the connection hook owns delivery
+ * freshness directly now -- there is no HTTP polling fallback. */
+type FeedHealth = "connecting" | "ok" | "delayed" | "unavailable";
+
+/** Maps the connection hook's own phase to the coarser feed-health label
+ * shown in the header. */
+function feedHealthFromPhase(phase: ConnectionPhase): FeedHealth {
+  switch (phase) {
+    case "connecting":
+    case "synchronizing":
+      return "connecting";
+    case "connected":
+      return "ok";
+    case "reconnecting":
+      return "delayed";
+    case "unavailable":
+      return "unavailable";
+  }
+}
+
+/** Adapts a WS PreviewSnapshot into the existing CaptureStatusResponse
+ * shape so the status strip and session/provider details can keep reading
+ * one consistent response type. `schema_version`/`stop_reason` are
+ * reconstructed field-for-field from the snapshot's own capture.* facts,
+ * never invented. */
+function snapshotToLegacyStatus(snapshot: PreviewSnapshot): CaptureStatusResponse {
+  // One coherent observation: once `stopped` is present the attempt is
+  // over, so running/startup/message/status all come from the terminal
+  // facts, never from an earlier (now superseded) `status` projection --
+  // a terminal view must not keep internally claiming running=true or
+  // showing a stale startup_stage/message, and must show the real final
+  // StatusSnapshot (counters/providers/devices), not an older one.
+  const terminal = snapshot.stopped !== null;
+  return {
+    schema_version: snapshot.version,
+    backend_instance_id: snapshot.backend_instance_id,
+    station_label: snapshot.station_label,
+    profile_label: snapshot.profile_label,
+    mode: snapshot.started?.mode ?? null,
+    session_id: snapshot.started?.session_id ?? snapshot.status?.session_id ?? snapshot.stopped?.session_id ?? null,
+    connecting: snapshot.connecting,
+    status_type: terminal ? null : (snapshot.status?.type ?? null),
+    running: terminal ? false : (snapshot.status?.running ?? false),
+    startup_stage: terminal ? null : (snapshot.status?.startup_stage ?? null),
+    message: terminal ? null : (snapshot.status?.message ?? null),
+    terminal,
+    stop_reason: snapshot.stopped?.reason ?? null,
+    error_message: snapshot.error_message ?? snapshot.stopped?.error_message ?? null,
+    status: terminal ? (snapshot.stopped?.status ?? null) : (snapshot.status?.status ?? null),
+  };
+}
+
+interface Presentation {
+  headline: string;
+  detail: string | null;
+  tone: Tone;
+  /** false means the status strip and details below show an observation
+   * that is no longer current (a stale feed) or will never change again
+   * (terminal) -- callers must not present it with live/positive styling. */
+  live: boolean;
+  /** A short caption for sections showing retained data while !live, e.g.
+   * "Last known" or "Final". null while live. */
+  freshnessLabel: string | null;
+}
+
+/** The pure headline/detail/tone facts for a response, independent of feed
+ * freshness -- derivePresentation() below is what actually accounts for
+ * staleness/terminal state before this reaches the page. */
+function deriveLifecycleFacts(r: CaptureStatusResponse): Pick<Presentation, "headline" | "detail" | "tone"> {
+  if (r.terminal) {
+    if (r.stop_reason === null) {
+      // CaptureStopped.reason is None for unconfirmed local completion
+      // (e.g. the transport dropped) -- never presented as if the server
+      // had confirmed a real stop reason.
+      return { headline: "Capture ended (unconfirmed)", detail: r.error_message, tone: "warning" };
+    }
+    const reason = stopReasonLabel(r.stop_reason);
+    return {
+      headline: "Capture stopped",
+      detail: `${reason}${r.error_message ? ` — ${r.error_message}` : ""}`,
+      tone: "neutral",
+    };
+  }
+  if (r.connecting) {
+    return { headline: "Connecting to capture server", detail: r.message, tone: "neutral" };
+  }
+  if (r.error_message !== null && r.session_id === null) {
+    // A real pre-acceptance failure: rejected/refused/closed before a
+    // session even existed -- never presented as a fabricated lifecycle.
+    return { headline: "Capture unavailable", detail: r.error_message, tone: "critical" };
+  }
+  if (r.status_type === CaptureStatusType.STARTING) {
+    const stage = r.startup_stage === null ? null : startupStageLabel(r.startup_stage);
+    return {
+      headline: "Capture initializing",
+      detail: [stage, r.message].filter((v) => v !== null).join(" — ") || null,
+      tone: "neutral",
+    };
+  }
+  if (r.running) {
+    return { headline: "Capture running", detail: null, tone: "positive" };
+  }
+  return { headline: "Capture initializing", detail: r.message, tone: "neutral" };
+}
+
+/** Derives the one presentation the whole page renders from actual response
+ * facts plus socket currentness -- see frontend/README.md's "Status
+ * presentation" section. The single source every component (status strip,
+ * details, live region, CameraGrid) reads from, so they cannot disagree
+ * about whether what's on screen is current.
+ *
+ * `connected` must be exactly `phase === "connected"` -- not a broader
+ * "feed health" mapping. Every other phase (auto-retrying, exhausted
+ * retry budget, fatal protocol error) means the socket is not currently
+ * delivering, so any cached nonterminal facts are presented as retained/
+ * stale, never live-positive, regardless of which specific phase it is. */
+function derivePresentation(r: CaptureStatusResponse | null, connected: boolean): Presentation {
+  if (r === null) {
+    return { headline: "Connecting to capture server", detail: null, tone: "neutral", live: true, freshnessLabel: null };
+  }
+  const facts = deriveLifecycleFacts(r);
+  if (r.terminal) {
+    return { ...facts, live: false, freshnessLabel: "Final" };
+  }
+  if (!connected) {
+    return {
+      headline: facts.headline,
+      detail: facts.detail,
+      // Same rule retainedTone() applies to provider rows below -- a stale
+      // feed must never keep showing the live-positive "running" look.
+      tone: retainedTone(facts.tone, false),
+      live: false,
+      freshnessLabel: "Last known",
+    };
+  }
+  return { ...facts, live: true, freshnessLabel: null };
+}
+
+/** The capture mode as shown to the operator, or "Mode pending" before
+ * an attempt has been accepted. */
+function modeLabel(mode: CaptureStatusResponse["mode"]): string {
+  if (mode === null) return "Mode pending";
+  return mode === CaptureMode.MOCK ? "Mock" : "Live";
+}
+
+/** The CSS class for one of the four semantic tones. */
+function toneClass(tone: Tone): string {
+  return `tone-${tone}`;
+}
+
+// DeviceState and ProviderState are different enums that happen to share
+// some numeric values (e.g. ProviderState.AVAILABLE=2 == DeviceState.UNKNOWN=2)
+// -- kept as a separate table, never looked up through DEVICE_TONE.
+const PROVIDER_TONE: Partial<Record<number, Tone>> = {
+  [ProviderState.AVAILABLE]: "positive",
+  [ProviderState.FAILED]: "critical",
+  [ProviderState.INITIALIZING]: "warning",
+  [ProviderState.STOPPED]: "neutral",
+};
+
+/** The semantic tone for a provider's ProviderState -- looked up through
+ * its own table, never DEVICE_TONE (see the comment above it). */
+function providerTone(status: ProviderStatus["status"]): Tone {
+  return PROVIDER_TONE[status] ?? "neutral";
+}
+
+/** The page's top bar: app title, capture mode, feed-health status and the Settings button.
+ * There is no page/tab navigation -- the generic capture display and the
+ * Ego Capture UI recording panel are always-present siblings on one page, and
+ * Settings and the end-of-day report open as dialogs over them rather than replacing them. */
+function AppHeader({
+  response,
+  feedHealthLabel,
+  onOpenSettings,
+}: {
+  response: CaptureStatusResponse | null;
+  feedHealthLabel: string;
+  onOpenSettings: () => void;
+}) {
+  return (
+    <header className="app-header">
+      <div className="app-title">
+        <span className="app-name">Ego Capture UI</span>
+      </div>
+      <div className="header-right">
+        <span className="mode-badge">{modeLabel(response?.mode ?? null)}</span>
+        {/* Announces feed-health changes (e.g. "Delayed") but not the
+         * separately-rendered sample-age ticker, so visitors using a
+         * screen reader hear meaningful transitions, not every tick. */}
+        <span className="feed-health" aria-live="polite">
+          Feed {feedHealthLabel}
+        </span>
+        <button type="button" className="settings-button" onClick={onOpenSettings} aria-haspopup="dialog">
+          Settings
+        </button>
+      </div>
+    </header>
+  );
+}
+
+/** The compact status row beneath the header: station, its read-only uptime
+ * chip (read again whenever `uptimeKey` changes), and the real capture lifecycle headline (a quiet one-liner, not a large hero). The supporting
+ * session/provider details are reached by scrolling to their own collapsed
+ * disclosure at the bottom of the page, not a link from here. A normal
+ * running/current state stays quiet here; an error or stale feed instead
+ * gets a visible banner from `StaleOrErrorBanner` below. */
+function StatusLine({ response, presentation, uptimeKey }: { response: CaptureStatusResponse | null; presentation: Presentation; uptimeKey: string }) {
+  return (
+    <div className={`status-strip ${toneClass(presentation.tone)}`}>
+      <span className="status-station">{response?.station_label ?? "Station"}</span>
+      <UptimeChip stationLabel={response?.station_label ?? null} refreshKey={uptimeKey} />
+      <span aria-live="polite" className="status-headline">
+        {presentation.freshnessLabel !== null && <span className="freshness-badge">{presentation.freshnessLabel}</span>}
+        {presentation.headline}
+        {presentation.detail !== null && <span className="status-detail"> — {presentation.detail}</span>}
+      </span>
+    </div>
+  );
+}
+
+/** A visible banner for a stale or unavailable feed; renders nothing for
+ * a live or terminal (already-labeled "Final") presentation. */
+function StaleOrErrorBanner({
+  presentation,
+  feedHealth,
+  diagnostic,
+  onRetry,
+}: {
+  presentation: Presentation;
+  feedHealth: FeedHealth;
+  diagnostic: string | null;
+  onRetry: () => void;
+}) {
+  if (presentation.live || presentation.freshnessLabel === "Final") return null;
+  return (
+    <p className="stale-banner" role="status">
+      {feedHealth === "unavailable" ? (
+        <>
+          Status updates unavailable{diagnostic !== null ? `: ${diagnostic}` : "."} — showing last known data.{" "}
+          <button type="button" className="refresh-button" onClick={onRetry}>
+            Retry
+          </button>
+        </>
+      ) : (
+        "Status updates unavailable — showing last known data."
+      )}
+    </p>
+  );
+}
+
+/** One tracking device or camera row in the session/provider details
+ * disclosure. */
+function SourceRow({
+  label,
+  status,
+  reason,
+  error,
+  live,
+}: {
+  label: string;
+  status: DeviceStatus["status"] | CameraStatus["status"];
+  reason: DeviceStatus["reason"];
+  error: string;
+  live: boolean;
+}) {
+  const tone = retainedTone(deviceTone(status), live);
+  return (
+    <li className={`source-row ${toneClass(tone)}`}>
+      <span className="source-label">{label}</span>
+      <span className="source-status">{deviceStateLabel(status)}</span>
+      {tone !== "positive" && (error !== "" || statusReasonLabel(reason) !== "None") && (
+        <span className="source-diagnostic">{error !== "" ? error : statusReasonLabel(reason)}</span>
+      )}
+    </li>
+  );
+}
+
+/** `freshnessLabel` is appended to each group header (e.g. "Tracking —
+ * Last known") rather than duplicated per row -- the staleness applies to
+ * the whole snapshot, not individual entries within it. */
+function SourceStatusList({
+  response,
+  live,
+  freshnessLabel,
+}: {
+  response: CaptureStatusResponse | null;
+  live: boolean;
+  freshnessLabel: string | null;
+}) {
+  const devices = response?.status?.devices ?? [];
+  const cameras = response?.status?.cameras ?? [];
+  const suffix = freshnessLabel !== null ? ` — ${freshnessLabel}` : "";
+  return (
+    <div className="source-groups">
+      <section>
+        <h3 className="group-sublabel">Tracking devices{suffix}</h3>
+        {devices.length === 0 ? (
+          <p className="empty-note">No tracking devices reported yet.</p>
+        ) : (
+          <ul className="source-list">
+            {devices.map((d) => (
+              <SourceRow key={d.id} label={d.description || d.id} status={d.status} reason={d.reason} error={d.error} live={live} />
+            ))}
+          </ul>
+        )}
+      </section>
+      <section>
+        <h3 className="group-sublabel">Cameras{suffix}</h3>
+        {cameras.length === 0 ? (
+          <p className="empty-note">No cameras selected.</p>
+        ) : (
+          <ul className="source-list">
+            {cameras.map((c) => (
+              <SourceRow key={c.stream_id} label={c.name} status={c.status} reason={c.reason} error={c.error} live={live} />
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
+/** The supporting disclosure for session/provider/device metadata and raw
+ * diagnostics -- collapsed by default so it never competes with the
+ * tracking tree for the first screen. */
+function SessionDetails({
+  response,
+  live,
+  freshnessLabel,
+}: {
+  response: CaptureStatusResponse | null;
+  live: boolean;
+  freshnessLabel: string | null;
+}) {
+  const detailsId = useId();
+  const providers = response?.status?.providers ?? [];
+  const suffix = freshnessLabel !== null ? ` — ${freshnessLabel}` : "";
+  return (
+    <details className="session-details">
+      <summary className="group-label">Session and provider details{suffix}</summary>
+      <div className="session-details-body">
+        <section>
+          <h3 className="group-sublabel">Session</h3>
+          <dl className="kv-list">
+            <div>
+              <dt>Station</dt>
+              <dd>{response?.station_label ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>Mode</dt>
+              <dd>{modeLabel(response?.mode ?? null)}</dd>
+            </div>
+            <div>
+              <dt>Configuration</dt>
+              <dd>{response?.profile_label ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>Session ID</dt>
+              <dd className="selectable">{response?.session_id ?? "—"}</dd>
+            </div>
+          </dl>
+        </section>
+        <section>
+          <h3 className="group-sublabel">Providers{suffix}</h3>
+          {providers.length === 0 ? (
+            <p className="empty-note">No providers reported yet.</p>
+          ) : (
+            <dl className="kv-list">
+              {providers.map((p) => (
+                <div key={p.id}>
+                  <dt>{p.name}</dt>
+                  <dd className={toneClass(retainedTone(providerTone(p.status), live))}>{providerStateLabel(p.status)}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </section>
+        <SourceStatusList response={response} live={live} freshnessLabel={freshnessLabel} />
+        <details className="technical-details">
+          <summary id={detailsId}>Technical details</summary>
+          <pre className="technical-json">{JSON.stringify(response, null, 2)}</pre>
+        </details>
+      </div>
+    </details>
+  );
+}
+
+const FEED_HEALTH_LABEL: Record<string, string> = {
+  connecting: "connecting",
+  ok: "current",
+  delayed: "delayed",
+  unavailable: "unavailable",
+};
+
+/** The one application shell: a single capture connection powers the
+ * generic status/tree/camera display and the Ego Capture UI recording panel,
+ * rendered together as permanent siblings on one page -- there is no
+ * separate page/tab for either. */
+export default function App() {
+  const {
+    phase,
+    snapshot,
+    receivedAtMonotonic,
+    diagnostic,
+    trackingSample,
+    recordingSnapshot,
+    recordingSnapshotReceivedAtMonotonic,
+    retry,
+    sendRecordingCommand,
+    operatorToken,
+    setOperatorToken,
+    clearOperatorToken,
+    controlToken,
+    setControlToken,
+    clearControlToken,
+  } = useCaptureSession();
+  const feedHealth = feedHealthFromPhase(phase);
+  const response = snapshot === null ? null : snapshotToLegacyStatus(snapshot);
+  const presentation = derivePresentation(response, phase === "connected");
+  const recordingActions = buildRecordingActions(sendRecordingCommand);
+  // A live take frames the cameras in red, so the state reads from across the room; never from a stale feed.
+  const recording = presentation.live && recordingSnapshot?.episodePhase === "RECORDING";
+  const [panelPhase, setPanelPhase] = useState<RecordingPhase>("idle");
+  // The side panel is always showing: the 3D view above the raw data. Its width is the operator's to choose by
+  // dragging the divider; the cameras, status bar and controls take whatever it leaves. The choice is remembered.
+  const [sidebarWidth, setSidebarWidth] = useState(() => clampSidebarWidth(loadSidebarWidth(), window.innerWidth));
+  const [resizing, setResizing] = useState(false);
+  // The latest clamped width, readable from event handlers without a stale closure (a drag end must save the final value).
+  const sidebarWidthRef = useRef(sidebarWidth);
+  const applyWidth = (requested: number, persist: boolean) => {
+    const next = clampSidebarWidth(requested, window.innerWidth);
+    sidebarWidthRef.current = next;
+    setSidebarWidth(next);
+    // Only a choice the operator made is remembered; a window refit must not overwrite their preference.
+    if (persist) saveSidebarWidth(next);
+  };
+  useEffect(() => {
+    // A smaller window can no longer fit the remembered width, and the main column must keep its minimum.
+    const refit = () => applyWidth(sidebarWidthRef.current, false);
+    window.addEventListener("resize", refit);
+    return () => window.removeEventListener("resize", refit);
+  }, []);
+  const unavailable = response === null && feedHealth === "unavailable";
+  // At most one dialog is open over the page; while one is, the page behind it takes no input.
+  const [dialog, setDialog] = useState<"settings" | "wrap_up" | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("station");
+  // Counts Settings openings: each one starts the dialog afresh on the tab that was asked for.
+  const [settingsOpenings, countSettingsOpening] = useReducer((n: number) => n + 1, 0);
+  const settingsOpen = dialog === "settings";
+  const modalOpen = dialog !== null;
+  // The operator settings the page itself uses (camera roles). Re-read each time Settings closes, so a change
+  // saved there reaches the tiles without a reload.
+  const [settingsGeneration, setSettingsGeneration] = useState(0);
+  const operatorSettings = useOperatorSettings(settingsGeneration);
+  // The start-of-day flow. It is read again when a dialog that can change it closes, and whenever the facts it
+  // is derived from change: the backend's own readiness reason, the station in use and the saved count. The
+  // control token goes with it, so the reply says which address the headset connects to.
+  const [setupGeneration, refreshSetup] = useReducer((n: number) => n + 1, 0);
+  const setup = useSetup(`${setupGeneration}|${recordingSnapshot?.notReadyReason ?? ""}|${response?.station_label ?? ""}|${recordingSnapshot?.savedCount ?? 0}`, { controlToken, scope: response?.station_label ?? "" });
+  /** Open Settings on the given tab, as a fresh dialog. */
+  const openSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    countSettingsOpening();
+    setDialog("settings");
+  };
+  /** Close Settings and read what it can change again: the camera setup the tiles go by, and the flow. */
+  const closeSettings = () => {
+    setDialog(null);
+    setSettingsGeneration((n) => n + 1);
+    refreshSetup();
+  };
+  /** Close End of day and read the flow again: a correction or a saved report can change the Wrap up step. */
+  const closeWrapUp = useCallback(() => {
+    setDialog(null);
+    refreshSetup();
+  }, []);
+  /** Open the place a step of the start-of-day flow is dealt with. */
+  const openStep = (step: OpenableStep) => {
+    if (step === "wrap_up") setDialog("wrap_up");
+    else openSettings(step);
+  };
+  // Every camera the session offers can fill a role, whichever path its video takes to the page.
+  const cameraSources = (snapshot?.started?.streams ?? []).filter((s) => s.kind === "camera" || s.kind === "livekit_camera").map((s) => s.name);
+
+  return (
+    <div className="app-shell app-shell--operator">
+      <AppHeader response={response} feedHealthLabel={FEED_HEALTH_LABEL[feedHealth]} onOpenSettings={() => openSettings("station")} />
+      <StepRail steps={setup?.steps ?? null} onOpen={openStep} />
+      {/* Mounted only while open, so every opening starts from a fresh report and an empty notes draft. */}
+      {dialog === "wrap_up" && <WrapUpDialog open onClose={closeWrapUp} controlToken={controlToken} />}
+      <SettingsPanel
+        key={settingsOpenings}
+        initialTab={settingsTab}
+        open={settingsOpen}
+        onClose={closeSettings}
+        sidebarWidth={sidebarWidth}
+        sidebarDefault={SIDEBAR_DEFAULT_PX}
+        onResetSidebar={() => applyWidth(SIDEBAR_DEFAULT_PX, true)}
+        controlToken={controlToken}
+        cameraSources={cameraSources}
+        setup={setup}
+      />
+      <div
+        inert={modalOpen}
+        className={`op-body${resizing ? " op-body--resizing" : ""}`}
+        style={{ "--op-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      >
+        <main className="app-main op-main">
+          {unavailable ? (
+            <section className="unavailable-panel">
+              <p>Status updates unavailable{diagnostic !== null ? `: ${diagnostic}` : "."}</p>
+              <button type="button" className="refresh-button" onClick={retry}>
+                Retry
+              </button>
+            </section>
+          ) : (
+            <>
+              <OperatorBar
+                response={response}
+                live={presentation.live}
+                recordingSnapshot={recordingSnapshot}
+                recordingSnapshotReceivedAtMonotonic={recordingSnapshotReceivedAtMonotonic}
+                operatorName={operatorToken}
+                hasControlToken={controlToken !== null}
+                pendingPhase={panelPhase}
+              />
+              {/* The chip is keyed on what the bar above shows, so the two do not disagree until the chip's own timer. */}
+              <StatusLine
+                response={response}
+                presentation={presentation}
+                uptimeKey={`${recordingSnapshot?.episodePhase ?? ""}|${recordingSnapshot?.notReadyReason ?? ""}|${recordingSnapshot?.savedCount ?? 0}`}
+              />
+              <StaleOrErrorBanner presentation={presentation} feedHealth={feedHealth} diagnostic={diagnostic} onRetry={retry} />
+              {/* The cameras are the page: they take every pixel the status bar above and the controls below leave. */}
+              <div className={`op-stage${recording ? " op-stage--recording" : ""}`}>
+                <CameraGrid snapshot={snapshot} live={presentation.live} receivedAtMonotonic={receivedAtMonotonic} cameraRoles={operatorSettings?.camera_roles ?? null} />
+              </div>
+              <div className="op-dock">
+                <RecordingPanel
+                  recordingSnapshot={recordingSnapshot}
+                  recordingSnapshotReceivedAtMonotonic={recordingSnapshotReceivedAtMonotonic}
+                  actions={recordingActions}
+                  operatorToken={operatorToken}
+                  setOperatorToken={setOperatorToken}
+                  clearOperatorToken={clearOperatorToken}
+                  controlToken={controlToken}
+                  setControlToken={setControlToken}
+                  clearControlToken={clearControlToken}
+                  onPhaseChange={setPanelPhase}
+                  interactionBlocked={modalOpen}
+                />
+              </div>
+            </>
+          )}
+        </main>
+        {!unavailable && (
+          <>
+            <SidebarResizer
+              width={sidebarWidth}
+              min={SIDEBAR_MIN_PX}
+              max={maxSidebarWidth(window.innerWidth)}
+              // Pointer moves during a drag are saved once, at drag end; a key press outside a drag is saved at once.
+              onResize={(width) => applyWidth(width, !resizing)}
+              onReset={() => applyWidth(SIDEBAR_DEFAULT_PX, true)}
+              onDragChange={(dragging) => {
+                setResizing(dragging);
+                if (!dragging) saveSidebarWidth(sidebarWidthRef.current);
+              }}
+            />
+            <aside className="op-sidebar" aria-label="3D view and details">
+              <section className="op-panel op-panel--3d" aria-label="3D view">
+                <PoseViserPanel
+                  visualization={snapshot?.visualization ?? null}
+                  backendInstanceId={snapshot?.backend_instance_id ?? null}
+                />
+              </section>
+              <section className="op-panel op-panel--details" aria-label="Details">
+                <CaptureTree
+                  trackingSample={presentation.live ? trackingSample : null}
+                  diagnostic={snapshot?.tracking?.diagnostic ?? null}
+                />
+                <SessionDetails response={response} live={presentation.live} freshnessLabel={presentation.freshnessLabel} />
+              </section>
+            </aside>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

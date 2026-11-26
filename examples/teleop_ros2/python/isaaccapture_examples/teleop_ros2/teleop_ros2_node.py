@@ -11,8 +11,7 @@ The `mode` parameter selects the teleoperation scenario and which topics are
 published:
 
   - controller_teleop (default): ee_poses (from controller aim poses for native
-                       or MANUS input, with MANUS calibration when selected; from
-                       provider wrist poses for Wuji input),
+                       input; from provider wrist poses for MANUS or Wuji input),
                        root_twist, root_pose, finger_joints
                        (retargeted TriHand angles), controller_data, head_pose,
                        and TF transforms for left/right wrists and head
@@ -92,10 +91,6 @@ class TeleopRos2Node(Node):
             self._params.resolved_hand_retargeter,
             self._params.hand_tracking_provider,
         )
-        if self._profile_spec.apply_manus_controller_mount_offset:
-            self.get_logger().info(
-                "Applying MANUS controller mount offset after pose transform."
-            )
         self._tf_broadcaster = TransformBroadcaster(self)
         self._create_publishers()
         self._config = build_session_config(self._params)
@@ -132,7 +127,6 @@ class TeleopRos2Node(Node):
             self._params.right_wrist_frame,
             self._params.transform_rotation,
             self._params.transform_translation,
-            self._profile_spec.apply_manus_controller_mount_offset,
             head=result["head"],
             head_frame=self._params.head_frame,
             ee_poses_frame=self._params.ee_poses_frame,

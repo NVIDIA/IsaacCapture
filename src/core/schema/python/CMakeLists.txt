@@ -5,6 +5,7 @@ pybind11_add_module(schema_py
     oak_bindings.h
     controller_bindings.h
     full_body_bindings.h
+    gamepad_bindings.h
     hand_bindings.h
     haptic_command_bindings.h
     head_bindings.h
@@ -27,6 +28,9 @@ pybind11_add_module(schema_py
     schema_module.cpp
     spacemouse_bindings.h
     steering_wheel_bindings.h
+    tactile_array_bindings.h
+    tactile_metadata_bindings.h
+    tracker_metadata_bindings.h
 )
 
 target_link_libraries(schema_py

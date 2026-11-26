@@ -8,6 +8,7 @@
 // Include binding definitions.
 #include "controller_bindings.h"
 #include "full_body_bindings.h"
+#include "gamepad_bindings.h"
 #include "hand_bindings.h"
 #include "haptic_command_bindings.h"
 #include "head_bindings.h"
@@ -28,7 +29,10 @@
 #include "soma_hand_joint_rotations_bindings.h"
 #include "spacemouse_bindings.h"
 #include "steering_wheel_bindings.h"
+#include "tactile_array_bindings.h"
+#include "tactile_metadata_bindings.h"
 #include "timestamp_bindings.h"
+#include "tracker_metadata_bindings.h"
 
 namespace py = pybind11;
 
@@ -60,6 +64,13 @@ PYBIND11_MODULE(_schema, m)
     // Bind OGLO tactile glove types (OgloGloveSample table).
     core::bind_oglo_tactile(m);
 
+    // Bind tactile types (TactileDataArray, TactileMetadata tables).
+    core::bind_tactile_array(m);
+    core::bind_tactile_metadata(m);
+
+    // Bind the helpers for producers of tracker metadata.
+    core::bind_tracker_metadata(m);
+
     // Bind joint-state types (JointState, JointStateOutput tables) for generic joint-space devices.
     core::bind_joint_state(m);
 
@@ -75,6 +86,9 @@ PYBIND11_MODULE(_schema, m)
 
     // Bind SpaceMouse types (SpaceMouseOutput table).
     core::bind_spacemouse(m);
+
+    // Bind gamepad types (GamepadInputState struct, GamepadSnapshot table).
+    core::bind_gamepad(m);
 
     // Bind message channel types (MessageChannelMessages table).
     core::bind_message_channel(m);

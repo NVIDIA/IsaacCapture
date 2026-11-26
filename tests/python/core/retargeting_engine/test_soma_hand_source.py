@@ -25,7 +25,7 @@ from isaaccapture.schema import (
     Point,
     Pose,
     Quaternion,
-    SomaHandedness,
+    SomaHandSide,
     SomaHandJoint,
     SomaHandJointPose,
     SomaHandJointPoses,
@@ -88,15 +88,15 @@ def fake_layer(hand_type="left"):
     return layer
 
 
-def rotations(handedness=SomaHandedness.LEFT):
+def rotations(hand_side=SomaHandSide.LEFT):
     joints = [
         SomaHandJointRotation(SomaHandJoint(index), Quaternion(0, 0, 0, 1))
         for index in range(25)
     ]
-    return SomaHandJointRotations(joints, Point(1, 2, 3), True, handedness)
+    return SomaHandJointRotations(joints, Point(1, 2, 3), True, hand_side)
 
 
-def poses(handedness=SomaHandedness.LEFT):
+def poses(hand_side=SomaHandSide.LEFT):
     positions = np.arange(75, dtype=np.float32).reshape(25, 3)
     joints = [
         SomaHandJointPose(
@@ -105,7 +105,7 @@ def poses(handedness=SomaHandedness.LEFT):
         )
         for index, position in enumerate(positions)
     ]
-    return SomaHandJointPoses(joints, handedness)
+    return SomaHandJointPoses(joints, hand_side)
 
 
 def payload_group(group_type, data):
@@ -116,7 +116,7 @@ def payload_group(group_type, data):
 
 def test_rotation_source_evaluates_received_payload():
     layer = fake_layer()
-    source = SomaHandSource("left", "vendor.left", SomaHandedness.LEFT, layer)
+    source = SomaHandSource("left", "vendor.left", SomaHandSide.LEFT, layer)
     assert isinstance(source.get_tracker(), SomaHandJointRotationsTracker)
     layer.get_reference_pose.assert_called_once_with(version="v0.3.1")
     raw = rotations()
@@ -143,16 +143,16 @@ def test_rotation_source_evaluates_received_payload():
 
 
 @pytest.mark.parametrize(
-    "handedness,hand_type",
-    [(SomaHandedness.LEFT, "left"), (SomaHandedness.RIGHT, "right")],
+    "hand_side,hand_type",
+    [(SomaHandSide.LEFT, "left"), (SomaHandSide.RIGHT, "right")],
 )
-def test_rotation_source_accepts_payload_handedness(handedness, hand_type):
-    payload = rotations(handedness)
+def test_rotation_source_accepts_payload_hand_side(hand_side, hand_type):
+    payload = rotations(hand_side)
     layer = fake_layer(hand_type)
 
-    source = SomaHandSource("hand", "vendor.hand", payload.handedness, layer)
+    source = SomaHandSource("hand", "vendor.hand", payload.hand_side, layer)
 
-    assert source.handedness == handedness
+    assert source.hand_side == hand_side
     assert source._evaluator.layer is layer
 
 
@@ -160,7 +160,7 @@ def test_joint_pose_source_maps_without_fk():
     source = SomaHandSource(
         "left",
         "vendor.left",
-        SomaHandedness.LEFT,
+        SomaHandSide.LEFT,
         representation=SomaHandRepresentation.JOINT_POSES,
     )
     assert isinstance(source.get_tracker(), SomaHandJointPosesTracker)
@@ -187,7 +187,7 @@ def test_joint_pose_source_invalidates_bad_numeric_entries():
     source = SomaHandSource(
         "left",
         "vendor.left",
-        SomaHandedness.LEFT,
+        SomaHandSide.LEFT,
         representation=SomaHandRepresentation.JOINT_POSES,
     )
     raw = SomaHandJointPoses(
@@ -205,7 +205,7 @@ def test_joint_pose_source_invalidates_bad_numeric_entries():
                 Pose(Point(0, 0, 0), Quaternion()),
             ),
         ],
-        SomaHandedness.LEFT,
+        SomaHandSide.LEFT,
     )
     inputs = payload_group(source.input_spec()["deviceio_soma_hand"], raw)
 
@@ -219,17 +219,17 @@ def test_joint_pose_source_invalidates_bad_numeric_entries():
     )
 
 
-def test_payload_handedness_must_match_collection():
+def test_payload_hand_side_must_match_collection():
     source = SomaHandSource(
         "left",
         "vendor.left",
-        SomaHandedness.LEFT,
+        SomaHandSide.LEFT,
         representation=SomaHandRepresentation.JOINT_POSES,
     )
     inputs = payload_group(
-        source.input_spec()["deviceio_soma_hand"], poses(SomaHandedness.RIGHT)
+        source.input_spec()["deviceio_soma_hand"], poses(SomaHandSide.RIGHT)
     )
-    with pytest.raises(ValueError, match="handedness"):
+    with pytest.raises(ValueError, match="hand side"):
         source({"deviceio_soma_hand": inputs})
 
 
@@ -244,12 +244,12 @@ def test_hand_transport_profiles_are_distinct():
 
 def test_rotation_source_requires_layer_and_valid_side():
     with pytest.raises(ValueError, match="prepared SOMA hand layer"):
-        SomaHandSource("left", "vendor.left", SomaHandedness.LEFT)
+        SomaHandSource("left", "vendor.left", SomaHandSide.LEFT)
     with pytest.raises(ValueError, match="LEFT or RIGHT"):
         SomaHandSource(
             "left",
             "vendor.left",
-            SomaHandedness.UNSPECIFIED,
+            SomaHandSide.UNSPECIFIED,
             fake_layer(),
         )
 
@@ -259,7 +259,7 @@ def test_rotation_source_rejects_layer_for_other_hand():
         SomaHandSource(
             "left",
             "vendor.left",
-            SomaHandedness.LEFT,
+            SomaHandSide.LEFT,
             fake_layer("right"),
         )
 
@@ -272,7 +272,7 @@ def test_rotation_source_rejects_wrong_hand_hierarchy():
         SomaHandSource(
             "left",
             "vendor.left",
-            SomaHandedness.LEFT,
+            SomaHandSide.LEFT,
             layer,
         )
 
@@ -304,7 +304,7 @@ def test_rotation_source_rejects_incompatible_hand_contract(change, error):
         SomaHandSource(
             "left",
             "vendor.left",
-            SomaHandedness.LEFT,
+            SomaHandSide.LEFT,
             layer,
         )
 
@@ -318,7 +318,7 @@ def test_hand_rotation_inputs_normalize_and_invalidate_numeric_values():
         ],
         Point(np.inf, 0, 0),
         True,
-        SomaHandedness.LEFT,
+        SomaHandSide.LEFT,
     )
 
     rotations, valid, translation, translation_valid = _SomaHandEvaluator._pose_inputs(

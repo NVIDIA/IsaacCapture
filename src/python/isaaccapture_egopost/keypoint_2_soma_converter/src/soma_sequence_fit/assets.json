@@ -1,0 +1,9 @@
+{
+  "SOMAHand.npz": "233e9225c1da05c6a3dd98107b9f027f2366e3b972bbe67e0d164e5d28619fff",
+  "SOMA_neutral.npz": "0bfde60903533f2a4abc989579d0d161fb0dc8d5301ecd17fd4a9168be543083",
+  "SOMA_template_rig.usda": "a952cb7bdf4ccd801e355d53122d395b985b69d0d9181439edad5081bb171856",
+  "SOMA_procedural_transforms.json": "9853e19ab51625ffaa7d9e7ccf0e443272c2740837604e6bacd66604e8edf509",
+  "MHR/mhr_model_lod1.pt": "352e271a6c42729c68554ceaea0c955e866970160c31e35506d782dc0f7377bc",
+  "MHR/base_body_lod1.obj": "e8bbb3f3681d76737635c10a9e6f6a058ad3d9be5a75547f84a578cea572e916",
+  "MHR/SOMA_wrap_lod1.obj": "9ab7a2328d5b026c17ef1d09ed692ffeb68f96d3fc74970cba72e667dbe0f728"
+}

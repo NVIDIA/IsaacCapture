@@ -62,7 +62,9 @@ from .teleop_state_manager_types import teleop_control_states
 logger = logging.getLogger(__name__)
 
 # Plugins that publish device status (see PluginDeviceStatusPublisher); others launch unmonitored.
-_MONITORED_PLUGIN_NAMES = frozenset({"manus_hand_plugin", "spacemouse"})
+_MONITORED_PLUGIN_NAMES = frozenset(
+    {"manus_hand_plugin", "avatar_hand_plugin", "spacemouse", "gamepad"}
+)
 
 
 def _resolve_sink(entry: GraphExecutable) -> tuple[GraphExecutable, IDeviceIOSink]:
@@ -231,10 +233,17 @@ class TeleopSession:
         self._active_retargeting_execution_mode: RetargetingExecutionMode | None = None
         # True from the start of __enter__ until __exit__ or rollback finishes.
         self._in_context: bool = False
+        self._cleanup_error: BaseException | None = None
         # Discover sources and external leaves from pipeline
         self._discover_sources()
+        self._controller_status_trackers = self._find_controller_status_trackers()
         # Vendor selection is a live-only concern; reject it up front in replay.
         self._reject_vendor_selection_in_replay()
+
+    @property
+    def cleanup_failed(self) -> bool:
+        """Whether resource cleanup failed; reuse and borrowed-owner release are unsafe."""
+        return self._cleanup_error is not None
 
     @property
     def oxr_session(self) -> oxr.OpenXRSession | None:
@@ -493,7 +502,10 @@ class TeleopSession:
             RuntimeError: If a critical DeviceIO/tracker/runtime failure occurs
                 while updating the session. This is a fatal condition; the
                 application is expected to terminate rather than continue.
+            BaseException: The stored failure if earlier resource cleanup failed.
         """
+        if self._cleanup_error is not None:
+            raise self._cleanup_error
         if self.frame_count % 60 == 0:
             self._check_plugin_health()
 
@@ -576,11 +588,18 @@ class TeleopSession:
         directly so the behavioral core stays in one place.
         """
         try:
+            if self._oxr_session is not None:
+                # Apply STOPPING/READY before querying input on the shared handles.
+                self._oxr_session.get_provider_snapshot()
             self.deviceio_session.update()
         except BaseException as error:
             self._status_monitor.mark_runtime_failed(error)
             raise
-        self._status_monitor.refresh(self.deviceio_session, self._oxr_session)
+        self._status_monitor.refresh(
+            self.deviceio_session,
+            self._oxr_session,
+            openxr_controllers=self._controller_status_snapshots(),
+        )
         pipeline_inputs = self._collect_tracker_data()
 
         if request.external_inputs:
@@ -614,7 +633,8 @@ class TeleopSession:
                 real_time_ns=graph_time.real_time_ns,
             ),
             execution_events=ExecutionEvents(
-                reset=bool(execution_events.reset),
+                # Merge the retained reset only after decoding current controls.
+                reset=bool(execution_events.reset or request.reset_requested),
                 execution_state=ExecutionState(execution_events.execution_state),
             ),
         )
@@ -822,12 +842,19 @@ class TeleopSession:
         """Publish metadata/context for a pipelined result and finish the step.
 
         ``last_context`` must always describe the output returned from this
-        call, not the request just submitted. The returned output is copied so
+        call, not the request just submitted; its reset flag also delivers any
+        unacknowledged reset edge from earlier coalesced work. The output is copied so
         user mutation cannot corrupt the cached latest frame; uncopyable
         outputs should implement ``create_snapshot()`` or use sync mode.
         """
         returned_outputs = snapshot_retargeter_io(frame.outputs)
-        returned_context = snapshot_compute_context(frame.context)
+        # latest() already gives this caller an isolated context. The seed is
+        # still shared with the runner and needs its own copy.
+        returned_context = (
+            snapshot_compute_context(frame.context)
+            if ran_synchronously
+            else frame.context
+        )
         now = time.monotonic()
         returned_age_frames = submitted_frame_id - frame.frame_id
         frame_deadline_miss = returned_age_frames > 1
@@ -843,6 +870,8 @@ class TeleopSession:
             ran_synchronously=ran_synchronously,
             frame_deadline_miss=frame_deadline_miss,
         )
+        if self._async_runner is not None:
+            self._async_runner.acknowledge_reset(frame.reset_generation)
         self.frame_count += 1
         return returned_outputs
 
@@ -1007,6 +1036,36 @@ class TeleopSession:
             for source in self._sources
         }
 
+    def _find_controller_status_trackers(self) -> tuple[Any, ...]:
+        """Controller trackers belonging to configured input sources."""
+        trackers = []
+        seen_ids = set()
+        for source in self._sources:
+            tracker = source.get_tracker()
+            if (
+                id(tracker) in seen_ids
+                or not callable(getattr(tracker, "get_left_controller", None))
+                or not callable(getattr(tracker, "get_right_controller", None))
+            ):
+                continue
+            seen_ids.add(id(tracker))
+            trackers.append(tracker)
+        return tuple(trackers)
+
+    def _controller_status_snapshots(self) -> dict[str, Any] | None:
+        """Read the latest cached per-side samples without another DeviceIO update."""
+        if not self._controller_status_trackers:
+            return None
+        snapshots = {"left": None, "right": None}
+        for tracker in self._controller_status_trackers:
+            for side in snapshots:
+                sample = getattr(tracker, f"get_{side}_controller")(
+                    self.deviceio_session
+                )
+                if snapshots[side] is None and sample is not None:
+                    snapshots[side] = sample
+        return snapshots
+
     def _check_plugin_health(self):
         """Check health of all running plugins."""
         for plugin_context in self.plugin_contexts:
@@ -1042,7 +1101,10 @@ class TeleopSession:
 
         Raises:
             RuntimeError: If the session is already active.
+            BaseException: The stored failure if earlier resource cleanup failed.
         """
+        if self._cleanup_error is not None:
+            raise self._cleanup_error
         # Detect nested context-manager use; this does not make the session thread-safe.
         if self._in_context:
             raise RuntimeError("TeleopSession is already active")
@@ -1061,13 +1123,22 @@ class TeleopSession:
                 self._exit_stack = stack.pop_all()
             except BaseException as error:
                 try:
-                    # Give resources the setup error, but do not let one suppress it.
                     stack.__exit__(type(error), error, error.__traceback__)
-                except BaseException:
+                except BaseException as cleanup_error:
+                    # An exhausted ExitStack does not prove that native owners drained.
+                    self._cleanup_error = error
+                    add_note = getattr(error, "add_note", None)
+                    if callable(add_note):
+                        add_note(
+                            f"TeleopSession setup rollback also failed: {cleanup_error!r}"
+                        )
                     logger.exception("Failed to roll back TeleopSession setup")
                 finally:
                     self._status_monitor.mark_startup_failed(error)
                     self._oxr_session = None
+                    self.deviceio_session = None
+                    self.plugin_managers = []
+                    self.plugin_contexts = []
                     self._in_context = False
                 raise
 
@@ -1087,10 +1158,16 @@ class TeleopSession:
         self._resolved_plugins = []
 
         live_mode = self.config.mode == SessionMode.LIVE
+        external_openxr = (
+            self.config.oxr_handles is not None
+            or self.config.oxr_session_factory is not None
+        )
         self._status_monitor.rebuild(
             (),
             include_openxr=live_mode,
-            external_openxr=live_mode and self.config.oxr_handles is not None,
+            external_openxr=live_mode and external_openxr,
+            include_openxr_controllers=live_mode
+            and bool(self._controller_status_trackers),
         )
         if live_mode:
             self._resolve_monitored_plugins()
@@ -1101,7 +1178,8 @@ class TeleopSession:
                     if spec is not None
                 ),
                 include_openxr=True,
-                external_openxr=self.config.oxr_handles is not None,
+                external_openxr=external_openxr,
+                include_openxr_controllers=bool(self._controller_status_trackers),
             )
 
         # Auto-populate mcap_config from pipeline sources if recording or replaying.
@@ -1165,6 +1243,8 @@ class TeleopSession:
             # Resolve OpenXR handles
             if self.config.oxr_handles is not None:
                 handles = self.config.oxr_handles
+            elif self.config.oxr_session_factory is not None:
+                handles = self.config.oxr_session_factory(required_extensions)
             elif self.config.joint_publisher is not None:
                 handles = oxr.OpenXRSessionHandles(
                     *self._start_twin(stack, required_extensions)
@@ -1356,14 +1436,25 @@ class TeleopSession:
                 )
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit the context - cleanup resources."""
+        """Clean up resources, latching failures that prohibit reuse or borrowed-owner release."""
+        if self._cleanup_error is not None and not (
+            self._in_context and self._async_runner is not None
+        ):
+            raise self._cleanup_error
         if not self._in_context:
             return False
 
         runner_error = None
         if self._async_runner is not None:
             runner = self._async_runner
-            runner.stop()
+            try:
+                runner.stop()
+            except BaseException as cleanup_error:
+                self._cleanup_error = cleanup_error
+                raise
+            # A failed/interrupted join retains the stack. Retry is safe only
+            # through stop(), which must finish before any borrower is released.
+            self._cleanup_error = None
             try:
                 runner.raise_if_failed(only_unreported=True)
             except BaseException as err:
@@ -1385,6 +1476,9 @@ class TeleopSession:
             # session and stopping each plugin both reach the same native code.
             with capture_native_output():
                 self._exit_stack.__exit__(exc_type, exc_val, exc_tb)
+        except BaseException as cleanup_error:
+            self._cleanup_error = cleanup_error
+            raise
         finally:
             self._status_monitor.mark_stopped()
             # The ExitStack above closes the OpenXR session; drop our reference so the

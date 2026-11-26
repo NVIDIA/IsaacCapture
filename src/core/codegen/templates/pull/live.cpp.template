@@ -4,6 +4,9 @@
 #include "@LIVE_IMPL_FILE@.hpp"
 
 #include <mcap/recording_traits.hpp>
+#if @HAS_METADATA@
+#include <schema/@METADATA_SCHEMA@_bfbs_generated.h>
+#endif
 #include <schema/@SCHEMA@_bfbs_generated.h>
 
 namespace core
@@ -20,6 +23,18 @@ SchemaTrackerConfig make_@NAME@_tensor_config(const @CLASS@* tracker)
     return cfg;
 }
 } // namespace
+#if @HAS_METADATA@
+@MCAP_CHANNELS_TYPE@::@MCAP_CHANNELS_TYPE@(mcap::McapWriter& writer,
+                                           std::string_view base_name,
+                                           const std::vector<std::string>& sub_channels)
+    : data(writer, base_name, sub_channels),
+      metadata(writer,
+               base_name,
+               std::vector<std::string>(@TRAITS@::metadata_channels.begin(), @TRAITS@::metadata_channels.end()))
+{
+    // No-op: members set in the initializer list.
+}
+#endif
 std::unique_ptr<@MCAP_CHANNELS_TYPE@> @LIVE_IMPL@::create_mcap_channels(mcap::McapWriter& writer,
                                                                         std::string_view base_name)
 {
@@ -31,17 +46,38 @@ std::unique_ptr<@MCAP_CHANNELS_TYPE@> @LIVE_IMPL@::create_mcap_channels(mcap::Mc
                          const @CLASS@* tracker,
                          std::unique_ptr<@MCAP_CHANNELS_TYPE@> mcap_channels)
     : mcap_channels_(std::move(mcap_channels)),
+#if @HAS_METADATA@
+      m_schema_reader(handles, make_@NAME@_tensor_config(tracker), mcap_channels_ ? &mcap_channels_->data : nullptr, 0, 1),
+      m_metadata_reader(handles, tracker->collection_id(), mcap_channels_ ? &mcap_channels_->metadata : nullptr)
+#else
       m_schema_reader(handles, make_@NAME@_tensor_config(tracker), mcap_channels_.get(), 0, 1)
+#endif
 {
     // No-op: members set in the initializer list.
 }
 void @LIVE_IMPL@::update(int64_t /*monotonic_time_ns*/)
 {
+#if @HAS_METADATA@
+    // Metadata first, so it is recorded ahead of the data it lets through on the same tick.
+    const bool publish = m_metadata_reader.update();
+    m_schema_reader.update(m_tracked, publish);
+    if (!publish)
+    {
+        m_tracked.reset();
+    }
+#else
     m_schema_reader.update(m_tracked);
+#endif
 }
 const Serialized<@FB_TABLE@>& @LIVE_IMPL@::get_data() const
 {
     return m_tracked;
 }
+#if @HAS_METADATA@
+const Serialized<@METADATA@>& @LIVE_IMPL@::get_metadata() const
+{
+    return m_metadata_reader.get();
+}
+#endif
 
 } // namespace core

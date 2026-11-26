@@ -10,7 +10,7 @@ from isaaccapture.retargeting_engine.deviceio_source_nodes import (
     SomaHandSource,
 )
 from isaaccapture.retargeting_engine.tensor_types import SomaHandInputIndex
-from isaaccapture.schema import SomaHandedness, SomaHandJoint
+from isaaccapture.schema import SomaHandSide, SomaHandJoint
 
 from .hand_pipeline import HandViewLayout, HandViewPipeline
 
@@ -98,14 +98,14 @@ def create_soma_hand_pipeline(
     left = SomaHandSource(
         "hand_left",
         left_collection_id,
-        SomaHandedness.LEFT,
+        SomaHandSide.LEFT,
         layers[0],
         representation=representation,
     )
     right = SomaHandSource(
         "hand_right",
         right_collection_id,
-        SomaHandedness.RIGHT,
+        SomaHandSide.RIGHT,
         layers[1],
         representation=representation,
     )

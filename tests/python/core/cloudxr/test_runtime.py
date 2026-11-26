@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import MagicMock, patch
 
+from isaaccapture.cloudxr import runtime
 from isaaccapture.cloudxr.runtime import (
     _is_exp_available,
     _should_join_main,
@@ -91,6 +92,58 @@ def _make_package_roots(tmp_path, artifact_index: int | None) -> tuple[list[str]
 # ============================================================================
 # TestShouldUseExp / TestShouldJoinMain / resolve / get_sdk_path
 # ============================================================================
+
+
+class TestIsTegraT234:
+    """Tests for Orin detection from sysfs and the device tree."""
+
+    @pytest.fixture
+    def paths(self, tmp_path, monkeypatch):
+        """Point every signal at an empty tmp dir, i.e. a non-Jetson host."""
+        soc_devices = tmp_path / "soc_devices"
+        soc_devices.mkdir()
+        monkeypatch.setattr(runtime, "_SOC_DEVICES", soc_devices)
+        monkeypatch.setattr(runtime, "_DEVICE_TREE_COMPATIBLE", tmp_path / "compatible")
+        return tmp_path
+
+    @staticmethod
+    def _add_soc(paths, name: str, family: str, soc_id: str) -> None:
+        soc = paths / "soc_devices" / name
+        soc.mkdir()
+        (soc / "family").write_text(f"{family}\n")
+        (soc / "soc_id").write_text(f"{soc_id}\n")
+
+    def test_nothing_readable(self, paths):
+        assert runtime._is_tegra_t234() is False
+
+    def test_tegra_soc_device(self, paths):
+        self._add_soc(paths, "soc0", "Tegra", "35")
+        assert runtime._is_tegra_t234() is True
+
+    def test_tegra_soc_device_not_first(self, paths):
+        self._add_soc(paths, "soc0", "jep106:0001", "jep106:0001:0001")
+        self._add_soc(paths, "soc1", "Tegra", "35")
+        assert runtime._is_tegra_t234() is True
+
+    def test_smccc_soc_id(self, paths):
+        self._add_soc(paths, "soc1", "jep106:036b", "jep106:036b:0234")
+        assert runtime._is_tegra_t234() is True
+
+    def test_xavier_chip_id(self, paths):
+        self._add_soc(paths, "soc0", "Tegra", "25")
+        assert runtime._is_tegra_t234() is False
+
+    def test_chip_id_from_other_family(self, paths):
+        self._add_soc(paths, "soc0", "Other", "35")
+        assert runtime._is_tegra_t234() is False
+
+    def test_non_numeric_soc_id(self, paths):
+        self._add_soc(paths, "soc0", "Tegra", "abc")
+        assert runtime._is_tegra_t234() is False
+
+    def test_device_tree_compatible(self, paths):
+        (paths / "compatible").write_bytes(b"nvidia,p3737-0000\x00nvidia,tegra234\x00")
+        assert runtime._is_tegra_t234() is True
 
 
 class TestShouldUseExp:

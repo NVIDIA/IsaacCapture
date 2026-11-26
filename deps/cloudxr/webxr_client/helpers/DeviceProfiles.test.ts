@@ -18,6 +18,14 @@
 import { DEVICE_PROFILES } from './DeviceProfiles';
 
 describe('device profile defaults', () => {
+  it('refreshes every PICO session, including errors, and leaves other profiles off', () => {
+    for (const profile of Object.values(DEVICE_PROFILES)) {
+      expect(profile.autoRefreshMode ?? 'never').toBe(
+        profile.id === 'pico4ultra' ? 'any' : 'never'
+      );
+    }
+  });
+
   it('keeps every profile bitrate within the 100 Mbps StreamSDK ceiling', () => {
     for (const profile of Object.values(DEVICE_PROFILES)) {
       const kbps = profile.cloudxr?.maxStreamingBitrateKbps;

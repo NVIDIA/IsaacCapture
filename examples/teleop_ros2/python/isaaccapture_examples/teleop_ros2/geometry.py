@@ -11,60 +11,6 @@ from geometry_msgs.msg import Pose, TransformStamped
 from scipy.spatial.transform import Rotation
 
 
-def apply_manus_controller_to_hand_pose(pose: Pose, side: str) -> Pose:
-    """
-    Apply MANUS controller-to-hand calibration in the pose's current frame.
-
-    This is equivalent to:
-
-        T_world_hand = T_world_controller @ T_controller_hand
-    """
-    if side not in ("left", "right"):
-        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
-
-    # All MANUS calibration data is intentionally kept in this one function.
-    hand_left_pico_rotation = np.array(
-        [
-            [-0.91777945, -0.18672461, -0.35044942],
-            [0.37550315, -0.69513369, -0.61301431],
-            [-0.12914434, -0.6942068, 0.70809509],
-        ],
-        dtype=float,
-    )
-    hand_pico_translation = np.array([0.0, 0.0, 0.08], dtype=float)
-
-    if side == "left":
-        controller_to_hand_rot_mat = hand_left_pico_rotation.T
-    else:
-        mirror_y = np.diag([1.0, -1.0, 1.0])
-        hand_right_pico_rotation = mirror_y @ hand_left_pico_rotation @ mirror_y
-        controller_to_hand_rot_mat = hand_right_pico_rotation.T
-
-    controller_to_hand_trans = -controller_to_hand_rot_mat @ hand_pico_translation
-
-    world_controller_pos = np.array(
-        [pose.position.x, pose.position.y, pose.position.z],
-        dtype=float,
-    )
-    world_controller_rot = Rotation.from_quat(
-        [
-            pose.orientation.x,
-            pose.orientation.y,
-            pose.orientation.z,
-            pose.orientation.w,
-        ]
-    )
-
-    controller_to_hand_rot = Rotation.from_matrix(controller_to_hand_rot_mat)
-
-    world_hand_pos = world_controller_pos + world_controller_rot.apply(
-        controller_to_hand_trans
-    )
-    world_hand_rot = world_controller_rot * controller_to_hand_rot
-
-    return to_pose(world_hand_pos, world_hand_rot.as_quat())
-
-
 def apply_relative_pose(reference: Pose, pose: Pose) -> Pose:
     """
     Transform ``pose`` in ``reference``'s frame, both poses needs to be

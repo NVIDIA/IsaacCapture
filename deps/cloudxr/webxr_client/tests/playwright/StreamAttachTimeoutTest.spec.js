@@ -14,7 +14,7 @@ const { test, expect } = require('@playwright/test');
  */
 
 const LOG_PREFIX = '[StreamAttachTimeoutTest] ';
-const SEQUENCE_TIMEOUT_MS = 15000;
+const SEQUENCE_TIMEOUT_MS = 20000;
 
 function collectLogLines(page) {
   const lines = [];
@@ -44,3 +44,45 @@ test('StreamAttachTimeoutTest: attach timeout, warmup timeout, then success', as
   const resultLine = lines.find(l => l.startsWith('[result]'));
   expect(resultLine, `captured lines:\n${lines.join('\n')}`).toContain('[result] PASS');
 });
+
+test('StreamAttachTimeoutTest: real video after idle frames does not re-arm a warm-up watchdog', async ({
+  page,
+}) => {
+  test.setTimeout(30000);
+
+  const lines = collectLogLines(page);
+  await page.goto('/StreamAttachTimeoutTest.html?scenario=real-video-after-idle');
+  await page.click('#startButton');
+
+  await expect
+    .poll(() => lines.some(l => l.startsWith('[result]')), {
+      timeout: 15000,
+      message: () => `scenario did not complete; captured so far:\n${lines.join('\n')}`,
+    })
+    .toBe(true);
+
+  const resultLine = lines.find(l => l.startsWith('[result]'));
+  expect(resultLine, `captured lines:\n${lines.join('\n')}`).toContain('[result] PASS');
+});
+
+for (const scenario of ['idle-silence-never-began', 'idle-silence-stalled', 'idle-config-change']) {
+  test(`StreamAttachTimeoutTest: ${scenario} times out after the idle quiet period plus the phase budget`, async ({
+    page,
+  }) => {
+    test.setTimeout(30000);
+
+    const lines = collectLogLines(page);
+    await page.goto(`/StreamAttachTimeoutTest.html?scenario=${scenario}`);
+    await page.click('#startButton');
+
+    await expect
+      .poll(() => lines.some(l => l.startsWith('[result]')), {
+        timeout: 20000,
+        message: () => `scenario did not complete; captured so far:\n${lines.join('\n')}`,
+      })
+      .toBe(true);
+
+    const resultLine = lines.find(l => l.startsWith('[result]'));
+    expect(resultLine, `captured lines:\n${lines.join('\n')}`).toContain('[result] PASS');
+  });
+}

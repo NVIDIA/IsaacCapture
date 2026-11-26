@@ -15,7 +15,7 @@ from isaaccapture.retargeting_engine.utilities.soma_body_evaluator import (
 from isaaccapture.retargeting_engine.utilities.soma_hand_evaluator import (
     _SomaHandEvaluator,
 )
-from isaaccapture.schema import SomaHandedness
+from isaaccapture.schema import SomaHandSide
 from isaaccapture_examples.soma_hand_publisher import publisher
 from isaaccapture_examples.soma_hand_publisher.publisher import (
     create_layers,
@@ -124,13 +124,13 @@ def test_publisher_pushes_each_hand_through_one_session(demo, representation, ca
         [demo.left, demo.right], demo.oxr_session.get_handles.return_value
     )
     assert demo.session.update.call_count == 2
-    for tracker, handedness in (
-        (demo.left, SomaHandedness.LEFT),
-        (demo.right, SomaHandedness.RIGHT),
+    for tracker, hand_side in (
+        (demo.left, SomaHandSide.LEFT),
+        (demo.right, SomaHandSide.RIGHT),
     ):
         assert tracker.push.call_count == 2
         tracker.push.assert_called_with(
-            demo.session, publisher._payload(demo.frame, 1, representation, handedness)
+            demo.session, publisher._payload(demo.frame, 1, representation, hand_side)
         )
     demo.sleep.assert_called_once_with(1 / 30)
     demo.session.__exit__.assert_called_once()
@@ -213,8 +213,8 @@ def test_invalid_rate_is_rejected_before_loading_model(monkeypatch, rate):
 
 def test_hand_payload_constructors_preserve_side_and_arrays():
     rotations = np.tile([0.0, 0.0, 0.0, 1.0], (25, 1))
-    rotation_payload = soma_joint_rotations(rotations, [1, 2, 3], SomaHandedness.LEFT)
-    assert rotation_payload.handedness == SomaHandedness.LEFT
+    rotation_payload = soma_joint_rotations(rotations, [1, 2, 3], SomaHandSide.LEFT)
+    assert rotation_payload.hand_side == SomaHandSide.LEFT
     dense_rotations, rotation_valid = _dense_joint_rotations(
         rotation_payload.joint_rotations, 25
     )
@@ -222,8 +222,8 @@ def test_hand_payload_constructors_preserve_side_and_arrays():
     assert rotation_valid.all()
 
     positions = np.arange(75, dtype=np.float32).reshape(25, 3)
-    pose_payload = soma_joint_poses(positions, rotations, SomaHandedness.RIGHT)
-    assert pose_payload.handedness == SomaHandedness.RIGHT
+    pose_payload = soma_joint_poses(positions, rotations, SomaHandSide.RIGHT)
+    assert pose_payload.hand_side == SomaHandSide.RIGHT
     dense_positions, _, pose_valid = _dense_joint_poses(pose_payload.joint_poses, 25)
     np.testing.assert_array_equal(dense_positions, positions)
     assert pose_valid.all()
@@ -233,19 +233,19 @@ def test_demo_profiles_match_upstream_hand_fk(soma_assets):
     body, hands = create_layers(soma_assets)
     frames = demo_hand_frames(soma_assets / "example_animation.npy", body, hands)
 
-    for side, handedness in (
-        ("left", SomaHandedness.LEFT),
-        ("right", SomaHandedness.RIGHT),
+    for side, hand_side in (
+        ("left", SomaHandSide.LEFT),
+        ("right", SomaHandSide.RIGHT),
     ):
         frame = frames[side]
         payload = soma_joint_rotations(
-            frame["rotations"][0], frame["translation"][0], handedness
+            frame["rotations"][0], frame["translation"][0], hand_side
         )
         positions, _, valid = _SomaHandEvaluator(hands[side], side).evaluate(payload)
         np.testing.assert_allclose(positions, frame["positions"][0], atol=1e-5)
         np.testing.assert_array_equal(valid, np.ones(25, dtype=np.uint8))
         evaluated = soma_joint_poses(
-            frame["positions"][0], frame["orientations"][0], handedness
+            frame["positions"][0], frame["orientations"][0], hand_side
         )
         evaluated_positions, _, evaluated_valid = _dense_joint_poses(
             evaluated.joint_poses, 25
@@ -256,21 +256,21 @@ def test_demo_profiles_match_upstream_hand_fk(soma_assets):
     for representation in ("joint-rotations", "joint-poses"):
         capacity = 2048 if representation == "joint-poses" else 1024
         for index in range(len(frames["left"]["positions"])):
-            for side, handedness in (
-                ("left", SomaHandedness.LEFT),
-                ("right", SomaHandedness.RIGHT),
+            for side, hand_side in (
+                ("left", SomaHandSide.LEFT),
+                ("right", SomaHandSide.RIGHT),
             ):
                 frame = frames[side]
                 if representation == "joint-poses":
                     payload = soma_joint_poses(
                         frame["positions"][index],
                         frame["orientations"][index],
-                        handedness,
+                        hand_side,
                     )
                 else:
                     payload = soma_joint_rotations(
                         frame["rotations"][index],
                         frame["translation"][index],
-                        handedness,
+                        hand_side,
                     )
                 assert len(payload.to_bytes()) <= capacity

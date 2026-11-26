@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# SENSING SHW5G on Jetson AGX Thor through Argus.
+# Assumes sensors 0/1 are the tested SHW5G entries from nvargus_nvraw --lps.
+# Run nvargus-daemon with enableCamInfiniteTimeout=1 if the driver requires it.
+# sync_session: false opens sensors 0/1 as independent Argus sessions; this is
+# more tolerant of GMSL drivers that do not support a dual-sensor Argus session.
+# The CUDA EGL acquire timeout is infinite because this JetPack/driver stack
+# returns CUDA_ERROR_UNKNOWN for finite acquire timeouts before first frame.
+
+source: local
+streaming:
+  host: 127.0.0.1
+encoder: auto
+
+cameras:
+  - name: shw5g
+    enabled: true
+    type: argus
+    stereo: true
+    sync_session: false
+    pair_emit_mode: both
+    sensor_id_left: 0
+    sensor_id_right: 1
+    sensor_mode: 0
+    width: 2560
+    height: 1984
+    fps: 60
+    gpu_id: 0
+    acquire_timeout_ms: 4294967295  # CUDA_EGL_INFINITE_TIMEOUT
+    repeat_capture: true
+    full_range: false
+    swap_uv: true
+    rtp:
+      port: 5000
+      port_right: 5001
+      bitrate_mbps: 30
+
+display:
+  mode: xr                  # window | xr
+  window:
+    width: 2560
+    height: 1984
+  xr:
+    near_z: 0.05
+    far_z: 100.0
+  clear_color: [0.0, 0.0, 0.0, 0.0]
+  placements:
+    shw5g:                        # size defaults to 1.0 m wide × aspect-derived height
+      lock_mode: lazy
+      distance: 0.5
+      stereo_baseline_mm: 50.0

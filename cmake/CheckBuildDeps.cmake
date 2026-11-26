@@ -4,8 +4,8 @@
 # ==============================================================================
 # CheckBuildDeps.cmake
 # ==============================================================================
-# Preflight for the command-line tools the build shells out to. Runs before any
-# FetchContent, so a missing tool is one error naming every gap at once instead
+# Preflight for system dependencies needed by the build. Runs before any
+# FetchContent, so missing dependencies produce one error naming every gap instead
 # of a FATAL_ERROR ~60 s deep in a fetched dependency's CMake, or a feature
 # dropped from the build with no diagnostic louder than a `--` status line.
 #
@@ -23,6 +23,39 @@ function(isaac_teleop_check_build_deps)
 
     set(_missing_tools "")
     set(_missing_pkgs "")
+
+    # GLFW enables X11 independently of Wayland and requires these headers even
+    # when the host has a working Wayland installation.
+    if(BUILD_VIZ AND (NOT DEFINED GLFW_BUILD_X11 OR GLFW_BUILD_X11))
+        set(_x11_headers
+            "X11/Xlib.h|libx11-dev"
+            "X11/extensions/Xrandr.h|libxrandr-dev"
+            "X11/extensions/Xinerama.h|libxinerama-dev"
+            "X11/Xcursor/Xcursor.h|libxcursor-dev"
+            "X11/extensions/XInput2.h|libxi-dev"
+            "X11/extensions/shape.h|libxext-dev"
+            "X11/XKBlib.h|libx11-dev"
+        )
+        foreach(_entry IN LISTS _x11_headers)
+            string(REPLACE "|" ";" _pair "${_entry}")
+            list(GET _pair 0 _header)
+            list(GET _pair 1 _pkg)
+            string(MAKE_C_IDENTIFIER "${_header}" _id)
+            find_path(ISAACCAPTURE_${_id}_INCLUDE_DIR NAMES "${_header}")
+            if(NOT ISAACCAPTURE_${_id}_INCLUDE_DIR)
+                list(APPEND _missing_tools "${_header} (BUILD_VIZ=ON -- GLFW X11 backend)")
+                list(APPEND _missing_pkgs "${_pkg}")
+            endif()
+        endforeach()
+    endif()
+
+    if(ENABLE_CLANG_FORMAT_CHECK)
+        find_program(CLANG_FORMAT_EXE NAMES clang-format-14)
+        if(NOT CLANG_FORMAT_EXE)
+            list(APPEND _missing_tools "clang-format-14 (ENABLE_CLANG_FORMAT_CHECK=ON)")
+            list(APPEND _missing_pkgs "clang-format-14")
+        endif()
+    endif()
 
     # pkg-config, for GLFW's Wayland backend and the OAK / OGLO plugins, all of
     # which pkg_check_modules(... REQUIRED). The vendored OpenXR SDK probes it
@@ -52,6 +85,14 @@ function(isaac_teleop_check_build_deps)
             list(APPEND _missing_tools "wayland-scanner  (BUILD_VIZ=ON -- GLFW Wayland backend)")
             list(APPEND _missing_pkgs "libwayland-dev")
             set(_wayland_gap TRUE)
+        endif()
+        if(PkgConfig_FOUND)
+            pkg_check_modules(XKBCOMMON QUIET xkbcommon>=0.5.0)
+            if(NOT XKBCOMMON_FOUND)
+                list(APPEND _missing_tools "xkbcommon>=0.5.0 (BUILD_VIZ=ON -- GLFW Wayland backend)")
+                list(APPEND _missing_pkgs "libxkbcommon-dev")
+                set(_wayland_gap TRUE)
+            endif()
         endif()
     endif()
 
@@ -91,6 +132,7 @@ function(isaac_teleop_check_build_deps)
     endif()
 
     list(JOIN _missing_tools "\n  " _tools)
+    list(REMOVE_DUPLICATES _missing_pkgs)
     list(JOIN _missing_pkgs " " _pkgs)
     set(_viz_hint "")
     # Dropping Wayland keeps Televiz -- GLFW's X11 backend is a complete build --

@@ -1,0 +1,39 @@
+{
+    "default_data_dir": "~/egocap_data",
+    "devices": {
+        "oak-DS-01": "<oakd-serial>",
+        "oak-DS-02": "<oakd-serial>",
+        "oak-DS-03": "<oakd-serial>",
+        "oak-DS-04": "<oakd-serial>",
+        "oak-DS-05": "<oakd-serial>",
+        "oak-DS-06": "<oakd-serial>"
+    },
+    "stations": [
+        {
+            "name": "station_01",
+            "ip": "",
+            "cameras": {
+                "ego": "oak-DS-01",
+                "wrist_left": "oak-DS-02",
+                "wrist_right": "oak-DS-03"
+            },
+            "cached_pico_ip": "",
+            "operator": "",
+            "stereo": true
+        },
+        {
+            "name": "station_02",
+            "ip": "",
+            "cameras": {
+                "ego": "oak-DS-04",
+                "wrist_left": "oak-DS-06",
+                "wrist_right": "oak-DS-05"
+            },
+            "cached_pico_ip": "",
+            "operator": "",
+            "stereo": true
+        }
+    ],
+    "counter_dir": "~/egocap_data",
+    "recording_root": "~/egocap_data"
+}

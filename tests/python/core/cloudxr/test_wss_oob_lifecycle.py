@@ -18,12 +18,21 @@ from isaaccapture.cloudxr.oob_teleop_lifecycle import RecoveryConfig
 
 
 @pytest.mark.asyncio
-async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
-    monkeypatch, tmp_path
+@pytest.mark.parametrize("connection_mode", ["immediate", "deferred", "cancelled"])
+async def test_wss_lifecycle_respects_connection_gate_and_cleanup_order(
+    monkeypatch, tmp_path, connection_mode
 ):
+    monkeypatch.delenv("TELEOP_OOB_HUB_ONLY", raising=False)
     events = []
     pending = asyncio.Event()
+    listening = asyncio.Event()
+    started = asyncio.Event()
+    requested = asyncio.Event() if connection_mode != "immediate" else None
     stop = asyncio.get_running_loop().create_future()
+
+    def on_listening():
+        events.append("callback")
+        listening.set()
 
     @asynccontextmanager
     async def serving(*args, **kwargs):
@@ -33,6 +42,7 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
 
     async def lifecycle_run():
         events.append("lifecycle started")
+        started.set()
         # Match the package loggers that WSS forwards into its session file.
         logging.getLogger("isaaccapture.cloudxr.oob_teleop_lifecycle").info(
             "lifecycle test transition"
@@ -73,18 +83,28 @@ async def test_wss_lifecycle_waits_without_headset_and_cleans_up_in_order(
                 setup_oob=True,
                 usb_local=True,
                 recovery_config=RecoveryConfig(),
-                on_listening=lambda: events.append("callback"),
+                on_listening=on_listening,
+                connect_requested=requested,
             )
         )
-        for _ in range(10):
-            await asyncio.sleep(0)
-            if "lifecycle started" in events:
-                break
-        assert not task.done()
-        assert events[:2] == ["wss listening", "callback"]
-        factory.assert_called_once()
-        stop.set_result(None)
-        await task
+        try:
+            await asyncio.wait_for(listening.wait(), timeout=1)
+            assert not task.done()
+            assert events[:2] == ["wss listening", "callback"]
+            if requested is not None:
+                factory.assert_not_called()
+                if connection_mode == "deferred":
+                    requested.set()
+            if connection_mode != "cancelled":
+                await asyncio.wait_for(started.wait(), timeout=1)
+                factory.assert_called_once()
+        finally:
+            stop.set_result(None)
+            await asyncio.wait_for(task, timeout=1)
+        if connection_mode == "cancelled":
+            factory.assert_not_called()
+            assert events == ["wss listening", "callback", "wss closed"]
+            return
     assert events.index("lifecycle stopped") < events.index("wss closed")
     assert "lifecycle test transition" in (tmp_path / "wss.log").read_text()
     assert "hub test registration" in (tmp_path / "wss.log").read_text()

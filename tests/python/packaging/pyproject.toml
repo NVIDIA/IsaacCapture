@@ -8,7 +8,7 @@ description = "Assertions over the wheel this build produced"
 requires-python = ">=3.11,<3.14"
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "reuse==6.2.0"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

@@ -3,9 +3,9 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 Avatar SDK contributors. All rig
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Sharpa Avatar Visualization Example
+# Sharpa AvatarExo Glove Visualization Example
 
-Live OpenXR hands from Sharpa Avatar gloves in the browser, plus pinch haptic.
+Live OpenXR hands from Sharpa AvatarExo Gloves in the browser, plus pinch haptic.
 CloudXR and `avatar_hand_plugin` start with the example unless you opt out.
 
 ```text
@@ -18,6 +18,8 @@ Install them first, then run this example against the installed plugin.
 
 ## Run
 
+Run the last two commands in a venv set up as in [Running an example](../README.md#running-an-example).
+
 ```bash
 ./src/plugins/sharpa_avatar/install_avatar_sdk.sh
 cmake -B build \
@@ -25,8 +27,8 @@ cmake -B build \
   -DAVATAR_SDK_ROOT=/opt/avatar-sdk
 cmake --build build --parallel
 cmake --install build
-uv pip install -e ./examples/sharpa_avatar
-python -m isaaccapture_examples.sharpa_avatar
+uv pip install -e ./examples/sharpa_avatar --no-sources
+python -m isaaccapture_examples.sharpa_avatar --print-health
 ```
 
 Open the URL it prints (default <http://127.0.0.1:8080>). The left hand is cyan
@@ -43,6 +45,7 @@ above first. `uv pip install -e` pulls `viser`; CloudXR comes from the
 ```text
 --no-haptic                   disable pinch feedback
 --no-viz                      terminal + haptic only (no browser view)
+--print-health                print Sharpa device health initially and on changes
 --host / --port               viser bind (default 127.0.0.1:8080)
 --no-launch-plugin            connect to an already running plugin
 --no-launch-cloudxr-runtime   connect to an already running CloudXR runtime

@@ -45,6 +45,12 @@ _HAND_POSE_NAMES = [
 _EXPECTED_HAND_POSE_NAMES = [
     f"{side}_{name}" for side in ("left", "right") for name in _HAND_POSE_NAMES
 ]
+_EXPECTED_HAND_TELEOP_ROOT_HEIGHT = 0.72
+_EXPECTED_HAND_TELEOP_TWISTS = {
+    "forward": (0.6, 0.0, 0.0, 0.0, 0.0, 0.0),
+    "negative_strafe": (0.0, -0.4, 0.0, 0.0, 0.0, 0.0),
+    "positive_strafe": (0.0, 0.4, 0.0, 0.0, 0.0, 0.0),
+}
 
 
 def _is_finite_sequence(values) -> bool:
@@ -146,13 +152,8 @@ def _assert_ee_poses_array(
         raise ValueError("EE pose array contains an invalid entry")
     _assert_nonzero_pose_positions(msg, "EE pose")
 
-    if mode != "controller_teleop" or hand_tracking_provider == "wuji":
+    if mode != "controller_teleop" or hand_tracking_provider in ("manus", "wuji"):
         expected_xy = ((-0.25, 1.10), (0.25, 1.10))
-    elif hand_tracking_provider == "manus":
-        expected_xy = (
-            (-0.1896684528, 1.255536544),
-            (0.2103315472, 1.144463456),
-        )
     else:
         expected_xy = ((-0.20, 1.20), (0.20, 1.20))
     for side, pose, (expected_x, expected_y) in zip(
@@ -311,6 +312,7 @@ def _assert_full_body_payload(msg: ByteMultiArray) -> None:
     _assert_noncollinear_positions(valid_positions, "full-body joint")
 
 
+# Keep mode-specific validator helpers grouped after reusable `_assert_*` checks.
 def _finger_joint_validator(hand_retargeter: str) -> Callable:
     if hand_retargeter == "pink_ik":
         expected_names = LEFT_SHARPA_WAVE_JOINT_NAMES + RIGHT_SHARPA_WAVE_JOINT_NAMES
@@ -340,6 +342,57 @@ def _finger_joint_validator(hand_retargeter: str) -> Callable:
             require_nonzero=True,
         )
     return _assert_joint_state
+
+
+def _hand_teleop_root_pose_validator(msg: PoseStamped) -> None:
+    _assert_pose_stamped(msg)
+    position = (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z)
+    expected_position = (0.0, 0.0, _EXPECTED_HAND_TELEOP_ROOT_HEIGHT)
+    if not all(
+        math.isclose(value, expected, abs_tol=1e-5)
+        for value, expected in zip(position, expected_position, strict=True)
+    ):
+        raise ValueError(
+            f"hand_teleop root pose position {position} does not match "
+            f"the expected fixture value {expected_position}"
+        )
+
+
+def _hand_teleop_twist_validator() -> Callable:
+    seen_commands: set[str] = set()
+
+    def _validate(msg: TwistStamped) -> None:
+        _assert_twist(msg)
+        values = (
+            msg.twist.linear.x,
+            msg.twist.linear.y,
+            msg.twist.linear.z,
+            msg.twist.angular.x,
+            msg.twist.angular.y,
+            msg.twist.angular.z,
+        )
+        command_name = next(
+            (
+                name
+                for name, expected in _EXPECTED_HAND_TELEOP_TWISTS.items()
+                if all(
+                    math.isclose(value, expected_value, abs_tol=1e-5)
+                    for value, expected_value in zip(values, expected, strict=True)
+                )
+            ),
+            None,
+        )
+        if command_name is None:
+            raise ValueError(f"unexpected hand_teleop root twist {values}")
+
+        seen_commands.add(command_name)
+        missing_commands = set(_EXPECTED_HAND_TELEOP_TWISTS) - seen_commands
+        if missing_commands:
+            raise ValueError(
+                f"waiting for hand_teleop root twists: {sorted(missing_commands)}"
+            )
+
+    return _validate
 
 
 class TopicVerifier(Node):
@@ -463,8 +516,18 @@ class TopicVerifier(Node):
                     NamedPoseArray,
                     ee_validator,
                 ),
-                ("root_twist", "xr_teleop/root_twist", TwistStamped, _assert_twist),
-                ("root_pose", "xr_teleop/root_pose", PoseStamped, _assert_pose_stamped),
+                (
+                    "root_twist",
+                    "xr_teleop/root_twist",
+                    TwistStamped,
+                    _hand_teleop_twist_validator(),
+                ),
+                (
+                    "root_pose",
+                    "xr_teleop/root_pose",
+                    PoseStamped,
+                    _hand_teleop_root_pose_validator,
+                ),
                 ("head_pose", "xr_teleop/head_pose", PoseStamped, _assert_pose_stamped),
                 (
                     "finger_joints",

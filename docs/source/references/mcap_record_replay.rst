@@ -4,7 +4,7 @@
 MCAP Recording & Replay
 ========================
 
-Isaac Teleop supports recording live tracking data to `MCAP <https://mcap.dev/>`_
+Isaac Capture supports recording live tracking data to `MCAP <https://mcap.dev/>`_
 files and replaying them offline through the same retargeting pipeline — no
 headset or OpenXR runtime required during replay.
 
@@ -156,11 +156,11 @@ additional source nodes (``HeadSource``, ``ControllersSource``, …) in
 
 For a live browser view of **all** human DeviceIO trackers at once (hands, head,
 controllers, and full body), see ``examples/deviceio_live_view/`` and its
-``README.md``:
+``README.md``. From the repo root, in a venv set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/deviceio_live_view
+   uv pip install -e ./examples/deviceio_live_view --no-sources
    python -m isaaccapture_examples.deviceio_live_view --accept-eula
 
 A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
@@ -170,14 +170,27 @@ A C++ recorder lives at ``examples/mcap_record_replay/cpp/``:
   same channel base name as ``FullBodySource``, so the resulting file replays
   with ``replay_full_body``.
 
-Live preview
-^^^^^^^^^^^^
-
-From the repo root:
+The C++ recorder does not start CloudXR, so start the runtime and source its
+environment first. With no output argument it writes to the current directory;
+pass ``recordings/`` so ``replay_full_body`` finds the take. From the repo root,
+after ``cmake --install`` and with the example package installed as in
+`Live preview`_:
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/mcap_record_replay
+   python -m isaaccapture.cloudxr.service start --accept-eula
+   source ~/.cloudxr/run/cloudxr.env
+   ./install/examples/mcap_record_replay/cpp/record_full_body 5 recordings/
+   python -m isaaccapture_examples.mcap_record_replay.replay_full_body
+
+Live preview
+^^^^^^^^^^^^
+
+From the repo root, in a venv set up as in :ref:`step 4 of Build from source <build-from-source-install-package>`:
+
+.. code-block:: bash
+
+   uv pip install -e ./examples/mcap_record_replay --no-sources
    python -m isaaccapture_examples.mcap_record_replay.live_full_body --accept-eula
    python -m isaaccapture_examples.mcap_record_replay.live_full_body --port 8090 --accept-eula
 
@@ -188,11 +201,11 @@ opened from another machine; pass ``--host 127.0.0.1`` to keep one local.
 Recording
 ^^^^^^^^^
 
-From the repo root:
+From the repo root, in the same venv:
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/mcap_record_replay --no-sources
    R="python -m isaaccapture_examples.mcap_record_replay.record_hand"
    $R              # 5 s → ./recordings/hands_<timestamp>.mcap
    $R 10           # record for 10 seconds
@@ -201,13 +214,12 @@ From the repo root:
 Recordings are written to ``./recordings/`` relative to where you run the
 command, and the replay scripts look there when given no path.
 
-The example never downloads a published wheel — it runs against the
-``isaaccapture`` next to it, built from this checkout.  The first install
-compiles the extension modules and takes a few minutes; later ones reuse the
-cached build, and the install is editable, so edits under ``src/python/`` need
-no rebuild.  From ``install/examples/mcap_record_replay`` (after ``cmake
+The example runs against the ``isaaccapture`` wheel installed in step 4, which
+``--no-sources`` keeps in place; after a rebuild, rerun that install (see
+:ref:`step 4 of Build from source <build-from-source-editable-examples>`).  From
+``install/examples/mcap_record_replay`` (after ``cmake
 --install``) it picks up the wheel you just built instead — see
-:doc:`/getting_started/build_from_source/index`.
+:doc:`/development/build_from_source/index`.
 
 An active OpenXR runtime / headset must be connected, just like any other
 live ``TeleopSession``.  Recording also needs the CloudXR runtime natives, which
@@ -230,14 +242,153 @@ Replay repeats until Ctrl+C — no headset required:
 Open the printed URL (default ``http://localhost:8080``) in a browser to see the
 left (green) and right (blue) hand skeletons update each frame.
 
-The ``record_controller`` / ``replay_controller`` and ``record_full_body`` /
-``replay_full_body`` module pairs use the same CLI (positional MCAP path,
-``--host``, ``--port``). ``live_full_body`` accepts ``--host``,
-``--port``, and the CloudXR launcher flags (including ``--accept-eula``).
+``record_controller`` and ``record_full_body`` take the same arguments as
+``record_hand`` (duration, output path, and the CloudXR launcher flags such as
+``--accept-eula``). ``replay_controller`` and ``replay_full_body`` take the
+same arguments as ``replay_hand`` (MCAP path, ``--host``, ``--port``) and
+default to the newest ``controllers_*.mcap`` or ``full_body_*.mcap`` under
+``./recordings/``. ``live_full_body`` accepts ``--host``, ``--port``, and the
+CloudXR launcher flags.
 
-``uv run`` (instead of an activated venv) needs an explicit ``--python 3.11``
-— without it, ``uv`` may resolve against the system Python and fail to match
-the lockfile.
+SOMA body workflows
+^^^^^^^^^^^^^^^^^^^
+
+The body commands accept ``--body-schema full-body-pose`` (default) or
+``--body-schema soma``. SOMA mode supports both ``SomaBodyJointRotations`` and
+``SomaBodyJointPoses``. They render the native 77-joint body topology, including
+available finger joints, without converting to ``FullBodyPose``. See
+:doc:`/device/soma` for the transport contract.
+
+FullBodyPose mode includes controllers by default. SOMA mode uses only the
+body stream, including available finger joints. Pass ``--controllers`` to
+include controller recording, or ``--no-controllers`` to disable it for
+FullBodyPose. Standalone hands use the separate hand commands; these examples
+do not extract or fuse them with the body.
+
+Install the example and demo publisher into a configured development checkout:
+
+.. code-block:: bash
+
+   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/soma_body_publisher
+
+Start the live viewer and connect a CloudXR client. Live preview does not read
+or write an MCAP file:
+
+.. code-block:: bash
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.live_full_body \
+     --accept-eula --body-schema soma --soma-body-representation joint-rotations
+
+In a second terminal, start the existing publisher after the runtime is running:
+
+.. code-block:: bash
+
+   source ~/.cloudxr/run/cloudxr.env
+   uv run --no-sync python -m isaaccapture_examples.soma_body_publisher \
+     --body-representation joint-rotations --loop
+
+Record in another terminal, then stop the live viewer and publisher before
+replaying on the same Viser port:
+
+.. code-block:: bash
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.record_full_body \
+     10 recordings/soma_body_joint-rotations_demo.mcap \
+     --accept-eula --body-schema soma --soma-body-representation joint-rotations
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.replay_full_body \
+     recordings/soma_body_joint-rotations_demo.mcap \
+     --body-schema soma --soma-body-representation joint-rotations
+
+For evaluated poses, use ``--soma-body-representation joint-poses`` on the
+viewer, recorder, and replay commands, and ``--body-representation joint-poses``
+on the publisher. Use a separate output file. Replay works without OpenXR.
+As with the other viewers, ``--host`` and ``--port`` control browser access.
+
+The recorder stores received SOMA payloads unchanged, without FK. Viewing joint
+rotations uses ``SomaBodySource`` and its existing FK helper against a prepared
+neutral model. Viewing joint poses maps directly without loading SOMA-X assets
+or running FK. Unavailable joints and connecting bones are hidden.
+
+``--soma-body-collection-id`` selects the publisher collection and MCAP channel
+base. Its default, ``soma_body_demo``, matches the publisher's ``--collection-id``.
+Replay reads
+``<collection>/soma_body_joint_rotations_tracked`` or
+``<collection>/soma_body_joint_poses_tracked``. If no file is supplied, it selects
+the newest ``soma_body_<representation>_*.mcap`` under ``./recordings/``.
+
+Native replay still advances one tracked sample per update. The viewer uses the
+selected channel's average capture rate for pacing; ``--rate`` overrides it
+(``0`` is unpaced). It does not resample or synchronize streams. FullBodyPose
+and OpenXR hand replay retain their 60 Hz, duration-based playback.
+
+SOMA hand workflows
+^^^^^^^^^^^^^^^^^^^
+
+The hand commands accept ``--hand-schema openxr-hand-pose`` (default) or
+``--hand-schema soma``. SOMA mode supports ``SomaHandJointRotations`` and
+``SomaHandJointPoses``. Each left/right collection retains its anatomical
+``hand_side`` and uses the native 25-joint Wrist/finger layout. These commands
+do not fuse standalone hands with a body stream.
+
+Install the MCAP example and the existing hand publisher:
+
+.. code-block:: bash
+
+   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/soma_hand_publisher
+
+Start the viewer and connect a CloudXR client:
+
+.. code-block:: bash
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.live_hand \
+     --accept-eula --hand-schema soma --soma-hand-representation joint-rotations
+
+After the runtime is running, start the publisher in a second terminal:
+
+.. code-block:: bash
+
+   source ~/.cloudxr/run/cloudxr.env
+   uv run --no-sync python -m isaaccapture_examples.soma_hand_publisher \
+     --hand-representation joint-rotations --loop
+
+Record in another terminal, then stop the viewer and publisher before replaying
+on the same Viser port:
+
+.. code-block:: bash
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.record_hand \
+     10 recordings/soma_hand_joint-rotations_demo.mcap \
+     --accept-eula --hand-schema soma --soma-hand-representation joint-rotations
+
+   uv run --no-sync python -m isaaccapture_examples.mcap_record_replay.replay_hand \
+     recordings/soma_hand_joint-rotations_demo.mcap \
+     --hand-schema soma --soma-hand-representation joint-rotations
+
+For evaluated poses, use ``--soma-hand-representation joint-poses`` on the
+viewer, recorder, and replay commands, and ``--hand-representation joint-poses``
+on the publisher. Use a separate output file. Live preview does not read or
+write MCAP; replay does not require OpenXR. ``--host`` and ``--port`` control
+browser access.
+
+Recording preserves received payloads without FK. Viewing rotations uses
+``SomaHandSource`` FK against prepared neutral models. Joint poses map directly
+without loading models. The viewer colors left green and right blue and hides
+unavailable joints and bones.
+
+``--soma-left-hand-collection-id`` and ``--soma-right-hand-collection-id`` default
+to ``soma_hand_left_demo`` and ``soma_hand_right_demo``, matching the publisher's
+``--left-collection-id`` and ``--right-collection-id``. Replay reads each
+collection's ``soma_hand_joint_rotations_tracked`` or
+``soma_hand_joint_poses_tracked`` channel. With no file argument, it selects the
+newest ``soma_hand_<representation>_*.mcap`` under ``./recordings/``.
+
+The trackers retain independent, one-sample-per-update replay. Pacing defaults
+to the busier selected hand's average capture rate; ``--rate`` overrides it.
+Missing or exhausted hands are hidden, and playback repeats after the longer
+channel finishes. No timestamp synchronization or resampling is added.
 
 API Reference
 -------------

@@ -58,7 +58,7 @@ inline void bind_soma_hand_joint_rotations(py::module& m)
     serialized_class<SomaHandJointRotations>(m, "SomaHandJointRotations", "Encoded SOMA hand joint rotations.")
         .def(py::init(
                  [](std::vector<SomaHandJointRotation> joint_rotations, const Point& global_translation,
-                    bool global_translation_is_valid, SomaHandedness handedness)
+                    bool global_translation_is_valid, SomaHandSide hand_side)
                  {
                      std::sort(joint_rotations.begin(), joint_rotations.end(),
                                [](const auto& a, const auto& b) { return a.joint() < b.joint(); });
@@ -81,11 +81,11 @@ inline void bind_soma_hand_joint_rotations(py::module& m)
                      native.joint_rotations = std::move(joint_rotations);
                      native.global_translation = std::make_shared<Point>(global_translation);
                      native.global_translation_is_valid = global_translation_is_valid;
-                     native.handedness = handedness;
+                     native.hand_side = hand_side;
                      return pack<SomaHandJointRotations>(native);
                  }),
              py::arg("joint_rotations") = std::vector<SomaHandJointRotation>{}, py::arg("global_translation") = Point(),
-             py::arg("global_translation_is_valid") = false, py::arg("handedness") = SomaHandedness_UNSPECIFIED)
+             py::arg("global_translation_is_valid") = false, py::arg("hand_side") = SomaHandSide_UNSPECIFIED)
         .def_property_readonly("joint_rotations",
                                [](const Serialized<SomaHandJointRotations>& self)
                                {
@@ -113,7 +113,7 @@ inline void bind_soma_hand_joint_rotations(py::module& m)
         .def_property_readonly("global_translation", field(&SomaHandJointRotations::global_translation),
                                py::return_value_policy::reference_internal)
         .def_property_readonly("global_translation_is_valid", field(&SomaHandJointRotations::global_translation_is_valid))
-        .def_property_readonly("handedness", field(&SomaHandJointRotations::handedness));
+        .def_property_readonly("hand_side", field(&SomaHandJointRotations::hand_side));
 
     bind_record<SomaHandJointRotationsRecord, SomaHandJointRotations>(
         m, "SomaHandJointRotationsRecord", "SomaHandJointRotations");

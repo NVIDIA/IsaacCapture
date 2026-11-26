@@ -3,8 +3,8 @@
 
 namespace core;
 
-// Hand side shared by the SOMA pose transport schemas.
-enum SomaHandedness : uint8 {
+// Anatomical hand side, independent of the right-handed reference frame.
+enum SomaHandSide : uint8 {
     UNSPECIFIED = 0,
     LEFT = 1,
     RIGHT = 2,

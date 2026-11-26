@@ -13,11 +13,22 @@ add_subdirectory(schema_compat)
 # log during its own construction.
 add_subdirectory(log_bridge)
 
+# Chrony evidence parsing and capture-time qualification (no dependency on the rest of the product).
+# POSIX clocks only, so the Windows source build skips it.
+if(NOT WIN32)
+    add_subdirectory(timesync)
+endif()
+
 # Build OXR Utils first - header-only utilities (no dependencies)
 add_subdirectory(oxr_utils)
 
 # Build Plugin Manager
 add_subdirectory(plugin_manager)
+
+# Camera interface: Linux only, for its shared memory and the socket between processes
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_subdirectory(camera)
+endif()
 
 # Build OXR library (depends on oxr_utils for types)
 add_subdirectory(oxr)
@@ -37,6 +48,10 @@ add_subdirectory(deviceio_session)
 
 # Build MCAP library (depends on deviceio for DeviceIOSession and tracker interfaces)
 add_subdirectory(mcap)
+
+if(BUILD_OVXR_CAMERA_QUADS)
+    add_subdirectory(ovxr_pip_layer)
+endif()
 
 # CloudXR runtime helper (stages the vendored CloudXR runtime SDK bundle).
 # Its pure-Python source lives in src/python/isaaccapture/cloudxr/, as does the

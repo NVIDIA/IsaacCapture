@@ -44,6 +44,10 @@ from ._schema import (
     # SpaceMouse types.
     SpaceMouseOutput,
     SpaceMouseOutputRecord,
+    # Gamepad types.
+    GamepadInputState,
+    GamepadSnapshot,
+    GamepadSnapshotRecord,
     # Keyboard types (held keys plus ordered key events).
     KeyAction,
     KeyEvent,
@@ -52,6 +56,18 @@ from ._schema import (
     # OGLO tactile glove types.
     OgloGloveSample,
     OgloGloveSampleRecord,
+    # Tactile types.
+    TactileDataArray,
+    TactileDataArrayRecord,
+    TactileMetadata,
+    HandSkeletonRef,
+    SegmentSource,
+    AlgorithmSource,
+    LBS,
+    # Tracker metadata, for producers of a tracker's metadata.
+    TRACKER_METADATA_MAX_SIZE,
+    TRACKER_METADATA_TENSOR_IDENTIFIER,
+    tracker_metadata_collection_id,
     # Joint-state types (generic joint-space devices: leader arms, exoskeletons, ...).
     JointState,
     JointStateOutput,
@@ -88,7 +104,7 @@ from ._schema import (
     FullBodyPose,
     FullBodyPoseRecord,
     # Shared SOMA types.
-    SomaHandedness,
+    SomaHandSide,
     # SOMA body joint-rotation types.
     SomaBodyJoint,
     SomaBodyJointRotation,
@@ -172,6 +188,10 @@ __all__ = [
     # SpaceMouse types.
     "SpaceMouseOutput",
     "SpaceMouseOutputRecord",
+    # Gamepad types.
+    "GamepadInputState",
+    "GamepadSnapshot",
+    "GamepadSnapshotRecord",
     # Keyboard types (held keys plus ordered key events).
     "KeyAction",
     "KeyEvent",
@@ -180,6 +200,18 @@ __all__ = [
     # OGLO tactile glove types.
     "OgloGloveSample",
     "OgloGloveSampleRecord",
+    # Tactile types.
+    "TactileDataArray",
+    "TactileDataArrayRecord",
+    "TactileMetadata",
+    "HandSkeletonRef",
+    "SegmentSource",
+    "AlgorithmSource",
+    "LBS",
+    # Tracker metadata.
+    "TRACKER_METADATA_MAX_SIZE",
+    "TRACKER_METADATA_TENSOR_IDENTIFIER",
+    "tracker_metadata_collection_id",
     # Joint-state types (generic joint-space devices).
     "JointState",
     "JointStateOutput",
@@ -216,7 +248,7 @@ __all__ = [
     "FullBodyPose",
     "FullBodyPoseRecord",
     # Shared SOMA types.
-    "SomaHandedness",
+    "SomaHandSide",
     # SOMA body joint-rotation types.
     "SomaBodyJoint",
     "SomaBodyJointRotation",

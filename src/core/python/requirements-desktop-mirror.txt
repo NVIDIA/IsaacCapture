@@ -1,0 +1,3 @@
+# Optional standalone desktop mirror (Python 3.12+)
+ovui==0.3.0; python_version >= "3.12"
+cuda-bindings>=13,<14

@@ -3,7 +3,7 @@ SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 SPDX-License-Identifier: Apache-2.0
 -->
 
-# Isaac Teleop Dependencies
+# Isaac Capture Dependencies
 
 This directory contains all project dependencies, organized by type.
 
@@ -91,9 +91,30 @@ machine and are located via `find_package`.
 ### pybind11
 - **Source**: https://github.com/pybind/pybind11.git
 - **Version**: a2e59f0e7065404b44dfe92a28aca47ba1378dc4 (v2.11.0-182)
-- **Purpose**: C++/Python bindings for Isaac Teleop Python API
+- **Purpose**: C++/Python bindings for Isaac Capture Python API
 - **Build**: Header-only library
 - **License**: BSD-style
+
+### OpenXR extension headers (vendored)
+- **Location**: `third_party/openxr_extensions/`
+- **Contents**: `openxr_extension_helpers.h` (The Khronos Group Inc., Apache-2.0)
+  and `XR_MNDX_xdev_space.h` (Collabora, Ltd., BSL-1.0)
+- **Purpose**: OpenXR extension declarations this project compiles against and
+  therefore redistributes in the wheel. Checked in rather than fetched, so they
+  sit here instead of beside NVIDIA's own extension headers in
+  `cloudxr/openxr_extensions/`.
+- **Build**: header-only `Teleop::openxr_extensions_upstream`, carried by
+  `Teleop::openxr_extensions` so consumers link one target.
+- **License**: Apache-2.0 and BSL-1.0 (see `LICENSES/`)
+
+### SPDX license list data
+- **Source**: https://github.com/spdx/license-list-data.git
+- **Version**: 31ba1a50e5397e00a304dbadc76531740e89ee48 (v3.29.0)
+- **Purpose**: reference license texts. The SBOM collector names a dependency's
+  license by matching the text that dependency ships against these; nothing from
+  this checkout is redistributed. See `scripts/sbom/README.md`.
+- **Build**: data only, no build step.
+- **License**: CC0-1.0
 
 ### GLM
 - **Source**: https://github.com/g-truc/glm.git

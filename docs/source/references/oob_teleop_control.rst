@@ -38,6 +38,17 @@ This will:
 4. Accept the self-signed certificate and click CONNECT automatically
    via Chrome DevTools Protocol (CDP)
 
+When the OpenXR application starts after the service, add
+``--defer-oob-connect``: steps 2-4 wait for ``GET /api/oob/v1/connect``, so
+the headset connects once there is a stream instead of retrying until one
+appears.
+
+.. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service run --accept-eula --setup-oob --defer-oob-connect
+   # once the application has its OpenXR session:
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://localhost:48322/api/oob/v1/connect
+
 Ordinary headset absence, an ``offline`` or ``unauthorized`` transport, and
 browser recovery failures leave the host running with a degraded OOB status.
 The lifecycle retries for 60 seconds at a 5-second cadence, then keeps
@@ -45,6 +56,14 @@ observing every 5 seconds. A meaningful device, network, rule, or browser
 change opens a fresh 60-second recovery episode. Override the positive,
 finite values with ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC`` and
 ``TELEOP_OOB_RETRY_INTERVAL_SEC``; invalid values fail host preflight.
+
+At INFO, OOB progress reports headset waiting and connection, browser readiness,
+and streaming loss or recovery. ADB authorization, missing headset Wi-Fi, and
+USB-health blocks remain visible with operator action. An unchanged wait for
+an absent headset is announced once; routine setup steps are DEBUG messages.
+Progress uses the ``isaaccapture.cloudxr.oob_teleop_env.oob-progress`` logger.
+It remains visible through filters selecting its parent logger, while embedded
+applications can also select progress alone.
 
 To start the hub **without** any ``adb`` interaction — useful in containers,
 CI, or wireless-only environments — set ``TELEOP_OOB_HUB_ONLY=1`` and open
@@ -73,18 +92,55 @@ You should see output confirming the hub is running:
    Streaming and web page access use WiFi, not USB tethering.
    ``adb forward`` is used only temporarily for CDP automation.
 
+.. Keep quick-start labels bold so they do not introduce a new RST title level.
+
+**Automatic presence recovery**
+
+While ``--setup-oob`` owns the selected headset, automatic power recovery runs
+in both Wi-Fi and USB-local streaming, with normal menus or headless clients.
+It stops with the OOB service. It requires authorized ADB access to that pinned
+device; a network-only connection does not provide automatic wake.
+
+On supported PICO hardware, the live ``stk_stk3x1x`` wakeup proximity sensor
+must report NEAR and Android must report Asleep before a wake request is sent.
+FAR, missing sensor data, or sensor privacy leave PICO wake to the operator.
+Quest presence probing is currently unsupported; positively identified Meta/Oculus
+headsets retain the existing one-shot wake request before browser automation,
+which still waits for confirmed Awake. Unknown devices require manual wake. The worker
+rechecks presence before each attempt, confirms Awake afterward, and allows
+at most three attempts five seconds apart. A brief Awake bounce does not reset
+that budget. Remove and put on the headset again, or press its power button,
+after a failed recovery. No headset settings are changed.
+
+Power recovery preserves the browser page and XR session. Awake does not prove
+that tracking resumed: the client reports paused/waking/recovery-failed status,
+and confirms restored head tracking only after fresh visible XR frames and head
+poses. Controller pose ages remain separate; absent controllers do not imply
+that head-only or hand-tracking modes failed.
+The hub's ``xrPresence`` reports these independently of cached SDK metrics.
+The ``xr`` cadence contains ``sessionActive``, ``generation``, ``visibility``
+(2 visible, 1 blurred, 0 hidden, -1 unknown), ``frameAgeMs``, ``headAgeMs``,
+``leftAgeMs``, ``rightAgeMs``, and controller configuration flags. Client ages
+use a monotonic clock and -1 for unknown; the hub exposes unknown ages as null
+and adds monotonic receipt age. Session and visibility changes reset freshness.
+This heartbeat does not refresh stream-metric timestamps.
+
 **Step 2 — (Manual fallback) Open the web client on the headset**
 
 If the adb automation fails (e.g. headset not paired), you can manually open
 the client URL on the headset browser with **all three** required query
-parameters — ``oobEnable``, ``serverIP``, and ``port``:
+parameters — ``oobEnable``, ``serverIP``, and ``port`` — plus the hub's
+``controlToken``:
 
 .. parsed-literal::
 
-   |web_client_url|\ ?oobEnable=1&serverIP=<HOST_IP>&port=48322
+   |web_client_url|\ ?oobEnable=1&serverIP=<HOST_IP>&port=48322&controlToken=<CONTROL_TOKEN>
 
 Replace ``<HOST_IP>`` with the streaming host's LAN IP. The ``port`` must
-match the proxy port (default 48322).
+match the proxy port (default 48322). ``<CONTROL_TOKEN>`` is the value of
+``CONTROL_TOKEN``, or the generated token printed in the startup banner; the
+banner's bookmark shows it as ``<REDACTED>``, so substitute it before pasting.
+Without the token the hub rejects the headset and the client does not retry.
 
 .. note::
 
@@ -99,7 +155,7 @@ self-signed certificate check):
 
 .. code-block:: bash
 
-   curl -k https://<HOST_IP>:48322/api/oob/v1/state
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://<HOST_IP>:48322/api/oob/v1/state
 
 You should see the headset listed under ``"headsets"`` with
 ``"connected": true``:
@@ -135,7 +191,7 @@ configuration overrides via the HTTP config API:
 
 .. code-block:: bash
 
-   curl -k "https://<HOST_IP>:48322/api/oob/v1/config?serverIP=<HOST_IP>&port=48322&codec=av1"
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" "https://<HOST_IP>:48322/api/oob/v1/config?serverIP=<HOST_IP>&port=48322&codec=av1"
 
 See ``GET /api/oob/v1/config`` below for all supported keys.
 
@@ -149,7 +205,7 @@ from a PC to collect them:
 .. code-block:: bash
 
    # Poll every 2 seconds (adjust to taste)
-   watch -n 2 'curl -sk https://<HOST_IP>:48322/api/oob/v1/state | python3 -m json.tool'
+   watch -n 2 'curl -sk -H "X-Control-Token: <CONTROL_TOKEN>" https://<HOST_IP>:48322/api/oob/v1/state | python3 -m json.tool'
 
 The ``metricsByCadence`` field on each headset entry will now contain live streaming metrics.
 
@@ -220,7 +276,7 @@ Registration (first message)
      "payload": {
        "role": "headset",
        "deviceLabel": "Quest 3",
-       "token": "<optional CONTROL_TOKEN>"
+       "token": "<CONTROL_TOKEN>"
      }
    }
 
@@ -246,6 +302,7 @@ Headset → hub: ``clientMetrics``
      "type": "clientMetrics",
      "payload": {
        "t": 1712800000000,
+       "sampleAgeMs": 125,
        "cadence": "frame",
        "metrics": {
          "streaming.framerate": 72.0,
@@ -258,6 +315,11 @@ One message is sent per cadence per tick, carrying the last known value of every
 reported so far in that cadence. Metric names are the CloudXR.js ``MetricsName`` values,
 so they match the SDK documentation. The hub stores them as an arbitrary
 ``{name: value}`` map per cadence, so metrics added by a future SDK need no hub change.
+``sampleAgeMs`` is the elapsed client monotonic time since the last SDK observation
+in that cadence. Repeating cached metrics increases their age rather than renewing
+freshness. The hub subtracts this age from receipt time, independently of the device's
+wall clock. Older clients that omit the field retain receipt-time freshness; they
+must be updated to distinguish cached samples from new observations.
 
 Browser health exchange
 ^^^^^^^^^^^^^^^^^^^^^^^
@@ -319,8 +381,9 @@ and, in USB-local mode, TURN and reverse rules have been verified;
 matching browser health report was received; ``connectDispatched`` records a
 host CONNECT click; and ``streamConfirmed`` requires a streaming report with
 fresh metrics. ``readinessStage`` and ``readinessSince`` show the latest
-milestone and when it was entered. ``lastMetricsAt`` is the host-received
-metrics time in epoch milliseconds; the launcher accepts ``streamConfirmed``
+milestone and when it was entered. ``lastMetricsAt`` is the latest metric observation
+time in host epoch milliseconds, derived from receipt time minus sample age;
+``lastSeenAt`` remains the browser message receipt time. The launcher accepts ``streamConfirmed``
 only while those metrics and the lifecycle status are less than five seconds
 old. Recovery can move the stage backward, and a surviving browser can resume
 a stream without another host CONNECT click.
@@ -436,7 +499,7 @@ version.
 
 .. code-block:: bash
 
-   curl -k https://localhost:48322/api/oob/v1/state
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" https://localhost:48322/api/oob/v1/state
 
 Example response:
 
@@ -469,7 +532,7 @@ Push config to connected headsets via query parameters:
 
 .. code-block:: bash
 
-   curl -k "https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&port=48322"
+   curl -k -H "X-Control-Token: <CONTROL_TOKEN>" "https://localhost:48322/api/oob/v1/config?serverIP=10.0.0.5&port=48322"
 
 Example response:
 
@@ -486,14 +549,28 @@ Supported query keys: ``serverIP``, ``port``, ``panelHiddenAtStart``, ``codec``.
 Optional ``targetClientId`` restricts the push to a single headset (returns 404
 if not connected).
 
+``GET /api/oob/v1/connect``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Releases headset setup on a service started with ``--defer-oob-connect``.
+Returns ``{"connectRequested": true, "alreadyRequested": false}``; repeating
+it is harmless (``"alreadyRequested": true``). A service that was not started
+deferred answers 409.
+
 Authentication
 --------------
 
-Set ``CONTROL_TOKEN=<secret>`` to require a token on all hub operations.
-Pass it as:
+Every hub operation requires a token. Set ``CONTROL_TOKEN=<secret>`` to choose
+it; if it is unset or empty, the hub generates a random token for the session and
+prints it in the startup banner. Requests without the token, and WebSocket
+``register`` frames without it, are rejected. Pass it as:
 
 - WebSocket: ``"token"`` field in the ``register`` payload
 - HTTP: ``?token=<secret>`` query parameter or ``X-Control-Token`` header
+
+The headset bookmark carries the token as ``controlToken`` in the URL query, so
+the hosting server and any proxy logs can see it. Treat bookmark URLs as
+secrets and prefer a client served from the streaming host (``--host-client``).
 
 Web client integration
 ----------------------
@@ -503,7 +580,7 @@ The web client connects to the hub when the page URL contains
 
 .. parsed-literal::
 
-   |web_client_url|\ ?oobEnable=1&serverIP=10.0.0.1&port=48322
+   |web_client_url|\ ?oobEnable=1&serverIP=10.0.0.1&port=48322&controlToken=<CONTROL_TOKEN>
 
 The client builds ``wss://{serverIP}:{port}/oob/v1/ws`` and:
 
@@ -543,7 +620,7 @@ Environment variables
        and signaling share this socket. In ``--usb-local`` mode
        ``adb reverse`` maps it to the headset.
    * - ``CONTROL_TOKEN``
-     - Optional auth token for hub access
+     - Auth token for hub access; a random per-session token is generated if unset
    * - ``TELEOP_STREAM_SERVER_IP``
      - Override the auto-detected LAN IP in hub initial config
    * - ``TELEOP_PROXY_HOST``
@@ -556,6 +633,16 @@ Environment variables
      - Default video codec for headset bookmarks
    * - ``TELEOP_CLIENT_PANEL_HIDDEN_AT_START``
      - Hide control panel on load (``true`` / ``false``)
+   * - ``TELEOP_CLIENT_IMMERSIVE_MODE``
+     - WebXR session mode: ``vr`` or ``ar``. PICO 4 Ultra needs ``vr``.
+   * - ``TELEOP_CLIENT_REFERENCE_SPACE``
+     - XR reference space: ``auto``, ``local-floor``, ``local``, ``viewer`` or
+       ``unbounded``. Pin it to compare replays across runs.
+   * - ``TELEOP_CLIENT_REPLAY_PACING``
+     - Replay pacing: ``frame`` (one recorded frame per XR frame, independent
+       of server speed) or ``time``.
+   * - ``TELEOP_CLIENT_SHOW_RECORDING_CONTROLS``
+     - Enable the recording and replay controls (``true`` / ``false``).
    * - ``TELEOP_CLIENT_ROUTE``
      - HashRouter fragment appended to the bookmark URL. Default empty
        (no fragment — the web client picks its own landing route). Set
@@ -590,6 +677,16 @@ Environment variables
        Before each new browser launch, ADB must confirm
        ``mWakefulness=Awake``; wear or unlock the headset (or cover its
        proximity sensor) when the service reports that it is asleep.
+   * - ``TELEOP_OOB_RECORDING``
+     - Recording to select in the client before CONNECT: a host path, pushed to
+       the headset, or ``latest``, the newest
+       ``isaacteleop-input-recording*.json`` (the client's Save name) in its
+       Download folder.
+       Starting the replay is left to the operator. Unset by default.
+   * - ``TELEOP_HEADSET_BROWSER_PACKAGE``
+     - Headset browser package. Unset, the vendor's browser is used. On PICO,
+       set ``com.pico.browser``: in hand-tracking mode the OS holds VR from
+       non-system browsers behind a "requires controllers" dialog.
    * - ``TELEOP_OOB_RECOVERY_TIMEOUT_SEC``
      - Positive finite recovery-episode duration in seconds (default ``60``).
        Expiry changes to observation mode; it never stops the host. If this is
@@ -636,7 +733,7 @@ On startup the launcher:
 2. Resolves the WebXR static directory from
    ``TELEOP_WEB_CLIENT_STATIC_DIR`` (default ``~/.cloudxr/static-client``)
    and syncs missing ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` from
-   the published client (see :doc:`../getting_started/build_from_source/webxr`).
+   the published client (see :doc:`../development/build_from_source/webxr`).
 3. Serves that directory at ``https://localhost:48322/client/`` on the WSS
    proxy's existing TLS listener.
 4. After the selected headset is ready, checks its non-loopback network,
@@ -704,7 +801,7 @@ and ``bundle.emulator.js`` (desktop emulation only). If the static cache under
 **Fix:** Ensure ``index.html``, ``bundle.js``, and ``bundle.emulator.js`` are present
 under the static dir — run the launcher once with network, copy a full ``npm run build``
 output, or use the GitHub Pages URL directly. See
-:doc:`../getting_started/build_from_source/webxr`.
+:doc:`../development/build_from_source/webxr`.
 
 CDP: startButton marked failed / not actionable
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

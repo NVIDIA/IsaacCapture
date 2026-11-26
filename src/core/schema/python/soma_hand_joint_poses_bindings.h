@@ -29,7 +29,7 @@ inline void bind_soma_hand_joint_poses(py::module& m)
 
     serialized_class<SomaHandJointPoses>(m, "SomaHandJointPoses", "Encoded evaluated SOMA hand poses.")
         .def(py::init(
-                 [](std::vector<SomaHandJointPose> joint_poses, SomaHandedness handedness)
+                 [](std::vector<SomaHandJointPose> joint_poses, SomaHandSide hand_side)
                  {
                      std::sort(joint_poses.begin(), joint_poses.end(),
                                [](const auto& a, const auto& b) { return a.joint() < b.joint(); });
@@ -50,11 +50,10 @@ inline void bind_soma_hand_joint_poses(py::module& m)
                      }
                      SomaHandJointPosesT native;
                      native.joint_poses = std::move(joint_poses);
-                     native.handedness = handedness;
+                     native.hand_side = hand_side;
                      return pack<SomaHandJointPoses>(native);
                  }),
-             py::arg("joint_poses") = std::vector<SomaHandJointPose>{},
-             py::arg("handedness") = SomaHandedness_UNSPECIFIED)
+             py::arg("joint_poses") = std::vector<SomaHandJointPose>{}, py::arg("hand_side") = SomaHandSide_UNSPECIFIED)
         .def_property_readonly("joint_poses",
                                [](const Serialized<SomaHandJointPoses>& self)
                                {
@@ -79,7 +78,7 @@ inline void bind_soma_hand_joint_poses(py::module& m)
                 return found != nullptr ? py::cast(*found) : py::none();
             },
             py::arg("joint"), "Return one provided joint pose, or None when absent.")
-        .def_property_readonly("handedness", field(&SomaHandJointPoses::handedness));
+        .def_property_readonly("hand_side", field(&SomaHandJointPoses::hand_side));
 
     bind_record<SomaHandJointPosesRecord, SomaHandJointPoses>(m, "SomaHandJointPosesRecord", "SomaHandJointPoses");
 }

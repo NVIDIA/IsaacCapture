@@ -11,7 +11,7 @@ from isaaccapture.deviceio_trackers import (
     SomaHandJointPosesTracker,
     SomaHandJointRotationsTracker,
 )
-from isaaccapture.schema import SomaHandedness
+from isaaccapture.schema import SomaHandSide
 
 from .deviceio_tensor_types import (
     DeviceIOSomaHandJointPosesTracked,
@@ -43,7 +43,7 @@ class SomaHandSource(IDeviceIOSource):
         self,
         name: str,
         collection_id: str,
-        handedness: SomaHandedness,
+        hand_side: SomaHandSide,
         layer: Any | None = None,
         *,
         representation: SomaHandRepresentation
@@ -51,9 +51,9 @@ class SomaHandSource(IDeviceIOSource):
     ) -> None:
         if not collection_id:
             raise ValueError("SOMA hand collection_id must not be empty")
-        if handedness not in (SomaHandedness.LEFT, SomaHandedness.RIGHT):
-            raise ValueError("SOMA hand source requires LEFT or RIGHT handedness")
-        self.handedness = handedness
+        if hand_side not in (SomaHandSide.LEFT, SomaHandSide.RIGHT):
+            raise ValueError("SOMA hand source requires LEFT or RIGHT hand side")
+        self.hand_side = hand_side
         self.representation = SomaHandRepresentation(representation)
         self._tracker: SomaHandJointRotationsTracker | SomaHandJointPosesTracker
         if self.representation is SomaHandRepresentation.JOINT_ROTATIONS:
@@ -65,7 +65,7 @@ class SomaHandSource(IDeviceIOSource):
             self._tracker = SomaHandJointPosesTracker(collection_id)
             self._input_type = DeviceIOSomaHandJointPosesTracked()
         # Pybind enum values read from buffers are not singleton objects.
-        expected_hand_type = "left" if handedness == SomaHandedness.LEFT else "right"
+        expected_hand_type = "left" if hand_side == SomaHandSide.LEFT else "right"
         self._evaluator = (
             _SomaHandEvaluator(layer, expected_hand_type) if layer is not None else None
         )
@@ -91,10 +91,10 @@ class SomaHandSource(IDeviceIOSource):
         if data is None:
             group.set_none()
             return
-        if data.handedness != self.handedness:
+        if data.hand_side != self.hand_side:
             raise ValueError(
-                f"SOMA hand payload handedness {data.handedness} does not match "
-                f"source handedness {self.handedness}"
+                f"SOMA hand payload hand side {data.hand_side} does not match "
+                f"source hand side {self.hand_side}"
             )
 
         if self.representation is SomaHandRepresentation.JOINT_ROTATIONS:

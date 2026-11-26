@@ -1,0 +1,512 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""The viser panel: both hands replayed on one playhead, beside the final results.
+
+The only module in this package that imports viser. The result list is the final
+result of every check, never a partial one.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import time
+from dataclasses import replace
+from html import escape
+from pathlib import Path
+
+import numpy as np
+import viser
+from viser import uplot
+
+from cts_common.panel import render
+from cts_common.panel.sample import Sample, Vec3
+from cts_common.panel.skeleton import HELD_JOINT_COLOUR, Skeleton
+from cts_common.panel.track import Track
+from cts_common.report import Mark
+
+from ..labels import StepTimeline
+from ..profile import CHAINS, HAND, JOINT_NAMES, METACARPALS, PALM, PROXIMAL, WRIST
+from ..report import Report
+from . import bundle, status
+from .track import SIDES, centre
+
+NUM_JOINTS = len(JOINT_NAMES)
+RATE_WINDOW_S = 8.0
+PLOT_PERIOD_S = 0.2
+TICK_S = 1.0 / 60.0
+SPEEDS = {"0.25x": 0.25, "0.5x": 0.5, "1x": 1.0, "2x": 2.0}
+# How long the package button stays disabled after the transfer call returns, seconds.
+REENABLE_DELAY_S = 3.0
+# Per-side colours, greys.
+COLOURS = {"left": "#1f2937", "right": "#9ca3af"}
+POINT_SIZE = 0.008
+AXES_LENGTH = 0.015
+# One colour per digit, none of them red: red is a held (invalid) joint.
+DIGIT_COLOURS: dict[str, tuple[int, int, int]] = {
+    "thumb": (230, 159, 0),
+    "index": (0, 114, 178),
+    "middle": (0, 158, 115),
+    "ring": (148, 103, 189),
+    "little": (188, 189, 34),
+}
+PALM_COLOUR = (120, 128, 140)
+# Every joint a digit owns: its chain and, for the fingers, the metacarpal.
+DIGIT_JOINTS: dict[str, tuple[int, ...]] = {
+    digit: (*chain, *((METACARPALS[digit],) if digit in METACARPALS else ()))
+    for digit, chain in CHAINS.items()
+}
+# "fill missing joints" draws an optional joint the glove never reported in this colour.
+# A metacarpal goes this far from the wrist toward its knuckle; PALM halfway to the
+# middle knuckle. Display estimates only; no check reads them.
+FILLED_COLOUR = (200, 204, 212)
+METACARPAL_AT = 0.3
+# "separate hands" shifts each hand this far along x, left to -x; wrists stay as recorded.
+SEPARATION_M = {"left": -0.15, "right": 0.15}
+
+
+def _joint_colours() -> list[tuple[int, int, int]]:
+    colours = [PALM_COLOUR] * NUM_JOINTS
+    for digit, joints in DIGIT_JOINTS.items():
+        for index in joints:
+            colours[index] = DIGIT_COLOURS[digit]
+    return colours
+
+
+def _lerp(a: Vec3, b: Vec3, t: float) -> Vec3:
+    return (
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    )
+
+
+def filled_joints(
+    positions: tuple[Vec3 | None, ...], hidden: frozenset[int] = frozenset()
+) -> tuple[dict[int, Vec3], list[tuple[Vec3, Vec3]]]:
+    """Estimated PALM and metacarpals where ``positions`` has none, and their bones."""
+    wrist = positions[WRIST]
+    if wrist is None:
+        return {}, []
+    filled: dict[int, Vec3] = {}
+    for digit, metacarpal in METACARPALS.items():
+        knuckle = positions[PROXIMAL[digit]]
+        if positions[metacarpal] is None and knuckle is not None:
+            filled[metacarpal] = _lerp(wrist, knuckle, METACARPAL_AT)
+    middle = positions[PROXIMAL["middle"]]
+    if positions[PALM] is None and middle is not None:
+        filled[PALM] = _lerp(wrist, middle, 0.5)
+    filled = {index: at for index, at in filled.items() if index not in hidden}
+    bones = [
+        (filled.get(parent) or positions[parent], filled.get(child) or positions[child])
+        for parent, child in HAND.bones()
+        if (parent in filled or child in filled) and not {parent, child} & hidden
+    ]
+    return filled, [(a, b) for a, b in bones if a is not None and b is not None]
+
+
+def _legend() -> str:
+    swatches = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:4px;'
+        f'margin-right:10px"><span style="width:10px;height:10px;border-radius:50%;'
+        f'background:rgb{colour}"></span>{digit}</span>'
+        for digit, colour in DIGIT_COLOURS.items()
+    )
+    return (
+        f'<div style="font-size:11px">{swatches}'
+        f'<span style="display:inline-flex;align-items:center;gap:4px">'
+        f'<span style="width:10px;height:10px;border-radius:50%;'
+        f'background:rgb{HELD_JOINT_COLOUR}"></span>invalid</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:4px;margin-left:10px">'
+        f'<span style="width:10px;height:10px;border-radius:50%;'
+        f'background:rgb{FILLED_COLOUR}"></span>filled</span></div>'
+    )
+
+
+class Panel:
+    def __init__(
+        self,
+        server: viser.ViserServer,
+        report: Report,
+        tracks: dict[str, Track],
+        recording: Path | None = None,
+        timeline: StepTimeline | None = None,
+    ) -> None:
+        self._server = server
+        self._report = report
+        self._tracks = tracks
+        self._recording = recording
+        self._timeline = timeline
+        self._duration_s = max((t.duration_s for t in tracks.values()), default=0.0)
+        self._playhead_s = 0.0
+
+        server.gui.configure_theme(control_width="large", dark_mode=False)
+        server.scene.set_up_direction("+y")
+        look = centre(tracks) or (0.0, 1.1, -0.3)
+        self._table_m = status.table_height(report)
+        server.scene.add_grid(
+            "/table",
+            width=1.2,
+            height=1.2,
+            plane="xz",
+            cell_size=0.05,
+            position=(look[0], self._table_m or 0.0, look[2]),
+        )
+        server.scene.add_frame("/origin", axes_length=0.1, axes_radius=0.002)
+        server.initial_camera.position = (look[0], look[1] + 0.25, look[2] + 0.55)
+        server.initial_camera.look_at = look
+        self._roots = {
+            side: server.scene.add_frame(f"/hands/{side}", show_axes=False)
+            for side in tracks
+        }
+        self._skeletons = {
+            side: Skeleton(
+                server,
+                HAND,
+                root=f"/hands/{side}",
+                point_size=POINT_SIZE,
+                joint_colours=_joint_colours(),
+                axes_length=AXES_LENGTH,
+            )
+            for side in tracks
+        }
+        self._filled = {
+            side: (
+                server.scene.add_point_cloud(
+                    f"/hands/{side}/filled/joints",
+                    points=np.zeros((0, 3), np.float32),
+                    colors=FILLED_COLOUR,
+                    point_size=POINT_SIZE,
+                    point_shape="circle",
+                ),
+                server.scene.add_line_segments(
+                    f"/hands/{side}/filled/bones",
+                    points=np.zeros((0, 2, 3), np.float32),
+                    colors=FILLED_COLOUR,
+                    thickness=2.5,
+                    thickness_units="screen",
+                ),
+            )
+            for side in tracks
+        }
+        self._build_gui()
+        self._draw()
+
+    def _build_gui(self) -> None:
+        gui = self._server.gui
+        report = self._report
+
+        gui.add_html(render.verdict_banner(report))
+        facts = [
+            ("recording", report.source.rsplit("/", 1)[-1]),
+            ("frames", f"{report.frames}"),
+            ("duration", f"{self._duration_s:.1f} s"),
+            (
+                "grid",
+                "stage floor: no flat window was held"
+                if self._table_m is None
+                else f"table at {self._table_m:.3f} m, from the flat windows",
+            ),
+        ]
+        for side in SIDES:
+            track = self._tracks.get(side)
+            facts.append(
+                (
+                    f"{side} valid",
+                    "no channel"
+                    if track is None
+                    else f"at worst {track.min_valid_count}/{NUM_JOINTS}",
+                )
+            )
+        gui.add_html(render.facts(facts))
+        for note in report.notes:
+            gui.add_html(
+                f'<div style="font-size:11px;opacity:0.7">note: {escape(note)}</div>'
+            )
+
+        with gui.add_folder("Playback"):
+            self._scrub = gui.add_slider(
+                "time s",
+                min=0.0,
+                max=max(self._duration_s, 0.01),
+                step=0.01,
+                initial_value=0.0,
+            )
+            self._playing = gui.add_checkbox("play", initial_value=False)
+            self._speed = gui.add_dropdown("speed", tuple(SPEEDS), initial_value="1x")
+            self._name_held = gui.add_checkbox("name held joints", initial_value=False)
+            gui.add_html(_legend())
+            self._readout = gui.add_html("")
+
+            @self._scrub.on_update
+            def _(_: viser.GuiEvent) -> None:
+                self._playhead_s = float(self._scrub.value)
+                self._draw()
+
+        self._build_view(gui)
+
+        if self._recording is not None:
+            self._build_submission(gui)
+
+        with gui.add_folder("Decides the take"):
+            gui.add_html(render.result_rows(status.decisive(report)))
+            self._rate_plot = self._add_rate_plot(gui)
+            self._add_validity_plot(gui)
+
+        for group in status.groups(report):
+            with gui.add_folder(
+                render.group_heading(group),
+                expand_by_default=group.mark is not Mark.PASS,
+            ):
+                gui.add_html(render.group_body(group))
+
+    def _build_view(self, gui: viser.GuiApi) -> None:
+        with gui.add_folder("View"):
+            self._separate = gui.add_checkbox(
+                "separate hands",
+                initial_value=False,
+                hint="offset left and right along x, so hands with no wrist pose do not overlap",
+            )
+            self._fill = gui.add_checkbox(
+                "fill missing joints",
+                initial_value=False,
+                hint="estimate PALM and metacarpals the glove never reported; drawn in light grey",
+            )
+            self._axes = gui.add_checkbox(
+                "joint axes",
+                initial_value=False,
+                hint="X red, Y green, Z blue; an OpenXR hand joint points +Z back "
+                "toward the wrist and +Y out of the back of the hand",
+            )
+            self._show_hand = {
+                side: gui.add_checkbox(f"{side} hand", initial_value=True)
+                for side in self._tracks
+            }
+            # Applies to both hands; a hidden hand stays hidden whatever is ticked here.
+            self._show_digit = {
+                digit: gui.add_checkbox(digit, initial_value=True)
+                for digit in DIGIT_JOINTS
+            }
+
+        @self._separate.on_update
+        def _(_: viser.GuiEvent) -> None:
+            self._place_hands()
+
+        for side, box in self._show_hand.items():
+            box.on_update(lambda _, side=side: self._show_hands(side))
+        for box in (self._fill, self._axes, *self._show_digit.values()):
+            box.on_update(lambda _: self._draw())
+
+    def _show_hands(self, side: str) -> None:
+        self._roots[side].visible = self._show_hand[side].value
+
+    def _hidden_joints(self) -> frozenset[int]:
+        return frozenset(
+            index
+            for digit, box in self._show_digit.items()
+            if not box.value
+            for index in DIGIT_JOINTS[digit]
+        )
+
+    def _place_hands(self) -> None:
+        for side, root in self._roots.items():
+            offset = SEPARATION_M.get(side, 0.0) if self._separate.value else 0.0
+            root.position = (offset, 0.0, 0.0)
+
+    def _build_submission(self, gui: viser.GuiApi) -> None:
+        with gui.add_folder("Submission"):
+            self._package_button = gui.add_button(
+                "package for submission",
+                hint="zip the recording, its sidecars and this report, then download",
+            )
+            self._package_bar = gui.add_progress_bar(0.0, visible=False)
+            self._package_note = gui.add_html("")
+
+            @self._package_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                self.package(event.client)
+
+    def package(self, client: viser.ClientHandle | None) -> None:
+        """Build the bundle and hand it to the client that asked for it."""
+        if client is None or self._recording is None:
+            return
+        self._package_button.disabled = True
+        self._package_bar.value = 0.0
+        self._package_bar.visible = True
+        try:
+            name, data = bundle.build(
+                self._report,
+                self._tracks,
+                self._recording,
+                self._timeline,
+                on_progress=self._package_progress,
+            )
+            self._package_bar.animated = True
+            client.send_file_download(name, data)
+            self._package_note.content = render.packaged(
+                name, len(data), hashlib.sha256(data).hexdigest()
+            )
+        except OSError as unreadable:
+            # The take moved or became unreadable since the panel started.
+            self._package_note.content = render.package_failed(unreadable)
+        finally:
+            time.sleep(REENABLE_DELAY_S)
+            self._package_bar.animated = False
+            self._package_bar.visible = False
+            self._package_button.disabled = False
+
+    def _package_progress(self, fraction: float) -> None:
+        self._package_bar.value = 100.0 * fraction
+
+    def _series(self, label: str) -> tuple[uplot.Series, ...]:
+        return (uplot.Series(label="s"),) + tuple(
+            uplot.Series(label=f"{side} {label}", stroke=COLOURS[side], width=1.5)
+            for side in self._tracks
+        )
+
+    def _add_rate_plot(self, gui: viser.GuiApi) -> viser.GuiUplotHandle:
+        extents = [t.rate_extent() for t in self._tracks.values()]
+        extents = [e for e in extents if e is not None] or [(0.0, 1.0)]
+        low = min(e[0] for e in extents)
+        high = max(e[1] for e in extents)
+        pad = max(0.5, (high - low) * 0.1)
+        empty = (np.zeros(1),) * (1 + len(self._tracks))
+        return gui.add_uplot(
+            data=empty,
+            series=self._series("Hz"),
+            scales={
+                "x": uplot.Scale(time=False),
+                "y": uplot.Scale(min=low - pad, max=high + pad),
+            },
+            title=f"frame rate, last {RATE_WINDOW_S:.0f} s",
+            height=110,
+        )
+
+    def _add_validity_plot(self, gui: viser.GuiApi) -> None:
+        times, columns = self._aligned(lambda track: track.validity_series())
+        gui.add_uplot(
+            data=(np.asarray(times or [0.0]),)
+            + tuple(np.asarray(c or [0.0]) for c in columns),
+            series=self._series("valid"),
+            scales={
+                "x": uplot.Scale(time=False),
+                "y": uplot.Scale(min=0.0, max=float(NUM_JOINTS)),
+            },
+            title="valid joints, whole take",
+            height=110,
+        )
+
+    def _aligned(self, series):
+        """Each hand's series resampled onto the first hand's times."""
+        sides = list(self._tracks)
+        if not sides:
+            return [], []
+        base_times, _ = series(self._tracks[sides[0]])
+        columns = []
+        for side in sides:
+            times, values = series(self._tracks[side])
+            if not times:
+                columns.append([0.0] * len(base_times))
+                continue
+            positions = np.searchsorted(times, base_times, side="right") - 1
+            positions = np.clip(positions, 0, len(values) - 1)
+            columns.append([values[i] for i in positions])
+        return base_times, columns
+
+    def _draw(self) -> None:
+        rows = []
+        step = None
+        hidden = self._hidden_joints()
+        with self._server.atomic():
+            for side, track in self._tracks.items():
+                if not track.samples:
+                    continue
+                sample = track.samples[track.index_at(self._playhead_s)]
+                step = step or sample.step
+                shown = sample
+                if hidden:
+                    shown = replace(
+                        sample,
+                        positions=tuple(
+                            None if index in hidden else position
+                            for index, position in enumerate(sample.positions)
+                        ),
+                    )
+                self._skeletons[side].draw(
+                    shown, self._name_held.value, self._axes.value
+                )
+                self._draw_filled(side, sample, hidden)
+                colour = "#b0342c" if sample.valid_count < NUM_JOINTS else "#12502c"
+                rows.append(
+                    f'<span style="color:{COLOURS[side]};font-weight:700">{side}</span> '
+                    f'<span style="color:{colour};font-weight:700">'
+                    f"{sample.valid_count}/{NUM_JOINTS}</span>"
+                )
+            self._readout.content = (
+                f'<div style="font-family:monospace;font-size:12px">'
+                f"{self._playhead_s:7.2f} s / {self._duration_s:.2f} s</div>"
+                f'<div style="font-size:12px">joints valid &nbsp;'
+                f"{' &nbsp; '.join(rows)}</div>"
+                f'<div style="font-size:12px">window: '
+                f"<b>{escape(step) if step else 'unlabelled'}</b></div>"
+            )
+
+    def _draw_filled(self, side: str, sample: Sample, hidden: frozenset[int]) -> None:
+        joints, bones = (
+            filled_joints(sample.positions, hidden) if self._fill.value else ({}, [])
+        )
+        cloud, lines = self._filled[side]
+        cloud.points = np.asarray(list(joints.values()), np.float32).reshape(-1, 3)
+        lines.points = np.asarray(bones, np.float32).reshape(-1, 2, 3)
+
+    def draw_rate(self) -> None:
+        times, columns = self._aligned(
+            lambda track: track.rate_window(
+                track.index_at(self._playhead_s), RATE_WINDOW_S
+            )
+        )
+        if not times:
+            return
+        self._rate_plot.data = (np.asarray(times),) + tuple(
+            np.asarray(c) for c in columns
+        )
+
+    def advance(self, elapsed_s: float) -> None:
+        if not self._playing.value or self._duration_s <= 0:
+            return
+        self._playhead_s += elapsed_s * SPEEDS[self._speed.value]
+        if self._playhead_s > self._duration_s:
+            self._playhead_s = 0.0
+        self._scrub.value = round(self._playhead_s, 2)
+        self._draw()
+
+    def run(self) -> None:
+        last = time.monotonic()
+        plotted = 0.0
+        while True:
+            now = time.monotonic()
+            elapsed, last = now - last, now
+            self.advance(elapsed)
+            if now - plotted > PLOT_PERIOD_S:
+                plotted = now
+                self.draw_rate()
+            time.sleep(TICK_S)
+
+
+def serve(
+    report: Report,
+    tracks: dict[str, Track],
+    recording: Path | None = None,
+    timeline: StepTimeline | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8080,
+) -> None:
+    server = viser.ViserServer(host=host, port=port)
+    panel = Panel(server, report, tracks, recording, timeline)
+    print(f"[panel] http://localhost:{server.get_port()} — Ctrl+C to stop")
+    try:
+        panel.run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.stop()

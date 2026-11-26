@@ -4,6 +4,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 add_executable(deviceio_trackers_tests
+    test_haptic_command_reader_tracker.cpp
     test_keyboard_tracker.cpp
 )
 

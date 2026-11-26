@@ -87,6 +87,7 @@ public:
     std::unique_ptr<IFullBodyTrackerImpl> create_full_body_tracker_pico_impl(const FullBodyTracker* tracker);
     std::unique_ptr<IFullBodyTrackerImpl> create_full_body_tracker_noitom_impl(const FullBodyTracker* tracker);
     std::unique_ptr<IFullBodyTrackerImpl> create_full_body_tracker_xsens_impl(const FullBodyTracker* tracker);
+    std::unique_ptr<IFullBodyTrackerImpl> create_full_body_tracker_jmex_impl(const FullBodyTracker* tracker);
     std::unique_ptr<ITensorPushTrackerImpl> create_tensor_push_tracker_impl(const TensorPushTracker* tracker);
     std::unique_ptr<IHapticCommandReaderTrackerImpl> create_haptic_command_reader_tracker_impl(
         const HapticCommandReaderTracker* tracker);

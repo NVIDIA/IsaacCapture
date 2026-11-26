@@ -8,7 +8,7 @@ from isaaccapture.schema import (
     DeviceDataTimestamp,
     Point,
     Quaternion,
-    SomaHandedness,
+    SomaHandSide,
     SomaHandJoint,
     SomaHandJointRotation,
     SomaHandJointRotations,
@@ -35,7 +35,7 @@ def test_soma_hand_rotations_sort_lookup_and_omit_unavailable_joints():
         ],
         Point(1.0, 2.0, 3.0),
         True,
-        SomaHandedness.LEFT,
+        SomaHandSide.LEFT,
     )
 
     assert [entry.joint for entry in payload.joint_rotations] == [
@@ -44,7 +44,7 @@ def test_soma_hand_rotations_sort_lookup_and_omit_unavailable_joints():
     ]
     assert payload.lookup(SomaHandJoint.PINKY_END).rotation.w == pytest.approx(0.8)
     assert payload.lookup(SomaHandJoint.INDEX1) is None
-    assert payload.handedness == SomaHandedness.LEFT
+    assert payload.hand_side == SomaHandSide.LEFT
 
 
 def test_soma_hand_rotations_reject_duplicate_joint_identifiers():
@@ -58,7 +58,7 @@ def test_soma_hand_rotation_record_preserves_quaternion_layout():
     quaternion /= np.linalg.norm(quaternion)
     payload = SomaHandJointRotations(
         [SomaHandJointRotation(SomaHandJoint.WRIST, Quaternion(*quaternion))],
-        handedness=SomaHandedness.RIGHT,
+        hand_side=SomaHandSide.RIGHT,
     )
     record = SomaHandJointRotationsRecord(payload, DeviceDataTimestamp(100, 200, 300))
 
@@ -67,5 +67,5 @@ def test_soma_hand_rotation_record_preserves_quaternion_layout():
         [wrist.rotation.x, wrist.rotation.y, wrist.rotation.z, wrist.rotation.w],
         quaternion,
     )
-    assert record.data.handedness == SomaHandedness.RIGHT
+    assert record.data.hand_side == SomaHandSide.RIGHT
     assert record.timestamp.sample_time_local_common_clock == 200

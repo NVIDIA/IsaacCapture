@@ -16,6 +16,7 @@
  */
 
 import { detectHeadset } from './BrowserCapabilities';
+import type { AutoRefreshMode } from './react/utils';
 
 // Device profiles provide per-device defaults used by the example UIs.
 // These are not hard requirements; they are applied as suggested values and remain user-editable.
@@ -25,6 +26,7 @@ export interface DeviceProfile {
   id: DeviceProfileId;
   label: string;
   description?: string;
+  autoRefreshMode?: AutoRefreshMode;
   // Constraints that affect hosting or connection requirements (e.g., HTTPS-only devices).
   connection?: {
     httpsRequired?: boolean;
@@ -72,6 +74,7 @@ const CUSTOM_PROFILE: DeviceProfile = {
 const QUEST3_PROFILE: DeviceProfile = {
   id: 'quest3',
   label: 'Quest 3',
+  autoRefreshMode: 'never',
   description: 'Balanced defaults for Meta Quest 3.',
   connection: {
     httpsRequired: false,
@@ -131,6 +134,7 @@ const QUEST2_PROFILE: DeviceProfile = {
 const PICO4ULTRA_PROFILE: DeviceProfile = {
   id: 'pico4ultra',
   label: 'Pico 4 Ultra',
+  autoRefreshMode: 'any',
   description: 'Conservative defaults for Pico 4 Ultra.',
   connection: {
     httpsRequired: true,

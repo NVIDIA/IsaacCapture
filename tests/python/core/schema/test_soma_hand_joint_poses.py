@@ -8,7 +8,7 @@ from isaaccapture.schema import (
     Point,
     Pose,
     Quaternion,
-    SomaHandedness,
+    SomaHandSide,
     SomaHandJoint,
     SomaHandJointPose,
     SomaHandJointPoses,
@@ -24,13 +24,13 @@ def test_soma_hand_joint_poses_are_keyed_and_sparse():
                 Pose(Point(1.0, 2.0, 3.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
             )
         ],
-        SomaHandedness.LEFT,
+        SomaHandSide.LEFT,
     )
 
     assert len(payload.joint_poses) == 1
     assert payload.lookup(SomaHandJoint.INDEX_END).pose.position.y == pytest.approx(2.0)
     assert payload.lookup(SomaHandJoint.WRIST) is None
-    assert payload.handedness == SomaHandedness.LEFT
+    assert payload.hand_side == SomaHandSide.LEFT
 
 
 def test_soma_hand_joint_poses_sort_and_reject_duplicates():
@@ -54,12 +54,12 @@ def test_soma_hand_joint_poses_record_round_trip():
                 Pose(Point(72.0, 73.0, 74.0), Quaternion(0.0, 0.0, 0.0, 1.0)),
             )
         ],
-        SomaHandedness.RIGHT,
+        SomaHandSide.RIGHT,
     )
     record = SomaHandJointPosesRecord(payload, DeviceDataTimestamp(10, 20, 30))
 
     assert record.data.lookup(SomaHandJoint.PINKY_END).pose.position.z == pytest.approx(
         74.0
     )
-    assert record.data.handedness == SomaHandedness.RIGHT
+    assert record.data.hand_side == SomaHandSide.RIGHT
     assert record.timestamp.available_time_local_common_clock == 10

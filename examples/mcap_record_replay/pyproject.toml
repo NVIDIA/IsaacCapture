@@ -18,6 +18,7 @@ dependencies = [
     "isaaccapture[cloudxr]",
     "mcap>=1.2.0",
     "numpy>=1.23.0",
+    "py-soma-x==0.3.1",
     "viser>=0.2.0",
 ]
 
@@ -25,12 +26,18 @@ dependencies = [
 # must stay without an __init__.py. `only-include` + `sources`, not `packages`:
 # the latter keeps only the last path component and would root the wheel at a
 # bare top-level `mcap_record_replay/`.
-[tool.hatch.build.targets.wheel]
+[tool.hatch.build]
 only-include = ["python/isaaccapture_examples/mcap_record_replay"]
+
+[tool.hatch.build.targets.wheel]
 sources = ["python"]
+
+[tool.uv.extra-build-dependencies]
+# cholespy 2.2.0 uses a nanobind internal API removed in version 3.
+cholespy = ["nanobind>=2,<3"]
 
 [tool.uv.sources]
 # Editable, so edits under src/python/ need no rebuild. Dropped from the
 # installed copy, which has no repo above it.
-# TODO(#880): nothing runs this example in CI; neither path is covered.
+# TODO(#880): the example install paths are not covered in CI.
 isaaccapture = { path = "../..", editable = true }

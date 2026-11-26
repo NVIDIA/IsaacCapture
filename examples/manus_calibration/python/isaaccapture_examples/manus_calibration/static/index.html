@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manus glove calibration</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>Manus glove calibration</h1>
+    <p>
+      Stop the capture session and every other Manus consumer first: the gloves are not shared.
+      Calibration files are saved on the server host in <code id="out-dir"></code>.
+    </p>
+
+    <section id="setup">
+      <fieldset id="sides">
+        <legend>Gloves</legend>
+        <label><input type="radio" name="sides" value="left"> Left</label>
+        <label><input type="radio" name="sides" value="right"> Right</label>
+        <label><input type="radio" name="sides" value="both" checked> Both</label>
+      </fieldset>
+      <button id="start" type="button">Start calibration</button>
+    </section>
+
+    <section id="status" aria-live="polite">
+      <p id="stage"></p>
+      <p id="gloves"></p>
+      <p id="notice" role="alert"></p>
+    </section>
+
+    <section id="step" hidden>
+      <h2 id="step-heading"></h2>
+      <p id="step-title" class="step-title"></p>
+      <p id="step-instruction"></p>
+      <p id="step-guidance" class="hint"></p>
+      <progress id="progress" max="100" value="0" hidden></progress>
+    </section>
+
+    <section id="actions" class="actions" hidden>
+      <button id="confirm" type="button" hidden></button>
+      <button id="cancel" type="button" class="danger">Cancel</button>
+    </section>
+
+    <section id="result" hidden>
+      <h2 id="result-heading"></h2>
+      <p id="result-message"></p>
+      <p id="result-dir" hidden></p>
+      <ul id="result-files"></ul>
+      <pre id="result-log" hidden></pre>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

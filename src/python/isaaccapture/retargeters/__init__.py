@@ -23,6 +23,9 @@ Available Retargeters:
     - SpaceMouseToSe3RelRetargeter: SpaceMouse axes -> relative EE delta control
     - SpaceMouseGripperRetargeter: SpaceMouse left-button toggle -> gripper open/closed
     - SpaceMouseToSe2Retargeter: SpaceMouse axes -> base velocity command (v_x, v_y, omega_z)
+    - GamepadToSe3RelRetargeter: Gamepad stick/dpad axes -> relative EE delta control
+    - GamepadGripperRetargeter: Gamepad X-button toggle -> gripper open/closed
+    - GamepadToSe2Retargeter: Gamepad stick axes -> base velocity command (v_x, v_y, omega_z)
     - SO101ClutchRetargeter: Clutch-rebased absolute EE pose for the SO-101 5-DOF arm --
       re-latches BOTH home position and orientation on every engage, base-frame left-composed, no
       fixed offset
@@ -136,6 +139,11 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
         "SpaceMouseGripperRetargeter",
         None,
     ),
+    "GamepadGripperRetargeter": (
+        ".gripper_retargeter",
+        "GamepadGripperRetargeter",
+        None,
+    ),
     "KeyboardGripperRetargeter": (
         ".gripper_retargeter",
         "KeyboardGripperRetargeter",
@@ -172,6 +180,28 @@ _LAZY_IMPORTS: dict[str, tuple[str, str, str | None]] = {
     "SpaceMouseToSe2RetargeterConfig": (
         ".spacemouse_se2_retargeter",
         "SpaceMouseToSe2RetargeterConfig",
+        None,
+    ),
+    # .gamepad_se3_retargeter  (requires retargeters-lite extra: scipy)
+    "GamepadToSe3RelRetargeter": (
+        ".gamepad_se3_retargeter",
+        "GamepadToSe3RelRetargeter",
+        "retargeters-lite",
+    ),
+    "GamepadToSe3RelRetargeterConfig": (
+        ".gamepad_se3_retargeter",
+        "GamepadToSe3RelRetargeterConfig",
+        "retargeters-lite",
+    ),
+    # .gamepad_se2_retargeter
+    "GamepadToSe2Retargeter": (
+        ".gamepad_se2_retargeter",
+        "GamepadToSe2Retargeter",
+        None,
+    ),
+    "GamepadToSe2RetargeterConfig": (
+        ".gamepad_se2_retargeter",
+        "GamepadToSe2RetargeterConfig",
         None,
     ),
     # .keyboard_se2_retargeter
@@ -369,6 +399,11 @@ __all__ = [
     "SpaceMouseGripperRetargeter",
     "SpaceMouseToSe2Retargeter",
     "SpaceMouseToSe2RetargeterConfig",
+    "GamepadToSe3RelRetargeter",
+    "GamepadToSe3RelRetargeterConfig",
+    "GamepadGripperRetargeter",
+    "GamepadToSe2Retargeter",
+    "GamepadToSe2RetargeterConfig",
     # SO-101 5-DOF arm retargeters
     "SO101ClutchRetargeter",
     "SO101GripperRetargeter",

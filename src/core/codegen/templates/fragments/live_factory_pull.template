@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 std::unique_ptr<@IFACE@> LiveDeviceIOFactory::create_@NAME@_tracker_impl(const @CLASS@* tracker)
 {
     std::unique_ptr<@MCAP_CHANNELS_TYPE@> channels;

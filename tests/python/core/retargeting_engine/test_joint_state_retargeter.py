@@ -257,6 +257,26 @@ class TestEePoseMode:
         assert pose.shape == (7,)
         assert np.linalg.norm(pose[3:7]) == pytest.approx(1.0, abs=1e-5)
 
+    def test_loads_urdf_version_1_2(self, minimal_urdf_path, tmp_path):
+        # Isaac Sim's URDF exporter stamps version="1.2" on <robot>.
+        urdf_1_2 = tmp_path / "mini_1_2.urdf"
+        urdf_1_2.write_text(
+            _MINIMAL_URDF.replace(
+                '<robot name="mini">', '<robot name="mini" version="1.2">'
+            )
+        )
+        joints = {"j1": 0.3, "j2": -0.4, "gripper": 0.0}
+        poses = []
+        for path in (minimal_urdf_path, str(urdf_1_2)):
+            r = self._make(path)
+            inputs, outputs = _build_io(r)
+            inputs[JointStateRetargeter.JOINTS] = _joints_group(
+                r, ["j1", "j2", "gripper"], joints
+            )
+            r.compute(inputs, outputs, _ctx(reset=True))
+            poses.append(np.asarray(outputs["ee_pose"][0], dtype=np.float64))
+        np.testing.assert_allclose(poses[1], poses[0], atol=1e-6)
+
     def test_fk_moves_with_joints(self, minimal_urdf_path):
         r = self._make(minimal_urdf_path)
         inputs, outputs = _build_io(r)

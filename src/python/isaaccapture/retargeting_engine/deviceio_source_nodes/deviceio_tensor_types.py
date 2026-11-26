@@ -14,6 +14,7 @@ from enum import IntEnum
 from typing import Any
 from ..interface.tensor_type import TensorType
 from ..interface.tensor_group_type import TensorGroupType
+from ..tensor_types.indices import _create_index_enum
 from isaaccapture.schema import (
     HeadPose,
     HandPose,
@@ -21,6 +22,7 @@ from isaaccapture.schema import (
     Generic3AxisPedalOutput,
     KeyboardOutput,
     SpaceMouseOutput,
+    GamepadSnapshot,
     JointStateOutput,
     FullBodyPose,
     SomaBodyJointPoses,
@@ -28,6 +30,8 @@ from isaaccapture.schema import (
     SomaHandJointPoses,
     SomaHandJointRotations,
     MessageChannelMessagesTracked,
+    TactileDataArray,
+    TactileMetadata,
 )
 
 
@@ -110,6 +114,12 @@ class SpaceMouseOutputTrackedType(_PayloadTensorType):
     _payload_cls = SpaceMouseOutput
 
 
+class GamepadSnapshotTrackedType(_PayloadTensorType):
+    """GamepadSnapshot payload from DeviceIO GamepadTracker."""
+
+    _payload_cls = GamepadSnapshot
+
+
 class JointStateOutputTrackedType(_PayloadTensorType):
     """JointStateOutput payload from DeviceIO JointStateTracker."""
 
@@ -148,6 +158,18 @@ class SomaHandJointPosesTrackedType(_PayloadTensorType):
     """SomaHandJointPoses payload from a generated SOMA hand tracker."""
 
     _payload_cls = SomaHandJointPoses
+
+
+class TactileDataTrackedType(_PayloadTensorType):
+    """TactileDataArray payload from DeviceIO TactileTracker."""
+
+    _payload_cls = TactileDataArray
+
+
+class TactileMetadataTrackedType(_PayloadTensorType):
+    """TactileMetadata metadata from DeviceIO TactileTracker."""
+
+    _payload_cls = TactileMetadata
 
 
 class MessageChannelMessagesTrackedType(_RequiredPayloadTensorType):
@@ -238,6 +260,18 @@ def DeviceIOSpaceMouseOutputTracked() -> TensorGroupType:
     )
 
 
+def DeviceIOGamepadSnapshotTracked() -> TensorGroupType:
+    """Tracked gamepad snapshot from DeviceIO GamepadTracker.
+
+    Contains:
+        gamepad_tracked: GamepadSnapshot handle, or None while the plugin is not pushing
+    """
+    return TensorGroupType(
+        "deviceio_gamepad_snapshot",
+        [GamepadSnapshotTrackedType("gamepad_tracked")],
+    )
+
+
 def DeviceIOJointStateOutputTracked() -> TensorGroupType:
     """Tracked joint-state data from DeviceIO JointStateTracker.
 
@@ -292,6 +326,27 @@ def DeviceIOSomaHandJointPosesTracked() -> TensorGroupType:
         "deviceio_soma_hand_joint_poses",
         [SomaHandJointPosesTrackedType("soma_hand_tracked")],
     )
+
+
+def DeviceIOTactileTracked() -> TensorGroupType:
+    """Tracked tactile frame and its metadata from DeviceIO TactileTracker.
+
+    Contains:
+        tactile_tracked: TactileDataArray handle, or None when inactive
+        tactile_metadata: TactileMetadata metadata handle, or None until it arrives
+    """
+    return TensorGroupType(
+        "deviceio_tactile",
+        [
+            TactileDataTrackedType("tactile_tracked"),
+            TactileMetadataTrackedType("tactile_metadata"),
+        ],
+    )
+
+
+DeviceIOTactileIndex: Any = _create_index_enum(
+    "DeviceIOTactileIndex", DeviceIOTactileTracked(), "tactile_"
+)
 
 
 def DeviceIOMessageChannelMessagesTracked() -> TensorGroupType:

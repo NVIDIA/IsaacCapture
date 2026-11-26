@@ -3,6 +3,13 @@
 
 cmake_minimum_required(VERSION 3.24...3.25)
 
+# SBOM discovery needs the codemodel and toolchains replies (CMake >=3.27).
+# Feature-test the query: raising the policy version would enable CMP0148,
+# removing FindPythonInterp still used by pybind11's legacy path through vcpkg.
+if(COMMAND cmake_file_api)
+  cmake_file_api(QUERY API_VERSION 1 CODEMODEL 2 TOOLCHAINS 1)
+endif()
+
 # Workaround for older CMake policy compatibility in dependencies
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version")
 
@@ -63,11 +70,14 @@ option(BUILD_PLUGIN_OAK_CAMERA "Build OAK camera plugin (requires vcpkg for Dept
 option(BUILD_PLUGIN_NOITOM_MOCAP "Build Noitom mocap plugin (downloads MocapApi SDK)" OFF)
 option(BUILD_PLUGIN_OGLO "Build OGLO tactile glove plugin (BLE, Linux only; fetches SimpleBLE + nlohmann/json)" OFF)
 option(BUILD_PLUGIN_WUJI_GLOVE "Build Wuji glove plugin (requires the wuji_sdk C SDK)" OFF)
-option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa Avatar glove plugin (Linux; skips if the Avatar SDK is missing)" OFF)
+option(BUILD_PLUGIN_OMNIGLOVE "Build AgiLink OmniGlove plugin (fetches a pinned SDK)" OFF)
+option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa AvatarExo Glove plugin (Linux; skips if the Avatar SDK is missing)" OFF)
+option(BUILD_PLUGIN_JMEX "Build j-mex AgileMaster plugin (Linux x86_64; skips without the MOXI Receiver SDK, stops if MOXIReceiverSDK_DIR holds none)" OFF)
 option(BUILD_PLUGIN_IO_EXO_GLOVE_ROS2 "Build exoskeleton glove ROS 2 (Humble) bridge plugin (Linux only; requires a sourced ROS 2 environment)" OFF)
 option(BUILD_EXAMPLES "Build examples" ON)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)
+option(BUILD_OVXR_CAMERA_QUADS "Build optional application-owned OVXR camera quad support" OFF)
 # Televiz (src/viz) needs Vulkan, the CUDA Toolkit, and glslangValidator.
 # Only Vulkan and CUDA gate the default -- without them the machine cannot build
 # viz at all, so a core-only source build still configures. glslangValidator is

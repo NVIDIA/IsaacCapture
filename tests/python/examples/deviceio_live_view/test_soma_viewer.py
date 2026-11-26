@@ -36,7 +36,7 @@ from isaaccapture.schema import (
     SomaBodyJointPoses,
     SomaBodyJointRotation,
     SomaBodyJointRotations,
-    SomaHandedness,
+    SomaHandSide,
     SomaHandJoint,
     SomaHandJointPose,
     SomaHandJointPoses,
@@ -110,7 +110,7 @@ def soma_joint_poses(positions, orientations):
     return SomaBodyJointPoses(joints)
 
 
-def soma_hand_joint_poses(positions, orientations, handedness):
+def soma_hand_joint_poses(positions, orientations, hand_side):
     joints = [
         SomaHandJointPose(
             SomaHandJoint(index),
@@ -120,15 +120,15 @@ def soma_hand_joint_poses(positions, orientations, handedness):
             zip(positions, orientations, strict=True)
         )
     ]
-    return SomaHandJointPoses(joints, handedness)
+    return SomaHandJointPoses(joints, hand_side)
 
 
-def soma_hand_joint_rotations(rotations, translation, handedness):
+def soma_hand_joint_rotations(rotations, translation, hand_side):
     joints = [
         SomaHandJointRotation(SomaHandJoint(index), Quaternion(*rotation))
         for index, rotation in enumerate(rotations)
     ]
-    return SomaHandJointRotations(joints, Point(*translation), True, handedness)
+    return SomaHandJointRotations(joints, Point(*translation), True, hand_side)
 
 
 def fake_viz(
@@ -228,7 +228,7 @@ def test_soma_hand_pose_reaches_native_25_joint_renderer():
     positions = np.arange(75, dtype=np.float32).reshape(25, 3) / 100
     orientations = np.tile([0, 0, 0, 1], (25, 1)).astype(np.float32)
     sources["hand_left"]._tracker.get_data.return_value = soma_hand_joint_poses(
-        positions, orientations, SomaHandedness.LEFT
+        positions, orientations, SomaHandSide.LEFT
     )
     sources["hand_right"]._tracker.get_data.return_value = None
 
@@ -477,15 +477,15 @@ def test_native_soma_hand_rotations_reach_renderer(monkeypatch, soma_assets):
             inputs[node.name][key] = group
 
     identity = np.tile([0, 0, 0, 1], (25, 1)).astype(np.float32)
-    for name, handedness in (
-        ("hand_left", SomaHandedness.LEFT),
-        ("hand_right", SomaHandedness.RIGHT),
+    for name, hand_side in (
+        ("hand_left", SomaHandSide.LEFT),
+        ("hand_right", SomaHandSide.RIGHT),
     ):
         source = sources[name]
         assert isinstance(source.get_tracker(), SomaHandJointRotationsTracker)
         source._tracker = MagicMock()
         source._tracker.get_data.return_value = soma_hand_joint_rotations(
-            identity, [0, 0, 0], handedness
+            identity, [0, 0, 0], hand_side
         )
         inputs[name] = source.poll_tracker(object())
 

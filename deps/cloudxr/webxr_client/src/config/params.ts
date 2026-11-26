@@ -265,21 +265,21 @@ export const URL_PARAMS: UrlParam[] = [
     elementId: 'cloudxrStreamAttachTimeoutMs',
     isValid: isNumber,
     description:
-      'Base timeout for detecting a stream that never attaches ("passthrough-only"), in milliseconds. Independent of retry.',
+      'Base timeout for detecting a stream that never attaches ("passthrough-only"), in milliseconds. Independent of retry. 0 disables.',
   },
   {
     key: 'warmupBeginTimeoutMs',
     elementId: 'cloudxrWarmupBeginTimeoutMs',
     isValid: isNumber,
     description:
-      'Timeout for detecting a stream that attached but produced no decoder warm-up signal at all, in milliseconds. Does not grow on retry.',
+      'Timeout for detecting a stream that attached but produced no decoder warm-up signal at all, in milliseconds. Does not grow on retry. 0 disables.',
   },
   {
     key: 'warmupEndTimeoutMs',
     elementId: 'cloudxrWarmupEndTimeoutMs',
     isValid: isNumber,
     description:
-      'Timeout for detecting decoder warm-up that began but never finished, in milliseconds. Does not grow on retry.',
+      'Timeout for detecting decoder warm-up that began but never finished, in milliseconds. Does not grow on retry. 0 disables all warm-up detection, including the begin timeout.',
   },
   {
     key: 'proxyUrl',

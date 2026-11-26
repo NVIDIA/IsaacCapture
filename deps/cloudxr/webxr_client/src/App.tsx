@@ -33,7 +33,7 @@
 import * as CloudXR from '@nvidia/cloudxr';
 import { getResolutionValidationError } from '@nvidia/cloudxr';
 import { computed, signal } from '@preact/signals-react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { setPreferredColorScheme } from '@react-three/uikit';
 import { createXRStore, noEvents, PointerEvents, useXR, XR, XROrigin } from '@react-three/xr';
 import type { XRDevice } from 'iwer';
@@ -62,6 +62,7 @@ import {
   saveStoredTeleopPath,
 } from '@helpers/TeleopProjects';
 import { logImmersiveXRSessionToConsole } from '@helpers/webxrModeDebugText';
+import { XRPresence } from '@helpers/xrPresence';
 
 import { CloudXR2DUI, COUNTDOWN_STORAGE_KEY } from './CloudXR2DUI';
 import CloudXR3DUI from './CloudXRUI';
@@ -69,13 +70,15 @@ import { readUrlParam } from './config/resolve';
 import { RecorderComponent } from './RecorderComponent';
 import { RecorderProvider, useRecorder } from './RecorderContext';
 import { SuppressWebGLRendererWhenHeadless } from './SuppressWebGLRendererWhenHeadless';
+import { SyntheticXRFrameObserver, SyntheticXRPanel } from './syntheticXR/SyntheticXRPanel';
 import { TraceVisualization } from './TraceVisualization';
 import {
-  SystemNotice,
   formatSystemNotice,
   formatSystemNoticeBody,
   isSystemNoticeMessage,
+  SystemNotice,
 } from './types/serverMessages';
+import { useSessionError } from './useSessionError';
 
 // Performance metrics signals - raw numeric data backing the in-XR HUD.
 // Signals update their value without triggering React re-renders.
@@ -114,6 +117,24 @@ const streamTestColor = computed(() => streamTest.value?.color ?? 'white');
 
 /** Accumulates every metric the SDK reports, for periodic upload to the OOB teleop hub. */
 const metricsAccumulator = new MetricsAccumulator();
+const xrPresence = new XRPresence();
+function ObserveXRPresence() {
+  const session = useXR(state => state.session);
+  useEffect(() => {
+    const update = () => xrPresence.setSession(session, session?.visibilityState);
+    update();
+    session?.addEventListener('visibilitychange', update);
+    return () => {
+      session?.removeEventListener('visibilitychange', update);
+      xrPresence.setSession(undefined, undefined);
+    };
+  }, [session]);
+  useFrame((state, _delta, frame) => {
+    const referenceSpace = state.gl.xr.getReferenceSpace();
+    if (frame && referenceSpace) xrPresence.observe(frame, referenceSpace);
+  });
+  return null;
+}
 
 /**
  * Fallback network-test window when the config omits a duration, and the bounds the SDK
@@ -209,9 +230,13 @@ function AppContent() {
   // Session status management
   const [sessionStatus, setSessionStatus] = useState('Disconnected');
   // Error message management
-  const [errorMessage, setErrorMessage] = useState('');
+  const setErrorMessage = useSessionError(cloudXR2DUI);
   // CloudXR session reference
   const [cloudXRSession, setCloudXRSession] = useState<CloudXR.Session | null>(null);
+  // The space CloudXR resolved for the current session, so the recorder can express
+  // poses in the same frame the stream uses. Cleared with the session: a space from an
+  // ended session yields no poses.
+  const [streamingSpace, setStreamingSpace] = useState<XRReferenceSpace | null>(null);
   // XR mode state for UI visibility
   const [isXRMode, setIsXRMode] = useState(false);
   // Server address being used for connection
@@ -284,6 +309,10 @@ function AppContent() {
       cloudXR2DUI.setStartButtonState(true, 'CONNECT (immersive mode not supported)');
     }
   }, [cloudXR2DUI, iwerLoaded, capabilitiesValid]);
+
+  useEffect(() => {
+    cloudXR2DUI?.setCapabilitiesReady(capabilitiesValid);
+  }, [cloudXR2DUI, capabilitiesValid]);
 
   // Check capabilities once CloudXR2DUI is ready and IWER is loaded
   useEffect(() => {
@@ -480,17 +509,6 @@ function AppContent() {
     return () => button?.removeEventListener('click', onLoadRecording);
   }, [onLoadRecording]);
 
-  // Update HTML error message display when error state changes
-  useEffect(() => {
-    if (cloudXR2DUI) {
-      if (errorMessage) {
-        cloudXR2DUI.showError(errorMessage);
-      } else {
-        cloudXR2DUI.hideError();
-      }
-    }
-  }, [errorMessage, cloudXR2DUI]);
-
   // Listen for XR session state changes to update button and UI visibility
   useEffect(() => {
     const handleXRStateChange = () => {
@@ -559,6 +577,7 @@ function AppContent() {
   const handleStatusChange = (connected: boolean, status: string) => {
     setIsConnected(connected);
     setSessionStatus(status);
+    if (connected && status === 'Connected') setErrorMessage('');
     const streaming = connected && status === 'Connected';
     const streamPhase = streamPhaseForStatus(connected, status);
     controlChannelRef.current?.sendStreamStatus(streaming, streamPhase, status);
@@ -604,10 +623,7 @@ function AppContent() {
 
     // Reload on session end per mode; read live off the stable 2D UI to avoid a stale closure.
     const autoRefreshMode = cloudXR2DUI?.getConfiguration().autoRefreshMode;
-    if (
-      (status === 'Disconnected' && (autoRefreshMode === 'clean' || autoRefreshMode === 'any')) ||
-      (status === 'Error' && autoRefreshMode === 'any')
-    ) {
+    if (status === 'Disconnected' && (autoRefreshMode === 'clean' || autoRefreshMode === 'any')) {
       window.location.reload();
     }
   };
@@ -701,6 +717,7 @@ function AppContent() {
     stopStreamTestCountdown();
     streamTest.value = null;
     setCloudXRSession(session);
+    if (!session) setStreamingSpace(null);
   };
 
   const systemNoticeTimerRef = useRef<number | null>(null);
@@ -982,16 +999,39 @@ function AppContent() {
 
     console.info('[Teleop] OOB control WebSocket:', hubWsUrl);
 
+    let previousPresenceMessage: string | undefined;
     const channel = new HeadsetControlChannel({
       url: hubWsUrl,
       token: readUrlParam(p, 'controlToken') ?? undefined,
+      onPresenceRecovery: state => {
+        const messages: Record<string, string> = {
+          paused: 'Headset paused',
+          waking: 'Waking headset',
+          awake: 'Headset awake; waiting for tracking',
+          recovery_failed: 'Headset recovery failed; press its power button',
+          unavailable: 'Headset connection unavailable; check USB and debugging permission',
+          unsupported: 'Headset presence unavailable; wake manually if needed',
+        };
+        let message = messages[state];
+        if (state === 'awake') {
+          const xr = xrPresence.snapshot().metrics;
+          if (xr.sessionActive !== 1) message = 'Headset awake';
+          const fresh = (source: string) =>
+            xr[`${source}AgeMs`] >= 0 && xr[`${source}AgeMs`] < 1000;
+          if (xr.visibility === 2 && fresh('frame') && fresh('head')) {
+            message = 'Head tracking restored';
+          }
+        }
+        if (message && message !== previousPresenceMessage) cloudXR2DUI.showStatus(message, 'info');
+        previousPresenceMessage = message;
+      },
       onConfig: () => {
         // Config push handling deferred to phase 2.
       },
       // Reports every metric the SDK emits, keyed by CloudXR.MetricsName, across the
       // render / frame / network cadences. The hub stores metrics as an arbitrary
       // {name: value} map per cadence, so new SDK metrics need no hub-side change.
-      getMetricsSnapshot: () => metricsAccumulator.takeSnapshot(),
+      getMetricsSnapshot: () => [...metricsAccumulator.takeSnapshot(), xrPresence.snapshot()],
     });
     channel.connect();
     controlChannelRef.current = channel;
@@ -1014,7 +1054,6 @@ function AppContent() {
   };
 
   // Memo config based on configVersion (manual dependency tracker incremented on config changes)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const config = useMemo(
     () => (cloudXR2DUI ? cloudXR2DUI.getConfiguration() : null),
     [cloudXR2DUI, configVersion]
@@ -1058,7 +1097,8 @@ function AppContent() {
 
   // Calculate panel position from config and memoize it as the vector used in CloudXR3DUI.
   const controlPanelPositionVector = useMemo(
-    () => getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
+    () =>
+      getControlPanelPositionVector(config?.controlPanelPosition ?? 'right', controlPanelLayout),
     [config?.controlPanelPosition, controlPanelLayout]
   );
 
@@ -1159,6 +1199,13 @@ function AppContent() {
 
   return (
     <>
+      <SyntheticXRPanel
+        ready={iwerLoaded}
+        connected={isConnected}
+        replaying={recorder.mode === 'replaying'}
+        onStartTeleop={handleStartTeleop}
+        startingOrRunning={isCountingDown || isTeleopRunning}
+      />
       <Canvas
         events={noEvents}
         style={{
@@ -1187,18 +1234,25 @@ function AppContent() {
         }}
       >
         <SuppressWebGLRendererWhenHeadless headless={!!config?.headless} />
+        <SyntheticXRFrameObserver />
         <PointerEvents batchEvents={false} />
         <XR store={store}>
+          <ObserveXRPresence />
           <SimpleEnvironment />
           <XROrigin />
           {cloudXR2DUI && config && (
             <>
-              <RecorderComponent isConnected={isConnected} showTrace={config.showTrace ?? false} />
+              <RecorderComponent
+                isConnected={isConnected}
+                showTrace={config.showTrace ?? false}
+                streamingSpace={streamingSpace}
+              />
               <TraceVisualization showTrace={config.showTrace ?? false} />
               <CloudXRComponent
                 config={config}
                 applicationName={`Isaac Teleop Web Client (${config.teleopPath})`}
                 trackingFrameAdapter={recorder.adaptTrackingFrame}
+                onReferenceSpace={setStreamingSpace}
                 iceServers={iceServersConfig}
                 reconnect={
                   config?.reconnectEnabled
@@ -1213,8 +1267,10 @@ function AppContent() {
                 warmupEndTimeoutMs={config?.warmupEndTimeoutMs}
                 onStatusChange={handleStatusChange}
                 onError={error => {
-                  if (cloudXR2DUI) {
-                    cloudXR2DUI.showError(error);
+                  // onStatusChange('Error') arrives first; persist the full error code before reloading.
+                  setErrorMessage(error);
+                  if (cloudXR2DUI?.getConfiguration().autoRefreshMode === 'any') {
+                    window.location.reload();
                   }
                 }}
                 onExitImmersiveXR={handleDisconnect}
