@@ -283,6 +283,14 @@ pre-commit install --hook-type commit-msg
 
 - If a hook failure shows **missing or non-obvious repo policy** (not a one-off typo), you **must** add a **short** reminder under **Mandatory learning loop** rules to the right `AGENTS.md` or adjacent **`//` comments** so the next run does not repeat it—unless it is already documented.
 
+## Sonar cleanup PRs
+
+- Match each reported location to a code fix or a line-specific safety reason.
+  A local finding does not justify excluding the whole file from analysis.
+- Read unresolved maintainer and bot threads from earlier commits too. Verify
+  CodeRabbit reviewed the current head, and report Sonar closure only when an
+  analysis covers the changed code; passing tests or skipped reviews do not.
+
 ## The wheel SBOM
 
 Published wheels carry a contents SBOM and license evidence derived from the
@@ -351,6 +359,8 @@ heading that still said the opposite.
 
 **Scope — document what *this* branch changes, not main**
 
+- In Sonar fix PRs, limit new guidance to the failure mode in the changed code
+  and a concrete preventive action. Propose general agent-process policy separately.
 - New or updated bullets should capture **learnings from the delta** between **this branch (or commit)** and **`main`** (or whatever long-lived base you are targeting—release branch, parent MR, etc.).
 - Do **not** restate facts that already hold on **`main`** just because this branch touches nearby files. If behavior landed in the **base** history, it belongs in **code comments** next to that code or in **main’s** docs—not as “new” guidance in an `AGENTS.md` introduced only to support a smaller follow-up change.
 - Example: schema- or API-level choices that merged **before** this branch are **out of scope** for `AGENTS.md` edits tied to this branch; they add churn and read like stale noise after merge.
