@@ -74,6 +74,7 @@ option(BUILD_PLUGIN_OMNIGLOVE "Build AgiLink OmniGlove plugin (fetches a pinned 
 option(BUILD_PLUGIN_SHARPA_AVATAR "Build Sharpa AvatarExo Glove plugin (Linux; skips if the Avatar SDK is missing)" OFF)
 option(BUILD_PLUGIN_JMEX "Build j-mex AgileMaster plugin (Linux x86_64; skips without the MOXI Receiver SDK, stops if MOXIReceiverSDK_DIR holds none)" OFF)
 option(BUILD_EXAMPLES "Build examples" ON)
+option(BUILD_EXAMPLE_REALHAND_HANDS "Build the optional RealHand L6/O6/L20 hand example and tests" OFF)
 option(BUILD_EXAMPLE_TELEOP_ROS2 "Build only the teleop_ros2 ROS 2 reference integration (e.g. for Docker)" OFF)
 option(BUILD_TESTING "Build unit tests" ON)
 option(BUILD_OVXR_CAMERA_QUADS "Build optional application-owned OVXR camera quad support" OFF)

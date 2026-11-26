@@ -381,3 +381,4 @@ See the :doc:`Contributing Guide <../../development/contributing>` for details.
    so101
    joint_space
    wuji
+   realhand
