@@ -27,7 +27,7 @@ from isaaccapture.logging_config._native_api import (
 
 _posix_only = pytest.mark.skipif(
     sys.platform == "win32",
-    reason="Process-group APIs (os.getpgid/os.killpg) are POSIX-only",
+    reason="Process-group signaling is POSIX-only",
 )
 
 _windows_skip = pytest.mark.skipif(
@@ -277,8 +277,8 @@ class TestServiceStop:
             ):
                 service.stop()
 
-                m_getpgid.assert_called_once_with(proc.pid)
-                m_killpg.assert_called_once_with(99, signal.SIGTERM)
+                m_getpgid.assert_not_called()
+                m_killpg.assert_called_once_with(proc.pid, signal.SIGTERM)
 
     def test_stop_idempotent(self, tmp_path):
         """Calling stop() twice does not raise."""
@@ -313,8 +313,262 @@ class TestServiceStop:
 
                 calls = m_killpg.call_args_list
                 assert len(calls) == 2
-                assert calls[0].args == (99, signal.SIGTERM)
-                assert calls[1].args == (99, signal.SIGKILL)
+                assert calls[0].args == (proc.pid, signal.SIGTERM)
+                assert calls[1].args == (proc.pid, signal.SIGKILL)
+
+    @_posix_only
+    @pytest.mark.parametrize(
+        "query",
+        ["_is_runtime_alive", "_collect_startup_failure_detail"],
+    )
+    def test_status_cannot_reap_during_group_shutdown(self, tmp_path, query):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+            proc = mocks["proc"]
+            signaling = threading.Event()
+            release = threading.Event()
+            exited = threading.Event()
+            contended = threading.Event()
+            completed = threading.Event()
+            runtime_lock = threading.RLock()
+
+            class ObservedLock:
+                def __enter__(self):
+                    if threading.current_thread().name == "runtime-status-reader":
+                        if not runtime_lock.acquire(blocking=False):
+                            contended.set()
+                            runtime_lock.acquire()
+                    else:
+                        runtime_lock.acquire()
+
+                def __exit__(self, *_args):
+                    runtime_lock.release()
+
+            service._runtime_lock = ObservedLock()
+            reader_polls = []
+            failures = []
+
+            def poll():
+                if threading.current_thread().name == "runtime-status-reader":
+                    reader_polls.append(True)
+                return 0 if exited.is_set() else None
+
+            def send(_pgid, _sig):
+                signaling.set()
+                assert release.wait(5), "shutdown was not released"
+
+            def stop():
+                try:
+                    service.stop()
+                except Exception as exc:
+                    failures.append(exc)
+
+            def read_status():
+                try:
+                    args = (
+                        (tmp_path,)
+                        if query == "_collect_startup_failure_detail"
+                        else ()
+                    )
+                    getattr(service, query)(*args)
+                except Exception as exc:
+                    failures.append(exc)
+                finally:
+                    completed.set()
+
+            proc.poll.side_effect = poll
+            proc.wait.side_effect = lambda **_kwargs: exited.set()
+            stopper = threading.Thread(target=stop, daemon=True)
+            reader = threading.Thread(
+                target=read_status, name="runtime-status-reader", daemon=True
+            )
+            with (
+                patch(
+                    "isaaccapture.cloudxr.service._service.os.killpg", side_effect=send
+                ),
+                patch.object(service, "_gather_diagnostic_logs", return_value=[]),
+            ):
+                try:
+                    stopper.start()
+                    assert signaling.wait(5)
+                    reader.start()
+                    assert contended.wait(5), (
+                        "reader did not contend for the owned runtime lock"
+                    )
+                    assert not completed.is_set()
+                    assert not reader_polls
+                finally:
+                    release.set()
+                    stopper.join(timeout=5)
+                    if reader.ident is not None:
+                        reader.join(timeout=5)
+                    service._restore_signal_handlers()
+            assert not stopper.is_alive() and not reader.is_alive()
+            assert not reader_polls
+            assert not failures
+            assert service._runtime_proc is None
+
+    def test_health_rejects_shutdown_without_waiting_for_runtime_lock(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+            runtime_lock = threading.RLock()
+            service._runtime_lock = runtime_lock
+            service._stopping = True
+            completed = threading.Event()
+            errors = []
+
+            def query():
+                try:
+                    service.health_check()
+                except Exception as exc:
+                    errors.append(exc)
+                finally:
+                    completed.set()
+
+            reader = threading.Thread(target=query, daemon=True)
+            try:
+                with runtime_lock:
+                    reader.start()
+                    assert completed.wait(5), (
+                        "health query waited on runtime termination"
+                    )
+                reader.join(timeout=5)
+                assert len(errors) == 1
+                assert isinstance(errors[0], RuntimeError)
+                assert "stopping" in str(errors[0])
+                mocks["proc"].poll.assert_not_called()
+            finally:
+                reader.join(timeout=5)
+                service._stopping = False
+                mocks["proc"].poll.return_value = 0
+                service.stop()
+
+    def test_health_rejects_a_snapshot_whose_owner_was_cleared(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+
+            def completed_shutdown():
+                service._runtime_proc = None
+                service._stopping = False
+                return mocks["proc"], None
+
+            with patch.object(
+                service, "_runtime_status", side_effect=completed_shutdown
+            ):
+                with pytest.raises(RuntimeError, match="not running"):
+                    service.health_check()
+            service.stop()
+
+    def test_health_rejects_a_nested_unobserved_query(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+
+            def poll():
+                with pytest.raises(RuntimeError, match="already in progress"):
+                    service.health_check()
+                return None
+
+            mocks["proc"].poll.side_effect = poll
+            service.health_check()
+            mocks["proc"].poll.assert_called_once_with()
+            mocks["proc"].poll.side_effect = None
+            mocks["proc"].poll.return_value = 0
+            service.stop()
+
+    def test_reentrant_stop_rejects_before_locks_and_retains_owner(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+            proc = mocks["proc"]
+            proc.poll.side_effect = service.stop
+            with (
+                patch.object(service, "_stop_lock") as stop_lock,
+                patch.object(service, "_stop_wss_proxy") as stop_wss,
+                patch("isaaccapture.cloudxr.service._service.os.killpg") as send,
+            ):
+                with pytest.raises(RuntimeError, match="reentrant runtime poll"):
+                    service.health_check()
+                stop_lock.__enter__.assert_not_called()
+                stop_wss.assert_not_called()
+                send.assert_not_called()
+            assert not service._runtime_query.active
+            assert service._runtime_proc is proc
+            proc.poll.side_effect = None
+            proc.poll.return_value = 0
+            service.stop()
+            assert service._runtime_proc is None
+
+    @pytest.mark.parametrize("boundary", ["enter", "exit"])
+    def test_reentrant_stop_is_guarded_at_runtime_lock_boundaries(
+        self, tmp_path, boundary
+    ):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+            real_lock = service._runtime_lock
+            observed = []
+
+            def check_reentry(phase):
+                if phase == boundary:
+                    with pytest.raises(RuntimeError, match="reentrant runtime poll"):
+                        service.stop()
+                    observed.append(phase)
+
+            class InterruptingLock:
+                def __enter__(self):
+                    real_lock.acquire()
+                    try:
+                        check_reentry("enter")
+                    except BaseException:
+                        real_lock.release()
+                        raise
+
+                def __exit__(self, *_args):
+                    try:
+                        check_reentry("exit")
+                    finally:
+                        real_lock.release()
+
+            with patch.object(service, "_stop_wss_proxy") as stop_wss:
+                service._runtime_lock = InterruptingLock()
+                try:
+                    service.health_check()
+                    assert observed == [boundary]
+                    stop_wss.assert_not_called()
+                    assert service._runtime_proc is mocks["proc"]
+                    assert not service._runtime_query.active
+                finally:
+                    service._runtime_lock = real_lock
+                    service.stop()
+
+    def test_nested_status_does_not_poll_again(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+            proc = mocks["proc"]
+
+            def poll():
+                assert service._is_runtime_alive()
+                return None
+
+            proc.poll.side_effect = poll
+            service.health_check()
+            proc.poll.assert_called_once_with()
+            assert not service._runtime_query.active
+            proc.poll.side_effect = None
+            proc.poll.return_value = 0
+            service.stop()
+
+    @_posix_only
+    def test_group_exit_race_still_waits_for_the_owned_child(self, tmp_path):
+        with mock_service_deps(tmp_path) as mocks:
+            service = CloudXRService()
+            proc = mocks["proc"]
+            proc.poll.side_effect = [None, 0]
+            with patch(
+                "isaaccapture.cloudxr.service._service.os.killpg",
+                side_effect=ProcessLookupError,
+            ):
+                service.stop()
+            proc.wait.assert_called_once()
+            assert service._runtime_proc is None
 
     def test_stop_on_windows_raises_unsupported(self, tmp_path) -> None:
         """Simulated win32 platform raises instead of calling POSIX APIs."""
@@ -493,7 +747,7 @@ class TestWssProxyStartup:
 
             # The runtime came up before the proxy, so a failed start must not
             # leave it holding the run directory.
-            m_killpg.assert_called_once_with(99, signal.SIGTERM)
+            m_killpg.assert_called_once_with(mocks["proc"].pid, signal.SIGTERM)
 
     def test_a_proxy_that_never_listens_times_out(self, tmp_path):
         with mock_service_deps(tmp_path):

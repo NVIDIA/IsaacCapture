@@ -133,6 +133,7 @@ def make_mock_popen(pid: int = 12345, poll_returns: list | None = None) -> Magic
     """Create a mock subprocess.Popen with configurable poll() behaviour."""
     proc = MagicMock()
     proc.pid = pid
+    proc.returncode = None
     proc.terminate = MagicMock()
     proc.kill = MagicMock()
     proc.wait = MagicMock()
@@ -171,6 +172,13 @@ def mock_service_deps(tmp_path, ready=True, wss=True):
     (static_dir / "bundle.js").write_text("// test bundle", encoding="utf-8")
 
     mock_proc = make_mock_popen()
+
+    def wait_for_exit(*_args, **_kwargs):
+        mock_proc.poll.return_value = 0
+        mock_proc.returncode = 0
+        return 0
+
+    mock_proc.wait.side_effect = wait_for_exit
     wss_patch = (
         patch.object(CloudXRService, "_start_wss_proxy_thread")
         if wss
@@ -200,6 +208,8 @@ def mock_service_deps(tmp_path, ready=True, wss=True):
             return_value=static_dir,
         ) as m_static_client,
         patch("isaaccapture.cloudxr.oob_teleop_env.print_host_preflight_warnings"),
+        # These runtimes have fabricated PIDs; never signal a host process group.
+        patch("isaaccapture.cloudxr.service._service.os.killpg", create=True),
         patch(
             "isaaccapture.cloudxr.service._service.subprocess.Popen",
             return_value=mock_proc,

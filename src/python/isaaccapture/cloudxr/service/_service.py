@@ -194,6 +194,10 @@ class CloudXRService:
         self._atexit_registered = False
         self._stopping = False
         self._stop_lock = threading.RLock()
+        # Reaping releases the PID used as the runtime's process-group ID.
+        # Keep this separate: stopping the proxy can wait on its health checks.
+        self._runtime_lock = threading.RLock()
+        self._runtime_query = threading.local()
         self._oob_lock = threading.Lock()
         self._oob_publish_lock = asyncio.Lock()
         self._oob_snapshot: dict | None = None
@@ -389,6 +393,10 @@ class CloudXRService:
                 Their handles are retained so callers can retry or inspect
                 the still-running component.
         """
+        # Check before taking the stop lock: another stop may already be waiting
+        # for this thread's poll to finish under the runtime lock.
+        if getattr(self._runtime_query, "active", False):
+            raise RuntimeError("Cannot stop CloudXR during a reentrant runtime poll")
         # Restore handlers only after teardown; _stopping blocks re-entrant stop().
         with self._stop_lock:
             if self._stopping:
@@ -414,7 +422,8 @@ class CloudXRService:
                             self._runtime_proc.pid,
                         )
                         raise
-                    self._runtime_proc = None
+                    with self._runtime_lock:
+                        self._runtime_proc = None
                     logger.info("CloudXR runtime process stopped")
                 if self._fatal_error is None and self._oob_snapshot is not None:
                     try:
@@ -587,10 +596,20 @@ class CloudXRService:
             raise RuntimeError(
                 f"{self._fatal_error}; see {self._oob_status_path}"
             ) from self._fatal_error
-        if self._runtime_proc is None:
+        if self._stopping:
+            raise RuntimeError(
+                "CloudXR service is stopping; runtime liveness is unchecked"
+            )
+        if getattr(self._runtime_query, "active", False):
+            raise RuntimeError("CloudXR runtime status query is already in progress")
+        proc, exit_code = self._runtime_status()
+        if self._stopping:
+            raise RuntimeError(
+                "CloudXR service is stopping; runtime liveness is unchecked"
+            )
+        if proc is None or self._runtime_proc is not proc:
             raise RuntimeError("CloudXR service is not running")
 
-        exit_code = self._runtime_proc.poll()
         if exit_code is not None:
             raise RuntimeError(
                 f"CloudXR runtime process exited unexpectedly (exit code {exit_code})"
@@ -696,9 +715,8 @@ class CloudXRService:
         """
         _MAX_LOG_BYTES = 4096
         parts: list[str] = []
-        proc = self._runtime_proc
+        proc, exit_code = self._runtime_status()
         if proc is not None:
-            exit_code = proc.poll()
             if exit_code is not None:
                 parts.append(f"Process exited with code {exit_code}.")
             else:
@@ -744,9 +762,28 @@ class CloudXRService:
 
         return result
 
+    def _runtime_status(self) -> tuple[subprocess.Popen | None, int | None]:
+        """Poll under ownership; use recorded status during shutdown or reentry."""
+        if getattr(self._runtime_query, "active", False):
+            proc = self._runtime_proc
+            return proc, proc.returncode if proc is not None else None
+        # Cover lock entry and exit too: a signal callback may run at either boundary.
+        try:
+            self._runtime_query.active = True
+            with self._runtime_lock:
+                proc = self._runtime_proc
+                if proc is None:
+                    return None, None
+                if self._stopping:
+                    return proc, proc.returncode
+                return proc, proc.poll()
+        finally:
+            self._runtime_query.active = False
+
     def _is_runtime_alive(self) -> bool:
         """Return whether the runtime subprocess is still running."""
-        return self._runtime_proc is not None and self._runtime_proc.poll() is None
+        proc, exit_code = self._runtime_status()
+        return proc is not None and exit_code is None
 
     def _terminate_runtime(self) -> None:
         """Terminate the runtime subprocess and all its children.
@@ -756,39 +793,29 @@ class CloudXRService:
         other children.  Windows is not supported (see
         :meth:`_terminate_runtime_windows`).
         """
-        proc = self._runtime_proc
-        if proc is None or proc.poll() is not None:
-            return
-
-        if sys.platform == "win32":
-            self._terminate_runtime_windows(proc)
-            return
-
-        try:
-            pgid = os.getpgid(proc.pid)
-        except ProcessLookupError:
-            return
-
-        try:
-            os.killpg(pgid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        try:
-            proc.wait(timeout=RUNTIME_TERMINATE_TIMEOUT_SEC)
-        except subprocess.TimeoutExpired:
-            pass
-
-        if proc.poll() is None:
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
+        with self._runtime_lock:
+            proc = self._runtime_proc
+            if proc is None or proc.poll() is not None:
                 return
-            try:
-                proc.wait(timeout=RUNTIME_TERMINATE_TIMEOUT_SEC)
-            except subprocess.TimeoutExpired:
-                pass
 
-        if proc.poll() is None:
+            if sys.platform == "win32":
+                self._terminate_runtime_windows(proc)
+                return
+
+            # start_new_session=True makes our child the leader of this exact group.
+            pgid = proc.pid
+
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(pgid, sig)
+                except ProcessLookupError:
+                    pass  # An exit still needs to be reaped below.
+                try:
+                    proc.wait(timeout=RUNTIME_TERMINATE_TIMEOUT_SEC)
+                except subprocess.TimeoutExpired:
+                    pass  # Exit is unconfirmed; poll before escalating.
+                if proc.poll() is not None:
+                    return
             raise RuntimeError("Failed to terminate or kill runtime process group")
 
     @staticmethod

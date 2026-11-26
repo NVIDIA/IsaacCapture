@@ -31,9 +31,12 @@ def _service_for_status(tmp_path):
     service._fatal_error = None
     service._fatal_supervisor = None
     service._stopping = False
+    service._runtime_lock = threading.RLock()
+    service._runtime_query = threading.local()
     service._wss_log_path = tmp_path / "wss.log"
     service._runtime_proc = MagicMock()
     service._runtime_proc.pid = os.getpid()
+    service._runtime_proc.returncode = None
     service._runtime_proc.poll.return_value = None
     service._wss_thread = None
     service._connect_requested = None
@@ -414,7 +417,9 @@ async def test_fatal_callback_ignores_shutdown_before_stop_future_resolves(tmp_p
     assert service.oob_status() is None
     assert service.drain_oob_updates() == []
     assert service._fatal_supervisor is None
-    service.health_check()
+    with pytest.raises(RuntimeError, match="stopping"):
+        service.health_check()
+    assert service._fatal_error is None
 
 
 @pytest.mark.parametrize("raise_error", [False, True])
