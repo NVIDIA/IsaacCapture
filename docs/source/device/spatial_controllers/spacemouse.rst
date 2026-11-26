@@ -96,10 +96,13 @@ and finds the device again after it is unplugged. For a device that sends all si
 report (Universal Receiver, SpaceMouse Wireless BT) at an explicit path, add ``--combined-report``.
 
 The plugin can also run on its own, for example on another machine pushing to the same runtime,
-next to any reader of the same collection:
+next to any reader of the same collection. Start the CloudXR runtime and source its environment in
+the shell that launches the plugin:
 
 .. code-block:: bash
 
+   python -m isaaccapture.cloudxr.service start --accept-eula
+   source ~/.cloudxr/run/cloudxr.env
    ./install/plugins/spacemouse/spacemouse_plugin
    ./install/plugins/spacemouse/spacemouse_plugin --device=/dev/hidraw3
 

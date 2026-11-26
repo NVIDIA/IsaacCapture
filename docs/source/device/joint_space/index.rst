@@ -84,7 +84,12 @@ it disables torque (so the leader can be back-driven) and reads ``Present_Positi
 converting ticks to radians with per-joint calibration. With no device path it falls back to a
 **synthetic** trajectory so the pipeline runs hardware-free (CI and the headless example).
 
+Start the CloudXR runtime and source its environment in the shell that launches the plugin:
+
 .. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service start --accept-eula
+   source ~/.cloudxr/run/cloudxr.env
 
    # Synthetic backend (no hardware), default collection id "so101_leader":
    ./install/plugins/so101_leader/so101_leader_plugin
@@ -111,9 +116,13 @@ of the device argument: a serial path containing ``/`` (e.g. ``/dev/ttyACM0``) s
 **Damiao** build (:ref:`below <rebot-devarm-damiao-build>`), a bare SocketCAN interface name
 (e.g. ``can0``) selects the **RobStride** build (:ref:`below <rebot-devarm-robstride-build>`).
 With no device argument it falls back to a **synthetic** trajectory, exactly like
-``so101_leader``:
+``so101_leader``. Start the CloudXR runtime and source its environment in the shell that launches
+the plugin:
 
 .. code-block:: bash
+
+   python -m isaaccapture.cloudxr.service start --accept-eula
+   source ~/.cloudxr/run/cloudxr.env
 
    # Synthetic backend (no hardware), default collection id "rebot_devarm_leader":
    ./install/plugins/rebot_devarm_leader/rebot_devarm_leader_plugin
@@ -139,6 +148,7 @@ tick conversion, only an optional per-joint sign and zero offset from a calibrat
 .. code-block:: bash
 
    # Real reBot DevArm on the Damiao USB-to-CAN adapter (Linux), optional calibration file:
+   source ~/.cloudxr/run/cloudxr.env
    ./install/plugins/rebot_devarm_leader/rebot_devarm_leader_plugin /dev/ttyACM0 rebot_devarm_leader rebot_devarm.calib
 
    # Probe wiring, motor ids, and the decode path -- no OpenXR runtime needed:
@@ -172,6 +182,7 @@ tables. Each channel refreshes at 45 Hz with the plugin's 90 Hz loop, under 20% 
    sudo ip link set can0 up type can bitrate 1000000
 
    # Real reBot DevArm (RobStride build) on a SocketCAN interface:
+   source ~/.cloudxr/run/cloudxr.env
    ./install/plugins/rebot_devarm_leader/rebot_devarm_leader_plugin can0
 
    # Probe wiring, motor ids, and the decode path -- no OpenXR runtime needed:
