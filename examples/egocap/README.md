@@ -145,6 +145,9 @@ for tracking, and the `oak` extra plus a camera's device ID for OAK-D cameras. S
 The backend and frontends are unchanged between mock and real mode — CaptureServer is the only
 process that differs.
 
+A rig with Manus gloves mounted on the controllers is calibrated with the terminal tools in
+[`tools/calibration/`](tools/calibration/README.md).
+
 ## Both UIs
 
 - The **capture/recording page** (`frontend/`) is always served once built; see

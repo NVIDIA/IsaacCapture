@@ -94,3 +94,13 @@ before any file is written. An existing derived episode is refused, never replac
   CaptureServer README's offset table and descriptor example. Check each against the code's output, not by eye.
 - The acquisition adapter runs one code path for the real, mock and replay SDKs. Give a new SDK capability to
   all three; never probe the SDK for it, which turns a missing export into silently absent data.
+
+## Command-line tools carry their own procedure
+
+- The steps an operator follows to use a tool (which devices are worn, switched on or in view, and what to do)
+  are written once, in the tool's `--help`. Its README summarizes and points there, and no page UI is added for
+  a tool unless that is asked for.
+- A script brought in from experiments is product code once it is here: drop diagnostics, plots and report
+  fields that no acceptance check or consumer uses, and keep each check's threshold and advice in one table.
+- A calibration result belongs to the station: a tool saves it in the station's calibration directory and
+  keeps what else that file holds; it is never a file in the checkout.
