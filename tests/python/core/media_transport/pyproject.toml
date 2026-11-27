@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+[project]
+name = "media-transport-tests"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = ['isaac-media-transport==0.1.0', 'pytest>=8', 'numpy>=1.26']
+
+[tool.uv.sources]
+isaac-media-transport = { path = "../../../../src/core/media_transport" }
