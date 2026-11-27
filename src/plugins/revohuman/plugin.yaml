@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 BrainCo. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: revohuman
+description: "RevoHuman exoskeleton gloves with tactile, pushed via OpenXR"
+command: "./revohuman_plugin"
+version: "1.0.0"
+devices:
+  - path: "/hand/left"
+    type: "hand_tracker"
+    description: "Left hand: 26 OpenXR joints"
+  - path: "/hand/right"
+    type: "hand_tracker"
+    description: "Right hand: 26 OpenXR joints"
+  - path: "/glove/revohuman_left"
+    type: "joint_state"
+    description: "Left glove encoder angles (21 joints, rad, SDK order)"
+  - path: "/glove/revohuman_right"
+    type: "joint_state"
+    description: "Right glove encoder angles (21 joints, rad, SDK order)"
+  - path: "/tactile/revohuman_left"
+    type: "tactile"
+    description: "Left glove taxel forces with the TactileMetadata from the C SDK taxel layout"
+  - path: "/tactile/revohuman_right"
+    type: "tactile"
+    description: "Right glove taxel forces with the TactileMetadata from the C SDK taxel layout"
