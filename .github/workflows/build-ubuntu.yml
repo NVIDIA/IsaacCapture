@@ -30,7 +30,8 @@ env:
   # Infrastructure defaults follow the canonical repository ID across renames.
   # Wheel publishing requires GPU validation, including on release tags.
   NO_GPU_TESTS: ${{ github.repository_id == '1092046207' && '0' || '1' }}
-  NO_GPU_ARM: "1"
+  # Self-hosted ARM GPU runners run on pushes only, not in pull requests.
+  NO_GPU_ARM: ${{ github.event_name == 'push' && '0' || '1' }}
   NO_WHEEL_PUBLISH: ${{ github.repository_id == '1092046207' && '0' || '1' }}
   # Only pushes to main save ccache; PRs and release branches restore main's latest
   # and leave the repository's cache quota to it.
