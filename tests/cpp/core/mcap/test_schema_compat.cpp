@@ -92,11 +92,6 @@ constexpr const char* kRealStampFields =
     "sample_time_local_common_clock: long;"
     "sample_time_raw_device_clock: long;";
 
-std::string temp_mcap_path()
-{
-    return mcap_test::temp_mcap_path("test_schema_compat");
-}
-
 //! The schema head.fbs compiles to, re-declared by hand: equivalent to what the reader
 //! carries, but not byte-identical, so it exercises the structural comparison.
 std::vector<uint8_t> faithful_head_bfbs()
@@ -435,8 +430,8 @@ TEST_CASE("enforce_schema_compat throws only on a schema that cannot be read", "
 
 TEST_CASE("McapTrackerViewers rejects a channel that declares no schema", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(path, std::nullopt);
 
     const auto recorded = recorded_schemas(path);
@@ -445,8 +440,8 @@ TEST_CASE("McapTrackerViewers rejects a channel that declares no schema", "[unit
 
 TEST_CASE("McapTrackerViewers rejects a schema that is not flatbuffer-encoded", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(
         path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs(), "protobuf"));
 
@@ -456,8 +451,8 @@ TEST_CASE("McapTrackerViewers rejects a schema that is not flatbuffer-encoded", 
 
 TEST_CASE("McapTrackerViewers rejects a schema named for another record type", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(path, head_schema("core.HandPoseRecord", faithful_head_bfbs()));
 
     const auto recorded = recorded_schemas(path);
@@ -466,8 +461,8 @@ TEST_CASE("McapTrackerViewers rejects a schema named for another record type", "
 
 TEST_CASE("McapTrackerViewers rejects a channel whose messages are not flatbuffers", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_records(
         path, { { "head", head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()), "json" } });
 
@@ -479,8 +474,8 @@ TEST_CASE("McapTrackerViewers rejects a channel whose messages are not flatbuffe
 
 TEST_CASE("McapTrackerViewers rejects an unreadable recording before its first read", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_records(path,
                   { { "left", head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()) },
                     { "right", head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), grown_stamp_head_bfbs()) } },
@@ -498,8 +493,8 @@ TEST_CASE("McapTrackerViewers rejects an unreadable recording before its first r
 
 TEST_CASE("McapTrackerViewers reads a recording whose writer never wrote a summary", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(
         path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()), 3, Summary::Missing);
 
@@ -516,8 +511,8 @@ TEST_CASE("McapTrackerViewers reads a recording whose writer never wrote a summa
 
 TEST_CASE("McapTrackerViewers reads a summary that does not repeat schema records", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()), 3,
                        Summary::WithoutSchemas);
 
@@ -534,8 +529,8 @@ TEST_CASE("McapTrackerViewers reads a summary that does not repeat schema record
 
 TEST_CASE("McapTrackerViewers reports a readable mismatch once and keeps reading", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()), 12);
 
     const CapturedCerr log;
@@ -550,8 +545,8 @@ TEST_CASE("McapTrackerViewers reports a readable mismatch once and keeps reading
 
 TEST_CASE("McapTrackerViewers grades from a read the caller already did", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()), 3);
 
     // What the file declares is read once and handed to both viewers, which is what a session
@@ -570,8 +565,8 @@ TEST_CASE("McapTrackerViewers grades from a read the caller already did", "[unit
 
 TEST_CASE("McapTrackerViewers refuses what a caller's read already condemned", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), grown_stamp_head_bfbs()), 3);
 
     const auto recorded = recorded_schemas(path);
@@ -580,8 +575,8 @@ TEST_CASE("McapTrackerViewers refuses what a caller's read already condemned", "
 
 TEST_CASE("RecordedSchemas refuses a recording it cannot enumerate", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_head_records(path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()), 3);
 
     // The scan reports success either way -- running into a truncated chunk looks exactly like
@@ -593,8 +588,8 @@ TEST_CASE("RecordedSchemas refuses a recording it cannot enumerate", "[unit][sch
 
 TEST_CASE("McapTrackerViewers asks every channel what its messages are", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_shared_schema_channels(path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()),
                                  { { "left", "flatbuffer" }, { "right", "json" } });
 
@@ -608,8 +603,8 @@ TEST_CASE("McapTrackerViewers asks every channel what its messages are", "[unit]
 
 TEST_CASE("McapTrackerViewers asks every channel on a topic, not just one of them", "[unit][schema_compat]")
 {
-    const auto path = temp_mcap_path();
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_shared_schema_channels(path, head_schema(core::HeadPoseRecord::GetFullyQualifiedName(), faithful_head_bfbs()),
                                  { { "head", "flatbuffer" }, { "head", "json" } });
 

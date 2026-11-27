@@ -7,6 +7,7 @@ cmake_minimum_required(VERSION 3.20)
 add_library(mcap_test_support INTERFACE)
 target_include_directories(mcap_test_support INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mcap_test_support INTERFACE
+    test_support::temporary_directory
     deviceio::deviceio_session
     mcap::mcap_core
     Catch2::Catch2

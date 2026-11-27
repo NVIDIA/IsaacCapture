@@ -5,6 +5,7 @@
 #include <avatar/avatar_health.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <schema/serialized.hpp>
+#include <test_support/temporary_directory.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -23,24 +24,7 @@ using plugins::avatar::UsbDevicePresence;
 namespace
 {
 
-class TemporaryDirectory
-{
-public:
-    TemporaryDirectory()
-    {
-        const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
-        path = std::filesystem::temp_directory_path() / ("sharpa-avatar-health-" + std::to_string(nonce));
-        std::filesystem::create_directories(path);
-    }
-
-    ~TemporaryDirectory()
-    {
-        std::error_code error;
-        std::filesystem::remove_all(path, error);
-    }
-
-    std::filesystem::path path;
-};
+using test_support::TemporaryDirectory;
 
 void write_text(const std::filesystem::path& path, const std::string& value)
 {
@@ -329,23 +313,23 @@ TEST_CASE("Dongle detection handles complete and incomplete USB enumeration", "[
 {
     TemporaryDirectory sysfs;
 
-    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path, 0x1915, 0x520F) == UsbDevicePresence::ABSENT);
+    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path(), 0x1915, 0x520F) == UsbDevicePresence::ABSENT);
 
-    std::filesystem::create_directories(sysfs.path / "1-2:1.0");
-    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path, 0x1915, 0x520F) == UsbDevicePresence::ABSENT);
+    std::filesystem::create_directories(sysfs.path() / "1-2:1.0");
+    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path(), 0x1915, 0x520F) == UsbDevicePresence::ABSENT);
 
-    const auto incomplete_device = sysfs.path / "1-3";
+    const auto incomplete_device = sysfs.path() / "1-3";
     std::filesystem::create_directories(incomplete_device);
     write_text(incomplete_device / "idVendor", "1915\n");
-    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path, 0x1915, 0x520F) == UsbDevicePresence::UNKNOWN);
+    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path(), 0x1915, 0x520F) == UsbDevicePresence::UNKNOWN);
 
-    const auto dongle = sysfs.path / "1-2";
+    const auto dongle = sysfs.path() / "1-2";
     std::filesystem::create_directories(dongle);
     write_text(dongle / "idVendor", "1915\n");
     write_text(dongle / "idProduct", "520F\n");
-    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path, 0x1915, 0x520F) == UsbDevicePresence::PRESENT);
+    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path(), 0x1915, 0x520F) == UsbDevicePresence::PRESENT);
 
-    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path / "missing", 0x1915, 0x520F) ==
+    CHECK(plugins::avatar::detect_usb_device_presence(sysfs.path() / "missing", 0x1915, 0x520F) ==
           UsbDevicePresence::UNKNOWN);
 }
 

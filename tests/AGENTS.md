@@ -27,8 +27,9 @@ Organize by **product area**, mirroring `src/` and `examples/`:
 | plugins | `tests/cpp/plugins/<plugin>/` | — |
 | examples | — | `tests/python/examples/<example>/` |
 
-Shared C++ fixtures (not executables) live under `tests/cpp/viz/support/`
-(`viz::test_support`, `viz::layers_testing`).
+Shared C++ fixtures (not executables) live under `tests/cpp/support/`
+(`test_support::temporary_directory`); visualization-specific helpers remain under
+`tests/cpp/viz/support/` (`viz::test_support`, `viz::layers_testing`).
 
 ## Naming invariants (CI depends on these)
 

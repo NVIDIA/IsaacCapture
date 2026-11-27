@@ -23,7 +23,13 @@ import threading
 import time
 from pathlib import Path
 
-from ._core import _move_above_std, ensure_private_dir, root_logger
+from ._core import (
+    _move_above_std,
+    default_runtime_dir,
+    ensure_private_dir,
+    is_private_dir,
+    root_logger,
+)
 
 # Match the POSIX-only C++ forwarding transport.
 _HAS_UNIX_SOCKETS = os.name == "posix" and hasattr(socket, "AF_UNIX")
@@ -35,9 +41,9 @@ _MAX_SOCKET_PATH = 103
 def _runtime_dir() -> Path:
     """Return a short per-user directory independent of the log directory."""
     xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
+    if xdg and is_private_dir(Path(xdg)):
         return Path(xdg) / "isaaccapture"
-    return Path(f"/tmp/isaaccapture-{os.getuid()}")
+    return default_runtime_dir()
 
 
 _FRAME_HEADER = struct.Struct(">I")  # 4-byte big-endian payload length prefix
@@ -266,6 +272,8 @@ if _HAS_UNIX_SOCKETS:
         def server_bind(self) -> None:
             self.socket = _move_socket_above_std(self.socket)
             super().server_bind()
+            # Restrict before listen; chmod cannot revoke an already queued connection.
+            os.chmod(self.server_address, 0o600)
 
         def get_request(self):
             # Accept and register as one step, so _drain() never sees a
@@ -377,8 +385,6 @@ def ensure_receiver() -> str:
             if os.path.lexists(path):
                 os.unlink(path)
             server = ThreadingUnixStreamServer(path, RequestHandler)
-            # Restrict the socket before accepting records.
-            os.chmod(path, 0o600)
             socket_info = os.lstat(path)
             socket_identity = (socket_info.st_dev, socket_info.st_ino)
         except OSError as exc:

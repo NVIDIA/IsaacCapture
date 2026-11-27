@@ -23,6 +23,8 @@ Python logging.
 facility in `sink_config.cpp` and `socket_sink.cpp` behind `#ifndef _WIN32`
 with its Windows body beside it: MSVC has no `<sys/socket.h>`, `<sys/un.h>`,
 `<poll.h>` or `<unistd.h>`, and a Linux-only build cannot show the breakage.
+The shared `secure_directory` module keeps its Windows implementation beside
+the POSIX implementation behind the same guard.
 
 `logger.hpp` is the only public header. `isaaccapture::Logger::get()` is memoized
 on the name, so repeated calls are cheap and always yield the same instance.
@@ -35,8 +37,8 @@ trace and above.
 `Logger::get()`, which every call site in this tree treats as infallible — and
 a static whose initializer throws stays uninitialised, so the next logging call
 re-runs it and throws again. The console sink is therefore built before
-anything that can fail, directory creation takes the `std::error_code`
-overload, and the file sink is wrapped: an unwritable log directory costs the
+anything that can fail, directory creation reports failure without throwing
+for operating-system errors, and the file sink is wrapped: an unwritable log directory costs the
 file and nothing else.
 
 **A log file is vetted twice, and `after_open` alone is not enough.** Every
@@ -79,6 +81,10 @@ moment. `_file.py` owns `<timestamp>.isaaccapture.<pid>.log`; C++ takes `.cpp`
 and, past the first writer, a `-1`/`-2` suffix (`unique_log_path()`). Keep them
 disjoint, and keep any new suffix out of the shape `rotating_file_sink` gives
 its own backups.
+
+## Private directory creation
+
+Follow the shared [secure directory policy](../secure_directory/AGENTS.md).
 
 ## The env-var contract is shared with Python, not parallel to it
 

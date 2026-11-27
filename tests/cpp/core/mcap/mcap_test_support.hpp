@@ -10,63 +10,46 @@
 #include <mcap/reader.hpp>
 #include <mcap/recorded_schemas.hpp>
 #include <mcap/tracker_channels.hpp>
+#include <mcap/writer.hpp>
 #include <schema/head_generated.h>
+#include <test_support/temporary_directory.hpp>
 
 #include <atomic>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
-
-#ifdef _WIN32
-#    include <process.h>
-#else
-#    include <unistd.h>
-#endif
 
 namespace mcap_test
 {
 
 namespace fs = std::filesystem;
 
-//! Process id, so two test binaries running at once cannot land on the same temp file.
-inline int current_pid()
-{
-#ifdef _WIN32
-    return _getpid();
-#else
-    return ::getpid();
-#endif
-}
-
-//! A temp .mcap path unique to this process and call. `prefix` names the suite asking.
-inline std::string temp_mcap_path(std::string_view prefix)
-{
-    static std::atomic<int> counter{ 0 };
-    const auto name =
-        std::string(prefix) + "_" + std::to_string(current_pid()) + "_" + std::to_string(counter++) + ".mcap";
-    return (fs::temp_directory_path() / name).string();
-}
-
-//! Removes the file when it goes out of scope, whether or not the case that wrote it passed.
-class TempFileCleanup
+//! Use this owning fixture for recordings; keep it alive until readers and writers close.
+class TemporaryMcapFile
 {
 public:
-    explicit TempFileCleanup(std::string path) : path_(std::move(path))
+    const std::string& path() const
     {
+        return path_;
     }
-    ~TempFileCleanup() noexcept
-    {
-        std::error_code ec;
-        fs::remove(path_, ec);
-    }
-    TempFileCleanup(const TempFileCleanup&) = delete;
-    TempFileCleanup& operator=(const TempFileCleanup&) = delete;
 
 private:
-    std::string path_;
+    test_support::TemporaryDirectory directory_;
+    std::string path_ = (directory_.path() / "recording.mcap").string();
 };
+
+inline std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
+{
+    auto writer = std::make_unique<mcap::McapWriter>();
+    mcap::McapWriterOptions options("teleop-test");
+    options.compression = mcap::Compression::None;
+    REQUIRE(writer->open(path, options).ok());
+    return writer;
+}
 
 inline std::unique_ptr<mcap::McapReader> open_reader(const std::string& path)
 {

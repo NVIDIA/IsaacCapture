@@ -10,6 +10,7 @@
 #include "inc/log_bridge/logger.hpp"
 #include "socket_sink.hpp"
 
+#include <secure_directory/secure_directory.hpp>
 #include <spdlog/common.h>
 #include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -33,7 +34,6 @@
 
 #    include <fcntl.h>
 #    include <unistd.h>
-#    include <vector>
 #else
 #    include <process.h>
 #endif
@@ -226,7 +226,11 @@ std::filesystem::path log_dir()
 #endif
     }
 #ifndef _WIN32
-    return "/tmp/isaaccapture-" + std::to_string(static_cast<unsigned>(::getuid())) + "/logs";
+    // Resolve only the platform root alias, never our children or operator overrides.
+    std::error_code root_ec;
+    const auto root = std::filesystem::canonical("/tmp", root_ec);
+    return (root_ec ? std::filesystem::path("/tmp") : root) /
+           ("isaaccapture-" + std::to_string(static_cast<unsigned>(::getuid()))) / "logs";
 #else
     // Match Python's tempfile.gettempdir(), which is already per-user.
     std::error_code temp_ec;
@@ -357,30 +361,14 @@ const std::vector<spdlog::sink_ptr>& local_sinks()
         console->set_formatter(make_formatter(kConsolePattern));
 
         auto dir = log_dir();
-#ifndef _WIN32
-        // Track newly created components for owner-only permissions.
-        std::vector<std::filesystem::path> missing;
+        std::string directory_failure;
+        if (!ensure_secure_directory(dir, &directory_failure))
         {
-            std::error_code exists_ec;
-            std::filesystem::path probe = dir;
-            while (!probe.empty() && probe != probe.parent_path() && !std::filesystem::exists(probe, exists_ec))
-            {
-                missing.push_back(probe);
-                probe = probe.parent_path();
-            }
+            // Logger::get() would recurse into this initializer; use the ready sink.
+            spdlog::logger diagnostic("isaaccapture.log_bridge", console);
+            diagnostic.warn("File logging disabled: {}", directory_failure);
+            return std::vector<spdlog::sink_ptr>{ console };
         }
-#endif
-        std::error_code dir_ec;
-        std::filesystem::create_directories(dir, dir_ec);
-#ifndef _WIN32
-        // Preserve permissions on existing operator-provided directories.
-        for (const auto& component : missing)
-        {
-            std::error_code perms_ec;
-            std::filesystem::permissions(
-                component, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, perms_ec);
-        }
-#endif
 
         // Give each C++ writer a timestamped, PID-qualified path.
         auto filename =

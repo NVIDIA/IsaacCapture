@@ -1,0 +1,135 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#include <catch2/catch_test_macros.hpp>
+#include <secure_directory/secure_directory.hpp>
+#include <sys/stat.h>
+#include <test_support/temporary_directory.hpp>
+
+#include <cstdlib>
+#include <fcntl.h>
+#include <filesystem>
+#include <string>
+#include <unistd.h>
+
+using test_support::TemporaryDirectory;
+
+TEST_CASE("secure directory creation uses owner-only permissions", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto directory = temporary.path() / "nested" / "logs";
+
+    const auto previous_umask = ::umask(0);
+    const bool created = isaaccapture::ensure_secure_directory(directory);
+    ::umask(previous_umask);
+    REQUIRE(created);
+
+    struct ::stat info
+    {
+    };
+    REQUIRE(::lstat(directory.c_str(), &info) == 0);
+    REQUIRE((info.st_mode & 0777) == 0700);
+    REQUIRE(::lstat(directory.parent_path().c_str(), &info) == 0);
+    REQUIRE((info.st_mode & 0777) == 0700);
+}
+
+TEST_CASE("secure directory creation rejects symlinked parents", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto destination = temporary.path() / "destination";
+    const auto link = temporary.path() / "runtime";
+    REQUIRE(std::filesystem::create_directory(destination));
+    REQUIRE(::symlink(destination.c_str(), link.c_str()) == 0);
+
+    REQUIRE_FALSE(isaaccapture::ensure_secure_directory(link / "logs"));
+    REQUIRE_FALSE(std::filesystem::exists(destination / "logs"));
+}
+
+TEST_CASE("secure directory creation rejects writable parents", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto shared = temporary.path() / "shared";
+    REQUIRE(std::filesystem::create_directory(shared));
+    REQUIRE(::chmod(shared.c_str(), 0777) == 0);
+
+    REQUIRE_FALSE(isaaccapture::ensure_secure_directory(shared / "logs"));
+}
+
+TEST_CASE("secure directory creation distinguishes sticky ancestors from targets", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto shared = temporary.path() / "shared";
+    REQUIRE(std::filesystem::create_directory(shared));
+    REQUIRE(::chmod(shared.c_str(), 01777) == 0);
+
+    REQUIRE(isaaccapture::ensure_secure_directory(shared / "logs"));
+    REQUIRE_FALSE(isaaccapture::ensure_secure_directory(shared));
+}
+
+TEST_CASE("secure directory creation rejects traversal before creating children", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto child = temporary.path() / "new";
+    REQUIRE_FALSE(isaaccapture::ensure_secure_directory(child / ".." / "logs"));
+    REQUIRE_FALSE(std::filesystem::exists(child));
+}
+
+TEST_CASE("secure directory creation accepts trailing separators and preserves existing permissions", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto directory = temporary.path() / "logs";
+    REQUIRE(std::filesystem::create_directory(directory));
+    REQUIRE(::chmod(directory.c_str(), 0755) == 0);
+    REQUIRE(isaaccapture::ensure_secure_directory(directory / ""));
+    struct ::stat info
+    {
+    };
+    REQUIRE(::lstat(directory.c_str(), &info) == 0);
+    REQUIRE((info.st_mode & 0777) == 0755);
+}
+
+#if defined(O_PATH) || defined(O_SEARCH)
+TEST_CASE("secure directory traversal does not require ancestor read permission", "[unit]")
+{
+    if (::geteuid() == 0)
+    {
+        SKIP("root bypasses directory permissions");
+    }
+    TemporaryDirectory temporary;
+    const auto ancestor = temporary.path() / "searchable";
+    REQUIRE(std::filesystem::create_directory(ancestor));
+    REQUIRE(std::filesystem::create_directory(ancestor / "existing"));
+    REQUIRE(::chmod(ancestor.c_str(), 0300) == 0);
+    const bool existing = isaaccapture::ensure_secure_directory(ancestor / "existing");
+    const bool created = isaaccapture::ensure_secure_directory(ancestor / "new");
+    REQUIRE(::chmod(ancestor.c_str(), 0700) == 0);
+    REQUIRE(existing);
+    REQUIRE(created);
+}
+#endif
+
+TEST_CASE("existing directory validation never creates missing components", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto missing = temporary.path() / "xdg" / "runtime";
+    std::string reason;
+    REQUIRE_FALSE(isaaccapture::is_secure_directory(missing, &reason));
+    REQUIRE_FALSE(std::filesystem::exists(missing.parent_path()));
+    REQUIRE(reason.find(missing.parent_path().string()) != std::string::npos);
+    REQUIRE(isaaccapture::is_secure_directory(temporary.path(), &reason));
+    REQUIRE(reason.empty());
+}
+
+TEST_CASE("directory refusal identifies the unsafe ancestor", "[unit]")
+{
+    TemporaryDirectory temporary;
+    const auto shared = temporary.path() / "shared";
+    REQUIRE(std::filesystem::create_directory(shared));
+    REQUIRE(::chmod(shared.c_str(), 0777) == 0);
+    std::string reason;
+    REQUIRE_FALSE(isaaccapture::ensure_secure_directory(shared / "not-created" / "logs", &reason));
+    REQUIRE(reason.find(shared.string()) != std::string::npos);
+    REQUIRE(reason.find("replaceable") != std::string::npos);
+    REQUIRE(reason.find("not-created") == std::string::npos);
+    REQUIRE_FALSE(std::filesystem::exists(shared / "not-created"));
+}

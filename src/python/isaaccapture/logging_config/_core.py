@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -24,12 +25,24 @@ def logging_enabled() -> bool:
 LINE_FORMAT = "[%(asctime)s.%(msecs)03d] [%(levelname)-5s] [%(name)s] [pid:%(process)d] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# POSIX needs per-uid isolation; the Windows temp directory is already per-user.
-_DEFAULT_LOG_DIR = (
-    Path(f"/tmp/isaaccapture-{os.getuid()}/logs")
-    if _POSIX
-    else Path(tempfile.gettempdir()) / "isaaccapture" / "logs"
-)
+
+def default_temp_root() -> Path:
+    """Resolve only the platform temporary-root alias, before application children."""
+    if not _POSIX:
+        return Path(tempfile.gettempdir())
+    root = Path("/tmp")
+    try:
+        root = root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        pass  # Directory validation will report an unusable root without breaking import.
+    return root
+
+
+def default_runtime_dir() -> Path:
+    """Select our per-user directory below the platform temporary root."""
+    name = f"isaaccapture-{os.getuid()}" if _POSIX else "isaaccapture"
+    return default_temp_root() / name
+
 
 # Custom level below DEBUG; emit with ``logger.log(TRACE, ...)``.
 TRACE = 5
@@ -93,10 +106,12 @@ def log_dir() -> Path:
     """Resolve and publish the session log directory shared with C++."""
     override = os.environ.get("ISAACCAPTURE_LOG_DIR")
     try:
-        directory = Path(override).expanduser() if override else _DEFAULT_LOG_DIR
+        directory = (
+            Path(override).expanduser() if override else default_runtime_dir() / "logs"
+        )
     except RuntimeError:
         # Containers may have neither HOME nor a passwd entry for ``~``.
-        directory = _DEFAULT_LOG_DIR
+        directory = default_runtime_dir() / "logs"
 
     try:
         directory = directory.absolute()
@@ -107,22 +122,65 @@ def log_dir() -> Path:
     return directory
 
 
-def ensure_private_dir(directory: Path) -> Path:
-    """Create *directory* and make only newly created components owner-only."""
-    missing = []
-    probe = directory
-    while not probe.exists() and probe != probe.parent:
-        missing.append(probe)
-        probe = probe.parent
+def _validate_directory(fd: int, directory: Path, *, target: bool) -> None:
+    info = os.fstat(fd)
+    # Sticky shared ancestors protect entries; the target must forbid other writers.
+    if info.st_uid not in (0, os.geteuid()) or (target and info.st_uid != os.geteuid()):
+        raise PermissionError(f"refusing foreign-owned directory path: {directory}")
+    writable = info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    if writable and (target or not info.st_mode & stat.S_ISVTX):
+        raise PermissionError(f"refusing replaceable directory path: {directory}")
 
-    try:
-        directory.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
+
+def _private_dir(directory: Path, *, create_missing: bool) -> Path:
+    if not _POSIX:
+        if create_missing:
+            directory.mkdir(parents=True, exist_ok=True)
+        elif not directory.is_dir():
+            raise NotADirectoryError(str(directory))
         return directory
-    if _POSIX:
-        for component in missing:
-            component.chmod(0o700)
+
+    parts = directory.absolute().parts[1:]
+    if not parts or ".." in parts:
+        raise PermissionError(f"refusing ambiguous directory path: {directory}")
+
+    # Pin parents with traversal-only descriptors where the platform exposes them.
+    flags = getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
+    flags |= os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    parent = os.open("/", flags)
+    try:
+        # The initial root is also a parent and must be checked before mkdirat.
+        component = Path("/")
+        _validate_directory(parent, component, target=False)
+        for index, name in enumerate(parts):
+            if create_missing:
+                try:
+                    os.mkdir(name, mode=0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass  # Existing entries still undergo the checks below.
+            child = os.open(name, flags, dir_fd=parent)
+            os.close(parent)
+            parent = child
+
+            component /= name
+            _validate_directory(parent, component, target=index == len(parts) - 1)
+    finally:
+        os.close(parent)
     return directory
+
+
+def ensure_private_dir(directory: Path) -> Path:
+    """Create owner-only directories without following replaceable POSIX paths."""
+    return _private_dir(directory, create_missing=True)
+
+
+def is_private_dir(directory: Path) -> bool:
+    """Apply the same ownership and path checks without creating anything."""
+    try:
+        _private_dir(directory, create_missing=False)
+    except OSError:
+        return False
+    return True
 
 
 def ensure_log_dir() -> Path:

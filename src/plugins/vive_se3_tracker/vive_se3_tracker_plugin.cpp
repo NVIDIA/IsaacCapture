@@ -9,13 +9,16 @@
 #include <oxr/oxr_session.hpp>
 #include <oxr_utils/os_time.hpp>
 #include <schema/se3_tracker_generated.h>
+#include <secure_directory/secure_directory.hpp>
 #include <sys/stat.h>
 #include <sys/types.h>
 
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <unistd.h>
@@ -38,52 +41,34 @@ int64_t env_int(const char* name, int64_t fallback)
     return std::strtoll(v, nullptr, 10);
 }
 
-// A directory is safe to place the advertisement file in only if it is a real
-// directory (not a symlink) that we own with no group/other write access — so no
-// other local user can pre-plant a symlink and redirect our truncating open.
-bool is_secure_dir(const std::string& dir)
-{
-    struct stat st
-    {
-    };
-    if (::lstat(dir.c_str(), &st) != 0)
-        return false;
-    if (!S_ISDIR(st.st_mode))
-        return false; // e.g. a symlink or a regular file planted at that path
-    if (st.st_uid != ::geteuid())
-        return false; // not owned by us
-    if (st.st_mode & (S_IWGRP | S_IWOTH))
-        return false; // group/other-writable
-    return true;
-}
-
 // Resolve where to write the collection-id advertisement file, securely:
 //   1. VIVE_SE3_COLLECTIONS_FILE, if set, wins verbatim (caller's responsibility).
 //   2. else $XDG_RUNTIME_DIR (systemd gives a per-user, mode-0700 dir).
 //   3. else a private /tmp/vive_se3_tracker-<uid> we create 0700 and verify we own.
-// Falls through to the plain /tmp file only if the private dir can't be secured,
-// and warns — never silently write to a world-writable fixed path.
+// Disables the advertisement if the private directory cannot be secured.
 // Keep in sync with record_se3_vive.py.
-std::string resolve_collections_file()
+std::optional<std::string> resolve_collections_file()
 {
     const char* env_cf = std::getenv("VIVE_SE3_COLLECTIONS_FILE");
     if (env_cf && *env_cf)
         return env_cf;
 
     const char* xdg = std::getenv("XDG_RUNTIME_DIR");
-    if (xdg && *xdg && is_secure_dir(xdg))
+    if (xdg && *xdg && isaaccapture::is_secure_directory(xdg))
         return std::string(xdg) + "/" + kCollectionsFileName;
 
-    const std::string dir = "/tmp/vive_se3_tracker-" + std::to_string(::geteuid());
-    ::mkdir(dir.c_str(), 0700); // ignore EEXIST; is_secure_dir does the real check
-    if (is_secure_dir(dir))
+    std::error_code root_error;
+    const auto root = std::filesystem::canonical("/tmp", root_error);
+    const std::string dir =
+        ((root_error ? std::filesystem::path("/tmp") : root) / ("vive_se3_tracker-" + std::to_string(::geteuid()))).string();
+    std::string reason;
+    if (isaaccapture::ensure_secure_directory(dir, &reason))
         return dir + "/" + kCollectionsFileName;
 
     isaaccapture::Logger::get("isaaccapture.plugins.vive_se3_tracker.ViveSe3TrackerPlugin")
-        ->warn(
-            "could not secure a per-user directory for the collections file; set VIVE_SE3_COLLECTIONS_FILE to a "
-            "private path.");
-    return dir + "/" + kCollectionsFileName; // best effort; open still O_TRUNC-guarded below
+        ->warn("Collection advertisement disabled: {}. Set VIVE_SE3_COLLECTIONS_FILE to a private path.", reason);
+    // Tracking also works with explicit collection IDs when discovery is unavailable.
+    return std::nullopt;
 }
 
 core::SchemaPusherConfig make_pusher_config(const std::string& collection_id)
@@ -124,7 +109,8 @@ ViveSe3TrackerPlugin::ViveSe3TrackerPlugin()
     collections_file_ = resolve_collections_file();
     // Remove any stale advertisement from a previous run; recreated lazily as
     // collections come up. Prevents readers from subscribing to dead streams.
-    std::remove(collections_file_.c_str());
+    if (collections_file_)
+        std::remove(collections_file_->c_str());
 
     const char* synth = std::getenv("VIVE_SE3_SYNTHETIC");
     synthetic_mode_ = (synth && (synth[0] == '1' || synth[0] == 't' || synth[0] == 'T'));
@@ -172,8 +158,8 @@ ViveSe3TrackerPlugin::~ViveSe3TrackerPlugin()
     // is no self-join.
     if (vut_client_)
         vut_client_->disconnect();
-    if (!collections_file_.empty())
-        std::remove(collections_file_.c_str());
+    if (collections_file_)
+        std::remove(collections_file_->c_str());
 }
 
 // Sanitize a serial taken straight off the VUT wire before it becomes a
@@ -275,23 +261,40 @@ ViveSe3TrackerPlugin::DeviceStream& ViveSe3TrackerPlugin::stream_for(uint32_t de
 
 void ViveSe3TrackerPlugin::write_collections_file() const
 {
-    if (collections_file_.empty())
+    if (!collections_file_)
         return;
     // Write to a temp then rename so a concurrent reader never sees a partial file.
-    const std::string tmp = collections_file_ + ".tmp";
+    // Reserve 0600 before writing, even under a permissive umask. Automatic paths
+    // have a validated parent protecting the subsequent stream reopen.
+    std::string tmp = *collections_file_ + ".tmp.XXXXXX";
+    const int fd = ::mkstemp(tmp.data());
+    if (fd < 0)
+    {
+        logger_->warn("could not create collections file {}: {}", tmp, std::strerror(errno));
+        return;
+    }
+    ::close(fd);
     {
         std::ofstream out(tmp, std::ios::trunc);
         if (!out)
         {
             logger_->warn("could not write collections file {}", tmp);
+            std::remove(tmp.c_str());
             return;
         }
         for (const auto& kv : streams_)
             out << kv.second.collection_id << "\n";
+        out.close();
+        if (!out)
+        {
+            logger_->warn("could not finish collections file {}", tmp);
+            std::remove(tmp.c_str());
+            return;
+        }
     }
-    if (std::rename(tmp.c_str(), collections_file_.c_str()) != 0)
+    if (std::rename(tmp.c_str(), collections_file_->c_str()) != 0)
     {
-        logger_->warn("could not update collections file {}", collections_file_);
+        logger_->warn("could not update collections file {}", *collections_file_);
         std::remove(tmp.c_str()); // don't leave the temp behind
     }
 }

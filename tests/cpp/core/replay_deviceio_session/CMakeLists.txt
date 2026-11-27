@@ -8,6 +8,7 @@ add_executable(replay_deviceio_session_tests
 )
 
 target_link_libraries(replay_deviceio_session_tests PRIVATE
+    mcap_test_support
     deviceio::deviceio_session
     deviceio::deviceio_trackers
     mcap::mcap_core

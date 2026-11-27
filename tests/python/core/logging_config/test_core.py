@@ -5,10 +5,13 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from conftest import LINE_RE
@@ -107,7 +110,91 @@ class TestLogDir:
         # sink_config.cpp builds this same string; a shared /tmp/isaaccapture
         # would belong to whichever user created it first.
         monkeypatch.delenv("ISAACCAPTURE_LOG_DIR", raising=False)
-        assert _core.log_dir() == Path(f"/tmp/isaaccapture-{os.getuid()}/logs")
+        assert (
+            _core.log_dir()
+            == Path("/tmp").resolve() / f"isaaccapture-{os.getuid()}" / "logs"
+        )
+
+    @pytest.mark.parametrize("channel", ["logs", "socket"])
+    def test_default_root_alias_does_not_bypass_child_validation(
+        self, monkeypatch, tmp_path, channel
+    ):
+        from isaaccapture.logging_config import _forwarding
+
+        root = tmp_path / "platform-temp"
+        root.mkdir()
+        alias = tmp_path / "tmp-alias"
+        alias.symlink_to(root, target_is_directory=True)
+        resolve = Path.resolve
+
+        def resolve_root(path, *args, **kwargs):
+            return resolve(alias if path == Path("/tmp") else path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", resolve_root)
+        monkeypatch.delenv("ISAACCAPTURE_LOG_DIR", raising=False)
+        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+        directory = _core.log_dir() if channel == "logs" else _forwarding._runtime_dir()
+        expected = root / f"isaaccapture-{os.getuid()}"
+        assert directory == (expected / "logs" if channel == "logs" else expected)
+        assert _core.ensure_private_dir(directory) == directory
+
+        # A symlink below that canonical root must still be refused.
+        link = root / "operator-link"
+        link.symlink_to(expected, target_is_directory=True)
+        monkeypatch.setenv("ISAACCAPTURE_LOG_DIR", str(link / "logs"))
+        selected = _core.log_dir()
+        assert selected == link / "logs"
+        with pytest.raises(OSError) as failure:
+            _core.ensure_private_dir(selected)
+        assert failure.value.errno in (errno.ENOTDIR, errno.ELOOP)
+
+    @pytest.mark.parametrize("failure", [OSError, RuntimeError])
+    def test_unusable_default_root_keeps_the_fallback_path(self, monkeypatch, failure):
+        with patch.object(Path, "resolve", side_effect=failure("unusable root")):
+            assert _core.default_runtime_dir() == Path(
+                f"/tmp/isaaccapture-{os.getuid()}"
+            )
+
+    @pytest.mark.parametrize(
+        "kind", ["valid", "missing", "symlink", "writable", "sticky", "foreign"]
+    )
+    def test_socket_runtime_requires_an_existing_trusted_xdg(
+        self, monkeypatch, tmp_path, kind
+    ):
+        from isaaccapture.logging_config import _forwarding
+
+        fallback = tmp_path / "fallback"
+        monkeypatch.setattr(_forwarding, "default_runtime_dir", lambda: fallback)
+        xdg = tmp_path / "xdg"
+        if kind == "symlink":
+            xdg.symlink_to(tmp_path, target_is_directory=True)
+        elif kind != "missing":
+            xdg.mkdir(mode=0o755)
+            if kind in ("writable", "sticky"):
+                xdg.chmod(0o777 if kind == "writable" else 0o1777)
+        if kind == "foreign":
+            fstat = os.fstat
+            identity = xdg.stat().st_ino
+
+            def foreign_owner(fd):
+                info = fstat(fd)
+                if info.st_ino == identity:
+                    return SimpleNamespace(
+                        st_mode=info.st_mode, st_uid=os.geteuid() + 1
+                    )
+                return info
+
+            monkeypatch.setattr(
+                _core, "os", SimpleNamespace(**{**vars(os), "fstat": foreign_owner})
+            )
+        monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
+        selected = _forwarding._runtime_dir()
+        assert selected == (xdg / "isaaccapture" if kind == "valid" else fallback)
+        assert _core.ensure_private_dir(selected) == selected
+        if kind == "missing":
+            assert not xdg.exists()
+        elif kind != "valid":
+            assert not (xdg / "isaaccapture").exists()
 
     def test_republishes_an_absolute_path(self, monkeypatch, tmp_path):
         # A child may chdir before its first C++ logger resolves the variable.
@@ -119,6 +206,86 @@ class TestLogDir:
 
 
 class TestEnsurePrivateDir:
+    @pytest.mark.parametrize(("mode", "foreign"), [(0o777, False), (0o755, True)])
+    def test_rejects_an_untrusted_root_before_creating_children(
+        self, tmp_path, mode, foreign
+    ):
+        info = SimpleNamespace(
+            st_mode=stat.S_IFDIR | mode,
+            st_uid=os.geteuid() + 1 if foreign else os.geteuid(),
+        )
+        with (
+            patch.object(_core.os, "fstat", return_value=info),
+            patch.object(_core.os, "mkdir") as mkdir,
+        ):
+            with pytest.raises(PermissionError):
+                _core.ensure_private_dir(tmp_path / "logs")
+            mkdir.assert_not_called()
+
+    @pytest.mark.parametrize("effective_owner", [True, False])
+    def test_ownership_uses_the_effective_user(self, effective_owner):
+        real_uid, effective_uid = 12345, 12346
+        info = SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o700,
+            st_uid=effective_uid if effective_owner else real_uid,
+        )
+        with (
+            patch.object(_core.os, "getuid", return_value=real_uid),
+            patch.object(_core.os, "geteuid", return_value=effective_uid),
+            patch.object(_core.os, "fstat", return_value=info),
+        ):
+            if effective_owner:
+                _core._validate_directory(123, Path("/owned"), target=True)
+            else:
+                with pytest.raises(PermissionError, match="foreign-owned"):
+                    _core._validate_directory(123, Path("/foreign"), target=True)
+
+    def test_failure_names_the_replaceable_ancestor(self, tmp_path):
+        ancestor = tmp_path / "shared"
+        ancestor.mkdir()
+        ancestor.chmod(0o777)
+        with pytest.raises(PermissionError) as failure:
+            _core.ensure_private_dir(ancestor / "not-created" / "logs")
+        assert str(ancestor) in str(failure.value)
+        assert "not-created" not in str(failure.value)
+        assert not (ancestor / "not-created").exists()
+
+    @not_root
+    @pytest.mark.skipif(
+        not any(hasattr(os, flag) for flag in ("O_PATH", "O_SEARCH")),
+        reason="requires traversal-only descriptors",
+    )
+    @pytest.mark.parametrize("existing", [False, True])
+    @pytest.mark.parametrize("search_only_api", [False, True])
+    def test_searchable_ancestor_does_not_need_read_permission(
+        self, tmp_path, monkeypatch, existing, search_only_api
+    ):
+        if search_only_api:
+            # Exercise O_SEARCH-only platforms using the host traversal flag.
+            attributes = dict(vars(os))
+            attributes["O_SEARCH"] = attributes.pop(
+                "O_PATH", attributes.get("O_SEARCH")
+            )
+            monkeypatch.setattr(_core, "os", SimpleNamespace(**attributes))
+        ancestor = tmp_path / "searchable"
+        ancestor.mkdir()
+        leaf = ancestor / "logs"
+        if existing:
+            leaf.mkdir(mode=0o700)
+        ancestor.chmod(0o300)
+        try:
+            assert _core.ensure_private_dir(leaf) == leaf
+            (leaf / "probe").write_text("usable")
+        finally:
+            ancestor.chmod(0o700)
+
+    def test_validation_only_never_creates_missing_components(self, tmp_path):
+        with patch.object(_core.os, "mkdir") as mkdir:
+            assert not _core.is_private_dir(tmp_path / "missing" / "runtime")
+            mkdir.assert_not_called()
+        assert not (tmp_path / "missing").exists()
+        assert _core.is_private_dir(tmp_path)
+
     def test_narrows_every_component_it_created(self, tmp_path):
         base = tmp_path / "shared"
         base.mkdir()
@@ -138,6 +305,57 @@ class TestEnsurePrivateDir:
         existing.chmod(0o755)
         assert _core.ensure_private_dir(existing) == existing
         assert stat.S_IMODE(existing.stat().st_mode) == 0o755
+
+    def test_rejects_a_symlink_at_the_target(self, tmp_path):
+        private = tmp_path / "private"
+        private.mkdir()
+        link = tmp_path / "logs"
+        link.symlink_to(private, target_is_directory=True)
+
+        with pytest.raises(OSError) as failure:
+            _core.ensure_private_dir(link)
+        assert failure.value.errno in (errno.ENOTDIR, errno.ELOOP)
+
+    def test_does_not_create_through_a_symlinked_parent(self, tmp_path):
+        destination = tmp_path / "destination"
+        destination.mkdir()
+        link = tmp_path / "runtime"
+        link.symlink_to(destination, target_is_directory=True)
+
+        with pytest.raises(OSError) as failure:
+            _core.ensure_private_dir(link / "logs")
+        assert failure.value.errno in (errno.ENOTDIR, errno.ELOOP)
+        assert not (destination / "logs").exists()
+
+    def test_rejects_a_replaceable_path_component(self, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        shared.chmod(0o777)
+
+        with pytest.raises(PermissionError, match="replaceable"):
+            _core.ensure_private_dir(shared / "logs")
+
+    def test_sticky_ancestor_is_allowed_but_sticky_target_is_not(self, tmp_path):
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        shared.chmod(0o1777)
+        assert _core.ensure_private_dir(shared / "logs") == shared / "logs"
+        with pytest.raises(PermissionError, match="replaceable"):
+            _core.ensure_private_dir(shared)
+
+    def test_rejects_parent_traversal_before_creating_anything(self, tmp_path):
+        with pytest.raises(PermissionError, match="ambiguous"):
+            _core.ensure_private_dir(tmp_path / "new" / ".." / "logs")
+        assert not (tmp_path / "new").exists()
+
+    def test_creation_is_private_even_with_a_permissive_umask(self, tmp_path):
+        previous = os.umask(0)
+        try:
+            leaf = _core.ensure_private_dir(tmp_path / "runtime" / "logs")
+        finally:
+            os.umask(previous)
+        assert stat.S_IMODE(leaf.stat().st_mode) == 0o700
+        assert stat.S_IMODE(leaf.parent.stat().st_mode) == 0o700
 
     @not_root
     def test_raises_rather_than_returning_an_unusable_directory(self, tmp_path):

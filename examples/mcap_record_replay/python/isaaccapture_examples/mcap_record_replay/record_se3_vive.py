@@ -24,48 +24,66 @@ Usage:
 
 import argparse
 import os
+import stat
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-from isaaccapture.deviceio_session import DeviceIOSession, McapRecordingConfig
-from isaaccapture.deviceio_trackers import Se3Tracker
-from isaaccapture.oxr import OpenXRSession
+
+def _collections_file() -> str | None:
+    """Match the publisher's trusted existing discovery directories."""
+    return os.environ.get("VIVE_SE3_COLLECTIONS_FILE") or _automatic_collections_file()
 
 
-def _collections_file() -> str:
-    """Where the pusher advertises live collection ids (one per line).
+def _automatic_collections_file() -> str | None:
+    if os.name != "posix":
+        return None
+    from isaaccapture.logging_config._core import default_temp_root, is_private_dir
 
-    Must mirror resolve_collections_file() in the plugin: VIVE_SE3_COLLECTIONS_FILE
-    overrides wholesale; otherwise the per-user $XDG_RUNTIME_DIR (systemd's
-    mode-0700 dir); otherwise a private per-user dir under /tmp
-    (vive_se3_tracker-<uid>) — never a fixed world-writable /tmp path.
-    """
-    env = os.environ.get("VIVE_SE3_COLLECTIONS_FILE")
-    if env:
-        return env
     xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if xdg:
-        return os.path.join(xdg, "vive_se3_collections.txt")
-    base = os.path.join("/tmp", f"vive_se3_tracker-{os.getuid()}")  # noqa: S108 - per-user 0700 dir, matches plugin
-    return os.path.join(base, "vive_se3_collections.txt")
-
-
-DEFAULT_COLLECTIONS_FILE = _collections_file()
+    if xdg and is_private_dir(Path(xdg)):
+        return str(Path(xdg) / "vive_se3_collections.txt")
+    base = default_temp_root() / f"vive_se3_tracker-{os.geteuid()}"
+    # Only the publisher creates its directory; discovery validates existing paths.
+    if is_private_dir(base):
+        return str(base / "vive_se3_collections.txt")
+    return None
 
 
 def discover_collections() -> list[str]:
-    """Read the collection ids the running pusher advertises, in file order."""
-    path = Path(DEFAULT_COLLECTIONS_FILE)
-    if not path.is_file():
+    """Read trusted collection ids in the order advertised by the pusher."""
+    override = os.environ.get("VIVE_SE3_COLLECTIONS_FILE")
+    selected = override or _automatic_collections_file()
+    if selected is None:
         return []
-    seen = {}
-    for line in path.read_text().splitlines():
-        cid = line.strip()
-        if cid:
-            seen.setdefault(cid, None)
-    return list(seen)
+    path = Path(selected)
+    try:
+        if override:  # Explicit paths remain the operator's responsibility.
+            if not path.is_file():
+                return []
+            text = path.read_text()
+        else:
+            fd = os.open(
+                path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+            )
+            try:
+                info = os.fstat(fd)
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.geteuid()
+                    or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                ):
+                    return []
+                with os.fdopen(fd, closefd=False) as stream:
+                    text = stream.read()
+            finally:
+                os.close(fd)
+    except (OSError, UnicodeError):
+        return []
+    return list(
+        dict.fromkeys(line.strip() for line in text.splitlines() if line.strip())
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -96,13 +114,17 @@ def main(argv: list[str]) -> int:
         if not collections:
             print(
                 "[record-se3] no live collections found "
-                f"({DEFAULT_COLLECTIONS_FILE} missing or empty). "
+                f"({_collections_file() or 'no trusted advertisement path'}; missing, empty, or unsafe). "
                 "Is the vive_se3_tracker pusher running and a tracker streaming? "
                 "Or pass --collections explicitly.",
                 file=sys.stderr,
             )
             return 1
         print(f"[record-se3] discovered collections: {', '.join(collections)}")
+
+    from isaaccapture.deviceio_session import DeviceIOSession, McapRecordingConfig
+    from isaaccapture.deviceio_trackers import Se3Tracker
+    from isaaccapture.oxr import OpenXRSession
 
     trackers = {cid: Se3Tracker(cid) for cid in collections}
 

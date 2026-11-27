@@ -20,6 +20,7 @@ target_include_directories(timesync
 
 target_link_libraries(timesync
     PRIVATE
+        posix_utils::posix_utils
         Threads::Threads
 )
 

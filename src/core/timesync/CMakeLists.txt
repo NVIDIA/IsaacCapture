@@ -14,6 +14,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     include(CTest)
 endif()
 
+# The module also builds standalone and as a camera bridge dependency.
+if(NOT TARGET posix_utils::posix_utils)
+    get_filename_component(_core_dir "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+    add_subdirectory(${_core_dir}/posix_utils ${CMAKE_CURRENT_BINARY_DIR}/posix_utils)
+endif()
+
 add_subdirectory(cpp)
 
 # Standalone configure runs the module's tests; in the product tree tests/cpp/core adds them.

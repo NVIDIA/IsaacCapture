@@ -37,6 +37,10 @@ stub generation.
   earlier. Empty-file cleanup may close the file handler only when it is also
   removing that empty file; leave a non-empty handler for `logging.shutdown()`.
 
+## Private directory creation
+
+Follow the shared [secure directory policy](../../../core/secure_directory/AGENTS.md).
+
 ## Leader and forwarding children
 
 `ISAACCAPTURE_LOG_SOCKET` decides which half of `_setup.install()` a process

@@ -63,14 +63,6 @@ core::Serialized<core::Generic3AxisPedalOutputRecord> make_record(float left_ped
         &native, core::DeviceDataTimestamp(time_ns, time_ns, time_ns));
 }
 
-std::unique_ptr<mcap::McapWriter> open_writer(const std::string& path)
-{
-    auto writer = std::make_unique<mcap::McapWriter>();
-    mcap::McapWriterOptions options("teleop-test");
-    options.compression = mcap::Compression::None;
-    REQUIRE(writer->open(path, options).ok());
-    return writer;
-}
 
 //! Writes what a live session of the tracker records: the metadata, when there is one, then one
 //! sample on the tracked channel replay reads.
@@ -227,8 +219,8 @@ TEST_CASE("Metadata samples compare equal up to their zero padding", "[unit][tra
 
 TEST_CASE("A metadata table is recorded at the log time it is given", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tracker_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_recording(path, make_metadata("glove"));
 
     auto reader = open_reader(path);
@@ -249,8 +241,8 @@ TEST_CASE("A metadata table is recorded at the log time it is given", "[unit][tr
 
 TEST_CASE("Replay publishes the data with the metadata it was recorded with", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tracker_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_recording(path, make_metadata("glove"));
 
     auto replay = open_replay(path);
@@ -264,8 +256,8 @@ TEST_CASE("Replay publishes the data with the metadata it was recorded with", "[
 
 TEST_CASE("Replay withholds data recorded without metadata", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tracker_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     write_recording(path, core::Serialized<core::TestTrackerMetadata>());
 
     auto replay = open_replay(path);
@@ -278,8 +270,8 @@ TEST_CASE("Replay withholds data recorded without metadata", "[unit][tracker_met
 TEST_CASE("Replay tactile metadata is semantically verified before force data is published", "[unit][tracker_metadata]")
 {
     constexpr std::string_view base_name = "tactile";
-    const auto path = temp_mcap_path("test_tactile_replay_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     std::array<uint32_t, 4> indices{};
     std::array<float, 4> weights{ 1.0f, 0.0f, 0.0f, 0.0f };
     std::string reason;
@@ -347,8 +339,8 @@ TEST_CASE("Schema trackers reject a different tensor before decoding or recordin
     constexpr std::string_view expected = "soma_body_joint_poses";
     constexpr std::string_view actual = "soma_body_joint_rotations";
     FakeTensorRuntime runtime;
-    const auto path = temp_mcap_path("test_soma_tensor_identifier");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording_file;
+    const auto& path = recording_file.path();
     auto writer = open_writer(path);
     core::McapTrackerChannels<core::SomaBodyJointPosesRecord> channels(*writer, BASE_NAME, { "poses" });
     core::SchemaTrackerConfig config{ .collection_id = std::string(collection),
@@ -409,8 +401,8 @@ TEST_CASE("Schema trackers reject a different tensor before decoding or recordin
 
 TEST_CASE("Live tactile metadata is semantically verified before adoption and recording", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tactile_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     {
         FakeTensorRuntime runtime;
         auto writer = open_writer(path);
@@ -456,8 +448,8 @@ TEST_CASE("Live tactile metadata is semantically verified before adoption and re
 
 TEST_CASE("Live publishes and records data only once the producer's metadata arrives", "[unit][tracker_metadata]")
 {
-    const auto path = temp_mcap_path("test_tracker_metadata");
-    const TempFileCleanup cleanup(path);
+    mcap_test::TemporaryMcapFile recording;
+    const auto& path = recording.path();
     {
         LiveSession live(path);
         live.start_data();

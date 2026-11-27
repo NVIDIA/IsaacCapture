@@ -23,6 +23,8 @@ target_include_directories(log_bridge_core
 target_link_libraries(log_bridge_core
     PUBLIC
         spdlog::spdlog
+    PRIVATE
+        secure_directory::secure_directory
 )
 
 add_library(log_bridge::log_bridge_core ALIAS log_bridge_core)

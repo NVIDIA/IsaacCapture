@@ -295,6 +295,31 @@ class TestAbnormalTermination:
         assert cpp_logs(child_logs) == []
 
 
+def test_receiver_permissions_are_private_before_listening(monkeypatch):
+    activate = _forwarding.ThreadingUnixStreamServer.server_activate
+    observed = []
+
+    def inspect_before_listen(server):
+        mode = stat.S_IMODE(os.stat(server.server_address).st_mode)
+        observed.append(mode)
+        assert mode == 0o600
+        activate(server)
+
+    monkeypatch.setattr(
+        _forwarding.ThreadingUnixStreamServer, "server_activate", inspect_before_listen
+    )
+    with tempfile.TemporaryDirectory(prefix="itlog") as directory:
+        os.chmod(directory, 0o755)
+        previous = os.umask(0)
+        try:
+            with _forwarding.ThreadingUnixStreamServer(
+                os.path.join(directory, "r.sock"), _forwarding.RequestHandler
+            ):
+                assert observed == [0o600]
+        finally:
+            os.umask(previous)
+
+
 def test_ensure_receiver_is_idempotent_and_publishes_its_address():
     # This process is already a leader; a second call must return the same
     # address rather than binding a second socket.

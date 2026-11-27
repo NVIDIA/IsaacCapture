@@ -11,6 +11,7 @@ add_executable(spacemouse_plugin_tests
 target_link_libraries(spacemouse_plugin_tests
     PRIVATE
         Catch2::Catch2WithMain
+        test_support::temporary_directory
         spacemouse::spacemouse_core
 )
 

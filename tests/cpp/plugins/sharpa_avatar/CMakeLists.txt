@@ -8,6 +8,7 @@ add_executable(sharpa_avatar_plugin_tests
 target_link_libraries(sharpa_avatar_plugin_tests
     PRIVATE
         Catch2::Catch2WithMain
+        test_support::temporary_directory
         isaac::avatar_plugin
 )
 
