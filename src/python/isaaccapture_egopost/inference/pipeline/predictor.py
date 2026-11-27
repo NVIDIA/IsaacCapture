@@ -73,7 +73,9 @@ def load_egohand_model(checkpoint_path: str | Path, soma_hand_data_folder: str |
         model: EgoHand instance in eval mode on CPU.
         target: The ``_target_`` string from the checkpoint cfg (for logging).
     """
-    ckpt = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+    # Store cfg as primitive metadata; do not allowlist arbitrary training objects
+    # or retry with unrestricted pickle when an incompatible checkpoint is supplied.
+    ckpt = torch.load(str(checkpoint_path), map_location="cpu", weights_only=True)
     cfg = OmegaConf.create(ckpt["hyper_parameters"]["cfg"])
     target = str(cfg.get("_target_", ""))
     if not any(target.endswith(t) for t in _VALID_TARGETS):
