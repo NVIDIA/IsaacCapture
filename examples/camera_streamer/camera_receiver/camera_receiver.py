@@ -41,7 +41,7 @@ from avs_wire import (
     sensor_sof_lag_ns,
     sensor_sof_ns,
 )
-from cuda_ipc import CudaIpcFramePublisher
+from cuda_ipc import COLOR_MATRICES, CudaIpcFramePublisher
 from nv_video_decode import NvVideoDecoder
 
 logger = logging.getLogger("isaaccapture.camera_streamer.receiver")
@@ -381,6 +381,7 @@ class StreamConfig:
     ring_depth: int
     ipc_names: tuple[str, ...]
     full_range: bool = False
+    color_matrix: str = "bt601"
 
 
 class _StreamRuntime:
@@ -533,6 +534,8 @@ class Avs1TcpReceiver:
                     gpu_id=self._gpu_device_id,
                     buffers=runtime.output_buffers[camera_index],
                     layout=layout,
+                    full_range=cfg.full_range,
+                    color_matrix=cfg.color_matrix,
                 )
 
     @property
@@ -1216,6 +1219,15 @@ def _parse_stream_config(raw: dict[str, Any]) -> StreamConfig:
     else:
         mono = str(ipc_cfg.get("mono", name))
         ipc_names = (mono,)
+    full_range = raw.get("full_range", False)
+    if not isinstance(full_range, bool):
+        raise ValueError(f"stream {name!r}: full_range must be true or false")
+    color_matrix = raw.get("color_matrix", "bt601")
+    if color_matrix not in COLOR_MATRICES:
+        raise ValueError(
+            f"stream {name!r}: color_matrix must be one of "
+            f"{', '.join(COLOR_MATRICES)}, got {color_matrix!r}"
+        )
     return StreamConfig(
         index=index,
         name=name,
@@ -1225,7 +1237,8 @@ def _parse_stream_config(raw: dict[str, Any]) -> StreamConfig:
         output_format=output_format,
         ring_depth=ring_depth,
         ipc_names=ipc_names,
-        full_range=bool(raw.get("full_range", False)),
+        full_range=full_range,
+        color_matrix=color_matrix,
     )
 
 

@@ -41,6 +41,14 @@ RELEASES = "~/camera-streamer/releases"
 RUN_CONFIG = "src/configs/run-config.yaml"
 SIPL_ROOT = "/usr/src/jetson_sipl_api/sipl"
 SOURCE_ROOT = "examples/camera_streamer/argus_sender"
+# The SHW5G head camera's platform file ships in the release; the driver and tuning files are system-wide.
+SIPL_PLATFORM_FILE = "shw5g_csi_cd.json"
+SIPL_PLATFORM_NAME = "SHW5G_2"
+SIPL_SYSTEM_FILES = (
+    "/usr/lib/nvsipl_drv/libnvuddf_shw5g_cameramodule_library.so",
+    "/usr/lib/nvsipl_drv/libnvsipl_qry_vb1940.so",
+    "/var/nvidia/nvcam/settings/sipl/SHW5G.nito",
+)
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
@@ -241,7 +249,13 @@ exit 1
 
 
 def cmd_run(
-    target: str, name: str, config: Path, seconds: int, env: list[str], dry_run: bool
+    target: str,
+    name: str,
+    config: Path,
+    seconds: int,
+    env: list[str],
+    dry_run: bool,
+    verbose: bool = False,
 ) -> None:
     """Run a deployed release for a bounded time, in the foreground, with a config from this machine."""
     if not NAME.fullmatch(name):
@@ -253,6 +267,7 @@ def cmd_run(
         if not re.fullmatch(r"[A-Z_][A-Z0-9_]*=[A-Za-z0-9_.:/-]*", item):
             raise DeployError(f"--env {item!r} is not NAME=VALUE with a plain value")
     env_prefix = "env " + " ".join(env) + " " if env else ""
+    verbose_flag = " --verbose" if verbose else ""
     guard = f"""
 set -e
 d={directory}
@@ -280,7 +295,7 @@ cd $d
 # SIGINT first: the sender drains its encoder and returns every camera buffer on SIGINT/SIGTERM.
 status=0
 started=$(cut -d' ' -f1 /proc/uptime)
-{env_prefix}timeout --signal=INT --kill-after=15 {seconds} ./build/argus_sender --config {RUN_CONFIG} || status=$?
+{env_prefix}timeout --signal=INT --kill-after=15 {seconds} ./build/argus_sender --config {RUN_CONFIG}{verbose_flag} || status=$?
 elapsed=$(awk -v s="$started" -v e="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN {{ printf "%d", e - s }}')
 # errexit off for the rest: a login shell also runs the target's logout files on exit, and a failing last command in
 # one would otherwise replace the exit status chosen here.
@@ -363,6 +378,27 @@ echo "built and tested: {directory}/build/argus_sender  (not activated, no camer
 """,
         dry_run,
     )
+    if with_sipl:
+        # The release carries the platform file; the drivers and tuning it needs are system-wide and installed by
+        # the sensing setup, so check that they are there and that SIPL accepts the platform file, read-only.
+        print(
+            "==> checking the SIPL platform file and system prerequisites", flush=True
+        )
+        remote(
+            target,
+            f"""
+set -e
+cd {directory}
+for f in {" ".join(SIPL_SYSTEM_FILES)}; do
+    [[ -e $f ]] || {{ echo "missing $f; run the sensing setup (src/plugins/sensing/scripts/setup.sh) on the target" >&2; exit 1; }}
+done
+command -v nvsipl_query >/dev/null || {{ echo "nvsipl_query is not installed on the target" >&2; exit 1; }}
+nvsipl_query -t src/configs/{SIPL_PLATFORM_FILE} -c {SIPL_PLATFORM_NAME} | grep -q "Resolution: 2560x1984" \\
+    || {{ echo "SIPL does not accept src/configs/{SIPL_PLATFORM_FILE} for {SIPL_PLATFORM_NAME}" >&2; exit 1; }}
+echo "SIPL accepts src/configs/{SIPL_PLATFORM_FILE} ({SIPL_PLATFORM_NAME})"
+""",
+            dry_run,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -393,6 +429,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME=VALUE",
         help="environment variable for the sender (repeatable)",
     )
+    run.add_argument(
+        "--verbose",
+        action="store_true",
+        help="run the sender with --verbose (per-second delivered frame rates)",
+    )
     deploy = sub.add_parser("deploy", help="copy, build and test; never activates")
     deploy.add_argument(
         "--with-sipl", action="store_true", help="also build the SIPL backend"
@@ -421,6 +462,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.seconds,
                 args.env,
                 args.dry_run,
+                args.verbose,
             )
         elif args.command == "discover":
             cmd_discover(args.target, args.dry_run)

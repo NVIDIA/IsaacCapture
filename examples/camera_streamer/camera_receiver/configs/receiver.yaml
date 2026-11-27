@@ -25,6 +25,12 @@ ipc:
   owner_name: camera_receiver_avs1
   queue_size: 1024
 
+# Per-stream NV12 colour, published in the IPC catalog for encoders. Both
+# describe the source as configured and are never detected:
+#   full_range:   false = limited (16-235), true = full (0-255). Default false.
+#   color_matrix: bt601 (default) or bt709.
+# Ordinary NV12 surfaces are limited-range BT.601; SIPL sources are full-range
+# BT.709. Change these together with the source format.
 streams:
   - index: 0
     name: head

@@ -10,7 +10,7 @@ import unittest
 from types import SimpleNamespace
 from pathlib import Path
 from typing import Optional
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -32,6 +32,7 @@ from avs_wire import (  # noqa: E402
     sensor_sof_lag_ns,
     sensor_sof_ns,
 )
+from cuda_ipc import CudaIpcFramePublisher  # noqa: E402
 from camera_receiver import (  # noqa: E402
     Avs1TcpReceiver,
     ReceivedRecord,
@@ -470,6 +471,60 @@ class Avs1ParserTests(unittest.TestCase):
         self.assertEqual(cfg.output_format, _OUTPUT_NV12)
         self.assertEqual(cfg.ring_depth, 6)
         self.assertEqual(cfg.ipc_names, ("head.left", "head.right"))
+
+    def test_stream_config_color_defaults_and_explicit(self) -> None:
+        base = {"index": 0, "name": "head", "type": "mono", "width": 64, "height": 48}
+        cfg = _parse_stream_config(base)
+        self.assertIs(cfg.full_range, False)
+        self.assertEqual(cfg.color_matrix, "bt601")
+
+        cfg = _parse_stream_config(
+            {**base, "full_range": True, "color_matrix": "bt709"}
+        )
+        self.assertIs(cfg.full_range, True)
+        self.assertEqual(cfg.color_matrix, "bt709")
+
+    def test_stream_config_rejects_bad_color(self) -> None:
+        base = {"index": 0, "name": "head", "type": "mono", "width": 64, "height": 48}
+        with self.assertRaisesRegex(ValueError, "full_range"):
+            _parse_stream_config({**base, "full_range": "false"})
+        with self.assertRaisesRegex(ValueError, "color_matrix"):
+            _parse_stream_config({**base, "color_matrix": "bt2020"})
+
+    def test_ipc_register_stream_rejects_bad_color(self) -> None:
+        pub = CudaIpcFramePublisher()
+        kwargs = dict(
+            name="s", width=2, height=2, pixel_format="nv12", gpu_id=0, buffers=[]
+        )
+        with self.assertRaisesRegex(ValueError, "full_range"):
+            pub.register_stream(full_range=1, **kwargs)
+        with self.assertRaisesRegex(ValueError, "color_matrix"):
+            pub.register_stream(color_matrix="BT709", **kwargs)
+
+    def test_ipc_catalog_carries_color(self) -> None:
+        fake_cp = MagicMock()
+        fake_cp.cuda.runtime.ipcGetMemHandle.return_value = b"\0" * 64
+        buf = SimpleNamespace(
+            __cuda_array_interface__={
+                "data": (1, False),
+                "shape": (4,),
+                "strides": (1,),
+            },
+            nbytes=4,
+        )
+        pub = CudaIpcFramePublisher()
+        with patch.dict(sys.modules, {"cupy": fake_cp}):
+            pub.register_stream(
+                "a", 2, 2, "nv12", 0, [buf], full_range=True, color_matrix="bt709"
+            )
+            pub.register_stream("b", 2, 2, "nv12", 0, [buf])
+        by_name = {s["name"]: s for s in pub._hello_message()["streams"]}
+        self.assertIs(by_name["a"]["full_range"], True)
+        self.assertEqual(by_name["a"]["color_matrix"], "bt709")
+        self.assertIs(by_name["b"]["full_range"], False)
+        self.assertEqual(by_name["b"]["color_matrix"], "bt601")
+        subscribed, _ = pub._subscribed_message(["a"])
+        self.assertEqual(subscribed["streams"][0]["color_matrix"], "bt709")
 
     def test_nv12_ipc_layout(self) -> None:
         layout = _ipc_layout("nv12", 640, 480)

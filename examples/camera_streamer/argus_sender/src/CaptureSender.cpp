@@ -21,9 +21,12 @@
 #include <linux/videodev2.h>
 
 #include <NvVideoEncoder.h>
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unistd.h>
@@ -42,8 +45,29 @@ uint64_t steadyNowNs()
         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+// What the capture loop saw of one stream in the current log interval, to tell a slow sensor from frames lost in the
+// sender: `sensorSequenceGaps` counts frames the backend numbered but the loop never received.
+struct CaptureIntervalStats
+{
+    uint64_t acquired = 0;
+    uint64_t skippedByRate = 0;
+    uint64_t noEncoderInput = 0;
+    uint64_t queued = 0;
+    uint64_t sensorSequenceGaps = 0;
+    uint64_t sofPeriodSamples = 0;
+    uint64_t sofPeriodSumNs = 0;
+    uint64_t sofPeriodMinNs = std::numeric_limits<uint64_t>::max();
+    uint64_t sofPeriodMaxNs = 0;
+    uint64_t lastSequence = 0;
+    uint64_t lastSofNs = 0;
+    bool haveSequence = false;
+    bool haveSof = false;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+};
+
 struct Stream
 {
+    CaptureIntervalStats interval;
     std::string label;
     CaptureSenderStream source;
     uint64_t sequence = 0;
@@ -52,6 +76,58 @@ struct Stream
     std::unique_ptr<DirectHevcEncoder> encoder;
     EncoderInputSlots<DmaBuffer> slots{ kEncoderOutputPlaneBuffers };
 };
+
+void countAcquired(CaptureIntervalStats& stats, const CaptureFrame& frame)
+{
+    ++stats.acquired;
+    if (stats.haveSequence && frame.sequence > stats.lastSequence + 1)
+        stats.sensorSequenceGaps += frame.sequence - stats.lastSequence - 1;
+    stats.lastSequence = frame.sequence;
+    stats.haveSequence = true;
+    if (frame.sensorClock == SENSOR_CLOCK_TSC_NS)
+    {
+        if (stats.haveSof && frame.sensorTime > stats.lastSofNs)
+        {
+            const uint64_t period = frame.sensorTime - stats.lastSofNs;
+            ++stats.sofPeriodSamples;
+            stats.sofPeriodSumNs += period;
+            stats.sofPeriodMinNs = std::min(stats.sofPeriodMinNs, period);
+            stats.sofPeriodMaxNs = std::max(stats.sofPeriodMaxNs, period);
+        }
+        stats.lastSofNs = frame.sensorTime;
+        stats.haveSof = true;
+    }
+}
+
+void logCaptureInterval(Stream& stream, uint32_t intervalSeconds)
+{
+    CaptureIntervalStats& stats = stream.interval;
+    const auto now = std::chrono::steady_clock::now();
+    const double elapsed = std::chrono::duration_cast<std::chrono::duration<double>>(now - stats.start).count();
+    if (intervalSeconds == 0 || elapsed < static_cast<double>(intervalSeconds))
+        return;
+    const double sofAvgMs = stats.sofPeriodSamples ? static_cast<double>(stats.sofPeriodSumNs) /
+                                                         static_cast<double>(stats.sofPeriodSamples) / 1.0e6 :
+                                                     0.0;
+    const double sofMinMs = stats.sofPeriodSamples ? static_cast<double>(stats.sofPeriodMinNs) / 1.0e6 : 0.0;
+    std::printf(
+        "argus_sender[capture:%s]: acquired %.2f/s, sensor_sequence_gaps %llu, skipped_by_rate %llu, "
+        "no_encoder_input %llu, queued %.2f/s, sensor_sof_period_ms(avg/min/max)=%.3f/%.3f/%.3f\n",
+        stream.label.c_str(), static_cast<double>(stats.acquired) / elapsed,
+        static_cast<unsigned long long>(stats.sensorSequenceGaps), static_cast<unsigned long long>(stats.skippedByRate),
+        static_cast<unsigned long long>(stats.noEncoderInput), static_cast<double>(stats.queued) / elapsed, sofAvgMs,
+        sofMinMs, static_cast<double>(stats.sofPeriodMaxNs) / 1.0e6);
+    std::fflush(stdout);
+    const uint64_t lastSequence = stats.lastSequence;
+    const uint64_t lastSofNs = stats.lastSofNs;
+    const bool haveSequence = stats.haveSequence;
+    const bool haveSof = stats.haveSof;
+    stats = CaptureIntervalStats();
+    stats.lastSequence = lastSequence;
+    stats.lastSofNs = lastSofNs;
+    stats.haveSequence = haveSequence;
+    stats.haveSof = haveSof;
+}
 
 void initializeV4l2Buffer(uint32_t index, struct v4l2_buffer* buffer, struct v4l2_plane planes[MAX_PLANES])
 {
@@ -191,10 +267,16 @@ bool runCaptureSender(const AppConfig& config,
                 CaptureFrame frame;
                 if (!capture->acquireLatest(stream.source.cameraId, &frame))
                     continue;
+                countAcquired(stream.interval, frame);
+                if (config.runtime.kpi)
+                    logCaptureInterval(stream, config.runtime.logIntervalSeconds);
                 // The stream carries its configured rate, not the sensor's; a skipped frame's lease returns it to the
                 // backend on leaving this scope.
                 if (stream.rate.shouldSkip(frame.readyMonotonicNs))
+                {
+                    ++stream.interval.skippedByRate;
                     continue;
+                }
                 // A frame arriving with no free encoder input is dropped, not waited for: the newest frame is the
                 // one worth sending and the encoder is already a frame behind.
                 if (!stream.slots.hasFree())
@@ -202,6 +284,7 @@ bool runCaptureSender(const AppConfig& config,
                 if (!stream.slots.hasFree())
                 {
                     ++stream.dropped;
+                    ++stream.interval.noEncoderInput;
                     continue;
                 }
                 const uint32_t index = stream.slots.nextFree();
@@ -270,6 +353,7 @@ bool runCaptureSender(const AppConfig& config,
                     break;
                 }
                 stream.slots.occupy(std::move(wrapper), std::move(frame));
+                ++stream.interval.queued;
                 ++frames;
             }
         }

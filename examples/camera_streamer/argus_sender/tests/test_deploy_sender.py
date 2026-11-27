@@ -51,6 +51,22 @@ def test_run_uploads_to_and_starts_with_the_run_config(capsys, tmp_path):
     assert f"./build/argus_sender --config {RUN_CONFIG}" in script
 
 
+def test_run_passes_verbose_to_the_sender_only_when_asked(capsys, tmp_path):
+    config = tmp_path / "c.yaml"
+    config.write_text("x: 1\n")
+    command = f"./build/argus_sender --config {RUN_CONFIG}"
+    (quiet,) = remote_scripts(
+        dry_run_lines(capsys, "run", "--name", "rel", "--config", str(config))[1:]
+    )
+    assert f"{command} --verbose" not in quiet
+    (loud,) = remote_scripts(
+        dry_run_lines(
+            capsys, "run", "--verbose", "--name", "rel", "--config", str(config)
+        )[1:]
+    )
+    assert f"{command} --verbose" in loud
+
+
 def test_run_checks_for_other_senders_without_matching_itself_and_keeps_its_exit_status(
     monkeypatch, capsys, tmp_path
 ):
@@ -90,14 +106,14 @@ def test_stop_daemon_only_stops_the_daemon_and_checks_the_result(capsys):
         assert broader not in script
 
 
-def deploy_script(monkeypatch, capsys):
+def deploy_script(monkeypatch, capsys, *extra):
     monkeypatch.setattr(deploy_sender, "repo_root", lambda: Path("/repo"))
     monkeypatch.setattr(
         deploy_sender,
         "git_output",
         lambda root, *args: "" if args[0] == "status" else "abc123def",
     )
-    lines = dry_run_lines(capsys, "deploy", "--name", "rel")
+    lines = dry_run_lines(capsys, "deploy", *extra, "--name", "rel")
     return remote_scripts(lines)
 
 
@@ -146,3 +162,25 @@ def test_lfs_check_passes_without_pointers(lfs_check):
     (release / "src/configs/good.remap").write_bytes(b"\x00\x01binary")
     result = run()
     assert result.returncode == 0, result.stderr
+
+
+SIPL_CHECK_FILES = (
+    "/usr/lib/nvsipl_drv/libnvuddf_shw5g_cameramodule_library.so",
+    "/usr/lib/nvsipl_drv/libnvsipl_qry_vb1940.so",
+    "/var/nvidia/nvcam/settings/sipl/SHW5G.nito",
+)
+
+
+def test_deploy_with_sipl_checks_the_shipped_platform_file_and_system_files(
+    monkeypatch, capsys
+):
+    scripts = deploy_script(monkeypatch, capsys, "--with-sipl")
+    (check,) = [s for s in scripts if "nvsipl_query" in s]
+    assert "nvsipl_query -t src/configs/shw5g_csi_cd.json -c SHW5G_2" in check
+    for path in SIPL_CHECK_FILES:
+        assert path in check
+
+
+def test_deploy_without_sipl_has_no_sipl_check(monkeypatch, capsys):
+    scripts = deploy_script(monkeypatch, capsys)
+    assert not any("nvsipl_query" in s for s in scripts)
