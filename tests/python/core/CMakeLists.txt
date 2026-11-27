@@ -13,3 +13,5 @@ if(BUILD_PYTHON_BINDINGS)
     # built under tests/cpp/core/log_bridge.
     add_subdirectory(logging_config)
 endif()
+
+add_subdirectory(media_transport)

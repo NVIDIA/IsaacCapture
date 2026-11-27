@@ -33,3 +33,9 @@ endif()
 if(BUILD_EXAMPLES AND BUILD_PYTHON_BINDINGS)
     add_subdirectory(examples/teleop_keyboard)
 endif()
+
+add_subdirectory(plugins)
+
+if(BUILD_EXAMPLES)
+    add_subdirectory(examples/remote_assistance)
+endif()

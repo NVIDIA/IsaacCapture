@@ -103,6 +103,17 @@ class VizRunner:
 
         self._session = session
         self._sources = list(sources)
+        self._latency_huds = []
+        # Disabled telemetry must not initialize or query display resources.
+        for source in self._sources:
+            reporter = getattr(source, "latency_reporter", None)
+            if reporter is not None and reporter.hud_enabled and session.is_xr_mode():
+                from ..controls.hud import Hud
+
+                self._latency_huds.append(
+                    (Hud(session, hold_s=float("inf"), offset_y_m=0.25), reporter)
+                )
+        self._latency_hud_at = 0.0
         self._layers = list(layers)
         self._strategies = (
             list(placement_strategies)
@@ -297,6 +308,7 @@ class VizRunner:
                 if not device_pinned:
                     self._pin_to_device(frame)
                     device_pinned = True
+                submit_begin_ns = time.monotonic_ns() if frame.on_submit else 0
                 if frame.image_right is not None:
                     # A stereo layer must always be fed two buffers, so the
                     # mono override ships the left frame to both eyes rather
@@ -309,6 +321,8 @@ class VizRunner:
                     layer.submit(frame.image, right, stream=frame.stream)
                 else:
                     layer.submit(frame.image, stream=frame.stream)
+                if frame.on_submit:
+                    frame.on_submit(submit_begin_ns, time.monotonic_ns())
                 last_layers[i] = layer
                 last_frames[i] = frame
                 self._submit_counts[i] += 1
@@ -436,6 +450,12 @@ class VizRunner:
                 # is one frame stale, which is irrelevant -- it is fixed by
                 # the headset's lens separation.
                 self._controls.step(dt, ipd_mm)
+            for hud, reporter in self._latency_huds:
+                if now >= self._latency_hud_at:
+                    hud.show(reporter.lines())
+                hud.step(dt, self._session.head_pose_now())
+            if now >= self._latency_hud_at:
+                self._latency_hud_at = now + 1.0
             self._apply_xr_placements()
             info = self._session.render()
             ipd_mm = _measure_ipd_mm(info) or ipd_mm

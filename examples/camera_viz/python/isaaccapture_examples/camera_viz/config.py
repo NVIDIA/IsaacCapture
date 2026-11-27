@@ -336,3 +336,35 @@ def check_shapes_are_displayable(cfg: dict, effective_mode: str) -> None:
                 "composited by the OpenXR runtime and requires XR mode; "
                 "use --mode xr or shape: quad in window mode."
             )
+
+
+def build_ipc_entries(cfg: dict, is_xr: bool) -> List[SourceEntry]:
+    """Use the media receiver's CUDA IPC output without a second decoder."""
+    from .sources.media_ipc import MediaIpcSource
+
+    cameras = list(_enabled_cameras(cfg))
+    if len(cameras) != 1:
+        raise ValueError("IPC viewer requires one camera per receiver socket")
+    cam = cameras[0]
+    placements = cfg.get("display", {}).get("placements", {})
+    source = MediaIpcSource(cfg["livekit"], cam)
+    placement, lock_mode, placement_cfg = _placement_with_aspect(
+        placements.get(cam["name"]), source.spec.width, source.spec.height, is_xr
+    )
+    stereo, distance = _stereo_for(cam, placements)
+    shape, compositor, radius, angle, yaw = _shape_for(cam["name"], placements)
+    return [
+        SourceEntry(
+            source=source,
+            placement=placement,
+            stereo=stereo,
+            stereo_plane_distance_cm=distance,
+            lock_mode=lock_mode,
+            placement_config=placement_cfg,
+            shape=shape,
+            compositor=compositor,
+            cylinder_radius_m=radius,
+            cylinder_angle_deg=angle,
+            equirect_yaw_deg=yaw,
+        )
+    ]

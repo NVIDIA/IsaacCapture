@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isaac-media-transport"
+version = "0.1.0"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE.md"]
+dependencies = ['numpy>=1.26,<3']
+
+[tool.setuptools.packages.find]
+include = ["isaac_media_transport*"]
