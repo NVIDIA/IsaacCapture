@@ -8,9 +8,10 @@ import egocap.core.config_io as config_io_mod
 from egocap.core.config_io import ConfigIO
 
 
-def test_init_sets_config_path():
-    cio = ConfigIO("/tmp/x/config.yaml")
-    assert cio.config_path == "/tmp/x/config.yaml"
+def test_init_sets_config_path(tmp_path):
+    path = str(tmp_path / "config.yaml")
+    cio = ConfigIO(path)
+    assert cio.config_path == path
 
 
 def test_load_missing_file_returns_default(tmp_path):

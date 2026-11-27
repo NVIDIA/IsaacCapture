@@ -218,6 +218,13 @@ measurement, a trap someone already paid for. They are not a place to narrate.
 This applies to `#`/`//` comments, docstrings, and comment blocks in
 `CMakeLists.txt`, `pyproject.toml`, YAML data files and scene XML.
 
+## Temporary paths in tests
+
+Use test-owned temporary directories to prevent collisions and symlink attacks,
+even when filesystem I/O is mocked. Preserve deliberately invalid paths in
+rejection tests; explain the negative case instead of weakening coverage to
+silence static analysis.
+
 ## Commits — DCO sign-off for AI-drafted commits
 
 Any commit whose message is drafted or edited by an AI agent **must** include
