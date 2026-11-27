@@ -43,9 +43,8 @@ constexpr M kWristAxes{ 0, -1, 0, -1, 0, 0, 0, 0, -1 };
 const core::Pose kIdentityPose(core::Point(0, 0, 0), core::Quaternion(0, 0, 0, 1));
 
 // Per finger (index, middle, ring, little, thumb): its SDK points and the OpenXR joint at its proximal pad (the
-// next three joints follow it). The pad hangs from the pad point in the axes of the pad_axes link; the knuckle
-// link orients the proximal joint and, on the non-thumb fingers, carries the pad with it, since their MPR link
-// only spreads the finger sideways.
+// next three joints follow it). The pad reference uses the axes of pad_axes. The knuckle orients the proximal
+// joint and carries the non-thumb pad; the thumb root is constrained along the pad-to-next-joint direction.
 struct Finger
 {
     SdkPoint dip, pip, knuckle, pad, pad_axes, tip;
@@ -229,11 +228,13 @@ HandJointPoses map_points(Hand hand, const RhHandPoints& sdk, bool retain_unmapp
         const M& driver = r[f.pad_axes];
         const auto shifted = [&](const V& at, const V& offset) { return add(at, mv(driver, mirrored(offset, right))); };
         const V pad = shifted(p[f.pad], fit.proximal_pad);
-        points[f.proximal] =
-            i == kThumb ? pad : add(p[f.knuckle], mv(mul(r[f.knuckle], transpose(driver)), sub(pad, p[f.knuckle])));
         points[f.proximal + 1] = shifted(p[f.pip], fit.side);
         points[f.proximal + 2] = shifted(p[f.dip], fit.side);
         points[f.proximal + 3] = shifted(p[f.tip], fit.side);
+        const V& next = points[f.proximal + 1];
+        points[f.proximal] = i == kThumb ?
+                                 sub(next, scale(unit(sub(next, pad)), kThumbMetacarpalLength)) :
+                                 add(p[f.knuckle], mv(mul(r[f.knuckle], transpose(driver)), sub(pad, p[f.knuckle])));
         const V tip_dir = unit(sub(p[f.tip], p[f.dip]));
         if (i != kThumb)
         {

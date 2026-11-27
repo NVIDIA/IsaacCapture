@@ -14,6 +14,8 @@ constexpr M kPalmBasis = { -4.3368086899420177e-19, -0.99951526706354676,  0.031
                            -0.090164189062272859,   -0.031005668283909979, -0.99544415591484126 };
 constexpr V kPalmPad{ 0.018276321340487119, 0, 0 };
 constexpr V kWristPad{ 0.012600000174487119, 0, 0 };
+// Keep the thumb metacarpal rigid without moving the distal joints used for pinch contact.
+constexpr double kThumbMetacarpalLength = 0.0462;
 // Per finger in kFingers order; the thumb has no placeholder.
 struct FingerFit
 {

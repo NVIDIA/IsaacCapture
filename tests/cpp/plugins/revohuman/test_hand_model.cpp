@@ -173,9 +173,9 @@ TEST_CASE("hand fit: the wrist depth and the thumb's own fit are applied", "[uni
     CHECK(palm[1] == Approx(0).margin(2e-8));
     CHECK(palm[2] == Approx(-.08614770283).margin(2e-8));
     const auto thumb = position(out.joints[core::HandJoint_THUMB_METACARPAL]);
-    CHECK(thumb[1] == Approx(-.01523045813683108).margin(2e-8));
-    CHECK(thumb[0] == Approx(.0380000196899724).margin(2e-8));
-    CHECK(thumb[2] == Approx(-.0403310513376026).margin(2e-8));
+    CHECK(thumb[1] == Approx(-.017729362255216822).margin(2e-8));
+    CHECK(thumb[0] == Approx(.04113431892567988).margin(2e-8));
+    CHECK(thumb[2] == Approx(-.04678494778503127).margin(2e-8));
     for (core::HandJoint placeholder : { core::HandJoint_INDEX_METACARPAL, core::HandJoint_MIDDLE_METACARPAL,
                                          core::HandJoint_RING_METACARPAL, core::HandJoint_LITTLE_METACARPAL })
         CHECK(position(out.joints[placeholder]) == std::array<double, 3>{});
@@ -226,7 +226,7 @@ TEST_CASE("hand fit: SDK tip movement reaches the output and invalid poses stay 
     CHECK((after.position_valid_mask & (1u << core::HandJoint_MIDDLE_TIP)) != 0);
 }
 
-TEST_CASE("hand fit: proximal remains MCP-carried and thumb height follows CMR", "[unit]")
+TEST_CASE("hand fit: proximal remains MCP-carried and the fixed-length thumb follows CMR", "[unit]")
 {
     auto raw = neutral_points();
     const auto before = map_hand_points(Hand::Left, raw);
@@ -239,9 +239,59 @@ TEST_CASE("hand fit: proximal remains MCP-carried and thumb height follows CMR",
     CHECK(std::hypot(index_after[0] - index_before[0], index_after[1] - index_before[1]) > .01);
     const auto thumb_before = position(before.joints[core::HandJoint_THUMB_METACARPAL]);
     const auto thumb_after = position(after.joints[core::HandJoint_THUMB_METACARPAL]);
-    CHECK(thumb_after[0] - thumb_before[0] == Approx(-.010).margin(2e-8));
-    CHECK(thumb_after[1] - thumb_before[1] == Approx(.010).margin(2e-8));
-    CHECK(thumb_after[2] == Approx(thumb_before[2]).margin(2e-8));
+    CHECK(std::hypot(thumb_after[0] - thumb_before[0], thumb_after[1] - thumb_before[1]) > .001);
+    const auto next = position(after.joints[core::HandJoint_THUMB_PROXIMAL]);
+    CHECK(std::hypot(thumb_after[0] - next[0], thumb_after[1] - next[1], thumb_after[2] - next[2]) ==
+          Approx(.0462).margin(2e-8));
+}
+
+TEST_CASE("hand fit: thumb metacarpal length and axis hold for both products and hands", "[unit]")
+{
+    for (const char* product : { "P1", "PTV1" })
+        for (Hand hand : { Hand::Left, Hand::Right })
+            for (int step = 0; step <= 20; ++step)
+            {
+                auto q = bent();
+                q[kThumbCmp] = .03 * step;
+                q[kThumbCmr] = .02 * step;
+                q[kThumbMcp] = -.6 + .03 * step;
+                const auto out = HandModel(product).joint_poses(hand, q, kAllJoints);
+                const auto a = position(out.joints[core::HandJoint_THUMB_METACARPAL]);
+                const auto b = position(out.joints[core::HandJoint_THUMB_PROXIMAL]);
+                CHECK(std::hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) == Approx(.0462).margin(2e-8));
+                const auto r = orientation(out.joints[core::HandJoint_THUMB_METACARPAL]);
+                const std::array<double, 3> z{ 2 * (r[0] * r[2] + r[3] * r[1]), 2 * (r[1] * r[2] - r[3] * r[0]),
+                                               1 - 2 * (r[0] * r[0] + r[1] * r[1]) };
+                for (int k = 0; k < 3; ++k)
+                    CHECK(z[k] == Approx((a[k] - b[k]) / .0462).margin(2e-6));
+                CHECK(out.position_valid_mask == kMappedHandMask);
+                CHECK(out.orientation_valid_mask == kMappedHandMask);
+            }
+}
+
+TEST_CASE("hand fit: a missing or coincident thumb direction stays invalid", "[unit]")
+{
+    auto raw = neutral_points();
+    SECTION("missing proximal")
+    {
+        raw.points[kThumbPip].p[0] = std::numeric_limits<double>::quiet_NaN();
+    }
+    SECTION("missing pad")
+    {
+        raw.points[kThumbCmp].p[0] = std::numeric_limits<double>::quiet_NaN();
+    }
+    SECTION("coincident points")
+    {
+        const auto& cmp = raw.points[kThumbCmp];
+        raw.points[kThumbPip].p[0] = cmp.p[0] + .010 - .00646;
+        raw.points[kThumbPip].p[1] = cmp.p[1] - .011189048216894946;
+        raw.points[kThumbPip].p[2] = cmp.p[2];
+    }
+    const auto out = map_hand_points(Hand::Left, raw);
+    CHECK((out.position_valid_mask & (1u << core::HandJoint_THUMB_METACARPAL)) == 0);
+    CHECK((out.orientation_valid_mask & (1u << core::HandJoint_THUMB_METACARPAL)) == 0);
+    CHECK((out.position_valid_mask & (1u << core::HandJoint_THUMB_TIP)) != 0);
+    CHECK((out.position_valid_mask & (1u << core::HandJoint_INDEX_PROXIMAL)) != 0);
 }
 
 TEST_CASE("hand fit: the thumb's distal joints sit on the measured sleeve centre", "[unit]")
