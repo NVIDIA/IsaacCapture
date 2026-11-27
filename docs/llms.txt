@@ -1,0 +1,9 @@
+# Isaac Capture
+
+> Shared capture infrastructure for teleoperation and egocentric data.
+
+The documentation is published per version below this site root. Only `main` publishes an index and Markdown pages for agents for now: replace `.html` with `.md` in any of its page URLs.
+
+## Docs
+
+- [Isaac Capture documentation (main)](https://nvidia.github.io/IsaacCapture/main/llms.txt): index of every page on main, each linked as Markdown

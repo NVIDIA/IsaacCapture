@@ -20,11 +20,13 @@ from typing import ClassVar
 import yaml
 from docutils import nodes
 from docutils.parsers.rst import Directive, directives
-from sphinx.addnodes import pending_xref
+from sphinx.addnodes import only, pending_xref
 from sphinx.errors import ExtensionError
 from sphinx.util.docutils import SphinxRole
 
 DEVICE_DATA = "_data/devices.yaml"
+# The tag sphinx-llm sets on its Markdown build.
+MARKDOWN_TAG = "sphinx_llm_markdown"
 DEVICE_LOGO_DIR = "_static/logos"
 
 # A device no release carries yet, so the only way to get it is to build main.
@@ -465,8 +467,11 @@ def _device_name(record: dict) -> nodes.paragraph:
     return line
 
 
-def _detail_line(entry, docname: str) -> nodes.paragraph:
-    """One panel entry: a noun phrase, a link, or an address to reach someone at."""
+def _detail_line(entry, docname: str, *, marked: bool = True) -> nodes.paragraph:
+    """One panel entry: a noun phrase, a link, or an address to reach someone at.
+
+    ``marked=False`` leaves off the external marker, which is HTML-only markup.
+    """
     line = _line(["device-panel-line"])
     if isinstance(entry, str):
         line += nodes.Text(entry)
@@ -482,7 +487,7 @@ def _detail_line(entry, docname: str) -> nodes.paragraph:
         line += nodes.reference("", phone, refuri=f"tel:{_TEL_RE.sub('', phone)}")
     elif entry.get("url"):
         ref = nodes.reference("", entry["label"], refuri=entry["url"])
-        if _is_external(entry["url"]):
+        if marked and _is_external(entry["url"]):
             _mark_external(ref)
         line += ref
     else:
@@ -666,8 +671,47 @@ def _matrix(
     return wrapper
 
 
+def _device_list(
+    devices: list[dict], planned: list[dict], docname: str, section: str
+) -> list[nodes.Node]:
+    """The Markdown build's form of a section: one bullet per device, setup links included."""
+    groups = DEVICE_SECTIONS[section]["groups"]
+    result: list[nodes.Node] = []
+    for group in groups:
+        rows = [record for record in devices if record["group"] == group]
+        if not rows:
+            continue
+        if len(groups) > 1:
+            result.append(nodes.rubric("", DEVICE_GROUPS[group]))
+        bullets = nodes.bullet_list()
+        for record in rows:
+            line = _line([])
+            line += nodes.reference("", record["name"], refuri=record["url"])
+            line += nodes.Text(f": {record['modes']}")
+            setup = (record.get("details") or {}).get("setup") or []
+            for index, entry in enumerate(setup):
+                line += nodes.Text(". Set up: " if index == 0 else "; ")
+                line += _detail_line(entry, docname, marked=False).children
+            bullets += nodes.list_item("", line)
+        result.append(bullets)
+    if DEVICE_SECTIONS[section]["planned"] and planned:
+        bullets = nodes.bullet_list()
+        for record in planned:
+            line = _line([], "Planned: ")
+            line += nodes.reference("", record["name"], refuri=record["url"])
+            line += nodes.Text(f" — {record['note']} (")
+            line += nodes.reference("", "tracking", refuri=record["tracking"])
+            line += nodes.Text(")")
+            bullets += nodes.list_item("", line)
+        result.append(bullets)
+    return result
+
+
 class DeviceMatrix(Directive):
-    """Render one section of ``devices.yaml`` as a table: name, value, Details panel."""
+    """Render one section of ``devices.yaml`` as a table: name, value, Details panel.
+
+    The table is HTML layout, so the Markdown build for agents gets a list instead.
+    """
 
     has_content = False
     option_spec: ClassVar[dict] = {
@@ -679,7 +723,11 @@ class DeviceMatrix(Directive):
         env = self.state.document.settings.env
         section = self.options.get("section", "input")
         devices, planned = _load_devices(env, self.options.get("data", DEVICE_DATA))
-        return [_matrix(devices, planned, env.docname, section)]
+        table = only(expr=f"not {MARKDOWN_TAG}")
+        table += _matrix(devices, planned, env.docname, section)
+        listing = only(expr=MARKDOWN_TAG)
+        listing += _device_list(devices, planned, env.docname, section)
+        return [table, listing]
 
 
 class EcoBlock(Directive):
@@ -750,6 +798,7 @@ def setup(app):
         app.add_node(
             node_class,
             html=(_visit_eco_block, _depart_eco_block),
+            markdown=(_passthrough, _passthrough),
             latex=(_passthrough, _passthrough),
             text=(_passthrough, _passthrough),
             man=(_passthrough, _passthrough),

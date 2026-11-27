@@ -71,6 +71,10 @@ Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everyth
 - [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
 - [OVXR installation](docs/source/getting_started/ovxr.rst)
 
+### Coding Agents
+
+Point a coding agent at [llms.txt](https://github.com/NVIDIA/IsaacCapture/blob/main/llms.txt), which indexes the install skill and the documentation as Markdown. An installed wheel carries the same file as `isaaccapture/llms.txt` in `site-packages`.
+
 ### Check a Device Integration
 
 The CTS records one scripted take from a hand-tracking or full-body device and checks it against the data a retargeter needs; start with the [hand](src/python/isaaccapture/cts/hand/README.md) or [full-body](src/python/isaaccapture/cts/full_body/README.md) guide.

@@ -18,3 +18,4 @@ current-docs:
 multi-docs:
 	@sphinx-multiversion "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS)
 	@cp index.html $(BUILDDIR)/index.html
+	@cp llms.txt $(BUILDDIR)/llms.txt
