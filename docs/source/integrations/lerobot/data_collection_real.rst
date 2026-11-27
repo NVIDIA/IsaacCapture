@@ -22,11 +22,13 @@ Follow the necessary one-time steps to set up your environment and hardware:
 #. A **LeRobot source checkout**, since that is where the example scripts live. Clone it and
    change into its root — the installs below and every later command run from there, except where
    a step is explicitly scoped to another checkout (the ``so101_leader`` plugin is built from an
-   Isaac Capture checkout):
+   Isaac Capture checkout). Clone the ``v0.6.0`` tag, because later LeRobot releases require
+   draccus 0.11, which makes these scripts reject ``--teleop.type`` with
+   ``error: unrecognized arguments``:
 
    .. code-block:: bash
 
-      git clone https://github.com/huggingface/lerobot.git
+      git clone --branch v0.6.0 https://github.com/huggingface/lerobot.git
       cd lerobot
 
 #. A working **SO-101 follower** — assembled, motors set up, and calibrated. See
@@ -60,11 +62,13 @@ Follow the necessary one-time steps to set up your environment and hardware:
       hf auth login
 
 #. Accept the CloudXR EULA once and start the runtime. The EULA prompts on stdin, which would hang
-   a headless run, so do both ahead of time; the service outlives each script you run below:
+   a headless run, so do both ahead of time; the service outlives each script you run below.
+   ``--host-client`` serves the web client at ``https://<host>:48322/client/``, which the scripts
+   expect when they attach:
 
    .. code-block:: bash
 
-      python -m isaaccapture.cloudxr.service start --accept-eula
+      python -m isaaccapture.cloudxr.service start --accept-eula --host-client
 
 Teleop and data recording
 -------------------------
