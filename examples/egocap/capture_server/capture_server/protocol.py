@@ -33,6 +33,7 @@ import re
 import struct
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from dataclasses import fields as dataclasses_fields
 from enum import IntEnum
 from types import MappingProxyType
 from typing import Any, TypedDict
@@ -85,6 +86,11 @@ class MessageType(IntEnum):
     CALIBRATION_STATUS = 17
     CALIBRATION_STEP_ACCEPTED = 18
     CALIBRATION_STOPPED = 19
+    # Asks the server to run its camera delivery check again; the answer is the network_check in the next status.
+    RUN_NETWORK_CHECK = 20
+    # A read-only query of the server's general status on the /query route: one request, one reply, no session.
+    QUERY_STATUS = 21
+    SERVER_STATUS = 22
 
 
 class SourceType(IntEnum):
@@ -1073,6 +1079,13 @@ def _require_strict_bool(value: Any, context: str) -> bool:
     return value
 
 
+def _require_positive_rate(value: Any, context: str) -> float:
+    """A positive finite frame rate; a reply carries any rate the stream descriptors accept."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value < float("inf"):
+        raise ProtocolError(f"{context} must be a positive finite number")
+    return float(value)
+
+
 def _require_rate_hz(value: Any, context: str) -> float:
     # `0 < value <= _MAX_RATE_HZ` already rejects NaN (every comparison
     # with NaN is False) and +/-inf (inf is never <= a finite bound), so
@@ -1771,24 +1784,288 @@ class CameraStatus:
         )
 
 
+class NetworkCheckState(IntEnum):
+    """Where the server's camera delivery check is. STALE is a pass that has aged out and so no longer counts."""
+
+    NOT_TESTED = 0
+    CHECKING = 1
+    READY = 2
+    UNSUITABLE = 3
+    STALE = 4
+
+
+def _require_optional_number(value: Any, context: str, *, integer: bool = False) -> float | int | None:
+    """None, or a finite nonnegative number (an integer when ``integer``): a measurement that may be unknown.
+
+    Unknown is None, never zero: zero means the thing was measured and none was seen.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int if integer else (int, float)):
+        raise ProtocolError(f"{context} must be {'an integer' if integer else 'a number'} or null")
+    if not 0 <= value < float("inf"):
+        raise ProtocolError(f"{context} must be finite and nonnegative")
+    return value if integer else float(value)
+
+
+def _require_optional_signed(value: Any, context: str) -> float | None:
+    """None, or a finite number that may be negative: an age can be (a frame stamped slightly ahead of arrival),
+    and a stream that recovers has negative growth."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not -float("inf") < value < float("inf"):
+        raise ProtocolError(f"{context} must be a finite number or null")
+    return float(value)
+
+
+def _require_optional_text(value: Any, context: str) -> str | None:
+    if value is not None and (not isinstance(value, str) or not value):
+        raise ProtocolError(f"{context} must be a nonempty string or null")
+    return value
+
+
+def _require_text_tuple(value: Any, context: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ProtocolError(f"{context} must be a list of strings")
+    return tuple(value)
+
+
+@dataclass(frozen=True)
+class NetworkCheckCamera:
+    """What the delivery check measured for one camera; every measurement is None when it could not be made."""
+
+    stream_id: int
+    name: str
+    #: None while the camera has not been judged (checking, or no result yet).
+    passed: bool | None
+    expected_fps: float
+    usable_frames: int | None = None
+    delivered_fps: float | None = None
+    missing_frames: int | None = None
+    max_capture_gap_ms: float | None = None
+    max_arrival_gap_ms: float | None = None
+    start_silence_ms: float | None = None
+    end_silence_ms: float | None = None
+    age_median_ms: float | None = None
+    age_max_ms: float | None = None
+    age_growth_ms: float | None = None
+    reasons: tuple[str, ...] = ()
+    #: The LiveKit track the camera was measured on; a consumer that finds another has a republished camera.
+    track_id: str | None = None
+
+    _NUMERIC = (
+        "usable_frames",
+        "delivered_fps",
+        "missing_frames",
+        "max_capture_gap_ms",
+        "max_arrival_gap_ms",
+        "start_silence_ms",
+        "end_silence_ms",
+        "age_median_ms",
+        "age_max_ms",
+        "age_growth_ms",
+    )
+
+    _SIGNED = ("age_median_ms", "age_max_ms", "age_growth_ms")
+
+    def to_json(self) -> dict[str, Any]:
+        """The camera result as a wire object."""
+        data: dict[str, Any] = {
+            "stream_id": self.stream_id,
+            "name": self.name,
+            "passed": self.passed,
+            "expected_fps": self.expected_fps,
+            "reasons": list(self.reasons),
+            "track_id": self.track_id,
+        }
+        data.update({key: getattr(self, key) for key in self._NUMERIC})
+        return data
+
+    @classmethod
+    def from_json(cls, data: Any) -> NetworkCheckCamera:
+        """Strict parse of one camera result."""
+        _require_keys(
+            data,
+            {"stream_id", "name", "passed", "expected_fps", "reasons", "track_id", *cls._NUMERIC},
+            "a network check camera",
+        )
+        stream_id, name, passed = data.get("stream_id"), data.get("name"), data.get("passed")
+        if type(stream_id) is not int or stream_id < 0:
+            raise ProtocolError("network check camera.stream_id must be a nonnegative integer")
+        if not isinstance(name, str) or not name:
+            raise ProtocolError("network check camera.name must be a nonempty string")
+        if passed is not None and not isinstance(passed, bool):
+            raise ProtocolError("network check camera.passed must be a boolean or null")
+        measured = {
+            key: (
+                _require_optional_signed(data.get(key), f"network check camera.{key}")
+                if key in cls._SIGNED
+                else _require_optional_number(
+                    data.get(key),
+                    f"network check camera.{key}",
+                    integer=key in ("usable_frames", "missing_frames"),
+                )
+            )
+            for key in cls._NUMERIC
+        }
+        return cls(
+            stream_id=stream_id,
+            name=name,
+            passed=passed,
+            expected_fps=_require_positive_rate(data.get("expected_fps"), "network check camera.expected_fps"),
+            reasons=_require_text_tuple(data.get("reasons"), "network check camera.reasons"),
+            track_id=_require_optional_text(data.get("track_id"), "network check camera.track_id"),
+            **measured,
+        )
+
+
+@dataclass(frozen=True)
+class NetworkCheckStatus:
+    """The server's own verdict on whether its cameras' frames reach it well enough to record.
+
+    Network and media delivery only: recorder CPU, disk and the take's own validity checks are separate facts.
+    ``generation`` names the camera identities, geometry and rates that were tested; a consumer that now sees a
+    different generation must not rely on a READY result.
+    """
+
+    state: NetworkCheckState
+    #: The capture session this verdict was reached in; a consumer must not apply it to another.
+    session_id: str | None
+    generation: str
+    #: The media endpoint the result describes, and the hops it did and did not exercise.
+    endpoint: str
+    legs_tested: tuple[str, ...]
+    legs_not_tested: tuple[str, ...]
+    window_s: float
+    valid_for_s: float
+    #: "starting" while the room is joined and clocks settle, "measuring" during the window; None otherwise.
+    phase: str | None = None
+    #: Whole seconds of the current phase that have elapsed; None when no check is running.
+    progress_s: int | None = None
+    #: Wall-clock time the result was reached, for display only; freshness is judged by the server (STALE).
+    completed_at_unix_ns: int | None = None
+    reason: str | None = None
+    cameras: tuple[NetworkCheckCamera, ...] = ()
+
+    def to_json(self) -> dict[str, Any]:
+        """The status as a wire object."""
+        return {
+            "state": int(self.state),
+            "session_id": self.session_id,
+            "generation": self.generation,
+            "endpoint": self.endpoint,
+            "legs_tested": list(self.legs_tested),
+            "legs_not_tested": list(self.legs_not_tested),
+            "window_s": self.window_s,
+            "valid_for_s": self.valid_for_s,
+            "phase": self.phase,
+            "progress_s": self.progress_s,
+            "completed_at_unix_ns": self.completed_at_unix_ns,
+            "reason": self.reason,
+            "cameras": [c.to_json() for c in self.cameras],
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> NetworkCheckStatus:
+        """Strict parse of the network check status."""
+        keys = {
+            "state",
+            "session_id",
+            "generation",
+            "endpoint",
+            "legs_tested",
+            "legs_not_tested",
+            "window_s",
+            "valid_for_s",
+            "phase",
+            "progress_s",
+            "completed_at_unix_ns",
+            "reason",
+            "cameras",
+        }
+        _require_keys(data, keys, "the network check status")
+        session_id, generation, endpoint, phase, reason = (
+            data.get(k) for k in ("session_id", "generation", "endpoint", "phase", "reason")
+        )
+        if session_id is not None and (not isinstance(session_id, str) or not session_id):
+            raise ProtocolError("network_check.session_id must be a nonempty string or null")
+        if not isinstance(generation, str) or not generation:
+            raise ProtocolError("network_check.generation must be a nonempty string")
+        if not isinstance(endpoint, str) or not endpoint:
+            raise ProtocolError("network_check.endpoint must be a nonempty string")
+        if phase is not None and not isinstance(phase, str):
+            raise ProtocolError("network_check.phase must be a string or null")
+        if reason is not None and not isinstance(reason, str):
+            raise ProtocolError("network_check.reason must be a string or null")
+        cameras_raw = data.get("cameras")
+        if not isinstance(cameras_raw, list):
+            raise ProtocolError("network_check.cameras must be a list")
+        return cls(
+            state=_require_int_enum(data.get("state"), NetworkCheckState, "network_check.state"),
+            session_id=session_id,
+            generation=generation,
+            endpoint=endpoint,
+            legs_tested=_require_text_tuple(data.get("legs_tested"), "network_check.legs_tested"),
+            legs_not_tested=_require_text_tuple(data.get("legs_not_tested"), "network_check.legs_not_tested"),
+            window_s=_require_seconds(data.get("window_s"), "network_check.window_s"),
+            valid_for_s=_require_seconds(data.get("valid_for_s"), "network_check.valid_for_s"),
+            phase=phase,
+            progress_s=_require_optional_number(data.get("progress_s"), "network_check.progress_s", integer=True),
+            completed_at_unix_ns=_require_optional_number(
+                data.get("completed_at_unix_ns"), "network_check.completed_at_unix_ns", integer=True
+            ),
+            reason=reason,
+            cameras=tuple(NetworkCheckCamera.from_json(c) for c in cameras_raw),
+        )
+
+
+@dataclass(frozen=True)
+class RunNetworkCheckRequest:
+    """Ask the server to run its camera delivery check again; refused while one is already running."""
+
+    session_id: str
+
+    def to_json(self) -> dict[str, Any]:
+        """The request as a wire object."""
+        return {
+            "type": int(MessageType.RUN_NETWORK_CHECK),
+            "version": PROTOCOL_VERSION,
+            "session_id": self.session_id,
+        }
+
+
+def parse_run_network_check(data: dict) -> RunNetworkCheckRequest:
+    """Strict parse of a network check request."""
+    _require_keys(data, {"type", "version", "session_id"}, "RunNetworkCheck")
+    return RunNetworkCheckRequest(session_id=require_envelope(data, MessageType.RUN_NETWORK_CHECK))
+
+
 @dataclass(frozen=True)
 class StatusSnapshot:
     updated_at_ns: int
     providers: tuple[ProviderStatus, ...] = ()
     devices: tuple[DeviceStatus, ...] = ()
     cameras: tuple[CameraStatus, ...] = ()
+    #: The server's camera delivery check; None when this server does not run one.
+    network_check: NetworkCheckStatus | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "updated_at_ns": self.updated_at_ns,
             "providers": [p.to_json() for p in self.providers],
             "devices": [d.to_json() for d in self.devices],
             "cameras": [c.to_json() for c in self.cameras],
         }
+        # Absent rather than null, so a server without the check sends the status it always has.
+        if self.network_check is not None:
+            data["network_check"] = self.network_check.to_json()
+        return data
 
     @classmethod
     def from_json(cls, data: Any) -> StatusSnapshot:
-        _require_keys(data, {"updated_at_ns", "providers", "devices", "cameras"}, "a status snapshot")
+        _require_keys(
+            data, {"updated_at_ns", "providers", "devices", "cameras", "network_check"}, "a status snapshot"
+        )
         updated_at_ns = data.get("updated_at_ns")
         if type(updated_at_ns) is not int or updated_at_ns < 0:
             raise ProtocolError("status.updated_at_ns must be a nonnegative integer")
@@ -1804,6 +2081,9 @@ class StatusSnapshot:
             providers=tuple(ProviderStatus.from_json(p) for p in providers_raw),
             devices=tuple(DeviceStatus.from_json(d) for d in devices_raw),
             cameras=tuple(CameraStatus.from_json(c) for c in cameras_raw),
+            network_check=(
+                None if data.get("network_check") is None else NetworkCheckStatus.from_json(data["network_check"])
+            ),
         )
 
 
@@ -2462,6 +2742,7 @@ _REJECTABLE_REQUESTS = (
     MessageType.START_CALIBRATION,
     MessageType.CONFIRM_CALIBRATION_STEP,
     MessageType.STOP_CALIBRATION,
+    MessageType.RUN_NETWORK_CHECK,
 )
 
 
@@ -2664,6 +2945,157 @@ class DevicesReply:
             raise ProtocolError(str(exc)) from None
 
 
+@dataclass(frozen=True)
+class QueryStatusRequest:
+    """Ask for the server's general status, without owning a session or joining any media."""
+
+    request_id: str
+
+    def to_json(self) -> dict[str, Any]:
+        """The request as a wire object."""
+        return {"type": int(MessageType.QUERY_STATUS), "version": PROTOCOL_VERSION, "request_id": self.request_id}
+
+
+def parse_query_status(data: dict) -> QueryStatusRequest:
+    """Strict parse of a status query; the reply is addressed by its ``request_id``."""
+    _require_keys(data, {"type", "version", "request_id"}, "QueryStatus")
+    _require_message_type(data, MessageType.QUERY_STATUS)
+    _require_version(data)
+    return QueryStatusRequest(request_id=_require_token(data.get("request_id"), "request_id"))
+
+
+@dataclass(frozen=True)
+class ServerCamera:
+    """One camera the server knows of, from its configuration and what a running session has observed of it.
+
+    Configured is not detected: ``state`` is None until a session has observed the camera, and a LiveKit camera is
+    offered by the server but never opened by it, so it has no observed state of its own (its delivery is the
+    network check's). Unknown values are None, never zero or empty.
+    """
+
+    name: str
+    #: "capture_server" for a camera the server opens itself, "livekit" for one published into a LiveKit room.
+    transport: str
+    #: Whether the running session includes this camera; False when no session runs.
+    selected: bool
+    device_id: str | None = None
+    room: str | None = None
+    publisher: str | None = None
+    track: str | None = None
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    stream_id: int | None = None
+    state: DeviceState | None = None
+    error: str | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        """The camera as a wire object."""
+        return {
+            "name": self.name,
+            "transport": self.transport,
+            "selected": self.selected,
+            "device_id": self.device_id,
+            "room": self.room,
+            "publisher": self.publisher,
+            "track": self.track,
+            "width": self.width,
+            "height": self.height,
+            "fps": self.fps,
+            "stream_id": self.stream_id,
+            "state": None if self.state is None else int(self.state),
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> ServerCamera:
+        """Strict parse of one camera entry."""
+        keys = {f.name for f in dataclasses_fields(cls)}
+        _require_keys(data, keys, "a server camera")
+        name, transport, selected = data.get("name"), data.get("transport"), data.get("selected")
+        if not isinstance(name, str) or not name:
+            raise ProtocolError("server camera.name must be a nonempty string")
+        if transport not in ("capture_server", "livekit"):
+            raise ProtocolError("server camera.transport must be capture_server or livekit")
+        if not isinstance(selected, bool):
+            raise ProtocolError("server camera.selected must be a boolean")
+        state = data.get("state")
+        fps = data.get("fps")
+        return cls(
+            name=name,
+            transport=transport,
+            selected=selected,
+            device_id=_require_optional_text(data.get("device_id"), "server camera.device_id"),
+            room=_require_optional_text(data.get("room"), "server camera.room"),
+            publisher=_require_optional_text(data.get("publisher"), "server camera.publisher"),
+            track=_require_optional_text(data.get("track"), "server camera.track"),
+            width=_require_optional_number(data.get("width"), "server camera.width", integer=True),
+            height=_require_optional_number(data.get("height"), "server camera.height", integer=True),
+            fps=None if fps is None else _require_positive_rate(fps, "server camera.fps"),
+            stream_id=_require_optional_number(data.get("stream_id"), "server camera.stream_id", integer=True),
+            state=None if state is None else _require_int_enum(state, DeviceState, "server camera.state"),
+            error=_require_optional_text(data.get("error"), "server camera.error"),
+        )
+
+
+@dataclass(frozen=True)
+class ServerStatusReply:
+    """The server's general status: its mode, its current session if any, and the same status snapshot a session
+    owner receives (sources, devices, cameras and, when the server runs one, the network check).
+
+    ``status`` is None when no session is running. ``network_check`` is the server's check whether or not a
+    session is running, and None when the server runs none, so its absence never hides the rest.
+    """
+
+    request_id: str
+    mode: CaptureMode
+    session_id: str | None
+    status: StatusSnapshot | None
+    network_check: NetworkCheckStatus | None
+    #: Every camera the server is configured with, merged with what a running session has observed.
+    cameras: tuple[ServerCamera, ...] = ()
+    type: MessageType = dataclass_field(default=MessageType.SERVER_STATUS, init=False)
+    version: int = dataclass_field(default=PROTOCOL_VERSION, init=False)
+
+    def to_json(self) -> dict[str, Any]:
+        """The reply as a wire object."""
+        return {
+            "type": int(self.type),
+            "version": self.version,
+            "request_id": self.request_id,
+            "mode": int(self.mode),
+            "session_id": self.session_id,
+            "status": None if self.status is None else self.status.to_json(),
+            "network_check": None if self.network_check is None else self.network_check.to_json(),
+            "cameras": [c.to_json() for c in self.cameras],
+        }
+
+    @classmethod
+    def from_json(cls, data: Any) -> ServerStatusReply:
+        """Strict parse of a status reply."""
+        _require_keys(
+            data,
+            {"type", "version", "request_id", "mode", "session_id", "status", "network_check", "cameras"},
+            "ServerStatus",
+        )
+        _require_message_type(data, MessageType.SERVER_STATUS)
+        _require_version(data)
+        session_id = data.get("session_id")
+        if session_id is not None and (not isinstance(session_id, str) or not session_id):
+            raise ProtocolError("ServerStatus.session_id must be a nonempty string or null")
+        status, check, cameras = data.get("status"), data.get("network_check"), data.get("cameras")
+        if not isinstance(cameras, list):
+            raise ProtocolError("ServerStatus.cameras must be a list")
+        return cls(
+            cameras=tuple(ServerCamera.from_json(c) for c in cameras),
+            request_id=_require_token(data.get("request_id"), "request_id"),
+            mode=_require_int_enum(data.get("mode"), CaptureMode, "ServerStatus.mode"),
+            session_id=session_id,
+            status=None if status is None else StatusSnapshot.from_json(status),
+            network_check=None if check is None else NetworkCheckStatus.from_json(check),
+        )
+
+
 # A server-to-client JSON message, dispatched by its envelope's "type".
 ServerJsonMessage = (
     SessionInit
@@ -2677,6 +3109,7 @@ ServerJsonMessage = (
     | CalibrationStepAccepted
     | CalibrationStopped
     | DevicesReply
+    | ServerStatusReply
 )
 
 _JSON_PARSERS_BY_TYPE: dict[MessageType, Any] = {

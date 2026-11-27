@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from capture_server import livekit_receiver as original_receiver
 from capture_server import protocol as p
-from egocap_web import livekit_receiver as original_receiver
 from egocap_web import livekit_recording as lrec
 
 
@@ -27,10 +27,10 @@ def _stream() -> p.LiveKitCameraStream:
 def without_livekit(monkeypatch: pytest.MonkeyPatch):
     """A fresh import of the receiver module as if the package were not installed; undone afterwards."""
     monkeypatch.setitem(sys.modules, "livekit", None)  # makes ``from livekit import rtc`` raise ImportError
-    monkeypatch.delitem(sys.modules, "egocap_web.livekit_receiver")
+    monkeypatch.delitem(sys.modules, "capture_server.livekit_receiver")
     # The import below rebinds this package attribute; restore it so later tests see the original module.
-    monkeypatch.setattr("egocap_web.livekit_receiver", original_receiver)
-    return importlib.import_module("egocap_web.livekit_receiver")
+    monkeypatch.setattr("capture_server.livekit_receiver", original_receiver)
+    return importlib.import_module("capture_server.livekit_receiver")
 
 
 def test_the_receiver_module_imports_without_livekit(without_livekit):

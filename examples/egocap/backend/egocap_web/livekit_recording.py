@@ -22,25 +22,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import ipaddress
 import logging
-import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
-from urllib.parse import urlparse
 
 from capture_server import protocol as p
+from capture_server.frame_timing import (
+    BUDGET_ENV,
+    DEFAULT_BUDGET_MS,
+    frame_age_is_plausible,
+    uncertainty_budget_ns,
+)
+from capture_server.livekit_receiver import LIVEKIT_MISSING, LiveKitFrameReceiver, livekit_available
+from capture_server.network_check import is_loopback_url
 from recording_service import PixelFormat, VideoSample
 
-from .livekit_receiver import LIVEKIT_MISSING, LiveKitFrameReceiver, livekit_available
 from .recording_adapter import MANUS_GLOVE_SOURCE, PICO_CONTROLLER_SOURCE, RecordingIngress
 
 logger = logging.getLogger("isaaccapture.egocap.livekit_recording")
 
-#: A frame older than this when it arrives, or stamped further than the lead below in the future, means the
-#: publisher's clock and this host's disagree grossly. This catches gross disagreement only, not millisecond error.
-_MAX_FRAME_AGE_S = 2.0
-_MAX_FRAME_LEAD_S = 0.05
 #: How long a published stream may send nothing before the take ends. Normal frame gaps are tens of milliseconds.
 _MAX_SILENCE_S = 5.0
 #: How long the room join may take before the take's start is refused.
@@ -55,12 +55,6 @@ _RECORDABLE_BASES: dict[p.LiveKitTimestampBasis, str] = {
     p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US: "frame_ready",
     p.LiveKitTimestampBasis.SENSOR_CAPTURE_MONOTONIC_US: "sensor_capture",
 }
-
-BUDGET_ENV = "EGOCAP_CLOCK_UNCERTAINTY_BUDGET_MS"
-# A frame at 30 fps is 33 ms; a mapping uncertain by more than a few ms would blur which camera frame matches a
-# tracking sample. This default is a policy choice, not a measurement; set the environment variable to change it.
-_DEFAULT_BUDGET_MS = 5.0
-
 
 # What each tracking source's saved time means today; none is a physical acquisition time.
 _TRACKING_SEMANTICS: dict[str, str] = {
@@ -94,31 +88,6 @@ def tracking_event_time(latency: Mapping[str, float]) -> dict[str, dict[str, Any
         else {"meaning": "host_poll_time", "qualified": False}
         for name in (PICO_CONTROLLER_SOURCE, MANUS_GLOVE_SOURCE)
     }
-
-
-def uncertainty_budget_ns() -> int:
-    """The largest clock-mapping uncertainty a take may be recorded with, from the environment or the default."""
-    raw = os.environ.get(BUDGET_ENV)
-    if raw is None or not raw.strip():
-        return int(_DEFAULT_BUDGET_MS * 1e6)
-    try:
-        ms = float(raw)
-    except ValueError:
-        raise ValueError(f"{BUDGET_ENV} must be a number of milliseconds, got {raw!r}") from None
-    if not ms > 0:
-        raise ValueError(f"{BUDGET_ENV} must be positive, got {raw!r}")
-    return int(ms * 1e6)
-
-
-def is_loopback_url(url: str) -> bool:
-    """Whether ``url`` names this machine: ``localhost`` or a loopback IP literal."""
-    host = urlparse(url).hostname or ""
-    if host.lower() == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def unrecordable_reason(started: Any, capture_server_url: str | None = None) -> str | None:
@@ -296,7 +265,7 @@ class LiveKitRecordingFeed:
             capture_time = mapping.to_local_ns(frame.user_timestamp_us * 1000) / 1e9
             receive_time = frame.receive_time_ns / 1e9
             age = receive_time - capture_time
-            if not -_MAX_FRAME_LEAD_S <= age <= _MAX_FRAME_AGE_S:
+            if not frame_age_is_plausible(age):
                 # A coarse validity check: a frame time far from this host's clock is not a frame time here.
                 self._fail(
                     f"{stream.name}: the publisher's clock disagrees with this host's (frame age {age:+.3f} s)"
@@ -351,7 +320,11 @@ class LiveKitRecordingSource:
         first_frame_timeout_s: float = 10.0,
         join_timeout_s: float = _JOIN_TIMEOUT_S,
         leave_timeout_s: float = _LEAVE_TIMEOUT_S,
+        tested_tracks: Callable[[], Mapping[int, str]] | None = None,
     ) -> None:
+        # The LiveKit track each camera was network-checked on, when the server ran a check; a different track now
+        # means the camera was republished since, so that verdict says nothing about it.
+        self._tested_tracks = tested_tracks
         self._recordable_streams = recordable_streams
         self._make_token = make_token
         self._first_frame_timeout_s = first_frame_timeout_s
@@ -363,7 +336,7 @@ class LiveKitRecordingSource:
         self._receiver: LiveKitFrameReceiver | None = None
         self._feed: LiveKitRecordingFeed | None = None
         # Read from the environment once in prepare(), so the feed and the saved evidence use the same figure.
-        self._budget_ns = int(_DEFAULT_BUDGET_MS * 1e6)
+        self._budget_ns = int(DEFAULT_BUDGET_MS * 1e6)
 
     async def prepare(self) -> None:
         """Join the room and wait for a usable first frame from every stream; raises if one never arrives.
@@ -397,6 +370,7 @@ class LiveKitRecordingSource:
                         f"{stream.name}: frames are {frame.image.shape[1]}x{frame.image.shape[0]}, "
                         f"expected {stream.width}x{stream.height}"
                     )
+            self._require_current_tracks(receiver)
             await self._wait_for_mapping(receiver)
         except asyncio.TimeoutError as exc:
             await self.stop()
@@ -450,6 +424,19 @@ class LiveKitRecordingSource:
 
         task.add_done_callback(_done)
 
+    def _require_current_tracks(self, receiver: LiveKitFrameReceiver) -> None:
+        """Refuse the start if a camera's track is lost, or is a different one than the check measured."""
+        tested = self._tested_tracks() if self._tested_tracks is not None else {}
+        now = receiver.track_ids()
+        for stream in self._streams:
+            # A frame can still be queued after its track ended, so loss is checked directly.
+            if receiver.is_lost(stream.stream_id):
+                raise RuntimeError(f"{stream.name}: the LiveKit track was lost before recording started")
+            if stream.stream_id in tested and now.get(stream.stream_id) != tested[stream.stream_id]:
+                raise RuntimeError(
+                    f"{stream.name}: the camera was republished since the network check; run it again"
+                )
+
     def _mapping_problem(self, receiver: LiveKitFrameReceiver) -> str | None:
         """Why the publisher's clock mapping cannot be used to start a take right now, or None when it can."""
         clock_sync = receiver.clock_sync
@@ -482,6 +469,8 @@ class LiveKitRecordingSource:
         """Begin feeding the take's ingress with frames acquired from now on."""
         if self._receiver is None:
             return
+        # The camera may have been republished while storage opened; the take must record the tested publication.
+        self._require_current_tracks(self._receiver)
         # Frames queued while storage was opening were acquired before the take started.
         self._receiver.clear_queued()
         source_names = {s.stream_id: s.name for s in self._streams}

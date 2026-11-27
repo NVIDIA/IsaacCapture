@@ -25,6 +25,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from capture_server.client import CaptureClient, ServerStatusQueryError
+from capture_server.livekit_receiver import RECEIVER_FRAMES_PER_STREAM
+from capture_server.livekit_token import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from egocap.core.data_root import calibration_dir
 from egocap.recording.capture_qc import CaptureQcConfig
 from recording_service import (
@@ -39,19 +42,18 @@ from recording_service import (
 
 from .auto_align import AutoAligner
 from .capture_preview import MAX_CAMERA_JPEG_BYTES
-from .capture_status import CaptureStatusMonitor
+from .capture_status import CaptureStatusMonitor, status_snapshot_to_json
 from .config import VisualizationConfig, config_from_env, visualization_from_env
 from .day_report_routes import router as day_report_router
 from .host_addresses import headset_addresses
-from .livekit_preview import API_KEY_ENV, API_SECRET_ENV, subscriber_token
 from .livekit_preview import router as livekit_preview_router
-from .livekit_receiver import RECEIVER_FRAMES_PER_STREAM
 from .livekit_recording import (
     LiveKitRecordingSource,
     recordable_livekit_streams,
     sensor_capture_names,
     unrecordable_reason,
 )
+from .network_gate import network_check_block, tested_tracks
 from .operator_settings import OperatorSettingsStore, operator_settings_path
 from .operator_settings import router as operator_settings_router
 from .preview_routes import router as preview_router
@@ -565,10 +567,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.operator_settings_store = OperatorSettingsStore(operator_settings_file)
     # Catalogs the operator imports from the page sit beside that file, apart from the shipped ones.
     app.state.imported_task_file_root = operator_settings_file.parent / "taskfiles"
+    app.state.capture_server_url = config.capture_server_url
     monitor = CaptureStatusMonitor(config, backend_instance_id=str(uuid.uuid4()))
     livekit_source = LiveKitRecordingSource(
         lambda: recordable_livekit_streams(monitor.native.started),
         _recorder_livekit_token,
+        tested_tracks=lambda: tested_tracks(monitor.native),
     )
     # Shared by the aligner and the end-of-day correction: whichever holds a session's lock has its labels.
     session_locks = SessionLocks()
@@ -600,6 +604,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         initial_context=initial_context,
         livekit_source=livekit_source,
         tracking_latency=resolved_station.latency if resolved_station is not None else None,
+        network_gate=lambda: network_check_block(monitor.native),
     )
     monitor.set_recording(coordinator)
     # The station registry sits beside the operator settings. Its selected station names what is recorded and
@@ -642,6 +647,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         control_token=control_token,
         auto_fill_operator_name=auto_fill_operator_name,
         setup_gate=setup_service.block_reason,
+        network_gate=lambda: network_check_block(monitor.native),
+        run_network_check=monitor.run_network_check,
     )
     # The 3D view settings are read once, for the view itself and for the settings report.
     visualization_config: VisualizationConfig | None = None
@@ -746,6 +753,30 @@ async def get_capture_status(request: Request) -> JSONResponse:
     healthy HTTP server is distinct from healthy capture."""
     monitor: CaptureStatusMonitor = request.app.state.monitor
     return JSONResponse(monitor.snapshot().to_json(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/server-status")
+async def get_server_status(request: Request) -> JSONResponse:
+    """CaptureServer's own general status, read from CaptureServer and not from the recording monitor.
+
+    A read-only relay of its query route: it starts no capture, joins no media and runs no check. When the server
+    cannot be reached this is a 503, never an empty successful answer.
+    """
+    headers = {"Cache-Control": "no-store"}
+    try:
+        reply = await CaptureClient(request.app.state.capture_server_url).query_status()
+    except ServerStatusQueryError as exc:
+        # The cause can carry socket or protocol detail; it goes to the log and the browser gets a fixed message.
+        logger.warning("CaptureServer status query failed: %s", exc)
+        return JSONResponse(
+            {"detail": "CaptureServer did not answer the status query"}, status_code=503, headers=headers
+        )
+    body = reply.to_json()
+    if reply.status is not None:
+        # The browser reads JSON numbers as float64, which loses the nanosecond clock; the recording page's status
+        # endpoint converts it the same way at this boundary.
+        body["status"] = status_snapshot_to_json(reply.status)
+    return JSONResponse(body, headers=headers)
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

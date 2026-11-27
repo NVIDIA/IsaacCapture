@@ -24,5 +24,7 @@ export function buildRecordingActions(sendRecordingCommand: SendRecordingCommand
     onStopEpisode: (target: RecordingEpisodeIdentity) => sendRecordingCommand("stop_episode", episodeTargetPayload(target)),
     onDiscardEpisode: (target: RecordingEpisodeIdentity) => sendRecordingCommand("discard_episode", episodeTargetPayload(target)),
     onNewBatch: (target: RecordingBatchIdentity) => sendRecordingCommand("new_batch", batchTargetPayload(target)),
+    onRunNetworkCheck: (target: RecordingBatchIdentity) =>
+      sendRecordingCommand("run_network_check", batchTargetPayload(target)),
   };
 }

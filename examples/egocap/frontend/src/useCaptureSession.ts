@@ -51,6 +51,8 @@ const RECORDING_COMMAND_TIMEOUT_MS: Record<RecordingActionName, number> = {
   stop_episode: 120_000,
   discard_episode: 45_000,
   new_batch: 45_000,
+  // Only asks the server to start; the check itself runs for tens of seconds and reports through the status.
+  run_network_check: 5_000,
 };
 
 /** sessionStorage key for the entered control token -- scoped to this

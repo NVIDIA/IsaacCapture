@@ -24,8 +24,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from capture_server import protocol as p
-
+from . import protocol as p
 from .livekit_clock_sync import ClockSyncClient
 
 try:
@@ -33,7 +32,7 @@ try:
 except ImportError:  # the optional "livekit" extra is not installed
     rtc = None
 
-logger = logging.getLogger("isaaccapture.egocap.livekit_receiver")
+logger = logging.getLogger("isaaccapture.capture_server.livekit_receiver")
 
 LIVEKIT_MISSING = "receiving LiveKit video needs the livekit package: install the egocap 'livekit' extra"
 
@@ -197,6 +196,14 @@ class LiveKitFrameReceiver:
                 if not task.done():
                     task.cancel()
 
+    def is_lost(self, stream_id: int) -> bool:
+        """Whether ``stream_id``'s track can deliver no more frames, even if frames are still queued."""
+        return self._lost[stream_id].is_set()
+
+    def track_ids(self) -> dict[int, str]:
+        """The LiveKit track each stream is currently read from, so a consumer can tell a republished camera."""
+        return dict(self._active)
+
     def clear_queued(self) -> None:
         """Drop every queued frame, so a take starts with frames acquired after it began."""
         for queue in self._queues.values():
@@ -258,6 +265,8 @@ class LiveKitFrameReceiver:
     def _mark_lost(self, stream_id: int) -> None:
         """Record that ``stream_id`` can deliver no more frames, without cancelling the calling reader task."""
         self.counters[stream_id].subscribed = False
+        # A track that can deliver nothing is no longer the stream's current publication.
+        self._active.pop(stream_id, None)
         self._lost[stream_id].set()
 
     def _on_track_subscribed(

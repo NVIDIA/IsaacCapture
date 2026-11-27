@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from capture_server import protocol as p
-from egocap_web.livekit_receiver import ReceivedFrame, StreamCounters
+from capture_server.livekit_receiver import ReceivedFrame, StreamCounters
 from egocap_web.livekit_recording import LiveKitRecordingFeed
 from egocap_web.recording_session import CoordinatorBusyError, RecordingSessionCoordinator
 from recording_service import (

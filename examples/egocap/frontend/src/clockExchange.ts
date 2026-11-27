@@ -4,7 +4,7 @@
 
 /**
  * Maps a remote machine's monotonic clock onto the browser's from four-timestamp exchanges, the same pattern and
- * policy as the backend's `clock_exchange.py` (see its docstring): t1 and t4 are read on this side, t2 and t3 on the
+ * policy as `capture_server/clock_exchange.py` (see its docstring): t1 and t4 are read on this side, t2 and t3 on the
  * remote, and the offset is ((t2 - t1) + (t3 - t4)) / 2 with half the round trip as its uncertainty. The browser's
  * own timer is coarser than the remote's, so its resolution is added to the uncertainty. All times are integer
  * nanoseconds (BigInt); the offset is remote minus local.

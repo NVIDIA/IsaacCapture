@@ -928,4 +928,49 @@ describe("useCaptureSession (effect integration)", () => {
       await firstPending;
     });
   });
+
+  it("run_network_check goes on the wire with only the batch id and is answered like any recording command", async () => {
+    const { result } = renderHook(() => useCaptureSession());
+    const ws1 = FakeWebSocket.instances[0];
+    act(() => ws1.open());
+    act(() => ws1.emitText(runningSnapshotBody(1)));
+    act(() => result.current.setControlToken("test-control-token"));
+
+    let settled: unknown;
+    await act(async () => {
+      const pending = result.current.sendRecordingCommand("run_network_check", { batch_id: "b1" });
+      const sent = JSON.parse(ws1.sent[0]) as { type: string; request_id: string; action: string; payload: unknown };
+      expect(sent.type).toBe("recording_command");
+      expect(sent.action).toBe("run_network_check");
+      expect(sent.payload).toEqual({ batch_id: "b1" });
+      ws1.emitText(JSON.stringify({ type: "recording_reply", request_id: sent.request_id, outcome: "rejected", reason: "busy" }));
+      settled = await pending;
+    });
+    expect(settled).toEqual({ outcome: "rejected", reason: "busy" });
+  });
+
+  it("an unanswered run_network_check is called unknown after about 5 s, not the minutes a Stop is given", async () => {
+    const { result } = renderHook(() => useCaptureSession());
+    const ws1 = FakeWebSocket.instances[0];
+    act(() => ws1.open());
+    act(() => ws1.emitText(runningSnapshotBody(1)));
+    act(() => result.current.setControlToken("test-control-token"));
+
+    let rejection: unknown;
+    await act(async () => {
+      result.current.sendRecordingCommand("run_network_check", { batch_id: "b1" }).catch((err: unknown) => {
+        rejection = err;
+      });
+      await vi.advanceTimersByTimeAsync(2000);
+      ws1.emitText(runningSnapshotBody(1));
+      await vi.advanceTimersByTimeAsync(2000);
+      ws1.emitText(runningSnapshotBody(1));
+      await vi.advanceTimersByTimeAsync(900);
+    });
+    expect(rejection).toBeUndefined();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    expect(rejection).toBeInstanceOf(RecordingCommandUncertainError);
+  });
 });

@@ -86,3 +86,14 @@ before any file is written. An existing derived episode is refused, never replac
   rewriting `config.yaml`, and never record into a session that has none.
 - Work that must survive a cancelled caller (notifying the aligner of a kept episode, for one) runs inside the
   owned operation task, not after the awaited result.
+
+## Camera delivery is qualified by CaptureServer
+
+- CaptureServer owns the camera delivery check and reports it in its session status; the backend and page only relay it and gate admission on it. Do not add a second camera network test in the recorder.
+- Validity checks the check applies to frames (age and lead limits, clock-mapping budget) live in `capture_server/frame_timing.py` and are shared with the recorder, so the check can never be weaker than the consumer it qualifies the path for.
+- A measurement that could not be made is unknown (`None`), never zero.
+- CaptureServer has one canonical status payload (the read-only `/query` route), reused by `python -m capture_server.status_report` and, through the backend's read-only `/api/server-status` relay, by the `/status/` page. The network check is a subsection of it; there is no separate network-only report or authority, and the check being off or unavailable must not hide the rest.
+- The check runs once per new capture session, not per take, reconnect or query; its verdict is bound to that session.
+- The status page and `/api/server-status` show CaptureServer's configured cameras merged with what a session has observed: configured is not detected, and a camera nobody has observed has no state. Do not derive the inventory from the recording monitor or only from a session's streams.
+
+- Network-report text names the measured quantity and unit: frame counts per one-second sample are not durations or total missing-frame counts. Keep UI, CLI and failure reasons consistent without changing acceptance policy for a wording fix.

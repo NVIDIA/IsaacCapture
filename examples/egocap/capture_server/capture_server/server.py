@@ -43,6 +43,7 @@ import contextlib
 import dataclasses
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -60,6 +61,8 @@ from . import mcal_catalog
 from . import protocol as p
 from .acquisition import Acquisition, CameraSourceError, SourceExited
 from .calibration import CalibrationConfig, CalibrationSession, build_worker, find_worker
+from .livekit_token import API_KEY_ENV, API_SECRET_ENV, subscriber_token
+from .network_check import NetworkCheckPolicy, NetworkCheckService, require_secure_livekit_urls
 
 _LOG = logging.getLogger("isaaccapture.capture_server.server")
 
@@ -184,6 +187,9 @@ class ServerConfig:
     # LiveKit video offered to clients in SessionInit. Video never passes through this server; the list only says
     # where each stream is published.
     livekit_streams: tuple[p.LiveKitCameraStream, ...] = ()
+    # The delivery check of those streams (see network_check.py). None runs no check and reports none: the
+    # limits are proposals that no healthy saved take has validated, so a station opts in by naming them.
+    network_check: NetworkCheckPolicy | None = None
 
     def __post_init__(self) -> None:
         """Resolve the MCAL folder once, then reject duplicate physical cameras and unusable LiveKit streams."""
@@ -206,6 +212,14 @@ class ServerConfig:
             p.check_livekit_streams(self.livekit_streams)
         except p.ProtocolError as exc:
             raise ValueError(f"ServerConfig.livekit_streams: {exc}") from exc
+        if self.network_check is not None and not self.livekit_streams:
+            raise ValueError("ServerConfig.network_check needs livekit_streams to check")
+        if self.network_check is not None:
+            require_secure_livekit_urls(self.livekit_streams)
+            # The check compares frames with the offered size and rate, so every stream must state them.
+            missing = sorted(s.name for s in self.livekit_streams if None in (s.width, s.height, s.fps))
+            if missing:
+                raise ValueError(f"network_check needs width, height and fps for every LiveKit stream: {missing}")
         jpeg_names = set(self.cameras or ()) | set(self.known_cameras or ())
         clashes = sorted(jpeg_names & {s.name for s in self.livekit_streams})
         if clashes:
@@ -257,6 +271,14 @@ class _BoundedDropOldestQueue:
 
 def _now_ns() -> int:
     return time.monotonic_ns()
+
+
+def _viewer_token(room: str) -> str:
+    """A token for the delivery check to join ``room``, signed with the LiveKit credentials of this environment."""
+    api_key, signing_key = os.environ.get(API_KEY_ENV, ""), os.environ.get(API_SECRET_ENV, "")
+    if not api_key or not signing_key:
+        raise RuntimeError(f"{API_KEY_ENV} and {API_SECRET_ENV} must be set for the network check to join LiveKit")
+    return subscriber_token(api_key=api_key, signing_key=signing_key, room=room, now=int(time.time()))
 
 
 def _status_excluding_timestamp(status: p.StatusSnapshot) -> dict[str, Any]:
@@ -600,9 +622,11 @@ class _Session:
         outbox: _Outbox,
         owner_ws: ServerConnection,
         livekit_streams: tuple[p.LiveKitCameraStream, ...] = (),
+        network_check: NetworkCheckService | None = None,
     ) -> None:
         self.session_id = begin.session_id
         self._livekit_streams = livekit_streams
+        self._network_check = network_check
         self.begin = begin
         # Which owner connection started this session -- a NEW owner
         # connecting later (because the old one disconnected while this
@@ -655,6 +679,18 @@ class _Session:
         self._status_task: asyncio.Task | None = None
         self._last_sent_status: p.StatusSnapshot | None = None
         self._blocked = False  # flips True at the start of _finalize's quiesce step
+
+    @property
+    def last_status(self) -> p.StatusSnapshot | None:
+        """The status last observed by this session, for read-only queries."""
+        return self._last_sent_status
+
+    async def _read_status(self) -> p.StatusSnapshot:
+        """The source's status with the server's delivery check overlaid, so every status carries one verdict."""
+        status = await self._source.status(_now_ns())
+        if self._network_check is not None:
+            status = dataclasses.replace(status, network_check=self._network_check.snapshot())
+        return status
 
     def _tracking_stream(self) -> p.TrackingStream | None:
         if not self._has_tracking:
@@ -853,7 +889,7 @@ class _Session:
         # and Begun (e.g. the first tracking step raises), _finalize's
         # terminal reply must still carry the last genuinely observed
         # status rather than losing it entirely.
-        self._last_sent_status = await self._race_stop(self._source.status(_now_ns()))
+        self._last_sent_status = await self._race_stop(self._read_status())
         starting = p.SessionStarting(
             session_id=self.session_id,
             stage=p.StartupStage.STARTING_SOURCES,
@@ -869,7 +905,10 @@ class _Session:
             # must both have succeeded for tracking requests.
             await self._race_stop(self._source.next_tracking_sample())
 
-        self._last_sent_status = await self._race_stop(self._source.status(_now_ns()))
+        # Sources are up: check the cameras' delivery for this session, so Begun already reports CHECKING.
+        if self._network_check is not None:
+            self._network_check.begin_session(self.session_id)
+        self._last_sent_status = await self._race_stop(self._read_status())
         begun_event = p.SessionBegun(session_id=self.session_id, status=self._last_sent_status)
         self._begun_event = begun_event  # cached verbatim for replay
         self._publish_control(begun_event.to_json())
@@ -1028,7 +1067,7 @@ class _Session:
             if self.stop_requested.is_set():
                 return
             try:
-                current = await self._source.status(_now_ns())
+                current = await self._read_status()
             except Exception as exc:  # noqa: BLE001 -- an observed, not silently-vanishing, failure
                 self._record_failure(p.StopReason.IC_ERROR, f"status observation failed: {_diagnostic_text(exc)}")
                 self.request_stop()
@@ -1182,6 +1221,11 @@ class CaptureServer:
         # lifecycle, status, frames) goes through this.
         self._outbox: _Outbox | None = None
         self._active_session: _Session | CalibrationSession | None = None
+        # Checks afresh for each accepted new session; its verdict belongs to that session and ends with it.
+        policy = self.config.network_check
+        self._network_check: NetworkCheckService | None = (
+            NetworkCheckService(self.config.livekit_streams, policy, _viewer_token) if policy is not None else None
+        )
         self._calibration_worker = build_worker(self.config.calibration) if self.config.calibration else None
         # Terminal calibration messages of recent attempts on the current owner connection, for stop retries.
         self._completed_calibrations: collections.OrderedDict[str, p.CalibrationStopped] = (
@@ -1289,6 +1333,8 @@ class CaptureServer:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._active_session.done.wait(), timeout=timeout)
         finally:
+            if self._network_check is not None:
+                await self._network_check.stop()
             # Queued scans are dropped; a scan already running finishes on its own and its result is discarded.
             self._mcal_pool.shutdown(wait=False, cancel_futures=True)
             if self._ws_server is not None:
@@ -1394,6 +1440,8 @@ class CaptureServer:
             await self._handle_confirm_calibration_step(ws, data)
         elif data.get("type") == int(p.MessageType.STOP_CALIBRATION):
             await self._handle_stop_calibration(ws, data)
+        elif data.get("type") == int(p.MessageType.RUN_NETWORK_CHECK):
+            await self._handle_run_network_check(ws, data)
         else:
             await ws.close(code=1002, reason="unexpected message type from client")
 
@@ -1628,6 +1676,7 @@ class CaptureServer:
             self._outbox,
             ws,
             livekit_streams=self.config.livekit_streams,
+            network_check=self._network_check,
         )
         self._active_session = session
         asyncio.ensure_future(self._run_session(session))
@@ -1725,8 +1774,8 @@ class CaptureServer:
     async def _handle_query(self, ws: ServerConnection) -> None:
         """One read-only device query on its own connection: no ownership, no session, one reply.
 
-        Only a ``QueryDevices`` request is answered; anything else, including every capture command, closes the
-        connection. Whatever happens here never touches a running session.
+        Only a ``QueryDevices`` or ``QueryStatus`` request is answered; anything else, including every capture
+        command, closes the connection. Whatever happens here never touches a running session.
         """
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=_QUERY_DEADLINE_S)
@@ -1738,7 +1787,20 @@ class CaptureServer:
             except ValueError:
                 await ws.close(code=1002, reason="malformed JSON")
                 return
-            if not isinstance(data, dict) or data.get("type") != int(p.MessageType.QUERY_DEVICES):
+            kind = data.get("type") if isinstance(data, dict) else None
+            if kind == int(p.MessageType.QUERY_STATUS):
+                try:
+                    status_request = p.parse_query_status(data)
+                except p.ProtocolError:
+                    await ws.close(code=1002, reason="invalid QueryStatus request")
+                    return
+                await asyncio.wait_for(
+                    ws.send(json.dumps(self._server_status(status_request.request_id).to_json())),
+                    timeout=_QUERY_DEADLINE_S,
+                )
+                await ws.close(code=1000)
+                return
+            if kind != int(p.MessageType.QUERY_DEVICES):
                 await ws.close(code=1002, reason="unsupported query type")
                 return
             try:
@@ -1767,6 +1829,68 @@ class CaptureServer:
             # The peer stalled or left; there is no session to clean up and nothing else to report.
             pass
 
+    def _server_status(self, request_id: str) -> p.ServerStatusReply:
+        """The general status: the running session's current snapshot, if any, and the network check."""
+        service, active = self._network_check, self._active_session
+        session = active if isinstance(active, _Session) and not active.done.is_set() else None
+        return p.ServerStatusReply(
+            request_id=request_id,
+            mode=self._mode,
+            session_id=None if session is None else session.session_id,
+            status=None if session is None else session.last_status,
+            network_check=None if service is None else service.snapshot(),
+            cameras=self._camera_inventory(session),
+        )
+
+    def _camera_inventory(self, session: _Session | None) -> tuple[p.ServerCamera, ...]:
+        """Every camera the server is configured with, enriched by what the running session has observed.
+
+        Built from configuration alone, so it lists cameras with no session and opens no hardware. A camera is
+        merged by its logical name; the session adds whether it is selected and its observed state and error.
+        """
+        cameras: dict[str, p.ServerCamera] = {}
+        for name, camera in (self.config.cameras or {}).items():
+            cameras[name] = p.ServerCamera(
+                name=name,
+                transport="capture_server",
+                selected=False,
+                device_id=camera.device_id,
+                width=camera.width,
+                height=camera.height,
+                fps=camera.fps,
+            )
+        for name in self.config.known_cameras or ():
+            cameras.setdefault(name, p.ServerCamera(name=name, transport="capture_server", selected=False))
+        for stream in self.config.livekit_streams:
+            cameras[stream.name] = p.ServerCamera(
+                name=stream.name,
+                transport="livekit",
+                selected=False,
+                room=stream.room,
+                publisher=stream.publisher,
+                track=stream.track,
+                width=stream.width,
+                height=stream.height,
+                fps=stream.fps,
+                stream_id=stream.stream_id,
+            )
+        if session is not None:
+            requested = {c.name for c in session.begin.cameras}
+            observed = {c.name: c for c in (session.last_status.cameras if session.last_status else ())}
+            for name in requested | {s.name for s in self.config.livekit_streams} | set(observed):
+                current = cameras.get(name) or p.ServerCamera(
+                    name=name, transport="capture_server", selected=False
+                )
+                seen = observed.get(name)
+                cameras[name] = dataclasses.replace(
+                    current,
+                    selected=True,
+                    stream_id=seen.stream_id if seen is not None else current.stream_id,
+                    state=seen.status if seen is not None else None,
+                    error=(seen.error or None) if seen is not None else None,
+                )
+        return tuple(cameras.values())
+
     async def _device_entries(self) -> tuple[p.DeviceEntry, ...]:
         """The devices this server offers; today the Manus plugin with its MCAL folder listing."""
         catalog = await self._scan_mcal()
@@ -1776,17 +1900,23 @@ class CaptureServer:
         try:
             await session.run()
         finally:
-            if session.terminal is not None:
-                self._completed[session.session_id] = session.terminal
-                self._completed.move_to_end(session.session_id)
-                while len(self._completed) > _COMPLETED_TOMBSTONE_CAPACITY:
-                    self._completed.popitem(last=False)
-            # Admission reopens only when the session's own cleanup
-            # genuinely succeeded -- a failed source release leaves this
-            # connection unable to admit a new session rather than silently
-            # reusing hardware/state that was never actually released.
-            if self._active_session is session and session.cleanup_ok:
-                self._active_session = None
+            try:
+                if session.terminal is not None:
+                    self._completed[session.session_id] = session.terminal
+                    self._completed.move_to_end(session.session_id)
+                    while len(self._completed) > _COMPLETED_TOMBSTONE_CAPACITY:
+                        self._completed.popitem(last=False)
+                # Admission reopens only when the session's own cleanup
+                # genuinely succeeded -- a failed source release leaves this
+                # connection unable to admit a new session rather than silently
+                # reusing hardware/state that was never actually released.
+                if self._active_session is session and session.cleanup_ok:
+                    self._active_session = None
+            finally:
+                # Leaving the room can take seconds; the bookkeeping and admission above are already settled, and
+                # a newer session's check is left alone by this teardown.
+                if self._network_check is not None:
+                    await self._network_check.end_session(session.session_id)
 
     async def _handle_stop(self, ws: ServerConnection, data: dict[str, Any]) -> None:
         try:
@@ -1953,6 +2083,31 @@ class CaptureServer:
                 step_token=confirm.step_token,
             ),
         )
+
+    async def _handle_run_network_check(self, ws: ServerConnection, data: dict[str, Any]) -> None:
+        """Run the delivery check again in the owner's current session; the answer is the next status.
+
+        Only the owner connection reaches this handler (``/query`` is read-only and answers no other type), so the
+        request's ``session_id`` only names the request in a rejection.
+        """
+        try:
+            request = p.parse_run_network_check(data)
+        except p.ProtocolError:
+            await ws.close(code=1002, reason="invalid RunNetworkCheck envelope")
+            return
+        service, active = self._network_check, self._active_session
+        if service is None:
+            reason, message = (
+                p.RejectionReason.INVALID_CONFIG,
+                "this server runs no network check (no network_check policy in the LiveKit streams file)",
+            )
+        elif not isinstance(active, _Session) or active.owner_ws is not ws or active.done.is_set():
+            reason, message = p.RejectionReason.UNKNOWN_SESSION, "there is no active capture session to check"
+        elif not service.start():
+            reason, message = p.RejectionReason.BUSY, "a network check is already running"
+        else:
+            return
+        self._reject(request.session_id, p.MessageType.RUN_NETWORK_CHECK, reason, message)
 
     async def _handle_stop_calibration(self, ws: ServerConnection, data: dict[str, Any]) -> None:
         try:
@@ -2188,9 +2343,10 @@ async def _run_cli(args: argparse.Namespace) -> int:
                 },
             )
         if args.livekit_streams is not None:
-            from .livekit_streams import load_livekit_streams
+            from .livekit_streams import load_livekit_offer
 
-            config = dataclasses.replace(config, livekit_streams=load_livekit_streams(args.livekit_streams))
+            offer = load_livekit_offer(args.livekit_streams)
+            config = dataclasses.replace(config, livekit_streams=offer.streams, network_check=offer.network_check)
     except (ValueError, NotImplementedError, OSError) as exc:
         # A malformed episode is a ValueError (EpisodeFormatError); a missing directory an OSError.
         print(f"capture-server: {exc}", file=sys.stderr)

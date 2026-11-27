@@ -4,8 +4,8 @@
 
 """The LiveKit streams a station offers, read from the ``--livekit-streams`` YAML file.
 
-Only locates the video (server URL, room, publisher identity and track names). The server never joins the room:
-each consumer connects to LiveKit itself and learns the live details there.
+Locates the video (server URL, room, publisher identity and track names). The server joins the room only to run
+the optional ``network_check``; each consumer connects to LiveKit itself and learns the live details there.
 
 .. code-block:: yaml
 
@@ -14,19 +14,22 @@ each consumer connects to LiveKit itself and learns the live details there.
       room: sensing-preview
       publisher: orin-sensing
       timestamp_basis: processing_unix_us   # what the publisher puts in the frame timestamp (see protocol.py)
+      network_check: {window_s: 30}         # optional: run the delivery check (see network_check.py); absent = off
       streams:
         - {name: Head left, track: sensing-left, width: 2560, height: 1984, fps: 30}
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 from . import protocol as p
+from .network_check import NetworkCheckPolicy
 
-_ROOM_KEYS = {"url", "room", "publisher", "timestamp_basis", "streams"}
+_ROOM_KEYS = {"url", "room", "publisher", "timestamp_basis", "streams", "network_check"}
 _BASES = {
     "monotonic_us": p.LiveKitTimestampBasis.PUBLISHER_MONOTONIC_US,
     "processing_unix_us": p.LiveKitTimestampBasis.PUBLISHER_PROCESSING_UNIX_US,
@@ -45,8 +48,21 @@ def _mapping(value: object, where: str, allowed: set[str]) -> dict:
     return value
 
 
+@dataclass(frozen=True)
+class LiveKitOffer:
+    """What the file declares: the streams offered to clients and the delivery check policy, if any."""
+
+    streams: tuple[p.LiveKitCameraStream, ...]
+    network_check: NetworkCheckPolicy | None
+
+
 def load_livekit_streams(path: Path) -> tuple[p.LiveKitCameraStream, ...]:
     """The streams named by the YAML file at ``path``; raises ``ValueError`` for anything unusable."""
+    return load_livekit_offer(path).streams
+
+
+def load_livekit_offer(path: Path) -> LiveKitOffer:
+    """The streams and optional network check policy of the YAML file at ``path``; ``ValueError`` if unusable."""
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -88,4 +104,10 @@ def load_livekit_streams(path: Path) -> tuple[p.LiveKitCameraStream, ...]:
         p.check_livekit_streams(streams)
     except p.ProtocolError as exc:
         raise ValueError(f"LiveKit streams file {path}: {exc}") from exc
-    return tuple(streams)
+    # Absent or null leaves the check off; a mapping is validated by the policy, which names what is wrong.
+    raw_policy = room.get("network_check")
+    try:
+        policy = None if raw_policy is None else NetworkCheckPolicy.from_mapping(raw_policy)
+    except ValueError as exc:
+        raise ValueError(f"LiveKit streams file {path}: {exc}") from exc
+    return LiveKitOffer(tuple(streams), policy)

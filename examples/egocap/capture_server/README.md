@@ -700,26 +700,35 @@ One JSON object is one text message. One complete header and payload is one bina
 | Server → client | 10 | RequestRejected |
 | Client → server, on `/query` | 11 | QueryDevices |
 | Server → client, on `/query` | 12 | Devices |
+| Client → server | 20 | RunNetworkCheck |
+| Client → server, on `/query` | 21 | QueryStatus |
+| Server → client, on `/query` | 22 | ServerStatus |
 | Server → client | BinaryKind 1 | CaptureFrame |
 | Server → client | BinaryKind 2 | CaptureImage |
 
-There are ten session message families, plus the device query described below. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
+There are ten session message families, plus the device and status queries described below. SessionInit describes the resolved session configuration and complete decoding layout before hardware initialization. SessionStarting reports progress and observed availability. SessionStatus carries IC's changing provider/device state without treating absence as terminal or confusing status with pose validity. No application recording command or file path is accepted.
 
 Every JSON session message has these envelope fields. The two `/query` messages instead carry `type`, `version` and a client-chosen `request_id`, and no `session_id`; a query message that carries one is rejected. An envelope is the small common part of a message that allows the receiver to route it before reading message-specific content.
 
 | Field | Allowed contents | What it does |
 |---|---|---|
-| `type` | `MessageType`: `BEGIN=1`, `STOP=2`, `SESSION_STARTING=3`, `SESSION_BEGUN=4`, `SESSION_STATUS=5`, `SESSION_STOPPED=6`, `SESSION_INIT=9`, `REQUEST_REJECTED=10`, `QUERY_DEVICES=11`, `DEVICES=12`. Binary families use the header's BinaryKind instead. | Selects the parser and action. Each message accepts only its own type value. The human-readable names in this document are explanations, not wire values. |
+| `type` | `MessageType`: `BEGIN=1`, `STOP=2`, `SESSION_STARTING=3`, `SESSION_BEGUN=4`, `SESSION_STATUS=5`, `SESSION_STOPPED=6`, `SESSION_INIT=9`, `REQUEST_REJECTED=10`, `QUERY_DEVICES=11`, `DEVICES=12`, `RUN_NETWORK_CHECK=20`, `QUERY_STATUS=21`, `SERVER_STATUS=22`. Binary families use the header's BinaryKind instead. | Selects the parser and action. Each message accepts only its own type value. The human-readable names in this document are explanations, not wire values. |
 | `version` | Not an enum: exactly integer 1; not boolean true. | Identifies the protocol contract used to interpret all remaining fields. A receiver must reject another version rather than guess its meaning. |
 | `session_id` | Nonempty string, at most 128 characters; a new UUID string is recommended for each new session. | Associates configuration, status, samples and terminal replies with one session. A reply for another ID must not reset the active session. This is a client-chosen correlation ID, not a hardware identifier. |
 
 #### Device query
 
-`QueryDevices` is a read-only request on the server's `/query` path: its own short-lived connection, one request and one reply, no ownership and no session, so it works before capture and while a capture is running. Any other message on `/query`, including every capture command, closes the connection with 1002. `await client.query_devices()` returns the `DeviceEntry` tuple and raises `DeviceQueryError` when no answer is obtained; a failure is never reported as an empty list.
+`QueryDevices` is a read-only request on the server's `/query` path: its own short-lived connection, one request and one reply, no ownership and no session, so it works before capture and while a capture is running. `QueryStatus` (below) is the only other message answered on `/query`; anything else, including every capture command, closes the connection with 1002. `await client.query_devices()` returns the `DeviceEntry` tuple and raises `DeviceQueryError` when no answer is obtained; a failure is never reported as an empty list.
 
 Request: `{"type": 11, "version": 1, "request_id": "<1..128 chars>"}`. Reply: `{"type": 12, "version": 1, "request_id": ..., "devices": [...]}` with one entry per device kind. The Manus entry is `{"device": 1, "mcal_status": ..., "mcal_files": [...], "error_message": ...}`. `mcal_status` is `READY=1` (the list may be empty), `DISABLED=2` (the server has no MCAL folder) or `UNAVAILABLE=3` (the folder could not be read; `error_message` says why). A listing over the 2000-file limit is `UNAVAILABLE`, never truncated.
 
 The MCAL folder is set with `--manus-calibration-dir DIR`. It is a plain folder: any nonempty, readable `.mcal` regular file directly in it is offered, whether placed by hand or written by a calibration tool. Symbolic links are never offered; copy files in. A name is offered only if it uses ASCII letters, digits, `_`, `.` and `-`, starts with a letter or digit, ends in lower-case `.mcal` and is at most 133 characters; any other file (for example `left glove (2).mcal` or `A.MCAL`) is silently skipped, so rename it. Select files by name with `ManusPluginConfig(left_calibration=..., right_calibration=...)` in `start(plugins=...)`. Begin is refused as `INVALID_CONFIG` when a name is not in the folder at that moment. A name only selects a file; whether the glove accepted it is the Manus plugin's per-hand status. If the file disappears or becomes unreadable after Begin is accepted, the plugin cannot load it and both hands are lost for that session.
+
+#### Status query and the delivery check
+
+`QueryStatus` is a second read-only request on `/query`: `{"type": 21, "version": 1, "request_id": "<1..128 chars>"}`. The reply `ServerStatus` (type 22) carries `mode`, the running `session_id` (null with no session), the session's current `StatusSnapshot` (null with no session), the server's `network_check` (null when the server runs none) and `cameras`, every camera the server is configured with merged with what a session has observed of it. A camera with no observation has a null `state`; a LiveKit camera is offered but never opened by the server, so its delivery is the network check's. `await client.query_status()` returns it and raises `ServerStatusQueryError` when no answer is obtained. `python -m capture_server.status_report [--json]` prints it.
+
+The delivery check is optional (`livekit.network_check` in the `--livekit-streams` file). For each accepted new session, after its sources start, the server joins the LiveKit room as a subscriber, measures every offered camera over one window and reports it as `StatusSnapshot.network_check` (state `NOT_TESTED=0`, `CHECKING=1`, `READY=2`, `UNSUITABLE=3` or `STALE=4`, with the session it belongs to, a generation naming the cameras tested, the endpoint, the legs tested and not tested, and per-camera measurements where an unknown value is null, never zero). The key is absent from a status when the server runs no check, so a strict older client rejects a status that carries it, as it does a LiveKit stream. `RunNetworkCheck` (`{"type": 20, "version": 1, "session_id": "<id>"}`, owner connection only) runs it again in the current session; it is rejected `BUSY` while one runs, `UNKNOWN_SESSION` with no active session of this connection and `INVALID_CONFIG` when the server runs no check, and its answer is the next status.
 
 #### Begin: configure sources, plugins and cameras
 

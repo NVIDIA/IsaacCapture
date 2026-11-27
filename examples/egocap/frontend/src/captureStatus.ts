@@ -53,6 +53,10 @@ export const DeviceState = {
 } as const;
 export type DeviceStateValue = (typeof DeviceState)[keyof typeof DeviceState];
 
+/** The server's camera delivery check; STALE is a pass that has aged out and no longer counts. */
+export const NetworkCheckState = { NOT_TESTED: 0, CHECKING: 1, READY: 2, UNSUITABLE: 3, STALE: 4 } as const;
+export type NetworkCheckStateValue = (typeof NetworkCheckState)[keyof typeof NetworkCheckState];
+
 export const ProviderType = { PLUGIN: 1, OPENXR_RUNTIME: 2 } as const;
 export type ProviderTypeValue = (typeof ProviderType)[keyof typeof ProviderType];
 
@@ -139,6 +143,43 @@ export interface CameraStatus {
   intrinsics: number[][] | null;
 }
 
+/** What the check measured for one camera. A null measurement is unknown, never zero. */
+export interface NetworkCheckCamera {
+  stream_id: number;
+  name: string;
+  /** null while the camera has not been judged. */
+  passed: boolean | null;
+  expected_fps: number;
+  usable_frames: number | null;
+  delivered_fps: number | null;
+  missing_frames: number | null;
+  max_capture_gap_ms: number | null;
+  max_arrival_gap_ms: number | null;
+  start_silence_ms: number | null;
+  end_silence_ms: number | null;
+  age_median_ms: number | null;
+  age_max_ms: number | null;
+  age_growth_ms: number | null;
+  reasons: string[];
+}
+
+/** CaptureServer's verdict on whether its cameras' frames arrive well enough to record: media delivery only, apart
+ * from recorder and disk health. `generation` names the cameras and settings that were tested. */
+export interface NetworkCheckStatus {
+  state: NetworkCheckStateValue;
+  generation: string;
+  endpoint: string;
+  legs_tested: string[];
+  legs_not_tested: string[];
+  window_s: number;
+  valid_for_s: number;
+  phase: string | null;
+  progress_s: number | null;
+  completed_at_unix_ns: number | null;
+  reason: string | null;
+  cameras: NetworkCheckCamera[];
+}
+
 export interface StatusSnapshot {
   /** Capture-host nanosecond clock, as a decimal string -- see captureStatus.ts's
    * module docstring and capture_status.py's to_json() for why. Not a browser
@@ -147,6 +188,8 @@ export interface StatusSnapshot {
   providers: ProviderStatus[];
   devices: DeviceStatus[];
   cameras: CameraStatus[];
+  /** null when the server runs no network check. */
+  network_check: NetworkCheckStatus | null;
 }
 
 export interface CaptureStatusResponse {
@@ -268,6 +311,120 @@ function parseCameraStatus(value: unknown, field: string): CameraStatus {
   };
 }
 
+function expectStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) throw new CaptureStatusParseError(`${field} must be an array`);
+  return value.map((v, i) => expectString(v, `${field}[${i}]`));
+}
+
+function parseNetworkCheckCamera(value: unknown, field: string): NetworkCheckCamera {
+  if (!isObject(value)) throw new CaptureStatusParseError(`${field} must be an object`);
+  const passed = value.passed;
+  if (passed !== null && typeof passed !== "boolean") {
+    throw new CaptureStatusParseError(`${field}.passed must be a boolean or null`);
+  }
+  const num = (key: string) => expectNullableNumber(value[key], `${field}.${key}`);
+  return {
+    stream_id: expectNumber(value.stream_id, `${field}.stream_id`),
+    name: expectString(value.name, `${field}.name`),
+    passed,
+    expected_fps: expectNumber(value.expected_fps, `${field}.expected_fps`),
+    usable_frames: num("usable_frames"),
+    delivered_fps: num("delivered_fps"),
+    missing_frames: num("missing_frames"),
+    max_capture_gap_ms: num("max_capture_gap_ms"),
+    max_arrival_gap_ms: num("max_arrival_gap_ms"),
+    start_silence_ms: num("start_silence_ms"),
+    end_silence_ms: num("end_silence_ms"),
+    age_median_ms: num("age_median_ms"),
+    age_max_ms: num("age_max_ms"),
+    age_growth_ms: num("age_growth_ms"),
+    reasons: expectStringArray(value.reasons, `${field}.reasons`),
+  };
+}
+
+function parseNetworkCheck(value: unknown, field: string): NetworkCheckStatus {
+  if (!isObject(value)) throw new CaptureStatusParseError(`${field} must be an object`);
+  if (!Array.isArray(value.cameras)) throw new CaptureStatusParseError(`${field}.cameras must be an array`);
+  return {
+    state: expectEnum(NetworkCheckState, value.state, `${field}.state`),
+    generation: expectString(value.generation, `${field}.generation`),
+    endpoint: expectString(value.endpoint, `${field}.endpoint`),
+    legs_tested: expectStringArray(value.legs_tested, `${field}.legs_tested`),
+    legs_not_tested: expectStringArray(value.legs_not_tested, `${field}.legs_not_tested`),
+    window_s: expectNumber(value.window_s, `${field}.window_s`),
+    valid_for_s: expectNumber(value.valid_for_s, `${field}.valid_for_s`),
+    phase: expectNullableString(value.phase, `${field}.phase`),
+    progress_s: expectNullableNumber(value.progress_s, `${field}.progress_s`),
+    completed_at_unix_ns: expectNullableNumber(value.completed_at_unix_ns, `${field}.completed_at_unix_ns`),
+    reason: expectNullableString(value.reason, `${field}.reason`),
+    cameras: value.cameras.map((v, i) => parseNetworkCheckCamera(v, `${field}.cameras[${i}]`)),
+  };
+}
+
+/** One camera CaptureServer is configured with, merged with what a running session has observed of it. A null
+ * `state` means no session has observed it; a LiveKit camera is offered, never opened, by the server. */
+export interface ServerCamera {
+  name: string;
+  transport: "capture_server" | "livekit";
+  selected: boolean;
+  device_id: string | null;
+  room: string | null;
+  publisher: string | null;
+  track: string | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  stream_id: number | null;
+  state: DeviceStateValue | null;
+  error: string | null;
+}
+
+/** CaptureServer's own general status (its read-only status query), not the recording page's view of it. */
+export interface ServerStatus {
+  mode: CaptureModeValue;
+  session_id: string | null;
+  status: StatusSnapshot | null;
+  network_check: NetworkCheckStatus | null;
+  cameras: ServerCamera[];
+}
+
+function parseServerCamera(value: unknown, field: string): ServerCamera {
+  if (!isObject(value)) throw new CaptureStatusParseError(`${field} must be an object`);
+  const transport = value.transport;
+  if (transport !== "capture_server" && transport !== "livekit") {
+    throw new CaptureStatusParseError(`${field}.transport must be capture_server or livekit`);
+  }
+  const num = (key: string) => expectNullableNumber(value[key], `${field}.${key}`);
+  const text = (key: string) => expectNullableString(value[key], `${field}.${key}`);
+  return {
+    name: expectString(value.name, `${field}.name`),
+    transport,
+    selected: expectBoolean(value.selected, `${field}.selected`),
+    device_id: text("device_id"),
+    room: text("room"),
+    publisher: text("publisher"),
+    track: text("track"),
+    width: num("width"),
+    height: num("height"),
+    fps: num("fps"),
+    stream_id: num("stream_id"),
+    state: expectNullableEnum(DeviceState, value.state, `${field}.state`),
+    error: text("error"),
+  };
+}
+
+export function parseServerStatus(body: unknown): ServerStatus {
+  if (!isObject(body)) throw new CaptureStatusParseError("server status must be an object");
+  if (!Array.isArray(body.cameras)) throw new CaptureStatusParseError("cameras must be an array");
+  return {
+    mode: expectEnum(CaptureMode, body.mode, "mode"),
+    session_id: expectNullableString(body.session_id, "session_id"),
+    status: body.status === null ? null : parseStatusSnapshot(body.status),
+    network_check: body.network_check === null ? null : parseNetworkCheck(body.network_check, "network_check"),
+    cameras: body.cameras.map((c, i) => parseServerCamera(c, `cameras[${i}]`)),
+  };
+}
+
 export function parseStatusSnapshot(value: unknown): StatusSnapshot {
   if (!isObject(value)) throw new CaptureStatusParseError("status must be an object");
   const updated = value.updated_at_ns;
@@ -285,6 +442,11 @@ export function parseStatusSnapshot(value: unknown): StatusSnapshot {
     providers: providers.map((v, i) => parseProviderStatus(v, `status.providers[${i}]`)),
     devices: devices.map((v, i) => parseDeviceStatus(v, `status.devices[${i}]`)),
     cameras: cameras.map((v, i) => parseCameraStatus(v, `status.cameras[${i}]`)),
+    // Absent from a server that runs no check, which is not the same as a check that has not run.
+    network_check:
+      value.network_check === undefined || value.network_check === null
+        ? null
+        : parseNetworkCheck(value.network_check, "status.network_check"),
   };
 }
 
