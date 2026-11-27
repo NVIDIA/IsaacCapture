@@ -8,6 +8,7 @@ contract — the teleop hot path never round-trips through host memory.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
@@ -20,7 +21,9 @@ from .rtp_h264 import RtpH264Source
 from .synthetic import SyntheticSource, SyntheticStereoSource
 from .v4l2 import V4l2Source
 from .video_file import VideoFileSource
-from .zed import ZedSource
+from .zed import ZedSource, ZedStereoSource
+from .zed import _resolution_for_dims as _zed_resolution
+from .zed import video_settings as _zed_video_settings
 
 __all__ = [
     "ArgusSource",
@@ -32,7 +35,12 @@ __all__ = [
     "V4l2Source",
     "VideoFileSource",
     "ZedSource",
+    "ZedStereoSource",
     "build_local_camera",
+    "build_stereo_camera",
+    "StereoCameraTraits",
+    "check_stereo_camera",
+    "describe_stereo_camera",
     "resolve_video_paths",
     "set_notify_sink",
     "set_verbose",
@@ -185,6 +193,7 @@ def build_local_camera(spec: dict) -> List[FrameSource]:
                 serial_number=int(spec.get("serial_number", 0)),
                 bus_type=spec.get("bus_type", "usb"),
                 stereo=stereo,
+                settings=_zed_video_settings(spec),
             )
         )
         if stereo:
@@ -199,3 +208,146 @@ def build_local_camera(spec: dict) -> List[FrameSource]:
         f"build_local_camera: unknown camera type {kind!r} "
         "(known: synthetic, v4l2, argus, oakd, zed, video)"
     )
+
+
+def _zed_stereo_arguments(spec: dict, name: str) -> dict:
+    """What a stereo ``type: zed`` entry passes to its source, checked."""
+    try:
+        arguments = {
+            "width": int(spec["width"]),
+            "height": int(spec["height"]),
+            "fps": int(spec.get("fps", 30)),
+            "serial_number": int(spec.get("serial_number", 0)),
+        }
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"camera {name!r}: width, height, fps and serial_number are whole "
+            f"numbers ({exc})"
+        ) from exc
+    bus_type = str(spec.get("bus_type", "usb")).lower()
+    if bus_type not in ("usb", "gmsl"):
+        raise ValueError(f"camera {name!r}: bus_type is usb or gmsl, got {bus_type!r}")
+    _zed_resolution(arguments["width"], arguments["height"])
+    return {**arguments, "bus_type": bus_type, "settings": _zed_video_settings(spec)}
+
+
+def _video_stereo_arguments(spec: dict, name: str) -> dict:
+    """What a side-by-side ``type: video`` entry passes to its source,
+    checked."""
+    try:
+        return {
+            "path": str(spec["path"]),
+            "width": int(spec.get("width", 0)),
+            "height": int(spec.get("height", 0)),
+            "fps": float(spec.get("fps", 0.0)),
+            "loop": bool(spec.get("loop", True)),
+        }
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"camera {name!r}: width, height and fps are numbers ({exc})"
+        ) from exc
+
+
+def _stereo_arguments(spec: dict) -> tuple:
+    """``(type, name, arguments)`` of a stereo camera entry. Raises
+    ValueError, with the reason, for any other entry."""
+    if not isinstance(spec, dict):
+        raise ValueError(f"a camera entry is a mapping, got {type(spec).__name__}")
+    kind = spec.get("type")
+    name = spec.get("name", kind)
+    stereo = bool(spec.get("stereo", False))
+
+    def refuse(reason: str):
+        raise ValueError(f"camera {name!r} is not a stereo camera: {reason}")
+
+    def require(*keys: str) -> None:
+        missing = [key for key in keys if key not in spec]
+        if missing:
+            raise ValueError(
+                f"camera {name!r}: a `type: {kind}` entry needs {' and '.join(missing)}"
+            )
+
+    if kind == "zed":
+        if not stereo:
+            refuse("a zed entry opens one eye unless it sets `stereo: true`")
+        require("width", "height")
+        return kind, name, _zed_stereo_arguments(spec, name)
+    if kind == "video":
+        if not stereo:
+            refuse("it is one view; a side-by-side recording sets `stereo: true`")
+        require("path")
+        return kind, name, _video_stereo_arguments(spec, name)
+    if kind == "synthetic":
+        if not stereo:
+            refuse("it is one view")
+        refuse(
+            "the test pattern is one drawing shifted between the eyes, with "
+            "nothing behind it"
+        )
+    if kind == "v4l2":
+        refuse("a v4l2 camera gives one image")
+    if kind == "argus":
+        if stereo and spec.get("sync_session", False):
+            refuse("an argus camera is not offered as a stereo camera yet")
+        refuse(
+            "its eyes are not one capture unless it sets `stereo: true` and "
+            "`sync_session: true`, one session for both sensors"
+        )
+    if kind == "oakd":
+        refuse("an oakd camera is not offered as a stereo camera yet")
+    raise ValueError(
+        f"camera {name!r}: unknown camera type {kind!r} (stereo cameras: zed, video)"
+    )
+
+
+def check_stereo_camera(spec: dict) -> None:
+    """Raise ValueError unless ``spec`` describes a stereo camera: one whose
+    every frame holds both eyes of one capture. Opens nothing."""
+    _stereo_arguments(spec)
+
+
+@dataclass(frozen=True)
+class StereoCameraTraits:
+    """What is known of a stereo camera from its entry, before it is
+    opened.
+
+    ``calibrated``: it stores its stereo calibration, for ``calibration()``;
+    one that does not needs it from elsewhere, such as a file.
+    ``rectified``: its images are already rectified.
+    """
+
+    calibrated: bool
+    rectified: bool
+
+
+def describe_stereo_camera(spec: dict) -> StereoCameraTraits:
+    """The traits of the stereo camera ``spec`` describes. Raises
+    ValueError, as ``check_stereo_camera`` does, for an entry that is not
+    one. Opens nothing."""
+    kind, _name, _arguments = _stereo_arguments(spec)
+    return StereoCameraTraits(
+        calibrated=kind == "zed",
+        rectified=kind == "zed",
+    )
+
+
+def build_stereo_camera(spec: dict, *, imu: bool = False) -> FrameSource:
+    """Open one ``cameras:`` entry as a stereo camera.
+
+    Every frame of the returned source holds both eyes of one capture,
+    ``image`` and ``image_right``, in capture order and never twice. A
+    camera stamps the frame with its capture time; a recording stamps it
+    when the frame is read. A reader that falls behind loses the captures
+    it did not read, and a source that counts them does so in
+    ``dropped_captures``.
+
+    ``calibration()`` gives the stereo calibration of a camera that stores
+    one; ``describe_stereo_camera`` says which cameras do. ``imu=True``
+    asks a camera with an IMU to read it, for ``imu()``. Raises ValueError
+    for an entry that is not a stereo camera.
+    """
+    kind, name, arguments = _stereo_arguments(spec)
+    if kind == "zed":
+        return ZedStereoSource.build(name=name, imu=imu, **arguments)
+    # video: a side-by-side file already emits both eyes in one frame.
+    return VideoFileSource(name=name, stereo=True, hold=True, **arguments)

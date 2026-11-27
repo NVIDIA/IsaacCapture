@@ -27,6 +27,14 @@ cameras:
     bus_type: usb               # usb | gmsl
     serial_number: 0            # 0 → first available
     stereo: true
+    # Optional camera settings. The camera keeps what the last application
+    # set; a key listed here is written at every open, an absent one is
+    # left alone. exposure and gain share one automatic mode.
+    # exposure: auto            # auto | 0..100
+    # gain: auto                # auto | 0..100
+    # white_balance: auto       # auto | 2800..6500 (K)
+    # brightness: 4             # 0..8; also contrast, saturation, sharpness
+    # gamma: 5                  # 1..9
     rtp:
       port: 5000                # left eye
       port_right: 5001          # right eye (required when stereo + source: rtp)

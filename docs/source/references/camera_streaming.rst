@@ -794,6 +794,10 @@ its own plane (and, in split mode, its own RTP port). Abbreviated:
        sensor_mode: 0            # argus only
        repeat_capture: true      # argus only — use repeat requests when supported
        pair_emit_mode: both      # argus independent stereo only: either | both
+       exposure: auto            # zed only, optional — auto | 0..100; also gain, white_balance
+                                 # (auto | 2800..6500), brightness, contrast, saturation,
+                                 # sharpness (0..8), gamma (1..9). Absent keys leave the camera
+                                 # as the last application set it.
        rtp:
          port: 5000              # left eye when stereo
          port_right: 5001        # required when stereo + source: rtp
@@ -965,6 +969,14 @@ Televiz as the compositor at the end of the chain:
   BGRA8 stays in VRAM and a CUDA kernel channel-swaps into contiguous RGBA with no host round-trip.
   The optional Argus source consumes Jetson EGLStreams with CUDA and publishes RGBA buffers without a
   CPU readback.
+- **Stereo cameras for code that computes on the pair** — depth or visual tracking, say — come from
+  ``build_stereo_camera(entry)`` in
+  :code-file:`sources/__init__.py <examples/camera_viz/python/isaaccapture_examples/camera_viz/sources/__init__.py>`,
+  which opens one ``cameras:`` entry. Every frame holds both eyes of one capture, in capture order
+  and never twice, and stays intact until the reader asks for the next. ``calibration()`` and
+  ``imu()`` give the stereo calibration and the IMU samples of a camera that has them, and
+  ``check_stereo_camera(entry)`` says why an entry is not a stereo camera. The viewer keeps using
+  ``build_local_camera``, which pairs the newest image of each eye.
 - **The viewer** (:code-file:`camera_viz.py <examples/camera_viz/python/isaaccapture_examples/camera_viz/camera_viz.py>`) creates a
   ``VizSession`` and adds one ``QuadLayer`` per enabled camera, then submits each frame to its layer
   and calls ``render()`` once per frame. Stereo cameras submit both eyes.

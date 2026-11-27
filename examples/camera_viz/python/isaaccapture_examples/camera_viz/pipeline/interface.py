@@ -47,6 +47,85 @@ class Frame:
     image_right: Optional[Any] = None
 
 
+#: The lens models a calibration can name. ``brown_conrady`` is OpenCV's
+#: standard one: radial and tangential terms, with its optional rational,
+#: thin-prism and tilt terms. ``fisheye`` is OpenCV's fisheye model.
+DISTORTION_MODELS = ("brown_conrady", "fisheye")
+
+
+def _check_lens_model(model: str) -> None:
+    if model not in DISTORTION_MODELS:
+        raise ValueError(
+            f"unknown distortion_model {model!r} (known: {', '.join(DISTORTION_MODELS)})"
+        )
+
+
+def _freeze(*arrays: Any) -> None:
+    """A source hands the same record to every caller, so its arrays are
+    made read-only."""
+    for array in arrays:
+        if hasattr(array, "setflags"):
+            array.setflags(write=False)
+
+
+@dataclass(frozen=True, eq=False)
+class StereoCalibration:
+    """The lenses of a stereo camera and how its two eyes sit.
+
+    Matrices are NumPy arrays in OpenCV's conventions. ``left_K`` and
+    ``right_K`` are 3x3 pinhole matrices for ``width`` x ``height`` images,
+    ``left_D`` and ``right_D`` are distortion coefficients in
+    ``distortion_model``, and a point ``p`` in the left eye's frame is
+    ``R @ p + T`` in the right eye's, with ``T`` in metres.
+
+    ``rectified`` says the images are already rectified: both eyes then
+    share ``left_K``, there is no distortion, ``R`` is the identity and
+    ``T`` is ``(-baseline, 0, 0)``.
+
+    ``R_left_from_imu`` rotates a vector from the IMU's frame into the left
+    eye's; None when the camera has no IMU.
+    """
+
+    width: int
+    height: int
+    left_K: Any
+    left_D: Any
+    right_K: Any
+    right_D: Any
+    R: Any
+    T: Any
+    rectified: bool = False
+    R_left_from_imu: Optional[Any] = None
+    distortion_model: str = "brown_conrady"
+
+    def __post_init__(self) -> None:
+        _check_lens_model(self.distortion_model)
+        _freeze(
+            self.left_K,
+            self.left_D,
+            self.right_K,
+            self.right_D,
+            self.R,
+            self.T,
+            self.R_left_from_imu,
+        )
+
+
+@dataclass(frozen=True)
+class ImuSamples:
+    """IMU samples in the order they were taken.
+
+    ``timestamps_ns`` is (N,) int64, on the clock of the camera's frame
+    timestamps. ``accel`` is (N, 3) float64 specific force in m/s^2, in the
+    IMU's frame: at rest it reads about 9.81 upward. ``gyro`` is kept for
+    the rotation rate and stays None until a source fills it.
+    """
+
+    timestamps_ns: Any
+    accel: Any
+    gyro: Optional[Any] = None
+
+
 class FrameSource(ABC):
     """Pull-based GPU-resident frame source."""
 
@@ -66,6 +145,16 @@ class FrameSource(ABC):
 
     @abstractmethod
     def stop(self) -> None: ...
+
+    def calibration(self) -> Optional[StereoCalibration]:
+        """The stereo calibration, from a source that knows it. None until
+        the camera is open, and always None from a source that has none."""
+        return None
+
+    def imu(self) -> Optional[ImuSamples]:
+        """The IMU samples taken since the last call, from a source that was
+        asked to read them. None when there are none."""
+        return None
 
     # Convenience context manager so app code can `with source:`.
     def __enter__(self) -> "FrameSource":

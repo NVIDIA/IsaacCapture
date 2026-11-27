@@ -8,11 +8,26 @@ GPU-resident frame (mailbox semantics matching QuadLayer's own 3-slot
 internal mailbox).
 """
 
-from .interface import Frame, FrameSource, SourceSpec
+from .interface import (
+    DISTORTION_MODELS,
+    Frame,
+    FrameSource,
+    ImuSamples,
+    SourceSpec,
+    StereoCalibration,
+)
 
 # VizRunner is exposed via a lazy attribute so importing ``pipeline``
 # doesn't drag in ``isaaccapture.viz`` for sender-side code paths.
-__all__ = ["Frame", "FrameSource", "SourceSpec", "VizRunner"]
+__all__ = [
+    "DISTORTION_MODELS",
+    "Frame",
+    "FrameSource",
+    "ImuSamples",
+    "SourceSpec",
+    "StereoCalibration",
+    "VizRunner",
+]
 
 
 def __getattr__(name: str):

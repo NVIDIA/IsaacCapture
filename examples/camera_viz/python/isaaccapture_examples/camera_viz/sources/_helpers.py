@@ -111,6 +111,60 @@ def notify_verbose(tag: str, msg: str) -> None:
 logger = logging.getLogger("isaaccapture.camera_viz.sources")
 
 
+class CaptureMailbox:
+    """Which of a source's buffers holds the newest capture, for a reader
+    that borrows it.
+
+    The producer asks where to write, fills that buffer, and publishes it
+    with the capture's timestamp. The reader takes the newest capture it
+    has not taken yet, and the buffer it took is not written again until
+    it takes the next. Captures that were replaced untaken are counted in
+    ``dropped``. Three buffers are the least that works: one published,
+    one held, one being written.
+    """
+
+    def __init__(self, buffers: int = 3) -> None:
+        if buffers < 3:
+            raise ValueError("CaptureMailbox needs at least three buffers")
+        self._buffers = buffers
+        self._lock = threading.Lock()
+        self._published: Optional[tuple] = None  # (buffer index, timestamp_ns)
+        self._held: Optional[int] = None
+        self._count = 0
+        self._taken = 0
+        self.dropped = 0
+
+    def write_index(self) -> int:
+        """The buffer the producer may fill now."""
+        with self._lock:
+            busy = {self._held, None if self._published is None else self._published[0]}
+            return next(index for index in range(self._buffers) if index not in busy)
+
+    def publish(self, index: int, timestamp_ns: int) -> None:
+        with self._lock:
+            self._published = (index, int(timestamp_ns))
+            self._count += 1
+
+    def reset(self) -> None:
+        """Forget the published capture, when a source starts again. The
+        buffer the reader holds stays its own."""
+        with self._lock:
+            self._published = None
+            self._count = self._taken = 0
+
+    def take(self) -> Optional[tuple]:
+        """``(buffer index, timestamp_ns)`` of the newest capture not taken
+        yet, or None."""
+        with self._lock:
+            if self._published is None or self._taken == self._count:
+                return None
+            if self._taken:
+                self.dropped += self._count - self._taken - 1
+            self._taken = self._count
+            self._held = self._published[0]
+            return self._published
+
+
 def alloc_pinned_host(shape: tuple, dtype: np.dtype) -> np.ndarray:
     """Allocate page-locked (pinned) host memory as a numpy array.
 
@@ -200,6 +254,10 @@ class PolledSource(FrameSource):
         self._publish_idx = -1
         self._consumed_idx = -2
         self._publish_lock = threading.Lock()
+        # Set by a source whose reader keeps a frame while newer ones
+        # arrive: it then picks the buffer to write, so the frame the
+        # reader holds is not written.
+        self._mailbox: Optional[CaptureMailbox] = None
 
         # Thread + reconnect state.
         self._stop = threading.Event()
@@ -219,6 +277,9 @@ class PolledSource(FrameSource):
     def start(self) -> None:
         if self._thread is not None:
             return
+        if self._mailbox is not None:
+            # Nothing of the last session is handed out in this one.
+            self._mailbox.reset()
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._produce_loop,
@@ -257,16 +318,25 @@ class PolledSource(FrameSource):
             self._connected = False
 
     def latest(self) -> Optional[Frame]:
-        with self._publish_lock:
-            if self._publish_idx < 0 or self._publish_idx == self._consumed_idx:
+        if self._mailbox is not None:
+            taken = self._mailbox.take()
+            if taken is None:
                 return None
-            idx = self._publish_idx
-            self._consumed_idx = idx
+            idx = self._consumed_idx = taken[0]
+            # When the capture was published, however long it then waited.
+            timestamp_ns = taken[1]
+        else:
+            with self._publish_lock:
+                if self._publish_idx < 0 or self._publish_idx == self._consumed_idx:
+                    return None
+                idx = self._publish_idx
+                self._consumed_idx = idx
+            timestamp_ns = time.monotonic_ns()
         # stream=0: producer already synchronized its stream before publishing,
         # so the GPU buffer is safe to read from any consumer stream.
         return Frame(
             image=self._gpu_buffers[idx],
-            timestamp_ns=time.monotonic_ns(),
+            timestamp_ns=timestamp_ns,
             source_id=self._spec.name,
             stream=0,
         )
@@ -345,6 +415,8 @@ class PolledSource(FrameSource):
                 self._stop.wait(timeout=0.001)
                 continue
 
+            if self._mailbox is not None:
+                self._write_idx = self._mailbox.write_index()
             buf = self._gpu_buffers[self._write_idx]
             try:
                 self._upload_and_convert(buf)
@@ -358,9 +430,12 @@ class PolledSource(FrameSource):
                 first_frame_seen = True
                 notify(self._kind, "streaming")
 
-            with self._publish_lock:
-                self._publish_idx = self._write_idx
-            self._write_idx = (self._write_idx + 1) % len(self._gpu_buffers)
+            if self._mailbox is not None:
+                self._mailbox.publish(self._write_idx, time.monotonic_ns())
+            else:
+                with self._publish_lock:
+                    self._publish_idx = self._write_idx
+                self._write_idx = (self._write_idx + 1) % len(self._gpu_buffers)
             self._frame_count += 1
 
     def _mark_disconnected(self) -> None:

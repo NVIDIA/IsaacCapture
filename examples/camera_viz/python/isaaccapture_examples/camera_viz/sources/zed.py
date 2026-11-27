@@ -24,12 +24,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from ..pipeline import Frame, FrameSource, SourceSpec
+from ..pipeline import Frame, FrameSource, ImuSamples, SourceSpec, StereoCalibration
 
-from ._helpers import notify, notify_verbose
+from ._helpers import CaptureMailbox, notify, notify_verbose
 
 
 def _notify(msg: str, level: int = logging.INFO) -> None:
@@ -56,6 +57,93 @@ _RESOLUTION_DIMS = {
     "VGA": (672, 376),
 }
 _DIMS_TO_RESOLUTION = {dims: name for name, dims in _RESOLUTION_DIMS.items()}
+
+#: Camera settings an entry may set, with the range of a manual value. An
+#: absent key leaves the camera as the last application set it.
+VIDEO_SETTINGS = {
+    "exposure": (0, 100),
+    "gain": (0, 100),
+    "white_balance": (2800, 6500),
+    "brightness": (0, 8),
+    "contrast": (0, 8),
+    "saturation": (0, 8),
+    "sharpness": (0, 8),
+    "gamma": (1, 9),
+}
+#: The ones that also take ``auto``, which hands them back to the camera.
+_AUTO_SETTINGS = ("exposure", "gain", "white_balance")
+
+# Unread IMU samples kept for a reader that fell behind.
+_IMU_BACKLOG = 4096
+#: How long a stop waits for the IMU reader to leave the SDK.
+_IMU_STOP_S = 2.0
+
+
+def video_settings(spec: dict) -> dict:
+    """The camera settings a ``type: zed`` entry sets, checked. ``auto``
+    becomes None."""
+    settings = {}
+    for key, (low, high) in VIDEO_SETTINGS.items():
+        if key not in spec:
+            continue
+        value = spec[key]
+        takes_auto = key in _AUTO_SETTINGS
+        if value == "auto" and takes_auto:
+            settings[key] = None
+        elif isinstance(value, bool) or not isinstance(value, int):
+            wanted = f"auto or {low}..{high}" if takes_auto else f"{low}..{high}"
+            raise ValueError(f"ZedSource: {key} must be {wanted}, got {value!r}")
+        elif not low <= value <= high:
+            raise ValueError(
+                f"ZedSource: {key} must be within {low}..{high}, got {value}"
+            )
+        else:
+            settings[key] = value
+    shared = [settings[key] for key in ("exposure", "gain") if key in settings]
+    if len(shared) == 2 and (shared[0] is None) != (shared[1] is None):
+        raise ValueError(
+            "ZedSource: exposure and gain share one automatic mode: give both "
+            "as numbers, both as auto, or leave one out"
+        )
+    return settings
+
+
+def stereo_calibration(info, width: int, height: int) -> StereoCalibration:
+    """The calibration of the rectified pair the SDK hands out, from the
+    camera information of an open camera."""
+    import numpy as np
+
+    params = info.camera_configuration.calibration_parameters
+    left = params.left_cam
+    K = np.array(
+        [[left.fx, 0.0, left.cx], [0.0, left.fy, left.cy], [0.0, 0.0, 1.0]],
+        dtype=np.float64,
+    )
+    baseline_m = float(params.get_camera_baseline())
+    # The SDK reports it in its length unit, millimetres unless told
+    # otherwise. A stereo baseline is a few centimetres, so a value above 1
+    # is in millimetres.
+    if baseline_m > 1.0:
+        baseline_m *= 1e-3
+    # The SDK gives a transform for a camera without an IMU too, so ask it
+    # whether the sensor is there.
+    sensors = info.sensors_configuration
+    R_left_from_imu = None
+    if sensors.accelerometer_parameters.is_available:
+        transform = sensors.camera_imu_transform
+        R_left_from_imu = np.asarray(transform.m, dtype=np.float64)[:3, :3]
+    return StereoCalibration(
+        width=width,
+        height=height,
+        left_K=K,
+        left_D=np.zeros(5),
+        right_K=K.copy(),
+        right_D=np.zeros(5),
+        R=np.eye(3),
+        T=np.array([-baseline_m, 0.0, 0.0]),
+        rectified=True,
+        R_left_from_imu=R_left_from_imu,
+    )
 
 
 def _resolution_for_dims(width: int, height: int) -> str:
@@ -135,6 +223,9 @@ class _ZedCamera:
         height: int,
         fps: int,
         stereo: bool,
+        settings: Optional[dict] = None,
+        pairs: bool = False,
+        imu: bool = False,
     ) -> None:
         try:
             import cupy as cp  # noqa: F401
@@ -173,6 +264,23 @@ class _ZedCamera:
         self._consecutive_failures = 0
         self._reconnect_count = 0
 
+        self._settings = dict(settings or {})
+        self._calibration: Optional[StereoCalibration] = None
+        # For a reader of pairs: both eyes of a capture go into the same
+        # buffer index, handed over as one. The per-eye slots work without
+        # it.
+        self._pairs = pairs and stereo
+        self._captures = CaptureMailbox(
+            len(next(iter(self._slots.values())).gpu_buffers)
+        )
+        self._last_capture_ns = 0
+        self._read_imu = imu
+        self._imu_lock = threading.Lock()
+        # Bounded: a reader that falls behind keeps the newest samples.
+        self._imu_samples: deque = deque(maxlen=_IMU_BACKLOG)
+        # The reader thread of the open camera and the event that ends it.
+        self._imu_reader: Optional[tuple] = None
+
     def _build_slots(self) -> None:
         import cupy as cp
 
@@ -207,6 +315,12 @@ class _ZedCamera:
             self._refcount += 1
             if self._refcount > 1:
                 return
+            # Nothing of the last session is handed out in this one.
+            self._captures.reset()
+            self._last_capture_ns = 0
+            with self._imu_lock:
+                self._imu_samples.clear()
+            self._calibration = None
             self._stop.clear()
             self._thread = threading.Thread(
                 target=self._produce_loop,
@@ -237,6 +351,42 @@ class _ZedCamera:
     def latest(self, eye: str) -> Optional[Frame]:
         slot = self._slots.get(eye)
         return slot.latest() if slot is not None else None
+
+    def latest_pair(self, source_id: str) -> Optional[Frame]:
+        """Both eyes of the newest capture not handed out yet, stamped with
+        its capture time. The frame stays intact until the next call."""
+        taken = self._captures.take()
+        if taken is None:
+            return None
+        index, timestamp_ns = taken
+        return Frame(
+            image=self._slots["left"].gpu_buffers[index],
+            image_right=self._slots["right"].gpu_buffers[index],
+            timestamp_ns=timestamp_ns,
+            source_id=source_id,
+            stream=0,
+        )
+
+    @property
+    def calibration(self) -> Optional[StereoCalibration]:
+        return self._calibration
+
+    @property
+    def pairs_dropped(self) -> int:
+        return self._captures.dropped
+
+    def drain_imu(self) -> Optional[ImuSamples]:
+        with self._imu_lock:
+            samples = list(self._imu_samples)
+            self._imu_samples.clear()
+        if not samples:
+            return None
+        import numpy as np
+
+        return ImuSamples(
+            timestamps_ns=np.array([s[0] for s in samples], dtype=np.int64),
+            accel=np.array([s[1:] for s in samples], dtype=np.float64),
+        )
 
     # ── Open / close (producer thread only) ───────────────────────────
 
@@ -318,14 +468,135 @@ class _ZedCamera:
         self._camera = camera
         self._runtime_params = sl.RuntimeParameters()
         self._consecutive_failures = 0
+        self._apply_settings(camera, sl)
+        if self._pairs:
+            self._calibration = stereo_calibration(info, self._width, self._height)
+            if self._read_imu:
+                if self._calibration.R_left_from_imu is None:
+                    _notify("this camera has no IMU")
+                else:
+                    self._start_imu(camera, sl)
         return True
 
+    def _apply_settings(self, camera, sl) -> None:
+        """Write the entry's camera settings. The camera keeps what the last
+        application set, so every listed setting is written at each open."""
+        settings = self._settings
+        if not settings:
+            return
+        names = sl.VIDEO_SETTINGS
+
+        def write(setting, value, label: str) -> None:
+            result = camera.set_camera_settings(setting, int(value))
+            if result is not None and result != sl.ERROR_CODE.SUCCESS:
+                _notify(
+                    f"setting {label} to {value} failed ({result})", logging.WARNING
+                )
+
+        # Exposure and gain share one automatic mode: it is on unless one
+        # of them is a number.
+        if "exposure" in settings or "gain" in settings:
+            manual = {
+                key: settings[key]
+                for key in ("exposure", "gain")
+                if settings.get(key) is not None
+            }
+            write(names.AEC_AGC, 0 if manual else 1, "auto exposure and gain")
+            for key, value in manual.items():
+                write(getattr(names, key.upper()), value, key)
+        if "white_balance" in settings:
+            kelvin = settings["white_balance"]
+            write(
+                names.WHITEBALANCE_AUTO,
+                1 if kelvin is None else 0,
+                "auto white balance",
+            )
+            if kelvin is not None:
+                write(names.WHITEBALANCE_TEMPERATURE, kelvin, "white_balance")
+        for key in ("brightness", "contrast", "saturation", "sharpness", "gamma"):
+            if key in settings:
+                write(getattr(names, key.upper()), settings[key], key)
+
+    def _start_imu(self, camera, sl) -> None:
+        # An event of its own: a reader that outlives its camera's close
+        # must not be woken by the next camera's reader starting.
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=self._imu_loop, args=(camera, sl, stop), name="zed_imu", daemon=True
+        )
+        self._imu_reader = (thread, stop)
+        thread.start()
+
+    def _stop_imu(self) -> bool:
+        """End the IMU reader. False when it did not end in time."""
+        reader, self._imu_reader = self._imu_reader, None
+        if reader is None:
+            return True
+        thread, stop = reader
+        stop.set()
+        thread.join(timeout=_IMU_STOP_S)
+        return not thread.is_alive()
+
+    def _imu_loop(self, camera, sl, stop: threading.Event) -> None:
+        """Poll the IMU, which runs several times faster than the camera:
+        reading it once per grab would lose most samples. The SDK allows
+        this alongside grab()."""
+        data = sl.SensorsData()
+        last_ns = 0
+        try:
+            while not stop.is_set():
+                status = camera.get_sensors_data(data, sl.TIME_REFERENCE.CURRENT)
+                if status == sl.ERROR_CODE.SUCCESS:
+                    imu = data.get_imu_data()
+                    stamp_ns = int(imu.timestamp.get_nanoseconds())
+                    if stamp_ns != last_ns:
+                        last_ns = stamp_ns
+                        a = imu.get_linear_acceleration()
+                        with self._imu_lock:
+                            # A reader that outlived its stop adds nothing to
+                            # the next session.
+                            if not stop.is_set():
+                                self._imu_samples.append((stamp_ns, a[0], a[1], a[2]))
+                stop.wait(0.001)
+        except Exception as e:
+            _notify(f"the IMU is no longer read ({e})", logging.ERROR)
+
+    def _choose_buffers(self) -> None:
+        """Point both eyes' next write at a buffer the reader of pairs
+        cannot be looking at."""
+        index = self._captures.write_index()
+        for slot in self._slots.values():
+            slot.write_idx = index
+
+    def _publish_pair(self, sl) -> None:
+        """Hand over the capture whose two eyes were just published.
+
+        A grab can succeed and return the capture before it (seen on a ZED
+        Mini, after opening and after a stall). That one is not handed out
+        again."""
+        stamp = self._camera.get_timestamp(sl.TIME_REFERENCE.IMAGE)
+        stamp_ns = int(stamp.get_nanoseconds())
+        if stamp_ns <= self._last_capture_ns:
+            return
+        self._last_capture_ns = stamp_ns
+        self._captures.publish(self._slots["left"].publish_idx, stamp_ns)
+
     def _close_camera(self) -> None:
+        imu_ended = self._stop_imu()
         if self._camera is not None:
-            try:
-                self._camera.close()
-            except Exception:
-                pass
+            if imu_ended:
+                try:
+                    self._camera.close()
+                except Exception:
+                    pass  # an unplugged camera cannot be closed; drop it
+            else:
+                # The reader is still inside an SDK call on this camera, and
+                # closing it under that call could crash. The handle is
+                # leaked instead.
+                _notify(
+                    "the IMU reader did not stop; leaving the camera open",
+                    logging.WARNING,
+                )
             self._camera = None
         for slot in self._slots.values():
             slot.zed_mat = None
@@ -393,6 +664,8 @@ class _ZedCamera:
 
             try:
                 retrieve_failed = False
+                if self._pairs:
+                    self._choose_buffers()
                 for eye, slot in self._slots.items():
                     err = self._camera.retrieve_image(
                         slot.zed_mat, view_enum[eye], sl.MEM.GPU
@@ -419,6 +692,8 @@ class _ZedCamera:
                         self._close_camera()
                 else:
                     self._consecutive_failures = 0
+                    if self._pairs:
+                        self._publish_pair(sl)
                     if not first_frame_seen:
                         first_frame_seen = True
                         _notify("streaming")
@@ -517,8 +792,11 @@ class ZedSource(FrameSource):
         serial_number: int = 0,
         bus_type: str = "usb",
         stereo: bool = True,
+        settings: Optional[dict] = None,
     ) -> List["ZedSource"]:
-        camera = _ZedCamera(serial_number, bus_type, width, height, fps, stereo)
+        camera = _ZedCamera(
+            serial_number, bus_type, width, height, fps, stereo, settings=settings
+        )
         eyes = ["left", "right"] if stereo else ["left"]
         return [
             cls(
@@ -528,3 +806,64 @@ class ZedSource(FrameSource):
             )
             for eye in eyes
         ]
+
+
+class ZedStereoSource(FrameSource):
+    """Both eyes of each capture of a stereo ZED, in one frame.
+
+    The frame carries the capture's own timestamp, on the SDK's clock.
+    Build via :meth:`ZedStereoSource.build`.
+    """
+
+    def __init__(self, camera: _ZedCamera, name: str) -> None:
+        self._camera = camera
+        self._spec = SourceSpec(name, camera.width, camera.height, "rgba8")
+
+    @property
+    def spec(self) -> SourceSpec:
+        return self._spec
+
+    @property
+    def dropped_captures(self) -> int:
+        """Captures that were replaced before they were read."""
+        return self._camera.pairs_dropped
+
+    def start(self) -> None:
+        self._camera.acquire()
+
+    def stop(self) -> None:
+        self._camera.release()
+
+    def latest(self) -> Optional[Frame]:
+        return self._camera.latest_pair(self._spec.name)
+
+    def calibration(self) -> Optional[StereoCalibration]:
+        return self._camera.calibration
+
+    def imu(self) -> Optional[ImuSamples]:
+        return self._camera.drain_imu()
+
+    @classmethod
+    def build(
+        cls,
+        name: str,
+        width: int,
+        height: int,
+        fps: int = 30,
+        serial_number: int = 0,
+        bus_type: str = "usb",
+        settings: Optional[dict] = None,
+        imu: bool = False,
+    ) -> "ZedStereoSource":
+        camera = _ZedCamera(
+            serial_number,
+            bus_type,
+            width,
+            height,
+            fps,
+            stereo=True,
+            settings=settings,
+            pairs=True,
+            imu=imu,
+        )
+        return cls(camera, name)
