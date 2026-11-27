@@ -126,6 +126,8 @@ struct SiplSettings
     std::vector<uint32_t> linkMasks;
     std::string nitoDir = "/var/nvidia/nvcam/settings/sipl";
     uint32_t isp0Buffers = 6;
+    // Pipeline indexes of the YUV422/UYVY cameras, which bypass the ISP.
+    std::vector<uint32_t> yuvCameras;
 };
 
 struct AppConfig

@@ -31,6 +31,7 @@ bool runSiplSender(const AppConfig& config, bool* receiverDisconnected, bool app
     siplConfig.linkMasks = config.sipl.linkMasks;
     siplConfig.nitoDir = config.sipl.nitoDir;
     siplConfig.isp0Buffers = config.sipl.isp0Buffers;
+    siplConfig.yuvCameras = config.sipl.yuvCameras;
     const uint64_t sessionId = createCaptureSessionId();
     siplConfig.sessionEpoch = sessionId;
 

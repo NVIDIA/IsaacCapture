@@ -31,8 +31,10 @@ camera on the SIPL backend: HEVC at 30 fps and 4 Mbit/s.
 The file is specific to that rig. A different SIPL platform or camera changes the `sipl` block (platform file, config
 name, link masks, tuning directory) and possibly the stream id and size. The Argus backend has no `sipl` block: it
 selects a sensor mode with `cameras[].mode`, can set `capture.mode` and `alignment`, enforces `output.fps` with a rate
-limiter and can set output dimensions. Keep one file per rig and pass the right one with `--sender-config`. The launcher itself supports one stream per
-file and requires an explicit `output.fps`.
+limiter and can set output dimensions. Keep one file per rig and pass the right one with `--sender-config`. The launcher itself supports
+mono streams only: each becomes one receiver stream and one LiveKit track named `sensing-<id>`. The streams share one
+explicit `output.fps` and each needs its own `id`; a profile with several streams sets every stream's `output.width`
+and `output.height`. `--fps` and `--bitrate-mbps` apply to every stream.
 
 `tools/start_system.py` loads this file by default. Command-line overrides (`--fps`, `--bitrate-mbps`,
 `--sender-port`) are applied to the loaded mapping, and the result is what is uploaded. The same
@@ -98,7 +100,8 @@ shipped profile.
 | `sipl.platform_config_name` | Empty; required for SIPL | Named platform inside the database/JSON. |
 | `sipl.link_masks` | Empty; required for SIPL | Sequence of unsigned masks, one per deserializer in transport order; passed to `ApplyMask`. Not an FPS knob. |
 | `sipl.nito_dir` | `/var/nvidia/nvcam/settings/sipl` | ISP tuning directory; loads `<module-name>.nito` on the Orin. Not a YAML sensor-mode selector. |
-| `sipl.isp0_buffers` | `6`; at least 2 | Number of ISP0 surfaces allocated/registered per sensor. Surface ownership and return timing affect pressure; increasing the count does not directly select FPS. |
+| `sipl.isp0_buffers` | `6`; at least 2 | Number of picture surfaces allocated/registered per sensor: ISP0 surfaces for a raw sensor, capture buffers and converted pictures for a YUV camera. Surface ownership and return timing affect pressure; increasing the count does not directly select FPS. |
+| `sipl.yuv_cameras` | Empty | SIPL pipeline indexes of the YUV422/UYVY cameras. Their capture output bypasses the ISP and is converted to NV12; a YUV camera that is not listed is refused. |
 | `network.bind` | `0.0.0.0`; nonempty | Sender TCP listening address. |
 | `network.port` | `5000`; 1–65535 | AVS1 TCP listening port. Receiver must connect here. |
 | `network.reconnect_ms` | `1000` | Retry delay for failed listen setup. Not a per-frame sleep or FPS limiter. |

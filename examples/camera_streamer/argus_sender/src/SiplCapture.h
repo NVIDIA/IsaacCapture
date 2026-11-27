@@ -7,7 +7,8 @@
 #ifndef ARGUS_SENDER_SIPL_CAPTURE_H
 #define ARGUS_SENDER_SIPL_CAPTURE_H
 
-// SIPL capture of every sensor in one platform configuration, ISP0 native NV12 out. The SIPL and NvSci headers stay
+// SIPL capture of every sensor in one platform configuration, native NV12 out: ISP0's for a raw sensor, the VIC's
+// conversion of the capture output for a YUV camera. The SIPL and NvSci headers stay
 // inside SiplCapture.cpp: they pull in macros that collide with other libraries.
 
 #include "CameraCapture.h"
@@ -30,7 +31,9 @@ struct SiplConfig
     // Directory holding <module>.nito; the ISP has no tuning without it.
     std::string nitoDir = "/var/nvidia/nvcam/settings/sipl";
     int gpuId = 0;
-    // ISP0 buffers per sensor. A frame an encoder still holds is one fewer for the ISP.
+    // Pipeline indexes of the YUV422/UYVY cameras, which bypass the ISP.
+    std::vector<uint32_t> yuvCameras;
+    // Picture buffers per sensor. A frame an encoder still holds is one fewer for capture.
     uint32_t isp0Buffers = 6;
     uint32_t frameTimeoutMs = 1000;
     // Stamped on every frame; the caller changes it whenever capture is rebuilt.

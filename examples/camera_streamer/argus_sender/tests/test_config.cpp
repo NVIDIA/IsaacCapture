@@ -134,6 +134,10 @@ int main()
             test, static_cast<int>(backend.captureBackend), static_cast<int>(argus_sender::CAPTURE_BACKEND_SIPL));
         TEST_CHECK_EQ(test, backend.sipl.linkMasks.size(), static_cast<size_t>(2));
         TEST_CHECK_EQ(test, backend.sipl.platformConfigName, std::string("RIG"));
+        TEST_CHECK(test, backend.sipl.yuvCameras.empty());
+        TEST_CHECK(test, loadText("version: 1\ncapture_backend: sipl\n" + sipl + "  yuv_cameras: [4, 5]\n" + streams,
+                                  &backend, &error));
+        TEST_CHECK_EQ(test, backend.sipl.yuvCameras.size(), static_cast<size_t>(2));
         TEST_CHECK(
             test,
             !loadText(
