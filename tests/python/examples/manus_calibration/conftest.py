@@ -28,6 +28,12 @@ from isaaccapture_manus_calibration.worker import (  # noqa: E402
 )
 
 
+def assert_reaped(attempt: CalibrationAttempt) -> None:
+    # asyncio records returncode after reaping; a numeric PID may already be reused.
+    proc = attempt._proc
+    assert proc is not None and proc.returncode is not None
+
+
 class Folder:
     """The plain output folder under test: what calibrations left in it."""
 
