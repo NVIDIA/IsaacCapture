@@ -121,6 +121,8 @@ case "$action" in
                 enabled) systemctl enable "$unit.service" ;;
                 enabled-runtime) systemctl enable --runtime "$unit.service" ;;
                 disabled) systemctl disable "$unit.service" ;;
+                # States such as static or masked have no enable/disable step here.
+                *) : ;;
             esac
             systemctl reset-failed "$unit.service" || true
             if [[ "$active" == active ]]; then
