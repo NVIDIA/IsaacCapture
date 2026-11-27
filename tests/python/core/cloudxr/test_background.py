@@ -20,6 +20,37 @@ _posix_only = pytest.mark.skipif(
 )
 
 
+@pytest.mark.parametrize("pid", [None, True, False, 0, -1, "123", 1.5])
+def test_process_probe_rejects_invalid_pids_without_calling_kill(pid):
+    with patch.object(background.os, "kill") as kill:
+        assert background.process_exists(pid) is False
+    kill.assert_not_called()
+
+
+def test_process_probe_never_uses_windows_kill():
+    with (
+        patch.object(background.os, "name", "nt"),
+        patch.object(background.os, "kill") as kill,
+    ):
+        result = background.process_exists(123)
+    assert result is False
+    kill.assert_not_called()
+
+
+@_posix_only
+@pytest.mark.parametrize(
+    "error", [ProcessLookupError, PermissionError, ValueError, OverflowError]
+)
+def test_process_probe_treats_unusable_pids_as_unavailable(error):
+    with patch.object(background.os, "kill", side_effect=error):
+        assert background.process_exists(123) is False
+
+
+@_posix_only
+def test_process_probe_recognizes_this_process():
+    assert background.process_exists(os.getpid()) is True
+
+
 @pytest.fixture
 def stand_in_service(tmp_path, monkeypatch):
     """Have spawn() run a module that sleeps for its last argument.

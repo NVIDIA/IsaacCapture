@@ -501,6 +501,19 @@ def test_attached_launcher_rejects_stale_writer_or_runtime(tmp_path):
         assert launcher.oob_status()["health"] == "degraded"
 
 
+@pytest.mark.parametrize("field", ["writerPid", "runtimePid"])
+@pytest.mark.parametrize("pid", [0, -1, True, 1 << 100])
+def test_attached_launcher_rejects_malformed_status_pids(tmp_path, field, pid):
+    launcher = object.__new__(CloudXRLauncher)
+    launcher._service = None
+    launcher._run_dir = str(tmp_path)
+    status = {"schemaVersion": 1, "writerPid": os.getpid(), "runtimePid": os.getpid()}
+    status[field] = pid
+    (tmp_path / "oob_status.json").write_text(json.dumps(status))
+    with patch("isaaccapture.cloudxr.launcher.is_runtime_live", return_value=True):
+        assert launcher.oob_status() is None
+
+
 def test_attached_launcher_preserves_only_observed_fatal_session(tmp_path):
     launcher = object.__new__(CloudXRLauncher)
     launcher._service = None

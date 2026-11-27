@@ -57,6 +57,18 @@ class AlreadyServingError(RuntimeError):
     """
 
 
+def process_exists(pid: object) -> bool:
+    """Probe a positive POSIX process ID without sending a signal."""
+    if os.name != "posix" or type(pid) is not int or pid <= 0:
+        return False
+    try:
+        # POSIX signal 0 is a probe; on Windows os.kill would terminate instead.
+        os.kill(pid, 0)  # NOSONAR
+    except (OSError, ValueError, OverflowError):
+        return False
+    return True
+
+
 def pid_path(run_dir: str) -> Path:
     """Path of the detached service's pid file."""
     return Path(run_dir) / PID_FILE

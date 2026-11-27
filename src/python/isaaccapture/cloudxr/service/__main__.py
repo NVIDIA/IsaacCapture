@@ -488,12 +488,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if oob:
         writer_pid = oob.get("writerPid")
         runtime_pid = oob.get("runtimePid")
-        try:
-            if not isinstance(writer_pid, int) or not isinstance(runtime_pid, int):
-                raise ProcessLookupError
-            os.kill(writer_pid, 0)
-            os.kill(runtime_pid, 0)
-        except (ProcessLookupError, PermissionError):
+        if not all(background.process_exists(pid) for pid in (writer_pid, runtime_pid)):
             print("CloudXR OOB:       status unavailable (stale writer)")
         else:
             print(
