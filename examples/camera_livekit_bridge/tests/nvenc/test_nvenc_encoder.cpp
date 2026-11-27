@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <nvenc/nvenc_encoder.hpp>
+#include <sys/stat.h>
+#include <sys/wait.h>
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
 #include <memory>
+#include <spawn.h>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -112,19 +115,49 @@ bool ffmpeg_available()
     return std::system("command -v ffmpeg >/dev/null 2>&1") == 0;
 }
 
+bool decode_with_ffmpeg(const std::vector<uint8_t>& data)
+{
+    // An anonymous owner-only file keeps encoded bytes off shared pathnames.
+    std::unique_ptr<FILE, int (*)(FILE*)> input(std::tmpfile(), &std::fclose);
+    if (!input || ::fchmod(::fileno(input.get()), 0600) != 0 ||
+        std::fwrite(data.data(), 1, data.size(), input.get()) != data.size() || std::fflush(input.get()) != 0 ||
+        std::fseek(input.get(), 0, SEEK_SET) != 0)
+        return false;
+
+    std::string argument_values[] = { "ffmpeg", "-v", "error", "-f", "h264", "-i", "pipe:0", "-f", "null", "-" };
+    std::vector<char*> arguments;
+    for (auto& value : argument_values)
+        arguments.push_back(value.data());
+    arguments.push_back(nullptr);
+
+    posix_spawn_file_actions_t actions;
+    if (::posix_spawn_file_actions_init(&actions) != 0)
+        return false;
+    const int fd = ::fileno(input.get());
+    int error = ::posix_spawn_file_actions_adddup2(&actions, fd, STDIN_FILENO);
+    if (error == 0 && fd != STDIN_FILENO)
+        error = ::posix_spawn_file_actions_addclose(&actions, fd);
+    pid_t pid = -1;
+    if (error == 0)
+        error = ::posix_spawnp(&pid, arguments[0], &actions, nullptr, arguments.data(), ::environ);
+    ::posix_spawn_file_actions_destroy(&actions);
+    if (error != 0)
+        return false;
+
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0)
+    {
+        if (errno != EINTR)
+            return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 void test_decodable(const std::vector<uint8_t>& idr)
 {
     if (!ffmpeg_available())
         return;
-    const char* tmp = std::getenv("TMPDIR");
-    const std::string path = std::string(tmp ? tmp : "/tmp") + "/test_nvenc_idr_" + std::to_string(::getpid()) + ".h264";
-    {
-        std::ofstream f(path, std::ios::binary);
-        f.write(reinterpret_cast<const char*>(idr.data()), static_cast<std::streamsize>(idr.size()));
-    }
-    const int rc = std::system(("ffmpeg -v error -i " + path + " -f null - </dev/null").c_str());
-    CHECK(rc == 0);
-    std::remove(path.c_str());
+    CHECK(decode_with_ffmpeg(idr));
 }
 
 void fill_noise(const NvencEncoder::Surface& s, uint32_t seed)
@@ -258,16 +291,7 @@ void test_decodable_across_reconfigure(NvencEncoder& enc)
     for (int i = 0; i < 6; ++i)
         append(encode_noise(enc, seed++, 820 + static_cast<uint64_t>(i), false));
 
-    const char* tmp = std::getenv("TMPDIR");
-    const std::string path =
-        std::string(tmp ? tmp : "/tmp") + "/test_nvenc_reconfig_" + std::to_string(::getpid()) + ".h264";
-    {
-        std::ofstream f(path, std::ios::binary);
-        f.write(reinterpret_cast<const char*>(stream.data()), static_cast<std::streamsize>(stream.size()));
-    }
-    const int rc = std::system(("ffmpeg -v error -i " + path + " -f null - </dev/null").c_str());
-    CHECK(rc == 0);
-    std::remove(path.c_str());
+    CHECK(decode_with_ffmpeg(stream));
 }
 
 // MSB-first reader over an SPS RBSP (emulation-prevention bytes already removed).
