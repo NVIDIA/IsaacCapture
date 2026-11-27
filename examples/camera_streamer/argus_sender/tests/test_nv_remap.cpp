@@ -25,7 +25,9 @@ std::string writeRmap(uint32_t destWidth,
                       const std::vector<float>& mapY,
                       const char* magic = "RMAP")
 {
-    char path[] = "/tmp/argus_sender_rmap_XXXXXX";
+    // mkstemp reserves a mode-0600 file; root-owned sticky /tmp protects
+    // its name from other users when reopened.
+    char path[] = "/tmp/argus_sender_rmap_XXXXXX"; // NOSONAR
     const int fd = mkstemp(path);
     if (fd < 0)
         return "";

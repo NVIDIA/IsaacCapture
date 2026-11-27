@@ -70,11 +70,14 @@ int main()
     }
 
     {
-        char path[] = "/tmp/argus_sender_tcp_test_XXXXXX";
+        // mkstemp reserves a mode-0600 file; root-owned sticky /tmp protects
+        // its name from other users when reopened.
+        char path[] = "/tmp/argus_sender_tcp_test_XXXXXX"; // NOSONAR
         const int temporaryFd = mkstemp(path);
         TEST_CHECK(test, temporaryFd >= 0);
-        if (temporaryFd >= 0)
-            close(temporaryFd);
+        if (temporaryFd < 0)
+            return test.finish();
+        close(temporaryFd);
 
         int sockets[2] = { -1, -1 };
         TEST_CHECK_EQ(test, socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);

@@ -29,7 +29,8 @@ class TempDir
 public:
     TempDir()
     {
-        std::string pattern = (fs::temp_directory_path() / "manus_cal_writer_XXXXXX").string();
+        // mkdtemp creates an owner-only directory atomically before any children.
+        std::string pattern = (fs::temp_directory_path() / "manus_cal_writer_XXXXXX").string(); // NOSONAR
         REQUIRE(::mkdtemp(pattern.data()) != nullptr);
         m_path = pattern;
     }

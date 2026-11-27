@@ -17,7 +17,9 @@ namespace
 
 bool loadText(const std::string& text, argus_sender::AppConfig* config, std::string* error)
 {
-    char path[] = "/tmp/argus_sender_config_XXXXXX";
+    // mkstemp reserves a mode-0600 file; root-owned sticky /tmp protects
+    // its name from other users when reopened.
+    char path[] = "/tmp/argus_sender_config_XXXXXX"; // NOSONAR
     const int fd = mkstemp(path);
     if (fd < 0)
         return false;
