@@ -12,7 +12,8 @@
 #   4. Verifies the most recent Build Ubuntu run on this commit was green.
 #   5. Pushes vX.Y.PATCH (annotated) using a PAT so build-ubuntu.yml fires
 #      on the tag and runs the release publish chain.
-#   6. Creates a draft GitHub release with auto-generated notes.
+#   6. Creates a draft GitHub release with notes generated since the last
+#      published release.
 #
 # Access is gated by environment: release (admin reviewers required).
 
@@ -173,9 +174,13 @@ jobs:
       run: |
         set -euo pipefail
         tag="${{ steps.compute.outputs.tag }}"
-        # Find the previous tag on the same X.Y line for note generation.
-        prev_tag="$(git tag --list "v${BRANCH_MAJOR}.${BRANCH_MINOR}.*" --sort=-v:refname \
-          | grep -vx "${tag}" | head -1 || true)"
+        # Notes start at the newest published release below this tag, which may
+        # be on an older X.Y line. Drafts are skipped: a tag whose build failed
+        # is never published, and its changes belong in the next release's notes.
+        published="$(gh release list --exclude-drafts --exclude-pre-releases --limit 1000 \
+          --json tagName --jq '.[].tagName')"
+        prev_tag="$( { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' <<< "${published}" || true; echo "${tag}"; } \
+          | sort -uV | grep -B1 -x "${tag}" | grep -vx "${tag}" || true)"
         notes_args=()
         if [[ -n "${prev_tag}" ]]; then
           notes_args+=(--notes-start-tag "${prev_tag}")
