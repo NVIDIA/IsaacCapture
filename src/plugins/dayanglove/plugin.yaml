@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 mwang259. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: dayanglove
+description: "DAYANGlove UDP/Protobuf pose and tactile data"
+command: "python3 ./source.py --publisher ./dayanglove_plugin"
+version: "0.1.0"
+devices:
+  - path: "/glove/dayanglove_left"
+    type: "dayanglove"
+    description: "Left DAYANGlove source data"
+  - path: "/glove/dayanglove_right"
+    type: "dayanglove"
+    description: "Right DAYANGlove source data"

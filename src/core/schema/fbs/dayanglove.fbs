@@ -1,0 +1,43 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 mwang259. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "timestamp.fbs";
+
+namespace core;
+
+// DAYANGlove v1 network fields retain their source names, order, types and units.
+table DAYANGloveFrame {
+    schema_version: uint32 (id: 0);
+    glove_id: string (id: 1);
+    hand: uint32 (id: 2); // 1 left, 2 right.
+    frame_number: uint64 (id: 3);
+    device_sequence: uint32 (id: 4);
+    received_unix_ns: uint64 (id: 5); // Sender wall clock, not device time.
+    monotonic_ns: uint64 (id: 6); // Sender monotonic clock, possibly a different host.
+    mano_pose45: [float] (id: 7); // Total local axis angles, radians; canonical right hand.
+    joints21_xyz_m: [float] (id: 8); // Wrist-relative 21 xyz triplets, meters.
+    palm_adc: [uint32] (id: 9); // 210 raw 12-bit values, no zeroing or interpolation.
+    mirror_x: bool (id: 10);
+    simulation: bool (id: 11);
+    pose_valid: bool (id: 12); // False requires empty pose and joint arrays.
+    identity_source: string (id: 13);
+    status: uint32 (id: 14);
+    output_sequence: uint64 (id: 15);
+    session_id: string (id: 16);
+    response_version: string (id: 17);
+    pose_source: string (id: 18);
+    source_timestamp: double (id: 19);
+    replay_loop: uint32 (id: 20);
+    recording_wear: uint32 (id: 21);
+    pose_id: string (id: 22);
+    device_sequence_valid: bool (id: 23);
+    received_monotonic_ns: uint64 (id: 24); // Receiver-local CLOCK_MONOTONIC for runtime timestamps.
+    available: bool (id: 25); // Local lifecycle event; false removes the collection.
+}
+
+table DAYANGloveFrameRecord {
+    data: DAYANGloveFrame (id: 0);
+    timestamp: DeviceDataTimestamp (id: 1);
+}
+
+root_type DAYANGloveFrameRecord;

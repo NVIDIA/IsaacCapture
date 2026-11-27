@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 mwang259. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[project]
+name = "dayanglove-receiver-tests"
+version = "0.0.0"
+requires-python = ">=3.11,<3.14"
+dependencies = ["protobuf>=5.29,<8", "pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["../.."]

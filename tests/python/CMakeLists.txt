@@ -3,6 +3,10 @@
 
 add_subdirectory(core)
 
+if(TARGET dayanglove_plugin)
+    add_subdirectory(plugins/dayanglove)
+endif()
+
 if(BUILD_PYTHON_BINDINGS AND NOT SKBUILD)
     add_subdirectory(packaging)
 endif()

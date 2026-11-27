@@ -120,3 +120,9 @@ table = "TactileDataArray"
 schema = "tactile_array"
 metadata = "TactileMetadata"
 max_flatbuffer_size = 16384
+
+[[tracker]]
+name = "dayanglove"
+table = "DAYANGloveFrame"
+class = "DAYANGloveTracker"
+max_flatbuffer_size = 4096

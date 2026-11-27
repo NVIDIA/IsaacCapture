@@ -1,0 +1,36 @@
+syntax = "proto3";
+package dayanglove.v1;
+
+// One UDP datagram = one GloveFrame. Fields never change numbers or units.
+// MANO is canonical RIGHT hand, wrist-relative, irrespective of physical hand.
+message GloveFrame {
+  enum Hand { HAND_UNSPECIFIED = 0; LEFT = 1; RIGHT = 2; }
+  uint32 schema_version = 1;             // 1
+  string glove_id = 2;                    // manual UID or future firmware UID
+  Hand hand = 3;
+  uint64 frame_number = 4;                // per-hand connection counter
+  uint32 device_sequence = 5;             // firmware uint8, wraps at256
+  uint64 received_unix_ns = 6;            // host receive wall clock
+  uint64 monotonic_ns = 7;                // host monotonic, NOT device time
+  repeated float mano_pose45 = 8 [packed = true]; //45 total local axis-angle radians
+  repeated float joints21_xyz_m = 9 [packed = true]; //63 floats,21xyz,meter
+  repeated uint32 palm_adc = 10 [packed = true]; //210 raw channels,original order
+  bool mirror_x = 11;                     // true forLEFT: mirror X for physical hand
+  bool simulation = 12;
+  bool pose_valid = 13;                   // false => pose arrays empty; tactile only
+  string identity_source = 14;            // manual / firmware / simulation
+  uint32 status = 15;                     // unchanged firmware status;0for recordings
+  uint64 output_sequence = 16;            // sender counter, detects UDP losses
+  string session_id = 17;                 // changes on each sender start
+  string response_version = 18;
+  string pose_source = 19;                // model / model_simulation / template_weak
+  double source_timestamp = 20;           // original host monotonic seconds for recordings
+  uint32 replay_loop = 21;                // zero-based; simulation+identity_source distinguish replay
+  uint32 recording_wear = 22;
+  string pose_id = 23;
+  bool device_sequence_valid = 24;         // false in recordings (not stored by H5)
+  // No display smoothing, screen rotation, interpolation or zeroing is applied.
+  // Finger order for pose45: index,middle,little,ring,thumb;3joints*xyz each.
+  // joints21: wrist,thumb1..tip,index1..tip,middle1..tip,ring1..tip,little1..tip.
+  // shape beta10=0; global orientation=0;translation=0, no absolute6DoF tracking.
+}
