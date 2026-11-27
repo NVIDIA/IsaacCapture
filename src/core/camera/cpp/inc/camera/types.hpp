@@ -20,7 +20,8 @@ inline constexpr std::uint32_t MAX_SLOTS_PER_STREAM = 64;
 // description can wrap.
 inline constexpr std::uint64_t MAX_SLOT_BYTES = std::uint64_t{ 1 } << 32;
 
-// Marks a time that is not known. All times are nanoseconds on the host's monotonic clock.
+// Marks a time that is not known. A frame set's timeline is in nanoseconds on the host's
+// monotonic clock; an image's device_time_ns is in its SDK's clock.
 inline constexpr std::int64_t TIME_UNKNOWN = -1;
 
 enum class PixelFormat : std::uint32_t
@@ -122,14 +123,24 @@ struct ImageInfo
 {
     std::uint32_t slot = 0;
     std::uint32_t flags = 0; // ImageFlag bits
-    std::uint64_t device_frame_id = 0; // the SDK's own frame number
-    std::int64_t device_time_ns = TIME_UNKNOWN; // the SDK's own timestamp, in the SDK's clock
+
+    // The capture's number: the SDK's, or where it has none the backend's count of the captures
+    // the SDK handed over. A capture that is not published keeps its number, so a gap between
+    // consecutive frame sets is what was dropped before publication.
+    std::uint64_t device_frame_id = 0;
+
+    // The SDK's own time for this image, as it gave it, in a clock the plugin's README names.
+    // An SDK that also gives a time on the host's clock has that one in capture_ns.
+    std::int64_t device_time_ns = TIME_UNKNOWN;
 };
 
 // Where a frame set was at each step, so latency can be read off every frame.
 struct FrameTimeline
 {
-    std::int64_t capture_ns = TIME_UNKNOWN; // sensor capture, when the backend can map it to the host clock
+    // When the sensors captured the frame set, where the backend can place that on the host
+    // clock: one time for the group, whose streams are captured together. Which moment of the
+    // exposure it marks is the SDK's, and is in the plugin's README.
+    std::int64_t capture_ns = TIME_UNKNOWN;
     std::int64_t sdk_ready_ns = TIME_UNKNOWN; // the SDK handed the frame to the backend
     std::int64_t published_ns = TIME_UNKNOWN; // set by Publisher::publish
     std::int64_t sent_ns = TIME_UNKNOWN; // set when the event is handed to a reader
@@ -138,8 +149,9 @@ struct FrameTimeline
 struct FrameEvent
 {
     std::uint64_t lease_id = 0; // this reader's hold on the frame set; return it with Publisher::release
-    // The frame set's place among the group's captures in this session. The same for every
-    // reader, so readers see gaps rather than a numbering of their own; a restart does not reset it.
+    // The frame set's place among those the group published in this session; a capture that
+    // was dropped before publication takes no number. The same for every reader, so readers
+    // see gaps rather than a numbering of their own; a restart does not reset it.
     std::uint64_t sequence = 0;
     std::uint32_t generation = 0; // restarts of the camera within the session
     std::uint32_t skipped = 0; // frame sets this reader did not receive since its previous one

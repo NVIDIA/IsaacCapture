@@ -157,11 +157,15 @@ ReceivedMessage MessageSocket::receive(std::span<std::byte> buffer, std::chrono:
     message.msg_control = control;
     message.msg_controllen = sizeof(control);
 
+    // A peer that closed without reading everything it was sent makes one read fail with
+    // ECONNRESET, ahead of what the peer had sent itself. Reading on gives those messages
+    // first and the close after them, as for a peer that had read everything.
     ssize_t received = 0;
+    bool reset = false;
     do
     {
         received = ::recvmsg(m_fd.get(), &message, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
-    } while (received < 0 && errno == EINTR);
+    } while (received < 0 && (errno == EINTR || (errno == ECONNRESET && !std::exchange(reset, true))));
     if (received < 0)
     {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
