@@ -55,6 +55,11 @@ core::PluginManager manager({ "<install>/plugins" });
 std::unique_ptr<core::Plugin> plugin = manager.start("camera_synthetic", "camera", { "--camera=head" });
 ```
 
+The `isaaccapture` Python package bundles the executable and its `plugin.yaml` under
+`plugins/camera_synthetic`, so an application that installed the wheel starts the plugin the
+same way, with `BUNDLED_PLUGINS_DIR` (from `isaaccapture.teleop_session_manager`) as the
+search path.
+
 The arguments are those of every camera plugin;
 [Running a plugin](../../core/camera/README.md#running-a-plugin) has the whole of it.
 

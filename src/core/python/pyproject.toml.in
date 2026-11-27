@@ -73,6 +73,7 @@ isaaccapture = ["*.so", "*.pyd", "*.pyi", "py.typed", "plugins/*/*"]
 # CHROMIUM_LICENSE: the notice for the key table compiled into _deviceio_trackers.
 "isaaccapture.deviceio_trackers" = ["*.so", "*.pyd", "*.pyi", "CHROMIUM_LICENSE"]
 "isaaccapture.deviceio_session" = ["*.so", "*.pyd", "*.pyi"]
+"isaaccapture.camera" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.mcap" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.oxr" = ["*.so", "*.pyd", "*.pyi"]
 "isaaccapture.plugin_manager" = ["*.so", "*.pyd", "*.pyi"]
