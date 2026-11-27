@@ -3,6 +3,7 @@
 
 add_executable(sharpa_avatar_plugin_tests
     test_avatar_health.cpp
+    test_avatar_stream_health.cpp
 )
 
 target_link_libraries(sharpa_avatar_plugin_tests
