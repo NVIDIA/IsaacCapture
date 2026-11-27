@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -397,11 +397,7 @@ class MultiRetargeterTuningUIImGui:
             imgui.spacing()
 
             if imgui.button("Save All", width=100):
-                for state in self._parameter_states.values():
-                    state.save_to_file()
-                self._set_status(
-                    "✓ All configurations saved successfully!", success=True
-                )
+                self._save_all()
 
             imgui.same_line()
 
@@ -469,9 +465,7 @@ class MultiRetargeterTuningUIImGui:
         imgui.spacing()
 
         if imgui.button("Save All", width=120):
-            for state in self._parameter_states.values():
-                state.save_to_file()
-            self._set_status("✓ All configurations saved successfully!", success=True)
+            self._save_all()
 
         imgui.same_line()
 
@@ -590,6 +584,17 @@ class MultiRetargeterTuningUIImGui:
 
         glfw.terminate()
         self._is_open = False
+
+    def _save_all(self) -> None:
+        failed = []
+        # Attempt every save even when another state has no path or cannot be written.
+        for name, state in self._parameter_states.items():
+            if not state.save_to_file():
+                failed.append(name)
+        if failed:
+            self._set_status(f"✗ Failed to save: {', '.join(failed)}", success=False)
+        else:
+            self._set_status("✓ All configurations saved successfully!", success=True)
 
     def _set_status(self, message: str, success: bool = True) -> None:
         """Set status message."""
