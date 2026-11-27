@@ -723,7 +723,7 @@ def print_oob_hub_startup_banner(
         )
         print(
             "  The launcher serves the WebXR UI on the WSS proxy and starts coturn automatically "
-            "(see coturn-cloudxr-3478.log if CONNECT fails)."
+            "(its live log path is reported at startup)."
         )
     else:
         print(

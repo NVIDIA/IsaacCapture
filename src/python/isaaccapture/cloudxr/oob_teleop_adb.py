@@ -39,6 +39,7 @@ from inspect import isawaitable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from .oob_teleop_env import (
     default_web_client_origin,
     parse_env_port,
@@ -1017,27 +1018,32 @@ def require_turn_port_free(port: int) -> None:
     )
 
 
+class _CoturnProcess(subprocess.Popen):
+    """Own private relay files until cleanup or launcher shutdown."""
+
+    def __init__(self, command: list[str], directory: TemporaryDirectory[str]):
+        self.directory = directory
+        self._files_cleaned = False
+        super().__init__(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    @property
+    def log_path(self) -> str:
+        return str(Path(self.directory.name) / "coturn.log")
+
+    def cleanup_files(self) -> None:
+        # A repeated TemporaryDirectory.cleanup() can remove a recreated path.
+        # This handle no longer owns that pathname after its first cleanup.
+        if not self._files_cleaned:
+            self.directory.cleanup()
+            self._files_cleaned = True
+
+
 def _open_private(path: str) -> int:
-    """Create *path* fresh and owner-only, reusing nothing already there.
-
-    These are predictable ``/tmp`` names, so another local user can get there
-    first. ``O_NOFOLLOW`` alone only refuses a symlink; a plain file they created
-    would be written through, which for the config file means handing them the
-    TURN credential it carries. Unlinking first is what makes the ``O_EXCL``
-    create meaningful, and under ``/tmp``'s sticky bit that unlink fails on a
-    file owned by someone else, so a planted path is refused rather than reused.
-
-    Raises:
-        OSError: if the path cannot be cleared or created safely.
-    """
-    try:
-        os.unlink(path)
-    except FileNotFoundError:
-        pass
+    """Create an owner-only file inside our newly allocated private directory."""
     return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
 
 
-def start_coturn(turn_port: int, user: str, credential: str) -> subprocess.Popen | None:
+def start_coturn(turn_port: int, user: str, credential: str) -> _CoturnProcess | None:
     """Start a coturn TURN server for USB-local ICE relay.
 
     coturn listens on ``127.0.0.1:turn_port`` (TCP + UDP).  ``adb reverse``
@@ -1067,8 +1073,13 @@ def start_coturn(turn_port: int, user: str, credential: str) -> subprocess.Popen
 
     # Write a config file — easier to maintain than a long arg list and avoids
     # shell quoting issues with special characters in credentials.
-    conf_path = f"/tmp/turnserver-cloudxr-{turn_port}.conf"
-    log_path = f"/tmp/coturn-cloudxr-{turn_port}.log"
+    try:
+        directory = TemporaryDirectory(prefix="cloudxr-coturn-")
+    except OSError as exc:
+        log.warning("coturn: failed to create private directory: %s", exc)
+        return None
+    conf_path = str(Path(directory.name) / "turnserver.conf")
+    log_path = str(Path(directory.name) / "coturn.log")
     conf_content = f"""\
 listening-port={turn_port}
 listening-ip=127.0.0.1
@@ -1087,31 +1098,27 @@ no-stdout-log
 log-file={log_path}
 simple-log
 """
-    # 0600 and O_EXCL/O_NOFOLLOW: this file carries the TURN credential and its
-    # name is predictable under a world-writable /tmp.
+    # coturn reopens these paths itself, so their parent must also stay private.
     try:
         with os.fdopen(_open_private(conf_path), "w", encoding="utf-8") as f:
             f.write(conf_content)
     except OSError as exc:
         log.warning("coturn: failed to write config file %s: %s", conf_path, exc)
+        directory.cleanup()
         return None
 
-    # Truncate the log so operators only see lines from this run. Not fatal: the
-    # relay is still worth starting without it, and coturn opens the path itself
-    # from `log-file=` above.
+    # Reserve the private log file. If this fails, coturn can still create it
+    # inside its owner-only directory.
     try:
         os.close(_open_private(log_path))
     except OSError as exc:
         log.warning("coturn: failed to prepare log file %s: %s", log_path, exc)
 
     try:
-        proc = subprocess.Popen(
-            [coturn_bin, "-c", conf_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        proc = _CoturnProcess([coturn_bin, "-c", conf_path], directory)
     except OSError as exc:
         log.warning("coturn failed to start (%s): %s", coturn_bin, exc)
+        directory.cleanup()
         return None
 
     # Give coturn a moment to start (or exit with a config error)
@@ -1123,6 +1130,7 @@ simple-log
             log_path,
             _tail_file(log_path, 10),
         )
+        proc.cleanup_files()
         return None
 
     log.info(
@@ -1156,16 +1164,11 @@ _TAIL_WINDOW = 16 * 1024
 
 
 def _tail_file(path: str, lines: int) -> str:
-    """Return the last *lines* lines of *path* (empty string on read failure).
-
-    Seeks instead of reading the whole file: coturn writes this log for as long
-    as the session runs and nothing truncates it mid-run, so ``readlines()``
-    pulled an unbounded file into memory to print twenty lines of it. The
-    regular-file check is not decoration -- a FIFO left at this predictable
-    ``/tmp`` name would make the read block.
-    """
+    """Read a bounded tail from a regular file; refuse links and special files."""
     try:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags = (
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
         with os.fdopen(os.open(path, flags), "rb") as f:
             if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
                 return ""
@@ -1179,19 +1182,16 @@ def _tail_file(path: str, lines: int) -> str:
 
 
 async def watch_coturn(
-    proc_box: list[subprocess.Popen | None],
+    proc_box: list[_CoturnProcess | None],
     *,
     turn_port: int,
     user: str,
     credential: str,
     poll_seconds: float = 2.0,
 ) -> None:
-    """Restart coturn once if it dies mid-session; surface its log on the way out.
+    """Report coturn's log and restart once; leave a second death down.
 
-    Stores the (possibly replaced) handle back in ``proc_box[0]`` so the
-    caller's cleanup teardown stops the live process. After one restart a
-    second death is left for ``stop_coturn`` to log — chasing further
-    restarts usually masks a config / port-binding bug we want visible.
+    Update ``proc_box[0]`` so the caller's teardown owns the replacement.
     """
     restarted = False
     while True:
@@ -1203,15 +1203,16 @@ async def watch_coturn(
         if proc is None or proc.poll() is None:
             continue
         rc = proc.returncode
-        log_path = f"/tmp/coturn-cloudxr-{turn_port}.log"
+        log_path = proc.log_path
         log.warning(
             "coturn died (rc=%d). Tail of %s:\n%s",
             rc,
             log_path,
             _tail_file(log_path, 20),
         )
+        proc.cleanup_files()
         if restarted:
-            log.error("coturn died again — leaving down. Inspect %s", log_path)
+            log.error("coturn died again — leaving down; see the log tail above")
             return
         restarted = True
         new_proc = start_coturn(turn_port, user, credential)
@@ -1224,18 +1225,28 @@ async def watch_coturn(
         log.info("coturn restarted (pid=%d)", new_proc.pid)
 
 
-def stop_coturn(proc: subprocess.Popen | None) -> None:
+def stop_coturn(proc: _CoturnProcess | None) -> None:
     """Terminate the coturn process started by :func:`start_coturn`."""
     if proc is None:
         return
+    if proc.poll() is not None and not proc._files_cleaned:
+        log.warning(
+            "coturn exited before shutdown (exit code %d). Tail of %s:\n%s",
+            proc.returncode,
+            proc.log_path,
+            _tail_file(proc.log_path, 20),
+        )
     try:
         proc.terminate()
         proc.wait(timeout=5)
     except (subprocess.TimeoutExpired, OSError):
         try:
             proc.kill()
-        except OSError:
-            pass
+            proc.wait(timeout=5)
+        except (subprocess.TimeoutExpired, OSError):
+            log.warning("coturn: failed to stop process %d", proc.pid)
+            return
+    proc.cleanup_files()
     log.info("coturn TURN server stopped")
 
 
