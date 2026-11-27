@@ -27,6 +27,7 @@ add_subdirectory(manus)
 add_subdirectory(manus_calibration)
 add_subdirectory(haptikos)
 add_subdirectory(jmex)
+add_subdirectory(camera_synthetic)
 
 if(BUILD_PLUGIN_NOITOM_MOCAP)
     add_subdirectory(noitom_mocap)
