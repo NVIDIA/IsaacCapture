@@ -177,7 +177,8 @@ def test_manifest_round_trip_atomic_and_unsupported_version_reported(tmp_path: P
 
     bad = json.loads(manifest_path(tmp_path, 3).read_text())
     bad["schema_version"] = 99
-    manifest_path(tmp_path, 4).write_text(json.dumps(bad))
+    # The manifest path stays inside this test's private tmp_path.
+    manifest_path(tmp_path, 4).write_text(json.dumps(bad))  # NOSONAR
     found, problems = scan_manifests(tmp_path)
     assert [m.episode_index for m in found] == [3]
     assert len(problems) == 1 and "schema_version" in problems[0]
@@ -318,7 +319,8 @@ def test_read_manifest_rejects_noncanonical_paths_and_indices(tmp_path: Path) ->
         path.write_text(json.dumps({**good, **patch}))
         with pytest.raises(ValueError):
             read_manifest(path)
-    path.write_text(json.dumps(good))
+    # The manifest path stays inside this test's private tmp_path.
+    path.write_text(json.dumps(good))  # NOSONAR
     assert read_manifest(path).episode_index == 2
 
 
@@ -412,7 +414,8 @@ def test_an_older_record_without_a_destination_is_decoded_as_unrouted(tmp_path: 
     for current in ("studio", "assignment", "finalization"):
         del data[current]
     data["schema_version"] = 2
-    file.write_text(json.dumps(data))
+    # The manifest path stays inside this test's private tmp_path.
+    file.write_text(json.dumps(data))  # NOSONAR
     decoded = read_manifest(file)
     assert decoded.studio is None and decoded.assignment is None
     assert decoded.schema_version == MANIFEST_SCHEMA_VERSION
@@ -480,7 +483,8 @@ def test_a_version_three_manifest_without_continuity_reads_as_no_evidence(tmp_pa
     data = json.loads(file.read_text())
     del data["continuity"]
     data["schema_version"] = 3
-    file.write_text(json.dumps(data))
+    # The manifest path stays inside this test's private tmp_path.
+    file.write_text(json.dumps(data))  # NOSONAR
     decoded = read_manifest(file)
     assert decoded.continuity is None and decoded.schema_version == MANIFEST_SCHEMA_VERSION
 
@@ -505,6 +509,7 @@ def test_a_version_newer_than_this_reader_is_still_refused(tmp_path: Path) -> No
     write_manifest(tmp_path, _manifest(0))
     data = json.loads(manifest_path(tmp_path, 0).read_text())
     data["schema_version"] = MANIFEST_SCHEMA_VERSION + 1
-    manifest_path(tmp_path, 1).write_text(json.dumps(data))
+    # The manifest path stays inside this test's private tmp_path.
+    manifest_path(tmp_path, 1).write_text(json.dumps(data))  # NOSONAR
     found, problems = scan_manifests(tmp_path)
     assert [m.episode_index for m in found] == [0] and "schema_version" in problems[0]

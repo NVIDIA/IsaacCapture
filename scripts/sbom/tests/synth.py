@@ -641,7 +641,8 @@ def _target_entry(name: str) -> dict:
 def _edit_json(path: Path):
     payload = json.loads(path.read_text(encoding="utf-8"))
     yield payload
-    path.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+    # Only synthetic workspace JSON beneath the pytest fixture root is edited.
+    path.write_text(json.dumps(payload, indent=1), encoding="utf-8")  # NOSONAR
 
 
 def _reply(build: Path) -> Path:

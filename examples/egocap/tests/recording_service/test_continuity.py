@@ -176,7 +176,8 @@ async def test_a_manifest_that_recorded_no_evidence_stays_none(tmp_path, own):
     data = json.loads(file.read_text())
     del data["continuity"]
     data["schema_version"] = 3
-    file.write_text(json.dumps(data))
+    # The session and its manifest were created beneath this test's tmp_path.
+    file.write_text(json.dumps(data))  # NOSONAR
     assert read_manifest(file).continuity is None
 
 

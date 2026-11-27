@@ -303,7 +303,11 @@ def _check_set_cli(merged, wheels, evidence):
         ({"wheels": [{}]}, "entry names no wheel"),
         ({"wheels": [{"filename": 1}]}, "entry names no wheel"),
         ({"wheels": [{"filename": "../x.whl"}]}, "not a bare wheel file name"),
-        ({"wheels": [{"filename": "/tmp/x.whl"}]}, "not a bare wheel file name"),
+        # Deliberately invalid absolute path; this test must reject it.
+        (
+            {"wheels": [{"filename": "/tmp/x.whl"}]},  # NOSONAR
+            "not a bare wheel file name",
+        ),
         ({"wheels": [{"filename": "a\\b.whl"}]}, "not a bare wheel file name"),
         ({"wheels": [{"filename": "C:x.whl"}]}, "not a bare wheel file name"),
     ],
@@ -356,7 +360,15 @@ def _record(filename="x-1.0-py3-none-any.whl", sidecar="x.spdx.json"):
     }
 
 
-@pytest.mark.parametrize("sidecar", ["../x.spdx.json", "/tmp/x.spdx.json", ".."])
+@pytest.mark.parametrize(
+    "sidecar",
+    [
+        "../x.spdx.json",
+        # Deliberately invalid absolute path; this test must reject it.
+        "/tmp/x.spdx.json",  # NOSONAR
+        "..",
+    ],
+)
 def test_check_set_refuses_a_sidecar_that_is_not_a_bare_name(tmp_path, sidecar):
     manifest = _manifest_of(tmp_path, [_record(sidecar=sidecar)])
 
