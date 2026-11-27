@@ -87,7 +87,8 @@ export function SyntheticXRPanel({
               onClick={() => {
                 const url = new URL(location.href);
                 url.searchParams.set('syntheticXR', '1');
-                location.assign(url.href);
+                // Only replace the query; the browser retains the current origin and path.
+                location.search = url.search;
               }}
             >
               Open Synthetic XR controls
