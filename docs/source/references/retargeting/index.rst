@@ -197,8 +197,12 @@ Available Retargeters
    Simple VR controller-based hand control. Maps trigger and squeeze inputs to G1 TriHand finger
    joint angles (7 DOF per hand). No external dependencies.
 
-   **Mapping:** trigger → index finger, squeeze → middle finger, both → thumb. Good for quick
-   prototyping and testing.
+   **Mapping:** trigger → index finger, squeeze → middle finger. Either input curls the thumb:
+   proximal and distal curl magnitudes follow ``max(trigger, squeeze)``. Output thumb rotation is
+   ``0.5 * (squeeze - trigger)`` for both hands. Equal inputs cancel rotation; equal nonzero
+   inputs still curl the thumb. Zero inputs produce zero joint angles.
+   The example prints thumb proximal curl as ``T=``.
+   Good for quick prototyping and testing.
 
    **Configuration:**
 
@@ -229,7 +233,7 @@ Available Retargeters
    ====== ====================== ==========================================
    Index  Joint                  Control
    ====== ====================== ==========================================
-   0      Thumb rotation         (trigger - squeeze) * 0.5 (sign per hand)
+   0      Thumb rotation         (squeeze - trigger) * 0.5
    1      Thumb proximal         -max(trigger, squeeze) * 0.4
    2      Thumb distal           -max(trigger, squeeze) * 0.7
    3      Index proximal         trigger
@@ -237,6 +241,9 @@ Available Retargeters
    5      Middle proximal        squeeze
    6      Middle distal          squeeze
    ====== ====================== ==========================================
+
+   The table shows final right-hand output angles. For the left hand, negate the curl
+   angles at indices 1–6; thumb rotation at index 0 is the same for both hands.
 
 .. dropdown:: TriHandBiManualMotionControllerRetargeter
 

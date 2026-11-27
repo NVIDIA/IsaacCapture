@@ -12,6 +12,10 @@ the CSS — where it moves when the code moves.
 Keep small API-option updates to purpose, prerequisites, and usage; avoid
 example wrappers and lifecycle walkthroughs unless needed to use the option.
 
+Verify controller-mapping descriptions against current output indices and final
+mirroring, including zero inputs; reports from older releases may describe
+different printed channels.
+
 ## Build the way CI does
 
 `make current-docs` wipes `build/current` and runs `sphinx-build -W --keep-going`, which

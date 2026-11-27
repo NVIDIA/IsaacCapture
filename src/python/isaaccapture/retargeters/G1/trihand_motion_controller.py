@@ -59,9 +59,12 @@ class TriHandMotionControllerRetargeter(BaseRetargeter):
         - "hand_joints": Joint angles for the robot hand (7 DOFs)
 
     The mapping is:
-    - Trigger: Controls index finger and thumb button
-    - Squeeze: Controls middle finger and thumb button
-    - Thumb rotation: Combination of trigger and squeeze (different for left/right)
+    - Trigger: Controls index finger
+    - Squeeze: Controls middle finger
+    - Thumb curl: Proximal/distal magnitudes follow max(trigger, squeeze),
+      with positive angles for left and negative for right
+    - Output thumb rotation: 0.5 * (squeeze - trigger) for both hands;
+      equal inputs cancel rotation, while equal nonzero inputs still curl the thumb
 
     Output DOF order:
     0. Thumb Rotation

@@ -45,7 +45,9 @@ def example_trihand_motion_controller():
     print("\nMapping VR controller inputs to G1 TriHand joints...")
     print("- Trigger: Controls index finger")
     print("- Squeeze: Controls middle finger")
-    print("- Both: Controls thumb\n")
+    print("- Thumb curl: Follows max(trigger, squeeze); either input curls the thumb")
+    print("- Thumb rotation: 0.5 * (squeeze - trigger); equal inputs cancel")
+    print("- Output: T=thumb proximal curl, I=index proximal, M=middle proximal\n")
 
     # Create controllers source (tracker is internal)
     controllers = ControllersSource(name="controllers")
