@@ -84,7 +84,7 @@ Try desktop controller input without an XR headset using the [Synthetic XR examp
 
 The latest [NVIDIA Isaac Lab](https://github.com/isaac-sim/IsaacLab) release, [3.0.0 EA](https://github.com/isaac-sim/IsaacLab/releases/tag/v3.0.0-EA), includes Isaac Capture, previously released as Isaac Teleop.
 
-To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.github.io/IsaacLab/develop/source/setup/installation/index.html) guide for more details. Then follow the [CloudXR teleoperation in Isaac Lab](https://isaac-sim.github.io/IsaacLab/develop/source/how-to/cloudxr_teleoperation.html) to get started with Teleoperation in Sim.
+To get started, please refer to Isaac Lab's [Installation](https://isaac-sim.github.io/IsaacLab/develop/source/isaaclab/installation.html) guide for more details. Then follow the [CloudXR teleoperation in Isaac Lab](https://isaac-sim.github.io/IsaacLab/develop/source/how-to/cloudxr_teleoperation.html) to get started with Teleoperation in Sim.
 
 ## Licensing
 
