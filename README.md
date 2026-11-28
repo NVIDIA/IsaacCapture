@@ -67,8 +67,8 @@ functionality preserved.
 Our [documentation page](https://nvidia.github.io/IsaacCapture) provides everything you need to get started, including detailed tutorials and step-by-step guides. Follow these links to learn more:
 
 - [Architecture](https://nvidia.github.io/IsaacCapture/main/overview/architecture.html)
-- [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/getting_started/quick_start.html)
-- [How to build from source](https://nvidia.github.io/IsaacCapture/main/getting_started/build_from_source.html)
+- [Quick installation steps](https://nvidia.github.io/IsaacCapture/main/teleop/quick_start.html)
+- [How to build from source](https://nvidia.github.io/IsaacCapture/main/development/build_from_source/index.html)
 - [OVXR installation](docs/source/getting_started/ovxr.rst)
 
 ### Check a Device Integration

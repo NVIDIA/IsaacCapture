@@ -3,7 +3,7 @@
 #
 # scikit-build-core backend for `pip install .` / `pip install -e .` / sdist from
 # source. Drives the same top-level CMakeLists.txt as the classic `cmake -B build`
-# flow (both coexist). See docs: getting_started/build_from_source.
+# flow (both coexist). See docs: development/build_from_source.
 [build-system]
 requires = ["scikit-build-core>=1.0", "numpy>=2.0"]
 build-backend = "scikit_build_core.build"
