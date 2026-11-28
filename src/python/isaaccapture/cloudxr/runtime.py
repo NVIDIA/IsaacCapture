@@ -21,7 +21,7 @@ from .env_config import get_env_config
 
 
 _EULA_URL = (
-    "https://github.com/NVIDIA/IsaacTeleop/blob/main/deps/cloudxr/CLOUDXR_LICENSE"
+    "https://github.com/NVIDIA/IsaacCapture/blob/main/deps/cloudxr/CLOUDXR_LICENSE"
 )
 
 RUNTIME_STARTUP_TIMEOUT_SEC: float = 30
