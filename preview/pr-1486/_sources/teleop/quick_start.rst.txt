@@ -94,9 +94,10 @@ you do **not** need to start the runtime in a separate terminal or source any
 environment file. If nothing is serving yet, the example starts a CloudXR
 service in the background and prints how to stop it; that service outlives the
 example, so the headset stays connected from one run to the next.
-The first launch downloads the CloudXR Web Client SDK and asks you to review and
-accept the EULA on the terminal; answer the prompt once and the acceptance is
-remembered for subsequent runs.
+When an example starts the service for the first time, it fetches the prebuilt
+web client assets (when hosting locally) and asks you to review and accept the
+EULA on the terminal; answer the prompt once and the acceptance is remembered
+for subsequent runs.
 
 .. TODO: ``Quest3`` is the profile every WebXR client uses — Quest, PICO, and the
    desktop-browser IWER emulator — so the name reads as a hardware restriction it
@@ -110,12 +111,13 @@ Vision Pro connects natively and needs ``auto-native`` instead; the default is
 not derived from the connected headset, so set it yourself. The profile is set
 on the *runtime*, so applications inherit whatever the runtime they connect to
 was started with. To override it, or any other setting, write a ``KEY=value``
-env file and start the service with it:
+env file and start the service with it (``--accept-eula`` is required on the
+first detached start):
 
 .. code-block:: bash
 
    echo 'NV_DEVICE_PROFILE=auto-native' > custom.env
-   python -m isaaccapture.cloudxr.service start --cloudxr-env-config ./custom.env
+   python -m isaaccapture.cloudxr.service start --accept-eula --cloudxr-env-config ./custom.env
 
 The same ``--cloudxr-env-config`` flag is available on the teleop examples under
 ``examples/teleop``, which register CloudXR's launcher arguments through

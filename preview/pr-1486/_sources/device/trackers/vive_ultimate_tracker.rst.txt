@@ -219,7 +219,7 @@ Install the examples package once, from the Isaac Capture root, in a venv set up
 
 .. code-block:: bash
 
-   uv pip install -e ./examples/mcap_record_replay
+   uv pip install -e ./examples/mcap_record_replay --no-sources
 
 While the plugin is running, record every tracker. With no arguments, the script records 10
 seconds to ``./recordings/<timestamp>.mcap``:

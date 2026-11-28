@@ -28,7 +28,7 @@ reads the recording and its labels and returns a verdict.
      - 11 steps, seated at a table. About 2 minutes, paced by a timer: you press only
        **Start recording**.
    * - Checks
-     - 40, in four groups: signal, hand shape, placement, and the scripted steps
+     - Four groups: signal, hand shape, placement, and the scripted steps
    * - Your plugin
      - Injects both hands with ``plugin_utils::HandInjector``: the suite records what Isaac Capture's OpenXR hand tracker reads, not a channel of
        your own. Joints in metres, placed in the room, at 30 Hz or more. A glove with no

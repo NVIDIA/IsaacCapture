@@ -584,7 +584,7 @@ additional source nodes (<code class="docutils literal notranslate"><span class=
 <p>For a live browser view of <strong>all</strong> human DeviceIO trackers at once (hands, head,
 controllers, and full body), see <code class="docutils literal notranslate"><span class="pre">examples/deviceio_live_view/</span></code> and its
 <code class="docutils literal notranslate"><span class="pre">README.md</span></code>. From the repo root, in a venv set up as in <a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/deviceio_live_view
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/deviceio_live_view<span class="w"> </span>--no-sources
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.deviceio_live_view<span class="w"> </span>--accept-eula
 </pre></div>
 </div>
@@ -595,10 +595,21 @@ python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.de
 same channel base name as <code class="docutils literal notranslate"><span class="pre">FullBodySource</span></code>, so the resulting file replays
 with <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code>.</p></li>
 </ul>
+<p>The C++ recorder does not start CloudXR, so start the runtime and source its
+environment first. With no output argument it writes to the current directory;
+pass <code class="docutils literal notranslate"><span class="pre">recordings/</span></code> so <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> finds the take. From the repo root,
+after <code class="docutils literal notranslate"><span class="pre">cmake</span> <span class="pre">--install</span></code> and with the example package installed as in
+<a class="reference internal" href="#live-preview">Live preview</a>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture.cloudxr.service<span class="w"> </span>start<span class="w"> </span>--accept-eula
+<span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+./install/examples/mcap_record_replay/cpp/record_full_body<span class="w"> </span><span class="m">5</span><span class="w"> </span>recordings/
+python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_full_body
+</pre></div>
+</div>
 <section id="live-preview">
 <h3>Live preview<a class="headerlink" href="#live-preview" title="Link to this heading">#</a></h3>
 <p>From the repo root, in a venv set up as in <a class="reference internal" href="../development/build_from_source/index.html#build-from-source-install-package"><span class="std std-ref">step 4 of Build from source</span></a>:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay<span class="w"> </span>--no-sources
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--accept-eula
 python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span>--port<span class="w"> </span><span class="m">8090</span><span class="w"> </span>--accept-eula
 </pre></div>
@@ -610,7 +621,7 @@ opened from another machine; pass <code class="docutils literal notranslate"><sp
 <section id="recording">
 <h3>Recording<a class="headerlink" href="#recording" title="Link to this heading">#</a></h3>
 <p>From the repo root, in the same venv:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay<span class="w"> </span>--no-sources
 <span class="nv">R</span><span class="o">=</span><span class="s2">"python -m isaaccapture_examples.mcap_record_replay.record_hand"</span>
 <span class="nv">$R</span><span class="w">              </span><span class="c1"># 5 s → ./recordings/hands_&lt;timestamp&gt;.mcap</span>
 <span class="nv">$R</span><span class="w"> </span><span class="m">10</span><span class="w">           </span><span class="c1"># record for 10 seconds</span>
@@ -619,10 +630,9 @@ opened from another machine; pass <code class="docutils literal notranslate"><sp
 </div>
 <p>Recordings are written to <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code> relative to where you run the
 command, and the replay scripts look there when given no path.</p>
-<p>The example never downloads a published wheel — it runs against the
-<code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> next to it, built from this checkout.  The install is editable,
-so edits under <code class="docutils literal notranslate"><span class="pre">src/python/</span></code> need no rebuild; for C++ changes see
-<a class="reference internal" href="../development/build_from_source/index.html#build-from-source-editable-examples"><span class="std std-ref">step 4 of Build from source</span></a>.  From
+<p>The example runs against the <code class="docutils literal notranslate"><span class="pre">isaaccapture</span></code> wheel installed in step 4, which
+<code class="docutils literal notranslate"><span class="pre">--no-sources</span></code> keeps in place; after a rebuild, rerun that install (see
+<a class="reference internal" href="../development/build_from_source/index.html#build-from-source-editable-examples"><span class="std std-ref">step 4 of Build from source</span></a>).  From
 <code class="docutils literal notranslate"><span class="pre">install/examples/mcap_record_replay</span></code> (after <code class="docutils literal notranslate"><span class="pre">cmake</span>
 <span class="pre">--install</span></code>) it picks up the wheel you just built instead — see
 <a class="reference internal" href="../development/build_from_source/index.html"><span class="doc">Build from Source</span></a>.</p>
@@ -643,10 +653,126 @@ has no such requirement.</p>
 </div>
 <p>Open the printed URL (default <code class="docutils literal notranslate"><span class="pre">http://localhost:8080</span></code>) in a browser to see the
 left (green) and right (blue) hand skeletons update each frame.</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">record_controller</span></code> / <code class="docutils literal notranslate"><span class="pre">replay_controller</span></code> and <code class="docutils literal notranslate"><span class="pre">record_full_body</span></code> /
-<code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> module pairs use the same CLI (positional MCAP path,
-<code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>). <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>,
-<code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the CloudXR launcher flags (including <code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">record_controller</span></code> and <code class="docutils literal notranslate"><span class="pre">record_full_body</span></code> take the same arguments as
+<code class="docutils literal notranslate"><span class="pre">record_hand</span></code> (duration, output path, and the CloudXR launcher flags such as
+<code class="docutils literal notranslate"><span class="pre">--accept-eula</span></code>). <code class="docutils literal notranslate"><span class="pre">replay_controller</span></code> and <code class="docutils literal notranslate"><span class="pre">replay_full_body</span></code> take the
+same arguments as <code class="docutils literal notranslate"><span class="pre">replay_hand</span></code> (MCAP path, <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>) and
+default to the newest <code class="docutils literal notranslate"><span class="pre">controllers_*.mcap</span></code> or <code class="docutils literal notranslate"><span class="pre">full_body_*.mcap</span></code> under
+<code class="docutils literal notranslate"><span class="pre">./recordings/</span></code>. <code class="docutils literal notranslate"><span class="pre">live_full_body</span></code> accepts <code class="docutils literal notranslate"><span class="pre">--host</span></code>, <code class="docutils literal notranslate"><span class="pre">--port</span></code>, and the
+CloudXR launcher flags.</p>
+</section>
+<section id="soma-body-workflows">
+<h3>SOMA body workflows<a class="headerlink" href="#soma-body-workflows" title="Link to this heading">#</a></h3>
+<p>The body commands accept <code class="docutils literal notranslate"><span class="pre">--body-schema</span> <span class="pre">full-body-pose</span></code> (default) or
+<code class="docutils literal notranslate"><span class="pre">--body-schema</span> <span class="pre">soma</span></code>. SOMA mode supports both <code class="docutils literal notranslate"><span class="pre">SomaBodyJointRotations</span></code> and
+<code class="docutils literal notranslate"><span class="pre">SomaBodyJointPoses</span></code>. They render the native 77-joint body topology, including
+available finger joints, without converting to <code class="docutils literal notranslate"><span class="pre">FullBodyPose</span></code>. See
+<a class="reference internal" href="../device/soma.html"><span class="doc">SOMA Pose Transport</span></a> for the transport contract.</p>
+<p>FullBodyPose mode includes controllers by default. SOMA mode uses only the
+body stream, including available finger joints. Pass <code class="docutils literal notranslate"><span class="pre">--controllers</span></code> to
+include controller recording, or <code class="docutils literal notranslate"><span class="pre">--no-controllers</span></code> to disable it for
+FullBodyPose. Standalone hands use the separate hand commands; these examples
+do not extract or fuse them with the body.</p>
+<p>Install the example and demo publisher into a configured development checkout:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/soma_body_publisher
+</pre></div>
+</div>
+<p>Start the live viewer and connect a CloudXR client. Live preview does not read
+or write an MCAP file:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_full_body<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--accept-eula<span class="w"> </span>--body-schema<span class="w"> </span>soma<span class="w"> </span>--soma-body-representation<span class="w"> </span>joint-rotations
+</pre></div>
+</div>
+<p>In a second terminal, start the existing publisher after the runtime is running:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.soma_body_publisher<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--body-representation<span class="w"> </span>joint-rotations<span class="w"> </span>--loop
+</pre></div>
+</div>
+<p>Record in another terminal, then stop the live viewer and publisher before
+replaying on the same Viser port:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.record_full_body<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="m">10</span><span class="w"> </span>recordings/soma_body_joint-rotations_demo.mcap<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--accept-eula<span class="w"> </span>--body-schema<span class="w"> </span>soma<span class="w"> </span>--soma-body-representation<span class="w"> </span>joint-rotations
+
+uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_full_body<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>recordings/soma_body_joint-rotations_demo.mcap<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--body-schema<span class="w"> </span>soma<span class="w"> </span>--soma-body-representation<span class="w"> </span>joint-rotations
+</pre></div>
+</div>
+<p>For evaluated poses, use <code class="docutils literal notranslate"><span class="pre">--soma-body-representation</span> <span class="pre">joint-poses</span></code> on the
+viewer, recorder, and replay commands, and <code class="docutils literal notranslate"><span class="pre">--body-representation</span> <span class="pre">joint-poses</span></code>
+on the publisher. Use a separate output file. Replay works without OpenXR.
+As with the other viewers, <code class="docutils literal notranslate"><span class="pre">--host</span></code> and <code class="docutils literal notranslate"><span class="pre">--port</span></code> control browser access.</p>
+<p>The recorder stores received SOMA payloads unchanged, without FK. Viewing joint
+rotations uses <code class="docutils literal notranslate"><span class="pre">SomaBodySource</span></code> and its existing FK helper against a prepared
+neutral model. Viewing joint poses maps directly without loading SOMA-X assets
+or running FK. Unavailable joints and connecting bones are hidden.</p>
+<p><code class="docutils literal notranslate"><span class="pre">--soma-body-collection-id</span></code> selects the publisher collection and MCAP channel
+base. Its default, <code class="docutils literal notranslate"><span class="pre">soma_body_demo</span></code>, matches the publisher’s <code class="docutils literal notranslate"><span class="pre">--collection-id</span></code>.
+Replay reads
+<code class="docutils literal notranslate"><span class="pre">&lt;collection&gt;/soma_body_joint_rotations_tracked</span></code> or
+<code class="docutils literal notranslate"><span class="pre">&lt;collection&gt;/soma_body_joint_poses_tracked</span></code>. If no file is supplied, it selects
+the newest <code class="docutils literal notranslate"><span class="pre">soma_body_&lt;representation&gt;_*.mcap</span></code> under <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code>.</p>
+<p>Native replay still advances one tracked sample per update. The viewer uses the
+selected channel’s average capture rate for pacing; <code class="docutils literal notranslate"><span class="pre">--rate</span></code> overrides it
+(<code class="docutils literal notranslate"><span class="pre">0</span></code> is unpaced). It does not resample or synchronize streams. FullBodyPose
+and OpenXR hand replay retain their 60 Hz, duration-based playback.</p>
+</section>
+<section id="soma-hand-workflows">
+<h3>SOMA hand workflows<a class="headerlink" href="#soma-hand-workflows" title="Link to this heading">#</a></h3>
+<p>The hand commands accept <code class="docutils literal notranslate"><span class="pre">--hand-schema</span> <span class="pre">openxr-hand-pose</span></code> (default) or
+<code class="docutils literal notranslate"><span class="pre">--hand-schema</span> <span class="pre">soma</span></code>. SOMA mode supports <code class="docutils literal notranslate"><span class="pre">SomaHandJointRotations</span></code> and
+<code class="docutils literal notranslate"><span class="pre">SomaHandJointPoses</span></code>. Each left/right collection retains its anatomical
+<code class="docutils literal notranslate"><span class="pre">hand_side</span></code> and uses the native 25-joint Wrist/finger layout. These commands
+do not fuse standalone hands with a body stream.</p>
+<p>Install the MCAP example and the existing hand publisher:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/mcap_record_replay
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>./examples/soma_hand_publisher
+</pre></div>
+</div>
+<p>Start the viewer and connect a CloudXR client:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.live_hand<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--accept-eula<span class="w"> </span>--hand-schema<span class="w"> </span>soma<span class="w"> </span>--soma-hand-representation<span class="w"> </span>joint-rotations
+</pre></div>
+</div>
+<p>After the runtime is running, start the publisher in a second terminal:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">source</span><span class="w"> </span>~/.cloudxr/run/cloudxr.env
+uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.soma_hand_publisher<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--hand-representation<span class="w"> </span>joint-rotations<span class="w"> </span>--loop
+</pre></div>
+</div>
+<p>Record in another terminal, then stop the viewer and publisher before replaying
+on the same Viser port:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.record_hand<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="m">10</span><span class="w"> </span>recordings/soma_hand_joint-rotations_demo.mcap<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--accept-eula<span class="w"> </span>--hand-schema<span class="w"> </span>soma<span class="w"> </span>--soma-hand-representation<span class="w"> </span>joint-rotations
+
+uv<span class="w"> </span>run<span class="w"> </span>--no-sync<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>isaaccapture_examples.mcap_record_replay.replay_hand<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>recordings/soma_hand_joint-rotations_demo.mcap<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--hand-schema<span class="w"> </span>soma<span class="w"> </span>--soma-hand-representation<span class="w"> </span>joint-rotations
+</pre></div>
+</div>
+<p>For evaluated poses, use <code class="docutils literal notranslate"><span class="pre">--soma-hand-representation</span> <span class="pre">joint-poses</span></code> on the
+viewer, recorder, and replay commands, and <code class="docutils literal notranslate"><span class="pre">--hand-representation</span> <span class="pre">joint-poses</span></code>
+on the publisher. Use a separate output file. Live preview does not read or
+write MCAP; replay does not require OpenXR. <code class="docutils literal notranslate"><span class="pre">--host</span></code> and <code class="docutils literal notranslate"><span class="pre">--port</span></code> control
+browser access.</p>
+<p>Recording preserves received payloads without FK. Viewing rotations uses
+<code class="docutils literal notranslate"><span class="pre">SomaHandSource</span></code> FK against prepared neutral models. Joint poses map directly
+without loading models. The viewer colors left green and right blue and hides
+unavailable joints and bones.</p>
+<p><code class="docutils literal notranslate"><span class="pre">--soma-left-hand-collection-id</span></code> and <code class="docutils literal notranslate"><span class="pre">--soma-right-hand-collection-id</span></code> default
+to <code class="docutils literal notranslate"><span class="pre">soma_hand_left_demo</span></code> and <code class="docutils literal notranslate"><span class="pre">soma_hand_right_demo</span></code>, matching the publisher’s
+<code class="docutils literal notranslate"><span class="pre">--left-collection-id</span></code> and <code class="docutils literal notranslate"><span class="pre">--right-collection-id</span></code>. Replay reads each
+collection’s <code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">rotations_</span><wbr><span class="pre">tracked</span></code> or
+<code class="docutils literal notranslate"><span class="pre">soma_</span><wbr><span class="pre">hand_</span><wbr><span class="pre">joint_</span><wbr><span class="pre">poses_</span><wbr><span class="pre">tracked</span></code> channel. With no file argument, it selects the
+newest <code class="docutils literal notranslate"><span class="pre">soma_hand_&lt;representation&gt;_*.mcap</span></code> under <code class="docutils literal notranslate"><span class="pre">./recordings/</span></code>.</p>
+<p>The trackers retain independent, one-sample-per-update replay. Pacing defaults
+to the busier selected hand’s average capture rate; <code class="docutils literal notranslate"><span class="pre">--rate</span></code> overrides it.
+Missing or exhausted hands are hidden, and playback repeats after the longer
+channel finishes. No timestamp synchronization or resampling is added.</p>
 </section>
 </section>
 <section id="api-reference">
@@ -747,6 +873,8 @@ When empty, <code class="docutils literal notranslate"><span class="pre">TeleopS
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#live-preview">Live preview</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#recording">Recording</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#replaying">Replaying</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#soma-body-workflows">SOMA body workflows</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#soma-hand-workflows">SOMA hand workflows</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#api-reference">API Reference</a><ul class="nav section-nav flex-column">
@@ -837,7 +965,7 @@ When empty, <code class="docutils literal notranslate"><span class="pre">TeleopS
 
   <p class="copyright">
     
-      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 11, 2026.
+      Copyright © 2025-2026, NVIDIA CORPORATION &amp; AFFILIATES, last updated on November 28, 2026.
       <br/>
     
   </p>
